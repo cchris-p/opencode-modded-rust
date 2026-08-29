@@ -1625,6 +1625,12 @@ async fn process_message(executor: &mut AgentExecutor, input: &str) -> anyhow::R
 fn list_models_interactive(registry: &ProviderRegistry) {
     println!("\nAvailable Models:\n");
     for provider in registry.list() {
+        if !matches!(
+            provider.id(),
+            "openai" | "anthropic" | "deepseek" | "openrouter"
+        ) {
+            continue;
+        }
         println!("  [{}]", provider.id());
         for model in provider.models() {
             println!("    {}", model.id);
@@ -1638,6 +1644,12 @@ fn list_models_interactive(registry: &ProviderRegistry) {
 fn list_providers_interactive(registry: &ProviderRegistry) {
     println!("\nConfigured Providers:\n");
     for provider in registry.list() {
+        if !matches!(
+            provider.id(),
+            "openai" | "anthropic" | "deepseek" | "openrouter"
+        ) {
+            continue;
+        }
         let models_count = provider.models().len();
         println!("  {} - {} model(s)", provider.id(), models_count);
     }
