@@ -1,3 +1,14 @@
+---
+id: "START-001"
+title: "Adopt cross-repo documentation boundary"
+priority: "P1"
+type: "docs"
+area: "START"
+spec: ""
+status: "todo"
+created: "2026-08-28"
+---
+
 # Adopt cross-repo documentation boundary
 
 ## Summary

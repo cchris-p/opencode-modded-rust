@@ -1,3 +1,14 @@
+---
+id: "START-008"
+title: "Full parity deferred"
+priority: "P3"
+type: "docs"
+area: "START"
+spec: ""
+status: "todo"
+created: "2026-08-28"
+---
+
 # Full parity deferred
 
 ## Summary

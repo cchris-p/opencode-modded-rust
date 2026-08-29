@@ -1,3 +1,14 @@
+---
+id: "START-006"
+title: "Define agent evaluation strategy"
+priority: "P2"
+type: "docs"
+area: "START"
+spec: ""
+status: "todo"
+created: "2026-08-28"
+---
+
 # Define agent evaluation strategy
 
 ## Summary

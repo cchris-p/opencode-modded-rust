@@ -1,3 +1,14 @@
+---
+id: "START-003"
+title: "Standardize product name"
+priority: "P1"
+type: "docs"
+area: "START"
+spec: ""
+status: "todo"
+created: "2026-08-28"
+---
+
 # Standardize product name
 
 ## Summary

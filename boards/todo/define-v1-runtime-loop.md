@@ -1,3 +1,14 @@
+---
+id: "START-005"
+title: "Define V1 runtime loop"
+priority: "P1"
+type: "feature"
+area: "START"
+spec: "wiki/v1.md"
+status: "todo"
+created: "2026-08-28"
+---
+
 # Define V1 runtime loop
 
 ## Summary

@@ -1,3 +1,14 @@
+---
+id: "START-004"
+title: "Assess current Rust state"
+priority: "P1"
+type: "research"
+area: "START"
+spec: ""
+status: "todo"
+created: "2026-08-28"
+---
+
 # Assess current Rust state
 
 ## Summary

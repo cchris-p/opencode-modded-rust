@@ -1,3 +1,14 @@
+---
+id: "START-007"
+title: "Plan ScopeMux integration"
+priority: "P2"
+type: "research"
+area: "START"
+spec: ""
+status: "todo"
+created: "2026-08-28"
+---
+
 # Plan ScopeMux integration
 
 ## Summary

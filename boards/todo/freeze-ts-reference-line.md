@@ -1,3 +1,14 @@
+---
+id: "START-002"
+title: "Freeze TS reference line"
+priority: "P1"
+type: "docs"
+area: "START"
+spec: ""
+status: "todo"
+created: "2026-08-28"
+---
+
 # Freeze TS reference line
 
 ## Summary
