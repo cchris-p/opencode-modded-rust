@@ -5,7 +5,7 @@ priority: "P1"
 type: "research"
 area: "START"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-08-28"
 ---
 
@@ -86,3 +86,7 @@ The repository already contains a substantial Rust implementation, but its readi
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/6
+
+## Completion
+
+- Merged into `development` on 2026-08-29.
