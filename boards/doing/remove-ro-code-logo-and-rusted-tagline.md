@@ -49,3 +49,7 @@ That branding is not wanted in the product and should not appear in the interfac
 ## Verification
 
 - `cargo check -p opencode-tui`
+
+## Blockers
+
+- PR creation is blocked in the current environment because `gh` is not installed and GitHub SSH access for `origin` fails with `Permission denied (publickey)`.
