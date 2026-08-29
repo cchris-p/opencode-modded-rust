@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-08-29"
 ---
 
@@ -69,3 +69,8 @@ The current model and provider surface is visibly stale in the TUI, which makes 
 
 - `cargo check -p opencode-provider -p opencode-server -p opencode-cli -p opencode-tui`
 - `cargo test -p opencode-provider bundled_v1_catalog -- --nocapture`
+
+## PR Status
+
+- Branch pushed: `bug/START-012-refresh-provider-model-catalog`
+- Automated PR creation is blocked in this environment because `gh` is not installed on PATH.
