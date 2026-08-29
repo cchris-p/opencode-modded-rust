@@ -1,12 +1,13 @@
-# OpenCodeRust
+# scopemux-code
 
-**A Rust implementation of OpenCode**
+**A Rust-native local coding agent product informed by OpenCode**
 
-OpenCodeRust is the Rust implementation and evolution of OpenCode. It provides a full CLI/TUI/Server workflow for local AI coding agents, session management, tool invocation, MCP/LSP integration, and plugin extensions.
+`scopemux-code` is the main Rust product. It is informed by OpenCode as a reference line, but it is not a long-term TypeScript customization effort. The current repository contains a broad existing implementation surface, while the active product direction is documented in `wiki/` and `invariants/`.
 
 ## Current status
 
-- Project name: `OpenCodeRust`
+- Product name: `scopemux-code`
+- Repository shorthand: `opencode-modded-rust`
 - Executable: `opencode` (kept for backward compatibility)
 
 ## Feature overview
@@ -34,7 +35,7 @@ cargo build -p opencode-cli
 
 ### 3. Use this project's binary
 
-To avoid running another OpenCode (e.g. npm/global) on your PATH when using OpenCodeRust, run from the **repo root**:
+To avoid running another OpenCode (e.g. npm/global) on your PATH when using `scopemux-code`, run from the **repo root**:
 
 - **`./target/debug/opencode`** after `cargo build -p opencode-cli`
 - **`cargo run -p opencode-cli --`** to always use this repo's version
@@ -158,6 +159,8 @@ cargo check -p opencode-tui
 
 - User guide: `USER_GUIDE.md`
 - Docs index: `docs/README.md`
+- Planning wiki: `wiki/README.md`
+- Invariants index: `invariants/README.md`
 - CLI: `docs/opencode-cli.md`
 - TUI: `docs/opencode-tui.md`
 - Server: `docs/opencode-server.md`
@@ -167,4 +170,6 @@ cargo check -p opencode-tui
 
 ## Notes
 
-- The executable name remains `opencode` for backward compatibility. OpenCodeRust is the project name.
+- The executable name remains `opencode` for backward compatibility.
+- `scopemux-code` is the product name used by planning and architecture documents.
+- `opencode-modded` remains the long-term reference and planning repo.

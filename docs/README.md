@@ -1,14 +1,19 @@
-# RustingOpenCode documentation index
+# scopemux-code documentation index
 
-This documentation set corresponds to the current code state of **RustingOpenCode (ROCode)** (version: `2026.02.23`).
+This documentation set corresponds to the current code state of `scopemux-code` (repository shorthand: `opencode-modded-rust`).
 
-## Quick links
-
-- Project overview: `README.md`
-- User guide: `USER_GUIDE.md`
-- CLI: `docs/opencode-cli.md`
-- TUI: `docs/opencode-tui.md`
-- Server: `docs/opencode-server.md`
+ ## Quick links
+ 
+ - Project overview: `README.md`
+ - User guide: `USER_GUIDE.md`
+ - CLI: `docs/opencode-cli.md`
+ - TUI: `docs/opencode-tui.md`
+ - Server: `docs/opencode-server.md`
+- Archived session brainstorm artifact: `docs/archive/session.md`
+- Wiki index: `wiki/README.md`
+- Vision: `wiki/vision.md`
+- Version roadmap: `wiki/v1.md`, `wiki/v2.md`, `wiki/v3.md`
+- Invariants index: `invariants/README.md`
 
 ## Module documentation
 
@@ -32,8 +37,9 @@ This documentation set corresponds to the current code state of **RustingOpenCod
 - `docs/opencode-util.md` – Filesystem, logging, and common utilities
 - `docs/opencode-watcher.md` – Filesystem watcher
 
-## Code and documentation conventions
+ ## Code and documentation conventions
 
-- The command name is still `opencode` (for compatibility with existing scripts).
-- Documentation should follow the source code and `--help` output as the source of truth.
-- Behaviour differences or refactoring plans are documented in `docs/overview/` (if that directory exists).
+ - The command name is still `opencode` (for compatibility with existing scripts).
+ - Documentation should follow the source code and `--help` output as the source of truth.
+ - Behaviour differences or refactoring plans are documented in `docs/overview/` (if that directory exists).
+ - Product direction, version planning, and invariants live in `wiki/` and `invariants/`.

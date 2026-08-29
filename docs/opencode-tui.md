@@ -4,8 +4,8 @@
 
 ## Branding and display
 
-- `APP_NAME`: `RustingOpenCode`
-- `APP_SHORT_NAME`: `ROCode`
+- `APP_NAME`: `scopemux-code`
+- `APP_SHORT_NAME`: `scopemux-code`
 - `APP_VERSION_DATE`: `2026.02.23`
 - `APP_TAGLINE`: `A Rusted OpenCode Version`
 

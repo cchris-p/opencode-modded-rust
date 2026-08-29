@@ -1,9 +1,9 @@
-# USER GUIDE - RustingOpenCode (ROCode)
+# USER GUIDE - scopemux-code
 
 This guide is for day-to-day users. It covers startup, common commands, configuration, and troubleshooting.  
-The project is named `RustingOpenCode` (short: `ROCode`). The CLI command is still `opencode`.
+The product is named `scopemux-code`. The CLI command is still `opencode`.
 
-**Use this project's opencode.** If you have another OpenCode (e.g. npm/global) on your PATH, the shell may run that instead. From the **RustingOpenCode repo root** use one of:
+**Use this project's opencode.** If you have another OpenCode (e.g. npm/global) on your PATH, the shell may run that instead. From the **scopemux-code repo root** use one of:
 
 - **`./target/debug/opencode`** — after `cargo build -p opencode-cli`
 - **`cargo run -p opencode-cli --`** — always uses this repo's version
@@ -13,7 +13,7 @@ In the commands below, `opencode` means this local binary (run from repo root).
 
 ## 1. Quick start
 
-From the RustingOpenCode repo root:
+From the scopemux-code repo root:
 
 ```bash
 cargo run -p opencode-cli -- --help
@@ -45,7 +45,7 @@ cargo run -p opencode-cli -- serve --port 3000 --hostname 127.0.0.1
 
 ## 2. Common commands
 
-Run these from the **RustingOpenCode repo root**; use `./target/debug/opencode` or `cargo run -p opencode-cli --`.
+Run these from the **scopemux-code repo root**; use `./target/debug/opencode` or `cargo run -p opencode-cli --`.
 
 ### 2.1 Session management
 
