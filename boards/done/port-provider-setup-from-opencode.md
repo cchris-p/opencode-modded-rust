@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: ""
-status: "doing"
+status: "done"
 created: "2026-08-29"
 ---
 
@@ -76,7 +76,10 @@ The current provider configuration surface feels incomplete compared with the re
 
 - `cargo check -p opencode-tui`
 
-## PR Status
+## PR
 
-- Branch is prepared in a separate worktree at `/var/folders/r5/fk0c2ljn1zs436tyhk6mrt2r0000gp/T/opencode/start-009`.
-- Remote fetch/push/PR creation is currently blocked here because git SSH auth to `origin` failed with `Permission denied (publickey)`.
+- https://github.com/cchris-p/opencode-modded-rust/pull/2
+
+## Completion
+
+- Merged into `development` after local QA confirmation on 2026-08-29.
