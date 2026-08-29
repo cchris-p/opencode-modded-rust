@@ -16,6 +16,7 @@
 - `scopemux-code` must maintain its own `docs/`, `wiki/`, `invariants/`, and `boards/` artifacts.
 - The Rust repo may reference files in `opencode-modded` by explicit path.
 - Reference by path, not by inheritance: a document in `opencode-modded` does not become Rust-product policy unless it is adopted in this repo.
+- `invariants/documentation-boundary.md` is the canonical invariant for this documentation-ownership rule.
 
 ## Current scope
 

@@ -21,6 +21,16 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `docs/` explains the current implementation surface.
 - `boards/` track the work required to move implementation toward the invariants.
 
+## Current invariant set
+
+- `documentation-boundary.md` defines the cross-repo documentation ownership rule.
+- `reference-boundary.md` defines how the TypeScript/OpenCode reference line constrains adoption.
+- `context.md` defines context-construction requirements.
+- `task-state.md` defines authoritative task-state rules.
+- `runtime-lifecycle.md` defines task lifecycle expectations.
+- `retrieval.md` defines retrieval expectations.
+- `verification.md` defines verification requirements.
+
 ## Cross-repo boundary
 
 - Reference by path, not by inheritance.
