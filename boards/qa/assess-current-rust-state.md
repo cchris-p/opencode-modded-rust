@@ -5,7 +5,7 @@ priority: "P1"
 type: "research"
 area: "START"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-08-28"
 ---
 
@@ -82,3 +82,7 @@ The repository already contains a substantial Rust implementation, but its readi
 - Compared the Rust repo against `wiki/v1.md`, current invariants, and the frozen TypeScript reference repo for context only.
 - Captured the main conclusion that the codebase is worth preserving, but the runtime/task-state/verification architecture still needs focused V1 work.
 - Created follow-up board items for the notable gaps that were not already covered by existing planning cards.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/6
