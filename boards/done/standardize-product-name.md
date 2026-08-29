@@ -5,7 +5,7 @@ priority: "P1"
 type: "docs"
 area: "START"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-08-28"
 ---
 
@@ -39,3 +39,7 @@ The repository currently contains multiple names inherited from earlier work. Th
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/4
+
+### Completion
+
+- Fixed and merged into `development` on 2026-08-29.
