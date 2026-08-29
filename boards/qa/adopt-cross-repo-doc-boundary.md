@@ -5,7 +5,7 @@ priority: "P1"
 type: "docs"
 area: "START"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-08-28"
 ---
 
@@ -40,3 +40,7 @@ The convention is documented in `AGENTS.md`, `wiki/`, and `invariants/`, but it 
 
 - `git diff --check`
 - Reviewed the updated invariant and boundary docs to confirm the documentation-ownership rule is explicit and repo-local.
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/5
