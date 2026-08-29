@@ -5,7 +5,7 @@ priority: "P1"
 type: "docs"
 area: "START"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-08-28"
 ---
 
@@ -29,3 +29,14 @@ The convention is documented in `AGENTS.md`, `wiki/`, and `invariants/`, but it 
 ## Done when
 
 - The convention is treated as a standing project rule in future planning and execution work.
+
+## Dev Notes
+
+- Added `invariants/documentation-boundary.md` as the canonical repository-owned statement of the cross-repo documentation boundary.
+- Indexed the new invariant in `invariants/README.md` so later planning work has a clear authoritative source.
+- Linked `wiki/product-boundary.md` back to the invariant so the planning doc and invariant agree on the canonical rule location.
+
+## Verification
+
+- `git diff --check`
+- Reviewed the updated invariant and boundary docs to confirm the documentation-ownership rule is explicit and repo-local.
