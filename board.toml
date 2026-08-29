@@ -1,0 +1,10 @@
+lanes = ["todo", "refinement", "doing", "qa", "done"]
+board_dir = "boards"
+bin = "archive"
+
+[icons]
+todo = "📒"
+refinement = "🧠"
+doing = "🔧"
+qa = "🧪"
+done = "🚀"
