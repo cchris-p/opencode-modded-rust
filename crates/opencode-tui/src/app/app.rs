@@ -18,9 +18,9 @@ use crate::command::CommandAction;
 use crate::components::{
     Agent, AgentSelectDialog, AlertDialog, CommandPalette, ForkDialog, ForkEntry, HelpDialog,
     HomeView, McpDialog, McpItem, Model, ModelSelectDialog, PermissionAction, PermissionPrompt,
-    Prompt, PromptStashDialog, ProviderDialog, QuestionPrompt,
-    SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog, SessionRenameDialog,
-    SessionView, SkillListDialog, SlashCommandPopup, StashItem, StatusDialog, StatusLine,
+    Prompt, PromptStashDialog, ProviderDialog, QuestionPrompt, SessionDeleteState,
+    SessionExportDialog, SessionItem, SessionListDialog, SessionRenameDialog, SessionView,
+    SettingsView, SkillListDialog, SlashCommandPopup, StashItem, StatusDialog, StatusLine,
     SubagentDialog, TagDialog, TaskKind, ThemeListDialog, ThemeOption, TimelineDialog,
     TimelineEntry, Toast, ToastVariant,
 };
@@ -43,6 +43,7 @@ pub struct App {
     terminal: terminal::Tui,
     event_rx: Receiver<Event>,
     prompt: Prompt,
+    settings_view: SettingsView,
     selection: Selection,
     session_view: Option<SessionView>,
     active_session_id: Option<String>,
@@ -182,6 +183,7 @@ impl App {
             terminal,
             event_rx,
             prompt,
+            settings_view: SettingsView::new(),
             selection: Selection::new(),
             session_view: None,
             active_session_id: None,
@@ -532,6 +534,12 @@ impl App {
                 }
                 if self.matches_keybind("help_toggle", *key) {
                     self.help_dialog.open();
+                    return Ok(());
+                }
+
+                if matches!(self.context.current_route(), Route::Settings)
+                    && self.handle_settings_key(*key)
+                {
                     return Ok(());
                 }
 
@@ -1755,6 +1763,7 @@ impl App {
                 self.refresh_status_dialog();
                 self.status_dialog.open();
             }
+            CommandAction::OpenSettings => self.open_provider_settings(),
             CommandAction::ManageMcp | CommandAction::OpenMcpList => {
                 let _ = self.refresh_mcp_dialog();
                 self.mcp_dialog.open();
@@ -2491,6 +2500,57 @@ impl App {
                 );
             }
         }
+
+        self.settings_view.sync_from_context(&self.context);
+    }
+
+    fn open_provider_settings(&mut self) {
+        self.refresh_model_dialog();
+        self.settings_view.sync_from_context(&self.context);
+        self.context.navigate(Route::Settings);
+    }
+
+    fn handle_settings_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.context.router.write().go_back();
+                true
+            }
+            KeyCode::Up => {
+                self.settings_view.move_up(&self.context);
+                true
+            }
+            KeyCode::Down => {
+                self.settings_view.move_down(&self.context);
+                true
+            }
+            KeyCode::Left => {
+                self.settings_view.move_left(&self.context);
+                true
+            }
+            KeyCode::Right => {
+                self.settings_view.move_right(&self.context);
+                true
+            }
+            KeyCode::Char('r') if key.modifiers.is_empty() => {
+                self.refresh_model_dialog();
+                true
+            }
+            KeyCode::Enter if key.modifiers.is_empty() => {
+                if let Some((model_ref, provider_id)) =
+                    self.settings_view.selected_model_ref(&self.context)
+                {
+                    self.set_active_model_selection(model_ref.clone(), Some(provider_id));
+                    self.toast.show(
+                        ToastVariant::Info,
+                        &format!("Active model set to {}", model_ref),
+                        2200,
+                    );
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     fn refresh_agent_dialog(&mut self) {
@@ -3191,6 +3251,7 @@ impl App {
         let permission_prompt = &self.permission_prompt;
         let question_prompt = &self.question_prompt;
         let slash_popup = &self.slash_popup;
+        let settings_view = &self.settings_view;
         let toast = &self.toast;
         let selection = &self.selection;
 
@@ -3214,6 +3275,9 @@ impl App {
                         let home = HomeView::new(context.clone());
                         home.render_with_prompt(frame, area, prompt);
                     }
+                }
+                Route::Settings => {
+                    settings_view.render(frame, area, prompt, &context);
                 }
                 _ => {
                     let home = HomeView::new(context.clone());
