@@ -5,7 +5,7 @@ priority: "P1"
 type: "docs"
 area: "START"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-08-28"
 ---
 
@@ -14,6 +14,8 @@ created: "2026-08-28"
 ## Summary
 
 Adopt `scopemux-code` as the canonical product name across planning and product-facing documentation.
+
+The logo removed in START-013 doesn't need to be considered for this story.
 
 ## Why this exists
 
@@ -27,3 +29,9 @@ The repository currently contains multiple names inherited from earlier work. Th
 ## Notes
 
 - Repository path names and executable compatibility names may remain different when useful.
+
+## Dev Notes
+
+- Clarified in `README.md`, `USER_GUIDE.md`, `docs/README.md`, `wiki/product-boundary.md`, and `invariants/reference-boundary.md` that `scopemux-code` is the canonical product name.
+- Marked retained `opencode`, `opencode-*`, and `opencode-modded-rust` identifiers as compatibility, implementation, or repository names rather than product branding.
+- Verified the documentation changes by reviewing the targeted docs and checking the updated wording in git diff.

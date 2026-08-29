@@ -1,6 +1,6 @@
 # scopemux-code documentation index
 
-This documentation set corresponds to the current code state of `scopemux-code` (repository shorthand: `opencode-modded-rust`).
+This documentation set corresponds to the current code state of `scopemux-code` (repository shorthand: `opencode-modded-rust`, kept as a legacy repository identifier).
 
  ## Quick links
  
@@ -39,7 +39,9 @@ This documentation set corresponds to the current code state of `scopemux-code` 
 
  ## Code and documentation conventions
 
- - The command name is still `opencode` (for compatibility with existing scripts).
+ - `scopemux-code` is the canonical product name in product-facing and planning docs.
+ - The command name is still `opencode` for compatibility with existing scripts.
+ - `opencode-*` document and crate names follow the current code layout and are not alternate product branding.
  - Documentation should follow the source code and `--help` output as the source of truth.
  - Behaviour differences or refactoring plans are documented in `docs/overview/` (if that directory exists).
  - Product direction, version planning, and invariants live in `wiki/` and `invariants/`.
