@@ -49,10 +49,3 @@ That branding is not wanted in the product and should not appear in the interfac
 ## Verification
 
 - `cargo check -p opencode-tui`
-
-## Dev Notes
-
-- Removed the home-screen logo render and tagline render path from `crates/opencode-tui/src/components/home.rs`.
-- Removed the now-unused `APP_TAGLINE` constant from `crates/opencode-tui/src/branding.rs`.
-- Updated `docs/opencode-tui.md` so the branding section no longer documents the removed tagline.
-- Verification: `cargo check -p opencode-tui`
