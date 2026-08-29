@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-08-29"
 ---
 
@@ -50,6 +50,6 @@ That branding is not wanted in the product and should not appear in the interfac
 
 - `cargo check -p opencode-tui`
 
-## Blockers
+## PR
 
-- PR creation is blocked in the current environment because `gh` is not installed and GitHub SSH access for `origin` fails with `Permission denied (publickey)`.
+- https://github.com/cchris-p/opencode-modded-rust/pull/1
