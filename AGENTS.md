@@ -19,6 +19,7 @@
 - `invariants/` contains absolute truths for the final desired system.
 - `boards/` tracks execution work, deferred work, and future feature triage.
 - `docs/archive/session.md` is archived brainstorming source material, not the authoritative plan.
+- The frozen TypeScript reference line is `$HOME/repos/opencode-modded` at commit `e62912b5d18b73316c7bfd6e894b040698f6c880` until a later board item explicitly changes it.
 
 ## Current Product Stance
 

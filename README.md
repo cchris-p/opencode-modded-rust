@@ -174,3 +174,4 @@ cargo check -p opencode-tui
 - The executable name `opencode` remains for backward compatibility.
 - `opencode-*` crate names and `opencode-modded-rust` are retained as implementation and repository identifiers, not the product name.
 - `opencode-modded` remains the long-term reference and planning repo.
+- The frozen TypeScript reference line for planning and later sync review is `$HOME/repos/opencode-modded` at commit `e62912b5d18b73316c7bfd6e894b040698f6c880` until a later board item changes it.
