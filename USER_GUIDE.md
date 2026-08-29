@@ -1,7 +1,7 @@
 # USER GUIDE - scopemux-code
 
 This guide is for day-to-day users. It covers startup, common commands, configuration, and troubleshooting.  
-The product is named `scopemux-code`. The CLI command is still `opencode`.
+The product is named `scopemux-code`. The CLI command is still `opencode` as a legacy compatibility identifier.
 
 **Use this project's opencode.** If you have another OpenCode (e.g. npm/global) on your PATH, the shell may run that instead. From the **scopemux-code repo root** use one of:
 

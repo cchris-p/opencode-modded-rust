@@ -4,6 +4,12 @@
 
 `scopemux-code` is the main product. `opencode-modded` remains the long-term reference and planning repository.
 
+## Naming
+
+- `scopemux-code` is the canonical product name.
+- `opencode` remains the CLI command name only where compatibility is useful.
+- `opencode-modded-rust` and `opencode-*` names are retained as repository and implementation identifiers, not product branding.
+
 ## Documentation ownership
 
 - `opencode-modded` retains its own `docs/`, `wiki/`, `invariants/`, and `boards/` artifacts.

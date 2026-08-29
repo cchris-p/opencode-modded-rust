@@ -7,8 +7,8 @@
 ## Current status
 
 - Product name: `scopemux-code`
-- Repository shorthand: `opencode-modded-rust`
-- Executable: `opencode` (kept for backward compatibility)
+- Repository shorthand: `opencode-modded-rust` (legacy repository identifier)
+- Executable: `opencode` (legacy compatibility command name)
 
 ## Feature overview
 
@@ -170,6 +170,7 @@ cargo check -p opencode-tui
 
 ## Notes
 
-- The executable name remains `opencode` for backward compatibility.
-- `scopemux-code` is the product name used by planning and architecture documents.
+- `scopemux-code` is the canonical product name for planning and product-facing documentation.
+- The executable name `opencode` remains for backward compatibility.
+- `opencode-*` crate names and `opencode-modded-rust` are retained as implementation and repository identifiers, not the product name.
 - `opencode-modded` remains the long-term reference and planning repo.
