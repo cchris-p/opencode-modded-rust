@@ -7,7 +7,6 @@
 - `APP_NAME`: `scopemux-code`
 - `APP_SHORT_NAME`: `scopemux-code`
 - `APP_VERSION_DATE`: `2026.02.23`
-- `APP_TAGLINE`: `A Rusted OpenCode Version`
 
 Defined in: `crates/opencode-tui/src/branding.rs`
 
