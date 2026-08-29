@@ -42,6 +42,16 @@ That branding is not wanted in the product and should not appear in the interfac
 
 ## Dev Notes
 
+- Removed the home-screen `Logo` render path and the `APP_TAGLINE` constant so the TUI no longer shows the RO CODE mark or Rusted tagline.
+- Kept the surrounding home layout centered after removing the branding block.
+- Updated `docs/opencode-tui.md` to stop documenting the tagline as current branding.
+
+## Verification
+
+- `cargo check -p opencode-tui`
+
+## Dev Notes
+
 - Removed the home-screen logo render and tagline render path from `crates/opencode-tui/src/components/home.rs`.
 - Removed the now-unused `APP_TAGLINE` constant from `crates/opencode-tui/src/branding.rs`.
 - Updated `docs/opencode-tui.md` so the branding section no longer documents the removed tagline.
