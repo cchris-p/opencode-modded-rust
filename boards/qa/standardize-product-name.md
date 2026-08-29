@@ -5,7 +5,7 @@ priority: "P1"
 type: "docs"
 area: "START"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-08-28"
 ---
 
@@ -35,3 +35,7 @@ The repository currently contains multiple names inherited from earlier work. Th
 - Clarified in `README.md`, `USER_GUIDE.md`, `docs/README.md`, `wiki/product-boundary.md`, and `invariants/reference-boundary.md` that `scopemux-code` is the canonical product name.
 - Marked retained `opencode`, `opencode-*`, and `opencode-modded-rust` identifiers as compatibility, implementation, or repository names rather than product branding.
 - Verified the documentation changes by reviewing the targeted docs and checking the updated wording in git diff.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/4
