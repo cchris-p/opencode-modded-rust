@@ -15,6 +15,7 @@ mod session;
 mod session_message;
 mod session_text;
 mod session_tool;
+mod settings;
 mod sidebar;
 mod slash_command;
 mod spinner;
@@ -42,6 +43,7 @@ pub use permission::{PermissionAction, PermissionPrompt, PermissionRequest, Perm
 pub use prompt::{Prompt, PromptStashEntry};
 pub use question::{QuestionPrompt, QuestionRequest, QuestionType};
 pub use session::SessionView;
+pub use settings::SettingsView;
 pub use sidebar::Sidebar;
 pub use slash_command::SlashCommandPopup;
 pub use spinner::{KnightRiderSpinner, Spinner, SpinnerMode, TaskKind};

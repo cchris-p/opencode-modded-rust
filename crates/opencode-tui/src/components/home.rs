@@ -8,9 +8,9 @@ use ratatui::{
     Frame,
 };
 
+use crate::branding::{APP_SHORT_NAME, APP_TAGLINE, APP_VERSION_DATE};
 use crate::components::{Logo, Prompt};
 use crate::context::{AppContext, McpConnectionStatus};
-use crate::branding::{APP_SHORT_NAME, APP_TAGLINE, APP_VERSION_DATE};
 
 const HOME_TIPS: &[&str] = &[
     "Press {highlight}Tab{/highlight} to cycle agents",
@@ -46,6 +46,7 @@ const HOME_TIPS: &[&str] = &[
     "Use {highlight}Ctrl+Shift+C{/highlight} to copy selected text",
     "Use {highlight}@path{/highlight} to reference files in prompt",
     "Use {highlight}/connect{/highlight} to add a new provider",
+    "Use {highlight}/settings{/highlight} to reconfigure the active provider",
     "Use {highlight}/models{/highlight} to switch active model",
     "Use {highlight}/agents{/highlight} to switch active agent",
     "Use {highlight}/skills{/highlight} to inspect installed skills",

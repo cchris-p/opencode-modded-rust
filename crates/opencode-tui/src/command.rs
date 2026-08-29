@@ -80,6 +80,7 @@ pub enum CommandAction {
     ToggleTips,
     ToggleCommandPalette,
     // Navigation
+    OpenSettings,
     OpenSessionList,
     SwitchSession,
     OpenModelList,
@@ -307,6 +308,17 @@ impl CommandRegistry {
             keybind: None,
             suggested: false,
             action: CommandAction::ConnectProvider,
+        });
+
+        self.register(SlashCommand {
+            name: "/settings".to_string(),
+            aliases: vec!["/provider".to_string()],
+            title: "Open Provider Settings".to_string(),
+            description: "Open Settings > Provider".to_string(),
+            category: CommandCategory::Navigation,
+            keybind: None,
+            suggested: true,
+            action: CommandAction::OpenSettings,
         });
 
         self.register(SlashCommand {

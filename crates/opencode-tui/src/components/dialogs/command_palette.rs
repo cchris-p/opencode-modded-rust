@@ -180,6 +180,12 @@ impl CommandPalette {
                 category: "Session".to_string(),
             },
             Command {
+                action: CommandAction::OpenSettings,
+                title: "Open provider settings".to_string(),
+                keybind: None,
+                category: "Navigation".to_string(),
+            },
+            Command {
                 action: CommandAction::SwitchTheme,
                 title: "Switch theme".to_string(),
                 keybind: None,
@@ -472,4 +478,3 @@ impl Default for CommandPalette {
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     super::centered_rect(width, height, area)
 }
-
