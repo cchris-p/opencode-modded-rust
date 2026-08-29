@@ -5,7 +5,7 @@ priority: "P1"
 type: "docs"
 area: "START"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-08-28"
 ---
 
@@ -44,3 +44,7 @@ The convention is documented in `AGENTS.md`, `wiki/`, and `invariants/`, but it 
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/5
+
+## Completion
+
+- Merged into `development` on 2026-08-29 after local QA approval.
