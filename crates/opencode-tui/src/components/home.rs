@@ -8,9 +8,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::branding::{APP_SHORT_NAME, APP_TAGLINE, APP_VERSION_DATE};
-use crate::components::{Logo, Prompt};
+use crate::components::Prompt;
 use crate::context::{AppContext, McpConnectionStatus};
+use crate::branding::{APP_SHORT_NAME, APP_VERSION_DATE};
 
 const HOME_TIPS: &[&str] = &[
     "Press {highlight}Tab{/highlight} to cycle agents",
@@ -85,53 +85,32 @@ impl HomeView {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let theme = self.context.theme.read();
-
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(1),
-                Constraint::Length(6),
-                Constraint::Length(1),
                 Constraint::Length(8),
                 Constraint::Length(4),
                 Constraint::Length(3),
             ])
             .split(area);
 
-        let logo = Logo::new(theme.text, theme.text_muted, theme.background);
-        logo.render(frame, layout[1]);
-        self.render_tagline(frame, layout[2]);
-
-        let prompt_width = layout[3].width.min(HOME_MAX_CONTENT_WIDTH);
-        let left_pad = (layout[3].width.saturating_sub(prompt_width)) / 2;
+        let prompt_width = layout[1].width.min(HOME_MAX_CONTENT_WIDTH);
+        let left_pad = (layout[1].width.saturating_sub(prompt_width)) / 2;
         let prompt_area = Rect {
-            x: layout[3].x + left_pad,
-            y: layout[3].y,
+            x: layout[1].x + left_pad,
+            y: layout[1].y,
             width: prompt_width,
-            height: layout[3].height,
+            height: layout[1].height,
         };
 
         prompt.render(frame, prompt_area);
 
         if self.should_show_tips() {
-            self.render_tips(frame, layout[4]);
+            self.render_tips(frame, layout[2]);
         }
 
-        self.render_footer(frame, layout[5]);
-    }
-
-    fn render_tagline(&self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let theme = self.context.theme.read();
-        let line = Paragraph::new(Line::from(Span::styled(
-            APP_TAGLINE,
-            Style::default().fg(theme.text_muted),
-        )))
-        .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(line, area);
+        self.render_footer(frame, layout[3]);
     }
 
     fn render_tips(&self, frame: &mut Frame, area: Rect) {

@@ -2269,12 +2269,22 @@ fn variants_for_model(
         .unwrap_or_default()
 }
 
+fn is_v1_catalog_provider(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        "openai" | "anthropic" | "deepseek" | "openrouter"
+    )
+}
+
 async fn list_providers(State(state): State<Arc<ServerState>>) -> Json<ProviderListResponse> {
     let variant_lookup = get_model_variant_lookup().await;
     let models = state.providers.list_models();
     let mut provider_map: HashMap<String, Vec<ModelInfo>> = HashMap::new();
     for m in models {
         let provider_id = m.provider.clone();
+        if !is_v1_catalog_provider(&provider_id) {
+            continue;
+        }
         let model_id = m.id.clone();
         let variants = variants_for_model(variant_lookup, &provider_id, &model_id);
         provider_map
@@ -2452,6 +2462,9 @@ async fn get_config_providers(
     let mut provider_map: HashMap<String, Vec<ModelInfo>> = HashMap::new();
     for m in models {
         let provider_id = m.provider.clone();
+        if !is_v1_catalog_provider(&provider_id) {
+            continue;
+        }
         let model_id = m.id.clone();
         let variants = variants_for_model(variant_lookup, &provider_id, &model_id);
         provider_map

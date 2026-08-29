@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use crate::anthropic::AnthropicProvider;
 use crate::auth::AuthInfo;
 use crate::azure::AzureProvider;
@@ -12,7 +11,10 @@ use crate::gitlab::GitLabProvider;
 use crate::google::GoogleProvider;
 use crate::groq::GroqProvider;
 use crate::mistral::MistralProvider;
-use crate::models::{ModelInfo, ModelInterleaved, ModelsData, ProviderInfo as ModelsProviderInfo};
+use crate::models::{
+    ModelCost, ModelInfo, ModelInterleaved, ModelLimit, ModelModalities, ModelProvider, ModelsData,
+    ProviderInfo as ModelsProviderInfo,
+};
 use crate::openai::OpenAIProvider;
 use crate::openrouter::OpenRouterProvider;
 use crate::perplexity::PerplexityProvider;
@@ -23,6 +25,7 @@ use crate::together::TogetherProvider;
 use crate::vercel::VercelProvider;
 use crate::vertex::GoogleVertexProvider;
 use crate::xai::XaiProvider;
+use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -84,6 +87,355 @@ pub static BUNDLED_PROVIDERS: Lazy<HashMap<&'static str, &'static str>> = Lazy::
     m.insert("@ai-sdk/github-copilot", "github-copilot");
     m
 });
+
+fn bundled_v1_models_data() -> ModelsData {
+    fn model(
+        id: &str,
+        name: &str,
+        release_date: &str,
+        context: u64,
+        output: u64,
+        reasoning: bool,
+        temperature: bool,
+        tool_call: bool,
+        vision: bool,
+        cost_input: f64,
+        cost_output: f64,
+        provider_npm: &str,
+        provider_api: &str,
+    ) -> ModelInfo {
+        let mut input = vec!["text".to_string()];
+        if vision {
+            input.push("image".to_string());
+        }
+
+        ModelInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            family: None,
+            release_date: Some(release_date.to_string()),
+            attachment: vision,
+            reasoning,
+            temperature,
+            tool_call,
+            interleaved: Some(ModelInterleaved::Bool(false)),
+            cost: Some(ModelCost {
+                input: cost_input,
+                output: cost_output,
+                cache_read: None,
+                cache_write: None,
+                context_over_200k: None,
+            }),
+            limit: ModelLimit {
+                context,
+                input: None,
+                output,
+            },
+            modalities: Some(ModelModalities {
+                input,
+                output: vec!["text".to_string()],
+            }),
+            experimental: None,
+            status: Some("active".to_string()),
+            options: HashMap::new(),
+            headers: None,
+            provider: Some(ModelProvider {
+                npm: Some(provider_npm.to_string()),
+                api: Some(provider_api.to_string()),
+            }),
+            variants: None,
+        }
+    }
+
+    fn provider(
+        id: &str,
+        name: &str,
+        env: &[&str],
+        npm: &str,
+        api: &str,
+        models: Vec<ModelInfo>,
+    ) -> (String, ModelsProviderInfo) {
+        let models = models
+            .into_iter()
+            .map(|model| (model.id.clone(), model))
+            .collect();
+        (
+            id.to_string(),
+            ModelsProviderInfo {
+                api: Some(api.to_string()),
+                name: name.to_string(),
+                env: env.iter().map(|value| value.to_string()).collect(),
+                id: id.to_string(),
+                npm: Some(npm.to_string()),
+                models,
+            },
+        )
+    }
+
+    HashMap::from([
+        provider(
+            "openai",
+            "OpenAI",
+            &["OPENAI_API_KEY"],
+            "@ai-sdk/openai",
+            "https://api.openai.com/v1",
+            vec![
+                model(
+                    "gpt-5.3-codex",
+                    "GPT-5.3 Codex",
+                    "2026-08-01",
+                    400_000,
+                    128_000,
+                    true,
+                    true,
+                    true,
+                    false,
+                    1.5,
+                    6.0,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "gpt-5-mini",
+                    "GPT-5 Mini",
+                    "2026-08-01",
+                    400_000,
+                    128_000,
+                    true,
+                    true,
+                    true,
+                    false,
+                    0.25,
+                    2.0,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "gpt-5-nano",
+                    "GPT-5 Nano",
+                    "2026-08-01",
+                    400_000,
+                    128_000,
+                    true,
+                    true,
+                    true,
+                    false,
+                    0.05,
+                    0.4,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "o4-mini",
+                    "o4 Mini",
+                    "2026-08-01",
+                    200_000,
+                    100_000,
+                    true,
+                    true,
+                    true,
+                    false,
+                    1.1,
+                    4.4,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+            ],
+        ),
+        provider(
+            "anthropic",
+            "Anthropic",
+            &["ANTHROPIC_API_KEY"],
+            "@ai-sdk/anthropic",
+            "https://api.anthropic.com/v1/messages",
+            vec![
+                model(
+                    "claude-sonnet-5",
+                    "Claude Sonnet 5",
+                    "2026-08-01",
+                    200_000,
+                    64_000,
+                    true,
+                    true,
+                    true,
+                    true,
+                    3.0,
+                    15.0,
+                    "@ai-sdk/anthropic",
+                    "https://api.anthropic.com/v1/messages",
+                ),
+                model(
+                    "claude-haiku-4-5",
+                    "Claude Haiku 4.5",
+                    "2026-08-01",
+                    200_000,
+                    64_000,
+                    true,
+                    true,
+                    true,
+                    true,
+                    1.0,
+                    5.0,
+                    "@ai-sdk/anthropic",
+                    "https://api.anthropic.com/v1/messages",
+                ),
+                model(
+                    "claude-opus-5",
+                    "Claude Opus 5",
+                    "2026-08-01",
+                    200_000,
+                    64_000,
+                    true,
+                    true,
+                    true,
+                    true,
+                    6.0,
+                    30.0,
+                    "@ai-sdk/anthropic",
+                    "https://api.anthropic.com/v1/messages",
+                ),
+                model(
+                    "claude-sonnet-4-6",
+                    "Claude Sonnet 4.6",
+                    "2026-05-01",
+                    200_000,
+                    64_000,
+                    true,
+                    true,
+                    true,
+                    true,
+                    3.0,
+                    15.0,
+                    "@ai-sdk/anthropic",
+                    "https://api.anthropic.com/v1/messages",
+                ),
+            ],
+        ),
+        provider(
+            "deepseek",
+            "DeepSeek",
+            &["DEEPSEEK_API_KEY"],
+            "@ai-sdk/openai-compatible",
+            "https://api.deepseek.com/chat/completions",
+            vec![
+                model(
+                    "deepseek-v4-pro",
+                    "DeepSeek V4 Pro",
+                    "2026-08-01",
+                    128_000,
+                    32_768,
+                    true,
+                    true,
+                    true,
+                    false,
+                    0.55,
+                    2.19,
+                    "@ai-sdk/openai-compatible",
+                    "https://api.deepseek.com/chat/completions",
+                ),
+                model(
+                    "deepseek-v4-flash",
+                    "DeepSeek V4 Flash",
+                    "2026-08-01",
+                    128_000,
+                    32_768,
+                    true,
+                    true,
+                    true,
+                    false,
+                    0.27,
+                    1.1,
+                    "@ai-sdk/openai-compatible",
+                    "https://api.deepseek.com/chat/completions",
+                ),
+            ],
+        ),
+        provider(
+            "openrouter",
+            "OpenRouter",
+            &["OPENROUTER_API_KEY"],
+            "@openrouter/ai-sdk-provider",
+            "https://openrouter.ai/api/v1/chat/completions",
+            vec![
+                model(
+                    "anthropic/claude-sonnet-5",
+                    "Claude Sonnet 5 (OpenRouter)",
+                    "2026-08-01",
+                    200_000,
+                    64_000,
+                    true,
+                    true,
+                    true,
+                    true,
+                    3.0,
+                    15.0,
+                    "@openrouter/ai-sdk-provider",
+                    "https://openrouter.ai/api/v1/chat/completions",
+                ),
+                model(
+                    "openai/gpt-5.3-codex",
+                    "GPT-5.3 Codex (OpenRouter)",
+                    "2026-08-01",
+                    400_000,
+                    128_000,
+                    true,
+                    true,
+                    true,
+                    false,
+                    1.5,
+                    6.0,
+                    "@openrouter/ai-sdk-provider",
+                    "https://openrouter.ai/api/v1/chat/completions",
+                ),
+                model(
+                    "openai/gpt-5-mini",
+                    "GPT-5 Mini (OpenRouter)",
+                    "2026-08-01",
+                    400_000,
+                    128_000,
+                    true,
+                    true,
+                    true,
+                    false,
+                    0.25,
+                    2.0,
+                    "@openrouter/ai-sdk-provider",
+                    "https://openrouter.ai/api/v1/chat/completions",
+                ),
+                model(
+                    "deepseek/deepseek-v4-pro",
+                    "DeepSeek V4 Pro (OpenRouter)",
+                    "2026-08-01",
+                    128_000,
+                    32_768,
+                    true,
+                    true,
+                    true,
+                    false,
+                    0.55,
+                    2.19,
+                    "@openrouter/ai-sdk-provider",
+                    "https://openrouter.ai/api/v1/chat/completions",
+                ),
+                model(
+                    "deepseek/deepseek-v4-flash-0731",
+                    "DeepSeek V4 Flash 0731 (OpenRouter)",
+                    "2026-08-01",
+                    128_000,
+                    32_768,
+                    true,
+                    true,
+                    true,
+                    false,
+                    0.27,
+                    1.1,
+                    "@openrouter/ai-sdk-provider",
+                    "https://openrouter.ai/api/v1/chat/completions",
+                ),
+            ],
+        ),
+    ])
+}
 
 // ---------------------------------------------------------------------------
 // Helper functions matching TS helpers
@@ -306,9 +658,7 @@ impl CustomLoader for OpenCodeLoader {
 
         let has_key = provider.env.iter().any(|e| std::env::var(e).is_ok())
             || provider_state
-                .and_then(|state| {
-                    provider_option_string(state, &["apiKey", "api_key", "apikey"])
-                })
+                .and_then(|state| provider_option_string(state, &["apiKey", "api_key", "apikey"]))
                 .is_some();
 
         if !has_key {
@@ -2170,21 +2520,22 @@ fn provider_secret(provider: &ProviderState, fallback_env: &[&str]) -> Option<St
 }
 
 fn provider_base_url(provider: &ProviderState) -> Option<String> {
-    provider_option_string(provider, &["baseURL", "baseUrl", "url", "api"]).or_else(|| {
-        provider
-            .models
-            .values()
-            .find_map(|model| (!model.api.url.trim().is_empty()).then(|| model.api.url.clone()))
-    })
-    .or_else(|| {
-        // GLM Coding Plan requires a dedicated endpoint instead of the generic API.
-        // TS users commonly configure this as provider id `zhipuai-coding-plan`.
-        if provider.id == "zhipuai-coding-plan" {
-            Some("https://open.bigmodel.cn/api/coding/paas/v4".to_string())
-        } else {
-            None
-        }
-    })
+    provider_option_string(provider, &["baseURL", "baseUrl", "url", "api"])
+        .or_else(|| {
+            provider
+                .models
+                .values()
+                .find_map(|model| (!model.api.url.trim().is_empty()).then(|| model.api.url.clone()))
+        })
+        .or_else(|| {
+            // GLM Coding Plan requires a dedicated endpoint instead of the generic API.
+            // TS users commonly configure this as provider id `zhipuai-coding-plan`.
+            if provider.id == "zhipuai-coding-plan" {
+                Some("https://open.bigmodel.cn/api/coding/paas/v4".to_string())
+            } else {
+                None
+            }
+        })
 }
 
 fn create_concrete_provider(
@@ -2211,7 +2562,9 @@ fn create_concrete_provider(
         "opencode" => {
             let api_key = provider_secret(provider, &["OPENCODE_API_KEY"])?;
             let base_url = provider_base_url(provider)?;
-            Some(Arc::new(OpenAIProvider::openai_compatible(base_url, api_key)))
+            Some(Arc::new(OpenAIProvider::openai_compatible(
+                base_url, api_key,
+            )))
         }
         "google" => {
             let api_key = provider_secret(
@@ -2340,7 +2693,9 @@ fn create_concrete_provider(
 
             let api_key = provider_secret(provider, &[])?;
             let base_url = provider_base_url(provider)?;
-            Some(Arc::new(OpenAIProvider::openai_compatible(base_url, api_key)))
+            Some(Arc::new(OpenAIProvider::openai_compatible(
+                base_url, api_key,
+            )))
         }
     }
 }
@@ -2392,7 +2747,10 @@ impl RuntimeProvider for AliasedProvider {
         self.model_index.get(id)
     }
 
-    async fn chat(&self, request: crate::ChatRequest) -> Result<crate::ChatResponse, crate::ProviderError> {
+    async fn chat(
+        &self,
+        request: crate::ChatRequest,
+    ) -> Result<crate::ChatResponse, crate::ProviderError> {
         self.inner.chat(request).await
     }
 
@@ -2458,7 +2816,7 @@ fn load_models_dev_cache() -> ModelsData {
         .join("models.json");
 
     let Ok(raw) = fs::read_to_string(cache_path) else {
-        return HashMap::new();
+        return bundled_v1_models_data();
     };
 
     if let Ok(parsed) = serde_json::from_str::<ModelsData>(&raw) {
@@ -2467,10 +2825,10 @@ fn load_models_dev_cache() -> ModelsData {
 
     // Fallback: tolerate per-provider schema drift instead of dropping everything.
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return HashMap::new();
+        return bundled_v1_models_data();
     };
     let Some(map) = value.as_object() else {
-        return HashMap::new();
+        return bundled_v1_models_data();
     };
 
     let mut data = HashMap::new();
@@ -2492,7 +2850,11 @@ fn load_models_dev_cache() -> ModelsData {
         }
     }
 
-    data
+    if data.is_empty() {
+        bundled_v1_models_data()
+    } else {
+        data
+    }
 }
 
 fn register_fallback_env_providers(registry: &mut ProviderRegistry) {
@@ -2814,6 +3176,24 @@ mod tests {
             options: HashMap::new(),
             models: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn bundled_v1_catalog_stays_limited_to_curated_provider_surface() {
+        let data = bundled_v1_models_data();
+
+        assert_eq!(data.len(), 4);
+        assert!(data.contains_key("openai"));
+        assert!(data.contains_key("anthropic"));
+        assert!(data.contains_key("deepseek"));
+        assert!(data.contains_key("openrouter"));
+
+        assert!(data["openai"].models.contains_key("gpt-5.3-codex"));
+        assert!(data["anthropic"].models.contains_key("claude-sonnet-5"));
+        assert!(data["deepseek"].models.contains_key("deepseek-v4-pro"));
+        assert!(data["openrouter"]
+            .models
+            .contains_key("anthropic/claude-sonnet-5"));
     }
 
     #[test]

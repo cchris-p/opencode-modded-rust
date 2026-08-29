@@ -28,64 +28,64 @@ impl ModelSelectDialog {
     pub fn new() -> Self {
         let models = vec![
             Model {
-                id: "claude-sonnet-4".into(),
-                name: "Claude Sonnet 4".into(),
+                id: "claude-sonnet-5".into(),
+                name: "Claude Sonnet 5".into(),
                 provider: "anthropic".into(),
                 context_window: 200000,
             },
             Model {
-                id: "claude-3-5-sonnet".into(),
-                name: "Claude 3.5 Sonnet".into(),
+                id: "claude-haiku-4-5".into(),
+                name: "Claude Haiku 4.5".into(),
                 provider: "anthropic".into(),
                 context_window: 200000,
             },
             Model {
-                id: "claude-3-opus".into(),
-                name: "Claude 3 Opus".into(),
+                id: "claude-opus-5".into(),
+                name: "Claude Opus 5".into(),
                 provider: "anthropic".into(),
                 context_window: 200000,
             },
             Model {
-                id: "gpt-4o".into(),
-                name: "GPT-4o".into(),
+                id: "gpt-5.3-codex".into(),
+                name: "GPT-5.3 Codex".into(),
                 provider: "openai".into(),
-                context_window: 128000,
+                context_window: 400000,
             },
             Model {
-                id: "gpt-4-turbo".into(),
-                name: "GPT-4 Turbo".into(),
+                id: "gpt-5-mini".into(),
+                name: "GPT-5 Mini".into(),
                 provider: "openai".into(),
-                context_window: 128000,
+                context_window: 400000,
             },
             Model {
-                id: "o1".into(),
-                name: "o1".into(),
+                id: "o4-mini".into(),
+                name: "o4 Mini".into(),
                 provider: "openai".into(),
                 context_window: 200000,
             },
             Model {
-                id: "gemini-2.0-flash".into(),
-                name: "Gemini 2.0 Flash".into(),
-                provider: "google".into(),
-                context_window: 1000000,
-            },
-            Model {
-                id: "gemini-1.5-pro".into(),
-                name: "Gemini 1.5 Pro".into(),
-                provider: "google".into(),
-                context_window: 1000000,
-            },
-            Model {
-                id: "deepseek-v3".into(),
-                name: "DeepSeek V3".into(),
+                id: "deepseek-v4-pro".into(),
+                name: "DeepSeek V4 Pro".into(),
                 provider: "deepseek".into(),
-                context_window: 64000,
+                context_window: 128000,
             },
             Model {
-                id: "llama-3.1-70b".into(),
-                name: "Llama 3.1 70B".into(),
-                provider: "openrouter".into(),
+                id: "deepseek-v4-flash".into(),
+                name: "DeepSeek V4 Flash".into(),
+                provider: "deepseek".into(),
                 context_window: 128000,
+            },
+            Model {
+                id: "anthropic/claude-sonnet-5".into(),
+                name: "Claude Sonnet 5 (OpenRouter)".into(),
+                provider: "openrouter".into(),
+                context_window: 200000,
+            },
+            Model {
+                id: "openai/gpt-5-mini".into(),
+                name: "GPT-5 Mini (OpenRouter)".into(),
+                provider: "openrouter".into(),
+                context_window: 400000,
             },
         ];
 
@@ -265,4 +265,3 @@ impl Default for ModelSelectDialog {
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     super::centered_rect(width, height, area)
 }
-
