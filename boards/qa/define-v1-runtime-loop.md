@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-08-28"
 ---
 
@@ -69,3 +69,11 @@ V1 needs a precise execution model so implementation work does not drift into br
 ## Branch
 
 - `feature/START-005-v1-runtime-loop`
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/13
+
+## Next QA Step
+
+- Review `wiki/v1-runtime-loop.md` against `wiki/v1.md` and the current invariants, then confirm the stage model and downstream follow-up mapping are concrete enough to drive `START-016` and `START-017` without reopening scope questions.
