@@ -14,6 +14,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `vision.md` defines the product intent and near-term posture.
 - `product-boundary.md` defines what this product is and is not.
 - `reference-strategy.md` explains how the TypeScript repo is used as a reference line.
+- `agent-evaluation-strategy.md` defines how the Rust runtime is judged across V1 through V3.
 - `v1.md` defines the first serious personal daily-driver target.
 - `v2.md` defines the next reliability and retrieval step.
 - `v3.md` defines broader daily-use coverage.
