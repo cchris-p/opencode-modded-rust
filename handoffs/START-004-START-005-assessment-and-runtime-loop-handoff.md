@@ -38,6 +38,12 @@ This handoff does not define deployment to `main`.
 - Confirm the runtime-loop output is consistent with `invariants/runtime-lifecycle.md` and related invariants.
 - Confirm follow-up board items exist for all notable gaps or risks surfaced by the assessment or runtime-loop definition.
 
+## Current Status
+- `START-004` landed earlier on `development` via PR `#6` and remains the assessment half of this architecture packet.
+- `START-005` is now implemented on `feature/START-005-v1-runtime-loop` and is under review in PR `#13`: https://github.com/cchris-p/opencode-modded-rust/pull/13
+- The original one-PR handoff plan was split in practice because `START-004` had already merged before the runtime-loop writeup resumed.
+- The architectural dependency intent remains the same: finish and merge `START-005` before downstream runtime-enforcement and ScopeMux-planning work.
+
 ## Branch Cleanup
 - Delete local branch `feature/START-004-START-005-assessment-runtime-loop` after the PR is merged into `development`.
 - Delete remote branch `feature/START-004-START-005-assessment-runtime-loop` after the PR is merged into `development`.
