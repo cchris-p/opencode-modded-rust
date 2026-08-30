@@ -3,6 +3,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -815,31 +816,10 @@ async fn run_tui(
         anyhow::bail!("--fork requires --continue or --session");
     }
 
-    let mut server_handle = None;
-    let mut mdns_publisher: Option<MdnsPublisher> = None;
     let base_url = if let Some(url) = attach_url {
         url
     } else {
-        let bind_host = if mdns && hostname == "127.0.0.1" {
-            "0.0.0.0".to_string()
-        } else {
-            hostname.clone()
-        };
-        let client_host = if bind_host == "0.0.0.0" {
-            "127.0.0.1".to_string()
-        } else {
-            bind_host.clone()
-        };
-        let bind_port = if port == 0 { 3000 } else { port };
-        let addr: SocketAddr = format!("{}:{}", bind_host, bind_port).parse()?;
-        let server_url = format!("http://{}:{}", client_host, bind_port);
-        eprintln!("Starting local server for TUI at {}", server_url);
-        opencode_server::set_cors_whitelist(cors.clone());
-        let mut handle = tokio::spawn(async move { opencode_server::run_server(addr).await });
-        wait_for_server_ready(&server_url, Duration::from_secs(90), Some(&mut handle)).await?;
-        server_handle = Some(handle);
-        mdns_publisher = start_mdns_publisher_if_needed(mdns, &bind_host, bind_port, &mdns_domain);
-        server_url
+        prepare_local_tui_server(port, hostname, mdns, mdns_domain, cors).await?
     };
 
     let selected_session = resolve_requested_session(continue_last, session, fork).await?;
@@ -855,9 +835,9 @@ async fn run_tui(
         std::env::set_var("OPENCODE_TUI_SESSION", session_id);
     }
 
-    let run_result = tokio::task::spawn_blocking(|| {
-        opencode_tui::run_tui()
-    }).await.map_err(|e| anyhow::anyhow!("TUI task panicked: {}", e))?;
+    let run_result = tokio::task::spawn_blocking(|| opencode_tui::run_tui())
+        .await
+        .map_err(|e| anyhow::anyhow!("TUI task panicked: {}", e))?;
 
     std::env::remove_var("OPENCODE_TUI_BASE_URL");
     std::env::remove_var("OPENCODE_TUI_MODEL");
@@ -865,12 +845,118 @@ async fn run_tui(
     std::env::remove_var("OPENCODE_TUI_AGENT");
     std::env::remove_var("OPENCODE_TUI_SESSION");
 
-    drop(mdns_publisher);
-    if let Some(handle) = server_handle {
-        handle.abort();
+    run_result
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LocalTuiServerRecord {
+    base_url: String,
+}
+
+async fn prepare_local_tui_server(
+    port: u16,
+    hostname: String,
+    mdns: bool,
+    mdns_domain: String,
+    cors: Vec<String>,
+) -> anyhow::Result<String> {
+    let cwd = std::env::current_dir()?;
+    let bind_host = if mdns && hostname == "127.0.0.1" {
+        "0.0.0.0".to_string()
+    } else {
+        hostname
+    };
+    let client_host = if bind_host == "0.0.0.0" {
+        "127.0.0.1".to_string()
+    } else {
+        bind_host.clone()
+    };
+    let bind_port = if port == 0 { 3000 } else { port };
+    let base_url = format!("http://{}:{}", client_host, bind_port);
+    let record_path = local_tui_server_record_path(&cwd)?;
+
+    if let Some(record) = load_local_tui_server_record(&record_path) {
+        if record.base_url == base_url && server_is_ready(&record.base_url).await {
+            eprintln!("Reusing local TUI server at {}", record.base_url);
+            return Ok(record.base_url);
+        }
     }
 
-    run_result
+    if server_is_ready(&base_url).await {
+        anyhow::bail!(
+            "A different OpenCode server is already reachable at {}. Use `opencode attach {}` or pick another `--port`.",
+            base_url,
+            base_url
+        );
+    }
+
+    eprintln!("Starting detached local server for TUI at {}", base_url);
+    spawn_detached_tui_server(&cwd, bind_port, &bind_host, mdns, &mdns_domain, &cors)?;
+    wait_for_server_ready(&base_url, Duration::from_secs(90), None).await?;
+    store_local_tui_server_record(
+        &record_path,
+        &LocalTuiServerRecord {
+            base_url: base_url.clone(),
+        },
+    )?;
+    Ok(base_url)
+}
+
+fn local_tui_server_record_path(cwd: &Path) -> anyhow::Result<PathBuf> {
+    let state_dir = dirs::state_dir()
+        .or_else(dirs::data_local_dir)
+        .ok_or_else(|| anyhow::anyhow!("Could not determine local state directory"))?;
+    let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    canonical.hash(&mut hasher);
+    Ok(state_dir
+        .join("opencode")
+        .join("tui-servers")
+        .join(format!("{:016x}.json", hasher.finish())))
+}
+
+fn load_local_tui_server_record(path: &Path) -> Option<LocalTuiServerRecord> {
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn store_local_tui_server_record(path: &Path, record: &LocalTuiServerRecord) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_vec(record)?)?;
+    Ok(())
+}
+
+fn spawn_detached_tui_server(
+    cwd: &Path,
+    port: u16,
+    hostname: &str,
+    mdns: bool,
+    mdns_domain: &str,
+    cors: &[String],
+) -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = ProcessCommand::new(exe);
+    cmd.current_dir(cwd)
+        .arg("serve")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--hostname")
+        .arg(hostname)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    if mdns {
+        cmd.arg("--mdns").arg("--mdns-domain").arg(mdns_domain);
+    }
+    for entry in cors {
+        cmd.arg("--cors").arg(entry);
+    }
+
+    cmd.spawn()?;
+    Ok(())
 }
 
 async fn resolve_requested_session(
@@ -937,6 +1023,15 @@ async fn wait_for_server_ready(
             }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn server_is_ready(base_url: &str) -> bool {
+    let client = reqwest::Client::new();
+    let health = server_url(base_url, "/health");
+    match client.get(&health).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
     }
 }
 
@@ -1742,7 +1837,10 @@ fn provider_to_bootstrap(provider: &opencode_config::ProviderConfig) -> Bootstra
 fn model_to_bootstrap(id: &str, model: &opencode_config::ModelConfig) -> BootstrapConfigModel {
     let mut options = HashMap::new();
     if let Some(api_key) = &model.api_key {
-        options.insert("apiKey".to_string(), serde_json::Value::String(api_key.clone()));
+        options.insert(
+            "apiKey".to_string(),
+            serde_json::Value::String(api_key.clone()),
+        );
     }
 
     let variants = model.variants.as_ref().map(|variants| {
@@ -1755,13 +1853,12 @@ fn model_to_bootstrap(id: &str, model: &opencode_config::ModelConfig) -> Bootstr
     BootstrapConfigModel {
         id: model.model.clone().or_else(|| Some(id.to_string())),
         name: model.name.clone(),
-        provider: model
-            .base_url
-            .as_ref()
-            .map(|url| opencode_provider::bootstrap::ConfigModelProvider {
+        provider: model.base_url.as_ref().map(|url| {
+            opencode_provider::bootstrap::ConfigModelProvider {
                 api: Some(url.clone()),
                 npm: None,
-            }),
+            }
+        }),
         options: (!options.is_empty()).then_some(options),
         variants,
         ..Default::default()

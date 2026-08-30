@@ -30,6 +30,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `runtime-lifecycle.md` defines task lifecycle expectations.
 - `retrieval.md` defines retrieval expectations.
 - `verification.md` defines verification requirements.
+- Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
 
 ## Cross-repo boundary
 
