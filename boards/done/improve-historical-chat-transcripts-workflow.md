@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "done"
 created: "2026-08-29"
 ---
 
@@ -96,3 +96,11 @@ The current Rust export flow appears simpler than the reference implementation a
 ## Branch
 
 - `feature/FEAT-001-historical-chat-transcripts`
+
+## PR
+
+- Pending
+
+## Completion
+
+- Implemented and ready for merge on 2026-08-30.
