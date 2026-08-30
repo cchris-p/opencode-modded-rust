@@ -51,6 +51,12 @@ pub struct SessionStatusInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessagePart {
     pub id: String,
     #[serde(rename = "type")]
@@ -653,7 +659,7 @@ impl ApiClient {
         Ok(agents)
     }
 
-    pub fn list_skills(&self) -> anyhow::Result<Vec<String>> {
+    pub fn list_skills(&self) -> anyhow::Result<Vec<SkillSummary>> {
         let url = format!("{}/skill", self.base_url);
         let response = self.client.get(&url).send()?;
 
@@ -663,7 +669,7 @@ impl ApiClient {
             anyhow::bail!("Failed to list skills: {} - {}", status, text);
         }
 
-        Ok(response.json::<Vec<String>>()?)
+        Ok(response.json::<Vec<SkillSummary>>()?)
     }
 
     pub fn get_mcp_status(&self) -> anyhow::Result<Vec<McpStatusInfo>> {

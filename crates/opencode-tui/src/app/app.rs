@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use chrono::{TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::api::{ApiClient, McpStatusInfo, MessageInfo, SessionInfo, SessionRevertInfo};
+use crate::api::{
+    ApiClient, McpStatusInfo, MessageInfo, SessionInfo, SessionRevertInfo, SkillSummary,
+};
 use crate::app::state::AppState;
 use crate::app::terminal;
 use crate::command::CommandAction;
@@ -2814,7 +2816,7 @@ impl App {
         };
         let skills = client.list_skills()?;
         self.skill_list_dialog.set_skills(skills.clone());
-        self.prompt.set_skill_suggestions(skills);
+        self.prompt.set_skill_suggestions(skill_names(&skills));
         Ok(())
     }
 
@@ -3517,6 +3519,10 @@ impl App {
         self.screen_lines = captured_lines;
         Ok(())
     }
+}
+
+fn skill_names(skills: &[SkillSummary]) -> Vec<String> {
+    skills.iter().map(|skill| skill.name.clone()).collect()
 }
 
 impl Drop for App {
