@@ -139,7 +139,7 @@ impl SessionExportDialog {
         );
         frame.render_widget(
             Paragraph::new(format!(
-                "  3  {} Include metadata (tokens, cost)",
+                "  3  {} Include assistant metadata",
                 check(self.include_metadata)
             ))
             .style(Style::default().fg(theme.text)),
