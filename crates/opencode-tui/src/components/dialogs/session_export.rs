@@ -139,7 +139,7 @@ impl SessionExportDialog {
         );
         frame.render_widget(
             Paragraph::new(format!(
-                "  3  {} Include metadata (tokens, cost)",
+                "  3  {} Include assistant metadata",
                 check(self.include_metadata)
             ))
             .style(Style::default().fg(theme.text)),
@@ -165,4 +165,3 @@ impl Default for SessionExportDialog {
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     super::centered_rect(width, height, area)
 }
-
