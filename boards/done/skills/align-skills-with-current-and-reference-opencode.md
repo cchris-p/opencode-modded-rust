@@ -58,12 +58,14 @@ The first skills task should lock down parity expectations before feature expans
 - The server `/skill` route now returns discovered skill names plus descriptions and the TUI skills dialog consumes the same data.
 - Prompt skill suggestions now refresh from the same server-backed discovered skill list.
 - The `skill` tool now accepts the reference-compatible `name` key as an alias for `skill_name`.
+- The server `/skill` route now has direct integration-test coverage for discovered names and descriptions.
 - Repo-local invariants and the skills parity audit were added to capture the delivered local-filesystem skills contract.
 
 ## Verification
 
 - `cargo test -p opencode-tool skill`
 - `cargo test -p opencode-tui skill_list`
+- `cargo test -p opencode-server --test skill_route`
 - `cargo check -p opencode-cli -p opencode-server -p opencode-tool -p opencode-tui`
 
 ## Related Items
