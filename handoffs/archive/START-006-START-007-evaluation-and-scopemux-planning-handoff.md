@@ -49,3 +49,9 @@ This handoff does not define deployment to `main`.
 5. Update both board items with summary links and any new follow-up references.
 6. Open one PR referencing both `START-006` and `START-007`, target `development`, and enumerate both item IDs in the PR body.
 7. Merge into `development` when ready, verify both planning outputs there, then delete the local and remote feature branch.
+
+## Archived Outcome
+- Archived on 2026-08-30 after handoff completion.
+- `START-006` had already been completed before this handoff was resumed.
+- The remaining `START-007` work landed in PR #14: https://github.com/cchris-p/opencode-modded-rust/pull/14
+- Added `wiki/scopemux-integration-plan.md` and explicit follow-up card `START-025`.
