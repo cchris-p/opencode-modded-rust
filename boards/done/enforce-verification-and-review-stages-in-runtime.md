@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-08-29"
 ---
 
@@ -81,6 +81,10 @@ Implement runtime-owned review and verification stages so a task cannot reach co
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/16
+
+## Completion
+
+- Merged into `development` on 2026-08-30.
 
 ## Related Items
 
