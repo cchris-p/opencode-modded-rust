@@ -131,6 +131,29 @@ CREATE TABLE IF NOT EXISTS todos (
 );
 "#;
 
+/// Session tasks table - stores authoritative runtime task state
+pub const CREATE_SESSION_TASKS_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS session_tasks (
+    session_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    completion_criteria TEXT NOT NULL,
+    workspace_target TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    verification_plan TEXT NOT NULL,
+    verification_status TEXT NOT NULL,
+    verification_notes TEXT,
+    review_status TEXT NOT NULL,
+    review_notes TEXT,
+    reopen_reason TEXT,
+    artifacts TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+"#;
+
 /// Permissions table - stores project-level permissions
 pub const CREATE_PERMISSIONS_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS permissions (
@@ -174,6 +197,9 @@ CREATE INDEX IF NOT EXISTS idx_parts_order ON parts(sort_order);
 -- Todo indexes
 CREATE INDEX IF NOT EXISTS idx_todos_session ON todos(session_id);
 CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status);
+
+-- Session task indexes
+CREATE INDEX IF NOT EXISTS idx_session_tasks_stage ON session_tasks(stage);
 "#;
 
 /// All migration statements to run
@@ -182,6 +208,7 @@ pub const ALL_MIGRATIONS: &[&str] = &[
     CREATE_MESSAGES_TABLE,
     CREATE_PARTS_TABLE,
     CREATE_TODOS_TABLE,
+    CREATE_SESSION_TASKS_TABLE,
     CREATE_PERMISSIONS_TABLE,
     CREATE_SESSION_SHARES_TABLE,
     CREATE_INDEXES,

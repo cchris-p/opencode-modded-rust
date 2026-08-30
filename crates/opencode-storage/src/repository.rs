@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use opencode_types::{
     MessagePart, MessageRole, Session, SessionMessage, SessionShare, SessionStatus, SessionSummary,
-    SessionTime, SessionUsage,
+    SessionTask, SessionTime, SessionUsage, TaskReviewStatus, TaskStage, TaskVerificationStatus,
 };
 
 use crate::database::DatabaseError;
@@ -94,9 +94,51 @@ impl SessionRow {
                 None
             },
             status: string_to_status(&self.status),
+            task: None,
             metadata: HashMap::new(),
             created_at: created_dt,
             updated_at: updated_dt,
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct SessionTaskRow {
+    session_id: String,
+    task_id: String,
+    objective: String,
+    completion_criteria: String,
+    workspace_target: String,
+    stage: String,
+    verification_plan: String,
+    verification_status: String,
+    verification_notes: Option<String>,
+    review_status: String,
+    review_notes: Option<String>,
+    reopen_reason: Option<String>,
+    artifacts: String,
+    created_at: i64,
+    updated_at: i64,
+}
+
+impl SessionTaskRow {
+    fn into_task(self) -> SessionTask {
+        let _ = &self.session_id;
+        SessionTask {
+            task_id: self.task_id,
+            objective: self.objective,
+            completion_criteria: deserialize_string_list(self.completion_criteria),
+            workspace_target: self.workspace_target,
+            stage: string_to_task_stage(&self.stage),
+            verification_plan: deserialize_string_list(self.verification_plan),
+            verification_status: string_to_verification_status(&self.verification_status),
+            verification_notes: self.verification_notes,
+            review_status: string_to_review_status(&self.review_status),
+            review_notes: self.review_notes,
+            reopen_reason: self.reopen_reason,
+            artifacts: deserialize_string_list(self.artifacts),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         }
     }
 }
@@ -189,6 +231,8 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
+        self.save_task(&session.id, session.task.as_ref()).await?;
+
         Ok(())
     }
 
@@ -208,7 +252,13 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
-        Ok(row.map(|r| r.into_session()))
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let mut session = row.into_session();
+        session.task = self.load_task(&session.id).await?;
+        Ok(Some(session))
     }
 
     pub async fn list(
@@ -250,7 +300,14 @@ impl SessionRepository {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?,
         };
 
-        Ok(rows.into_iter().map(|r| r.into_session()).collect())
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut session = row.into_session();
+            session.task = self.load_task(&session.id).await?;
+            sessions.push(session);
+        }
+
+        Ok(sessions)
     }
 
     pub async fn update(&self, session: &Session) -> Result<(), DatabaseError> {
@@ -327,6 +384,8 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
+        self.save_task(&session.id, session.task.as_ref()).await?;
+
         Ok(())
     }
 
@@ -357,7 +416,78 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
-        Ok(rows.into_iter().map(|r| r.into_session()).collect())
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut session = row.into_session();
+            session.task = self.load_task(&session.id).await?;
+            sessions.push(session);
+        }
+
+        Ok(sessions)
+    }
+
+    async fn load_task(&self, session_id: &str) -> Result<Option<SessionTask>, DatabaseError> {
+        let row = sqlx::query_as::<_, SessionTaskRow>(
+            r#"SELECT
+                session_id, task_id, objective, completion_criteria, workspace_target,
+                stage, verification_plan, verification_status, verification_notes,
+                review_status, review_notes, reopen_reason, artifacts,
+                created_at, updated_at
+            FROM session_tasks WHERE session_id = ?"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(row.map(SessionTaskRow::into_task))
+    }
+
+    async fn save_task(
+        &self,
+        session_id: &str,
+        task: Option<&SessionTask>,
+    ) -> Result<(), DatabaseError> {
+        sqlx::query("DELETE FROM session_tasks WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        let Some(task) = task else {
+            return Ok(());
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO session_tasks (
+                session_id, task_id, objective, completion_criteria, workspace_target,
+                stage, verification_plan, verification_status, verification_notes,
+                review_status, review_notes, reopen_reason, artifacts,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(session_id)
+        .bind(&task.task_id)
+        .bind(&task.objective)
+        .bind(serialize_string_list(&task.completion_criteria))
+        .bind(&task.workspace_target)
+        .bind(task_stage_to_string(&task.stage))
+        .bind(serialize_string_list(&task.verification_plan))
+        .bind(verification_status_to_string(&task.verification_status))
+        .bind(&task.verification_notes)
+        .bind(review_status_to_string(&task.review_status))
+        .bind(&task.review_notes)
+        .bind(&task.reopen_reason)
+        .bind(serialize_string_list(&task.artifacts))
+        .bind(task.created_at)
+        .bind(task.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(())
     }
 }
 
@@ -377,6 +507,72 @@ fn string_to_status(s: &str) -> SessionStatus {
         "compacting" => SessionStatus::Compacting,
         _ => SessionStatus::Active,
     }
+}
+
+fn task_stage_to_string(stage: &TaskStage) -> &'static str {
+    match stage {
+        TaskStage::Selected => "selected",
+        TaskStage::ContextPrepared => "context_prepared",
+        TaskStage::Implementing => "implementing",
+        TaskStage::Verifying => "verifying",
+        TaskStage::Reviewing => "reviewing",
+        TaskStage::Repairing => "repairing",
+        TaskStage::Completed => "completed",
+    }
+}
+
+fn string_to_task_stage(s: &str) -> TaskStage {
+    match s {
+        "context_prepared" => TaskStage::ContextPrepared,
+        "implementing" => TaskStage::Implementing,
+        "verifying" => TaskStage::Verifying,
+        "reviewing" => TaskStage::Reviewing,
+        "repairing" => TaskStage::Repairing,
+        "completed" => TaskStage::Completed,
+        _ => TaskStage::Selected,
+    }
+}
+
+fn verification_status_to_string(status: &TaskVerificationStatus) -> &'static str {
+    match status {
+        TaskVerificationStatus::NotRun => "not_run",
+        TaskVerificationStatus::Passed => "passed",
+        TaskVerificationStatus::Failed => "failed",
+        TaskVerificationStatus::Incomplete => "incomplete",
+    }
+}
+
+fn string_to_verification_status(s: &str) -> TaskVerificationStatus {
+    match s {
+        "passed" => TaskVerificationStatus::Passed,
+        "failed" => TaskVerificationStatus::Failed,
+        "incomplete" => TaskVerificationStatus::Incomplete,
+        _ => TaskVerificationStatus::NotRun,
+    }
+}
+
+fn review_status_to_string(status: &TaskReviewStatus) -> &'static str {
+    match status {
+        TaskReviewStatus::NotReviewed => "not_reviewed",
+        TaskReviewStatus::Approved => "approved",
+        TaskReviewStatus::ChangesRequested => "changes_requested",
+    }
+}
+
+fn string_to_review_status(s: &str) -> TaskReviewStatus {
+    match s {
+        "approved" => TaskReviewStatus::Approved,
+        "changes_requested" => TaskReviewStatus::ChangesRequested,
+        _ => TaskReviewStatus::NotReviewed,
+    }
+}
+
+fn serialize_string_list(items: &[String]) -> String {
+    serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn deserialize_string_list(value: String) -> Vec<String> {
+    serde_json::from_str(&value).unwrap_or_default()
 }
 
 pub struct MessageRepository {
