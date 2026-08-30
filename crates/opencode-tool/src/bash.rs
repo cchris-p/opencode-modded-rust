@@ -4,7 +4,9 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::time::{timeout, Duration};
 
-use crate::{Metadata, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, Metadata, Tool, ToolContext, ToolError, ToolResult,
+};
 use opencode_permission::BashArity;
 use opencode_plugin::{HookContext, HookEvent};
 
@@ -152,17 +154,10 @@ impl Tool for BashTool {
         // Check external directories
         for path in &parsed.directories {
             if ctx.is_external_path(path) {
-                let parent = std::path::Path::new(path)
-                    .parent()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.clone());
-
-                ctx.ask_permission(
-                    crate::PermissionRequest::new("external_directory")
-                        .with_pattern(format!("{}/*", parent))
-                        .with_metadata("filepath", serde_json::json!(path))
-                        .with_metadata("parentDir", serde_json::json!(parent)),
-                )
+                ctx.ask_permission(external_directory_permission_request(
+                    path,
+                    crate::ExternalDirectoryKind::File,
+                ))
                 .await?;
             }
         }

@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use super::replacers::CompositeReplacer;
-use crate::{with_file_lock, Metadata, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, with_file_lock, Metadata, Tool, ToolContext, ToolError,
+    ToolResult,
+};
 
 #[cfg(feature = "lsp")]
 const MAX_DIAGNOSTICS_PER_FILE: usize = 20;
@@ -98,17 +101,10 @@ impl Tool for EditTool {
         let path_str = path.to_string_lossy().to_string();
 
         if ctx.is_external_path(&path_str) {
-            let parent = path
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| path_str.clone());
-
-            ctx.ask_permission(
-                crate::PermissionRequest::new("external_directory")
-                    .with_pattern(format!("{}/*", parent))
-                    .with_metadata("filepath", serde_json::json!(&path_str))
-                    .with_metadata("parentDir", serde_json::json!(parent)),
-            )
+            ctx.ask_permission(external_directory_permission_request(
+                &path_str,
+                crate::ExternalDirectoryKind::File,
+            ))
             .await?;
         }
 

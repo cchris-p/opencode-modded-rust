@@ -5,7 +5,9 @@ use std::path::PathBuf;
 #[cfg(feature = "lsp")]
 use lsp_types;
 
-use crate::{Metadata, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, Metadata, Tool, ToolContext, ToolError, ToolResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,11 +104,10 @@ impl Tool for LspTool {
         }
 
         if ctx.is_external_path(&path_str) {
-            ctx.ask_permission(
-                crate::PermissionRequest::new("external_directory")
-                    .with_pattern(&path_str)
-                    .with_metadata("filepath", serde_json::json!(&path_str)),
-            )
+            ctx.ask_permission(external_directory_permission_request(
+                &path_str,
+                crate::ExternalDirectoryKind::File,
+            ))
             .await?;
         }
 

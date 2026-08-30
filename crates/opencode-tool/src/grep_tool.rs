@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
-use crate::{Metadata, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, Metadata, Tool, ToolContext, ToolError, ToolResult,
+};
 
 const MAX_LINE_LENGTH: usize = 2000;
 
@@ -104,12 +106,14 @@ impl Tool for GrepTool {
         let base_dir_str = base_dir.to_string_lossy().to_string();
 
         if ctx.is_external_path(&base_dir_str) {
-            ctx.ask_permission(
-                crate::PermissionRequest::new("external_directory")
-                    .with_pattern(format!("{}/*", base_dir_str))
-                    .with_metadata("path", serde_json::json!(&base_dir_str)),
-            )
-            .await?;
+            let mut request = external_directory_permission_request(
+                &base_dir_str,
+                crate::ExternalDirectoryKind::Directory,
+            );
+            request
+                .metadata
+                .insert("path".to_string(), serde_json::json!(&base_dir_str));
+            ctx.ask_permission(request).await?;
         }
 
         ctx.ask_permission(

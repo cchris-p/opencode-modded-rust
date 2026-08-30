@@ -50,6 +50,56 @@ fn expand(pattern: &str) -> String {
     pattern.to_string()
 }
 
+fn trim_trailing_separators(path: &str) -> &str {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        path
+    } else {
+        trimmed
+    }
+}
+
+fn normalize_external_directory_pattern(pattern: &str) -> String {
+    if pattern == "*" {
+        return pattern.to_string();
+    }
+
+    if let Some(prefix) = pattern
+        .strip_suffix("/*")
+        .or_else(|| pattern.strip_suffix("\\*"))
+    {
+        let prefix = trim_trailing_separators(prefix);
+        return if prefix == "/" || prefix.ends_with(':') {
+            format!("{prefix}*")
+        } else {
+            format!("{prefix}/*")
+        };
+    }
+
+    if pattern.contains('*') {
+        return pattern.to_string();
+    }
+
+    let normalized = trim_trailing_separators(pattern);
+    if normalized == "/" || normalized.ends_with(':') {
+        format!("{normalized}*")
+    } else {
+        format!("{normalized}/*")
+    }
+}
+
+pub fn normalize_permission_pattern(permission: &str, pattern: &str) -> String {
+    match permission {
+        "external_directory" => normalize_external_directory_pattern(pattern),
+        _ => pattern.to_string(),
+    }
+}
+
+pub fn expand_permission_pattern(permission: &str, pattern: &str) -> String {
+    let expanded = expand(pattern);
+    normalize_permission_pattern(permission, &expanded)
+}
+
 pub fn from_config(permission: &ConfigPermission) -> PermissionRuleset {
     let mut ruleset: PermissionRuleset = Vec::new();
 
@@ -66,7 +116,7 @@ pub fn from_config(permission: &ConfigPermission) -> PermissionRuleset {
                 for (pattern, action) in patterns.iter() {
                     ruleset.push(PermissionRule {
                         permission: key.clone(),
-                        pattern: expand(pattern),
+                        pattern: expand_permission_pattern(key, pattern),
                         action: *action,
                     });
                 }
@@ -83,9 +133,14 @@ pub fn merge(rulesets: &[PermissionRuleset]) -> PermissionRuleset {
 
 pub fn evaluate(permission: &str, pattern: &str, rulesets: &[PermissionRuleset]) -> PermissionRule {
     let merged = merge(rulesets);
+    let pattern = normalize_permission_pattern(permission, pattern);
 
     let matched = merged.iter().rev().find(|rule| {
-        wildcard_match(permission, &rule.permission) && wildcard_match(pattern, &rule.pattern)
+        wildcard_match(permission, &rule.permission)
+            && wildcard_match(
+                &pattern,
+                &normalize_permission_pattern(permission, &rule.pattern),
+            )
     });
 
     matched.cloned().unwrap_or(PermissionRule {
@@ -342,5 +397,33 @@ mod tests {
 
         assert!(disabled_tools.contains("bash"));
         assert!(!disabled_tools.contains("read"));
+    }
+
+    #[test]
+    fn external_directory_patterns_normalize_to_directory_boundary() {
+        assert_eq!(
+            normalize_permission_pattern("external_directory", "/tmp/demo"),
+            "/tmp/demo/*"
+        );
+        assert_eq!(
+            normalize_permission_pattern("external_directory", "/tmp/demo/"),
+            "/tmp/demo/*"
+        );
+        assert_eq!(
+            normalize_permission_pattern("external_directory", "/tmp/demo/*"),
+            "/tmp/demo/*"
+        );
+    }
+
+    #[test]
+    fn evaluate_matches_normalized_external_directory_patterns() {
+        let ruleset = vec![PermissionRule {
+            permission: "external_directory".to_string(),
+            pattern: "/tmp/demo/".to_string(),
+            action: PermissionAction::Allow,
+        }];
+
+        let matched = evaluate("external_directory", "/tmp/demo/*", &[ruleset]);
+        assert_eq!(matched.action, PermissionAction::Allow);
     }
 }
