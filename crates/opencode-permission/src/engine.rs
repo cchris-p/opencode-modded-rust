@@ -3,6 +3,8 @@ use std::collections::HashMap;
 
 use opencode_plugin::{HookContext, HookEvent};
 
+use crate::normalize_permission_pattern;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionInfo {
     pub id: String,
@@ -70,9 +72,15 @@ impl PermissionEngine {
 
     fn to_keys(pattern: Option<&Pattern>, permission_type: &str) -> Vec<String> {
         match pattern {
-            None => vec![permission_type.to_string()],
-            Some(Pattern::Single(s)) => vec![s.clone()],
-            Some(Pattern::Multiple(v)) => v.clone(),
+            None => vec![normalize_permission_pattern(
+                permission_type,
+                permission_type,
+            )],
+            Some(Pattern::Single(s)) => vec![normalize_permission_pattern(permission_type, s)],
+            Some(Pattern::Multiple(v)) => v
+                .iter()
+                .map(|item| normalize_permission_pattern(permission_type, item))
+                .collect(),
         }
     }
 
@@ -285,5 +293,20 @@ mod tests {
         assert!(wildcard_match("foo/bar/baz", "*/baz"));
         assert!(wildcard_match("foo/bar/baz", "*bar*"));
         assert!(!wildcard_match("foo", "bar"));
+    }
+
+    #[test]
+    fn always_approval_uses_normalized_external_directory_boundary() {
+        let mut engine = PermissionEngine::new();
+        engine.approved.insert(
+            "ses_test".to_string(),
+            HashMap::from([("/tmp/demo/*".to_string(), true)]),
+        );
+
+        assert!(engine.is_approved(
+            "ses_test",
+            Some(&Pattern::Single("/tmp/demo/".to_string())),
+            "external_directory",
+        ));
     }
 }

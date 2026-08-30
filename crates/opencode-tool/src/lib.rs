@@ -24,7 +24,8 @@ pub mod websearch;
 pub mod write;
 
 pub use external_directory::{
-    assert_external_directory, ExternalDirectoryKind, ExternalDirectoryOptions,
+    assert_external_directory, permission_request as external_directory_permission_request,
+    ExternalDirectoryKind, ExternalDirectoryOptions,
 };
 pub use registry::*;
 pub use tool::*;

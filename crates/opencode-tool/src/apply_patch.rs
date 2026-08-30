@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::{Metadata, PermissionRequest, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, Metadata, PermissionRequest, Tool, ToolContext,
+    ToolError, ToolResult,
+};
 
 pub struct ApplyPatchTool;
 #[cfg(feature = "lsp")]
@@ -107,9 +110,10 @@ impl Tool for ApplyPatchTool {
 
             let file_path_str = file_path.to_string_lossy().to_string();
             if ctx.is_external_path(&file_path_str) {
-                ctx.ask_permission(
-                    PermissionRequest::new("external_directory").with_pattern(&file_path_str),
-                )
+                ctx.ask_permission(external_directory_permission_request(
+                    &file_path_str,
+                    crate::ExternalDirectoryKind::File,
+                ))
                 .await?;
             }
 

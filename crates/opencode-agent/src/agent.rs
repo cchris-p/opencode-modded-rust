@@ -9,8 +9,8 @@ use opencode_config::{
     PermissionRule as LoadedPermissionRule,
 };
 use opencode_permission::{
-    build_agent_ruleset, evaluate as evaluate_permission, PermissionAction, PermissionRule,
-    PermissionRuleset,
+    build_agent_ruleset, evaluate as evaluate_permission, expand_permission_pattern,
+    PermissionAction, PermissionRule, PermissionRuleset,
 };
 
 const PROMPT_GENERATE: &str = r#"You are an AI agent configuration generator. Given a description of what an agent should do, generate a JSON configuration with:
@@ -774,7 +774,7 @@ fn permission_rules_from_config(permission: &LoadedPermissionConfig) -> Permissi
                 for (pattern, action) in patterns {
                     rules.push(PermissionRule {
                         permission: permission_name.clone(),
-                        pattern: pattern.clone(),
+                        pattern: expand_permission_pattern(permission_name, pattern),
                         action: map_loaded_permission_action(action),
                     });
                 }
