@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: ""
-status: "refinement"
+status: "done"
 created: "2026-08-30"
 ---
 
@@ -100,6 +100,21 @@ The current behavior is faulty: a directory declared as always allow can still t
 - `PermissionEngine` stores "always" approvals in session memory.
 - `external_directory` requests currently derive a `parent_dir/*` pattern ad hoc in tool code.
 - If the bug turns out to involve path canonicalization, config merge order, or cached permission state, document the exact failure mode before broadening scope.
+
+## Dev Notes
+
+- Normalized `external_directory` config and runtime patterns to one directory-boundary shape so `/path/dir`, `/path/dir/`, and `/path/dir/*` resolve the same way.
+- Reused one canonical external-directory permission request helper across `bash`, `read`, `write`, `edit`, `apply_patch`, `glob`, `grep`, and `lsp` so tool callsites stop generating inconsistent raw patterns.
+- Normalized session-scoped saved approvals in `PermissionEngine` so repeated approvals resolve against the same canonical boundary.
+- Verification: `cargo test -p opencode-permission -p opencode-tool -p opencode-agent`
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/17
+
+### Final Summary
+
+- Fixed and merged into `development` on 2026-08-30.
 
 ## Related Items
 
