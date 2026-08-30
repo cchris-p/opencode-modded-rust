@@ -3540,10 +3540,10 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
             let skills = list_available_skills();
             let list: Vec<_> = skills
                 .into_iter()
-                .map(|(name, description)| {
+                .map(|skill| {
                     serde_json::json!({
-                        "name": name,
-                        "description": description
+                        "name": skill.name,
+                        "description": skill.description
                     })
                 })
                 .collect();

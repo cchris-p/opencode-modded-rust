@@ -12,12 +12,21 @@ pub struct SkillTool;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SkillInput {
+    #[serde(default)]
+    name: Option<String>,
     #[serde(rename = "skill_name")]
-    skill_name: String,
+    #[serde(default)]
+    skill_name: Option<String>,
     #[serde(default)]
     arguments: Option<serde_json::Value>,
     #[serde(default)]
     prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AvailableSkill {
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +50,48 @@ fn home_dir() -> Option<PathBuf> {
     })
 }
 
+fn normalize_existing_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn detect_worktree_root(start: &Path) -> PathBuf {
+    let mut current = normalize_existing_path(start);
+    loop {
+        if current.join(".git").exists() {
+            return current;
+        }
+        let Some(parent) = current.parent() else {
+            return current;
+        };
+        if parent == current {
+            return current;
+        }
+        current = parent.to_path_buf();
+    }
+}
+
+fn walk_up_directories(start: &Path, stop: &Path) -> Vec<PathBuf> {
+    let mut current = normalize_existing_path(start);
+    let stop = normalize_existing_path(stop);
+    let mut result = Vec::new();
+
+    loop {
+        result.push(current.clone());
+        if current == stop {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        if parent == current {
+            break;
+        }
+        current = parent.to_path_buf();
+    }
+
+    result
+}
+
 fn resolve_skill_path(base: &Path, raw: &str) -> PathBuf {
     if let Some(stripped) = raw.strip_prefix("~/") {
         if let Some(home) = home_dir() {
@@ -54,6 +105,20 @@ fn resolve_skill_path(base: &Path, raw: &str) -> PathBuf {
     } else {
         base.join(path)
     }
+}
+
+fn collect_project_skill_roots(base: &Path) -> Vec<PathBuf> {
+    let worktree = detect_worktree_root(base);
+    let mut roots = Vec::new();
+
+    for dir in walk_up_directories(base, &worktree).into_iter().rev() {
+        roots.push(dir.join(".agents/skills"));
+        roots.push(dir.join(".claude/skills"));
+        roots.push(dir.join(".opencode/skill"));
+        roots.push(dir.join(".opencode/skills"));
+    }
+
+    roots
 }
 
 fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
@@ -75,10 +140,7 @@ fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
         roots.push(home.join(".opencode/skills"));
     }
 
-    roots.push(base.join(".agents/skills"));
-    roots.push(base.join(".claude/skills"));
-    roots.push(base.join(".opencode/skill"));
-    roots.push(base.join(".opencode/skills"));
+    roots.extend(collect_project_skill_roots(base));
 
     if let Ok(config) = load_config(base) {
         if let Some(skills) = config.skills {
@@ -95,6 +157,30 @@ fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
         }
     }
     deduped
+}
+
+fn resolve_skill_name(input: SkillInput) -> Result<ResolvedSkillInput, ToolError> {
+    let skill_name = input
+        .skill_name
+        .or(input.name)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ToolError::InvalidArguments(
+                "Missing required field: provide either 'skill_name' or 'name'".to_string(),
+            )
+        })?;
+
+    Ok(ResolvedSkillInput {
+        skill_name,
+        arguments: input.arguments,
+        prompt: input.prompt,
+    })
+}
+
+struct ResolvedSkillInput {
+    skill_name: String,
+    arguments: Option<serde_json::Value>,
+    prompt: Option<String>,
 }
 
 fn parse_frontmatter_value(frontmatter: &str, key: &str) -> Option<String> {
@@ -233,6 +319,11 @@ impl Tool for SkillTool {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the skill to load",
+                    "enum": skill_names
+                },
                 "skill_name": {
                     "type": "string",
                     "description": "Name of the skill to load",
@@ -247,7 +338,10 @@ impl Tool for SkillTool {
                     "description": "Additional prompt/instructions for the skill"
                 }
             },
-            "required": ["skill_name"]
+            "anyOf": [
+                {"required": ["skill_name"]},
+                {"required": ["name"]}
+            ]
         })
     }
 
@@ -256,8 +350,9 @@ impl Tool for SkillTool {
         args: serde_json::Value,
         ctx: ToolContext,
     ) -> Result<ToolResult, ToolError> {
-        let input: SkillInput =
+        let raw_input: SkillInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        let input = resolve_skill_name(raw_input)?;
 
         let skills = discover_skills(Path::new(&ctx.directory));
 
@@ -353,11 +448,18 @@ impl Default for SkillTool {
     }
 }
 
-pub fn list_available_skills() -> Vec<(String, String)> {
+pub fn list_available_skills() -> Vec<AvailableSkill> {
     let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    discover_skills(&base)
+    list_available_skills_for_base(&base)
+}
+
+pub fn list_available_skills_for_base(base: &Path) -> Vec<AvailableSkill> {
+    discover_skills(base)
         .into_iter()
-        .map(|s| (s.name, s.description))
+        .map(|s| AvailableSkill {
+            name: s.name,
+            description: s.description,
+        })
         .collect()
 }
 
@@ -437,5 +539,91 @@ custom content
 
         assert!(names.contains(&"local-skill".to_string()));
         assert!(names.contains(&"custom-skill".to_string()));
+    }
+
+    #[test]
+    fn discover_skills_walks_up_to_worktree_root() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join(".git"), "gitdir").unwrap();
+
+        let root_skill = root.join(".opencode/skills/root/SKILL.md");
+        fs::create_dir_all(root_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &root_skill,
+            r#"---
+name: shared-skill
+description: root copy
+---
+root content
+"#,
+        )
+        .unwrap();
+
+        let nested = root.join("apps/cli");
+        fs::create_dir_all(&nested).unwrap();
+
+        let discovered = discover_skills(&nested);
+        let skill = discovered
+            .into_iter()
+            .find(|skill| skill.name == "shared-skill")
+            .unwrap();
+
+        assert_eq!(skill.description, "root copy");
+    }
+
+    #[test]
+    fn nearer_project_roots_override_ancestor_duplicates() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join(".git"), "gitdir").unwrap();
+
+        let root_skill = root.join(".opencode/skills/reviewer/SKILL.md");
+        fs::create_dir_all(root_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &root_skill,
+            r#"---
+name: reviewer
+description: root reviewer
+---
+root
+"#,
+        )
+        .unwrap();
+
+        let nested = root.join("apps/cli");
+        let nested_skill = nested.join(".opencode/skills/reviewer/SKILL.md");
+        fs::create_dir_all(nested_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &nested_skill,
+            r#"---
+name: reviewer
+description: nested reviewer
+---
+nested
+"#,
+        )
+        .unwrap();
+
+        let discovered = discover_skills(&nested);
+        let skill = discovered
+            .into_iter()
+            .find(|skill| skill.name == "reviewer")
+            .unwrap();
+
+        assert_eq!(skill.description, "nested reviewer");
+    }
+
+    #[test]
+    fn resolve_skill_name_accepts_reference_name_alias() {
+        let resolved = resolve_skill_name(SkillInput {
+            name: Some("reviewer".to_string()),
+            skill_name: None,
+            arguments: None,
+            prompt: None,
+        })
+        .unwrap();
+
+        assert_eq!(resolved.skill_name, "reviewer");
     }
 }

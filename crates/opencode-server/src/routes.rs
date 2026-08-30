@@ -39,6 +39,7 @@ use opencode_provider::{
     temperature_for_model, top_p_for_model, AuthInfo, AuthMethodType, ModelsData, ModelsDevInfo,
     ModelsRegistry,
 };
+use opencode_tool::skill::{list_available_skills, AvailableSkill};
 
 pub fn router() -> Router<Arc<ServerState>> {
     Router::new()
@@ -4491,8 +4492,8 @@ async fn apply_plugin_config_hooks(loader: &Arc<PluginLoader>, config: &mut AppC
     }
 }
 
-async fn list_skills() -> Result<Json<Vec<String>>> {
-    Ok(Json(Vec::new()))
+async fn list_skills() -> Result<Json<Vec<AvailableSkill>>> {
+    Ok(Json(list_available_skills()))
 }
 
 #[derive(Debug, Serialize)]

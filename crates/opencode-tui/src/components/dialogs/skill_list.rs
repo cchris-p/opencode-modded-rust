@@ -6,10 +6,11 @@ use ratatui::{
     Frame,
 };
 
+use crate::api::SkillSummary;
 use crate::theme::Theme;
 
 pub struct SkillListDialog {
-    skills: Vec<String>,
+    skills: Vec<SkillSummary>,
     filtered: Vec<usize>,
     query: String,
     state: ListState,
@@ -29,9 +30,13 @@ impl SkillListDialog {
         }
     }
 
-    pub fn set_skills(&mut self, mut skills: Vec<String>) {
-        skills.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
-        skills.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    pub fn set_skills(&mut self, mut skills: Vec<SkillSummary>) {
+        skills.sort_by(|a, b| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        });
+        skills.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         self.skills = skills;
         self.filter();
     }
@@ -78,7 +83,7 @@ impl SkillListDialog {
 
     pub fn selected_skill(&self) -> Option<&str> {
         let idx = self.state.selected().and_then(|s| self.filtered.get(s))?;
-        self.skills.get(*idx).map(String::as_str)
+        self.skills.get(*idx).map(|skill| skill.name.as_str())
     }
 
     fn filter(&mut self) {
@@ -87,7 +92,10 @@ impl SkillListDialog {
             .skills
             .iter()
             .enumerate()
-            .filter(|(_, skill)| skill.to_ascii_lowercase().contains(&query))
+            .filter(|(_, skill)| {
+                skill.name.to_ascii_lowercase().contains(&query)
+                    || skill.description.to_ascii_lowercase().contains(&query)
+            })
             .map(|(idx, _)| idx)
             .collect();
         self.state.select(if self.filtered.is_empty() {
@@ -145,7 +153,19 @@ impl SkillListDialog {
             self.filtered
                 .iter()
                 .filter_map(|idx| self.skills.get(*idx))
-                .map(|skill| ListItem::new(Line::from(format!("/{}", skill))))
+                .map(|skill| {
+                    let mut lines = vec![Line::from(Span::styled(
+                        format!("/{}", skill.name),
+                        Style::default().fg(theme.text),
+                    ))];
+                    if !skill.description.trim().is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            skill.description.clone(),
+                            Style::default().fg(theme.text_muted),
+                        )));
+                    }
+                    ListItem::new(lines)
+                })
                 .collect::<Vec<_>>()
         };
 
@@ -173,7 +193,34 @@ impl Default for SkillListDialog {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_by_name_and_description() {
+        let mut dialog = SkillListDialog::new();
+        dialog.set_skills(vec![
+            SkillSummary {
+                name: "reviewer".to_string(),
+                description: "Review code changes".to_string(),
+            },
+            SkillSummary {
+                name: "release".to_string(),
+                description: "Prepare changelog".to_string(),
+            },
+        ]);
+
+        dialog.open();
+        for ch in "code".chars() {
+            dialog.handle_input(ch);
+        }
+
+        assert_eq!(dialog.filtered.len(), 1);
+        assert_eq!(dialog.selected_skill(), Some("reviewer"));
+    }
+}
+
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     super::centered_rect(width, height, area)
 }
-
