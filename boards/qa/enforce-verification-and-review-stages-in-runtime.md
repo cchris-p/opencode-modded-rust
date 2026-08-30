@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-08-29"
 ---
 
@@ -77,6 +77,10 @@ Implement runtime-owned review and verification stages so a task cannot reach co
   - `cargo test -p opencode-session test_blocking_review_reopens_into_repairing`
   - `cargo test -p opencode-server storage_roundtrip_restores_sessions_and_messages`
   - `cargo test -p opencode-session` still has two unrelated pre-existing failures in `instruction::tests::test_find_up_walks_parents` and `instruction::tests::test_find_up_stops_at_stop_dir`
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/16
 
 ## Related Items
 
