@@ -4,8 +4,8 @@ title: "Define agent evaluation strategy"
 priority: "P2"
 type: "docs"
 area: "START"
-spec: ""
-status: "todo"
+spec: "wiki/agent-evaluation-strategy.md"
+status: "done"
 created: "2026-08-28"
 ---
 
@@ -26,6 +26,20 @@ The project still needs a way to judge whether the runtime is improving, even th
 - how review quality is judged
 - how regressions are detected within the Rust product itself
 - which signals matter more than raw speed
+
+## Outcome
+
+- Added `wiki/agent-evaluation-strategy.md` as the repo-local evaluation framework for V1 through V3.
+- Anchored evaluation on bounded real-work task packs, explicit verification, and fresh-context review.
+- Defined separate judgments for task success, review quality, regression detection, and secondary speed signals.
+- Identified concrete follow-up work for task packs, review fixtures, structured result capture, and rerun workflow support.
+
+## Follow-up items created
+
+- `START-016` Define V1 evaluation task pack
+- `START-017` Define review quality rubric and fixtures
+- `START-018` Persist structured evaluation results
+- `START-019` Add lightweight evaluation rerun workflow
 
 ## Done when
 
