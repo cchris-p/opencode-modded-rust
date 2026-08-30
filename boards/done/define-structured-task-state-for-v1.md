@@ -5,7 +5,7 @@ priority: "P1"
 type: "research"
 area: "START"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-08-29"
 ---
 
@@ -49,6 +49,10 @@ Specify the authoritative task-state model the Rust runtime should use for V1 so
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/15
+
+## Completion
+
+- Merged into `development` on 2026-08-30.
 
 ## Related Items
 
