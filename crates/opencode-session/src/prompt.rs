@@ -1858,7 +1858,11 @@ impl SessionPrompt {
         let parts = match content {
             Content::Text(text) => vec![crate::MessagePart {
                 id: format!("prt_{}", uuid::Uuid::new_v4()),
-                part_type: PartType::Text { text, synthetic: None, ignored: None },
+                part_type: PartType::Text {
+                    text,
+                    synthetic: None,
+                    ignored: None,
+                },
                 created_at: now,
                 message_id: None,
             }],
@@ -1867,7 +1871,11 @@ impl SessionPrompt {
                 .filter_map(|p| match p.content_type.as_str() {
                     "text" => p.text.map(|text| crate::MessagePart {
                         id: format!("prt_{}", uuid::Uuid::new_v4()),
-                        part_type: PartType::Text { text, synthetic: None, ignored: None },
+                        part_type: PartType::Text {
+                            text,
+                            synthetic: None,
+                            ignored: None,
+                        },
                         created_at: now,
                         message_id: None,
                     }),
@@ -2883,9 +2891,9 @@ fn apply_chat_message_hook_outputs(
             }
         }
         if let Some(next_parts) = object.get("parts").and_then(|value| value.as_array()) {
-            let parsed = serde_json::from_value::<Vec<crate::MessagePart>>(serde_json::Value::Array(
-                next_parts.clone(),
-            ));
+            let parsed = serde_json::from_value::<Vec<crate::MessagePart>>(
+                serde_json::Value::Array(next_parts.clone()),
+            );
             if let Ok(parts) = parsed {
                 message.parts = parts;
             }

@@ -8,9 +8,9 @@ use ratatui::{
     Frame,
 };
 
+use crate::branding::{APP_SHORT_NAME, APP_VERSION_DATE};
 use crate::components::Prompt;
 use crate::context::{AppContext, McpConnectionStatus};
-use crate::branding::{APP_SHORT_NAME, APP_VERSION_DATE};
 
 const HOME_TIPS: &[&str] = &[
     "Press {highlight}Tab{/highlight} to cycle agents",

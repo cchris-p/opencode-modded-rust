@@ -7,7 +7,6 @@ use opencode_provider::{
     ToolResult as ProviderToolResult, ToolUse,
 };
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum FilePartSource {

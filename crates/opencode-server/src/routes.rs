@@ -7,7 +7,7 @@ use axum::{
     middleware::{self, Next},
     response::sse::{Event, Sse},
     response::{Html, IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use futures::stream::Stream;
