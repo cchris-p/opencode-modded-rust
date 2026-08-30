@@ -99,8 +99,8 @@ The current Rust export flow appears simpler than the reference implementation a
 
 ## PR
 
-- Pending
+- https://github.com/cchris-p/opencode-modded-rust/pull/12
 
 ## Completion
 
-- Implemented and ready for merge on 2026-08-30.
+- Merged into `development` on 2026-08-30.
