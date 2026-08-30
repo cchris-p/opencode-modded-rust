@@ -111,7 +111,7 @@ pub(crate) fn sync_custom_fetch_proxy(
 
 pub struct ServerState {
     pub sessions: Mutex<SessionManager>,
-    pub providers: ProviderRegistry,
+    pub providers: RwLock<ProviderRegistry>,
     pub auth_manager: Arc<AuthManager>,
     pub event_bus: broadcast::Sender<String>,
     session_repo: Option<SessionRepository>,
@@ -123,7 +123,7 @@ impl ServerState {
         let (tx, _) = broadcast::channel(1024);
         Self {
             sessions: Mutex::new(SessionManager::new()),
-            providers: ProviderRegistry::new(),
+            providers: RwLock::new(ProviderRegistry::new()),
             auth_manager: Arc::new(AuthManager::new()),
             event_bus: tx,
             session_repo: None,
@@ -142,26 +142,9 @@ impl ServerState {
         load_plugin_auth_store(&server_url, auth_manager.clone()).await;
         let auth_store = auth_manager.list().await;
 
-        // Load config and convert providers to bootstrap format
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let bootstrap_config = match load_config(&cwd) {
-            Ok(config) => {
-                let providers = convert_config_providers_for_bootstrap(&config);
-                bootstrap_config_from_raw(
-                    providers,
-                    config.disabled_providers.clone(),
-                    config.enabled_providers.clone(),
-                    config.model.clone(),
-                    config.small_model.clone(),
-                )
-            }
-            Err(error) => {
-                tracing::warn!(%error, "failed to load config for provider bootstrap, using defaults");
-                opencode_provider::BootstrapConfig::default()
-            }
-        };
-
-        state.providers = create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
+        let bootstrap_config = load_provider_bootstrap_config();
+        *state.providers.write().unwrap() =
+            create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
         let db = Database::new().await?;
         let pool = db.pool().clone();
         state.session_repo = Some(SessionRepository::new(pool.clone()));
@@ -172,6 +155,14 @@ impl ServerState {
 
     pub fn broadcast(&self, event: &str) {
         let _ = self.event_bus.send(event.to_string());
+    }
+
+    pub async fn refresh_providers(&self) -> anyhow::Result<()> {
+        let auth_store = self.auth_manager.list().await;
+        let bootstrap_config = load_provider_bootstrap_config();
+        *self.providers.write().unwrap() =
+            create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
+        Ok(())
     }
 
     async fn load_sessions_from_storage(&self) -> anyhow::Result<()> {
@@ -235,6 +226,26 @@ impl ServerState {
         }
 
         Ok(())
+    }
+}
+
+fn load_provider_bootstrap_config() -> opencode_provider::BootstrapConfig {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    match load_config(&cwd) {
+        Ok(config) => {
+            let providers = convert_config_providers_for_bootstrap(&config);
+            bootstrap_config_from_raw(
+                providers,
+                config.disabled_providers.clone(),
+                config.enabled_providers.clone(),
+                config.model.clone(),
+                config.small_model.clone(),
+            )
+        }
+        Err(error) => {
+            tracing::warn!(%error, "failed to load config for provider bootstrap, using defaults");
+            opencode_provider::BootstrapConfig::default()
+        }
     }
 }
 

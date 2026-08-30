@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-08-29"
 ---
 
@@ -66,3 +66,25 @@ Add a dedicated OpenAI settings flow that mirrors the reference product's auth c
 - The local Rust stack already has persisted auth storage plus plugin-auth authorize/callback routes; this story should build on that path.
 - In the current Rust codebase, the practical V1 mirror target for OpenAI login is the existing pasted code/token callback flow unless a richer browser-driven path is already achievable without major new plumbing.
 - If login support depends on missing lower-level auth plumbing, capture that explicitly instead of silently downgrading the story.
+
+## Dev Notes
+
+- Extended `Settings > Provider` with an OpenAI-specific auth panel that shows current auth state and supports API key entry, login start, login code paste, and auth clearing.
+- Reused the existing persisted auth store and server auth endpoints rather than adding a second credential path.
+- Added `GET /auth/{id}` so the TUI can display whether OpenAI currently has saved API or OAuth auth.
+- Refreshed the live provider registry after auth writes, deletes, and OAuth callbacks so saved settings apply immediately instead of requiring a restart.
+- Intentional V1 deviation from `/Users/cchrisleepyles/repos/opencode-modded`: the login path mirrors the existing pasted code/token callback flow already present in the Rust stack, not a richer browser-driven auth UX.
+
+## Verification
+
+- `cargo check`
+- `cargo test -p opencode-server -p opencode-tui`
+- `cargo test -p opencode-tui --lib -- --test-threads=1`
+
+## Branch
+
+- `feature/START-015-openai-auth-settings`
+
+## Next QA Step
+
+- Check out `feature/START-015-openai-auth-settings` in the main workspace when it is safe to move the shared checkout, then verify the OpenAI settings flow locally from the user-facing TUI.
