@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-08-29"
 ---
 
@@ -22,9 +22,9 @@ The current Rust export flow appears simpler than the reference implementation a
 ## Current Rust behavior
 
 - TUI transcript export is built in `crates/opencode-tui/src/app/app.rs` by `build_session_transcript`.
-- The current Rust TUI export writes Markdown, but it has no export-time multiselect options.
-- The current Rust transcript is built from TUI session state after message parts are flattened into a simplified local representation.
-- That flattening currently includes visible text, reasoning, files, tool calls, and tool results, but it does not expose the richer stored session part taxonomy as export-time options.
+- The current Rust TUI export writes Markdown.
+- The export dialog already exposes toggles for thinking, tool details, and assistant metadata.
+- Before this implementation, the Rust formatter still ignored those toggles and always emitted one fixed Markdown shape based on flattened message content.
 - The CLI `export` path in `crates/opencode-cli/src/main.rs` already exports full session data as JSON and is separate from this Markdown transcript workflow.
 
 ## Reference behavior
@@ -38,8 +38,8 @@ The current Rust export flow appears simpler than the reference implementation a
 
 ## Confirmed divergence
 
-- Rust does not currently offer the reference repo's export-time option selection for transcript contents.
-- Rust currently exports one fixed Markdown shape instead of the reference repo's option-driven Markdown output.
+- Rust already had the option toggles in the dialog, so the remaining gap was formatter wiring rather than missing controls.
+- Rust previously exported one fixed Markdown shape instead of the reference repo's option-driven Markdown output.
 
 ## Scope
 
@@ -78,3 +78,21 @@ The current Rust export flow appears simpler than the reference implementation a
 ## Notes
 
 - If extra Rust-only transcript granularity still looks useful after parity lands, track it as a separate follow-up board item rather than expanding this story.
+
+## Dev Notes
+
+- Kept the implementation scoped to the Rust TUI transcript export path and left the CLI JSON export code untouched.
+- Updated the transcript formatter to render from structured message parts instead of pre-flattened message content so the existing dialog toggles now control output.
+- Wired the export dialog toggles through both save-to-file and dialog copy-to-clipboard actions.
+- Mirrored the reference behavior by gating reasoning blocks, tool input/output blocks, and assistant header metadata independently.
+- Intentional difference from the TypeScript reference: the Rust formatter still uses the already-available local model string in the assistant header instead of a provider display-name lookup helper.
+
+## Verification
+
+- `cargo check -p opencode-tui`
+- `cargo test -p opencode-tui transcript_ -- --test-threads=1`
+- `cargo test -p opencode-tui --lib -- --test-threads=1` still shows unrelated flaky prompt tests in this workspace, but the new transcript tests pass consistently.
+
+## Branch
+
+- `feature/FEAT-001-historical-chat-transcripts`

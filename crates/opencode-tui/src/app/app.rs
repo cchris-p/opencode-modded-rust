@@ -37,6 +37,13 @@ use crate::ui::{Clipboard, Selection};
 const TICK_RATE_MS: u64 = 16;
 const MAX_EVENTS_PER_FRAME: usize = 256;
 
+#[derive(Clone, Copy, Debug, Default)]
+struct TranscriptOptions {
+    include_thinking: bool,
+    include_tool_details: bool,
+    include_assistant_metadata: bool,
+}
+
 pub struct App {
     context: Arc<AppContext>,
     state: AppState,
@@ -1096,7 +1103,8 @@ impl App {
                                 .set_message("Filename cannot be empty for export.");
                             self.alert_dialog.open();
                         } else {
-                            match self.export_session_to_file(session_id, filename) {
+                            let options = self.transcript_options_from_export_dialog();
+                            match self.export_session_to_file(session_id, filename, options) {
                                 Ok(path) => {
                                     self.alert_dialog.set_message(&format!(
                                         "Session exported to `{}`.",
@@ -1118,7 +1126,8 @@ impl App {
                 }
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if let Some(session_id) = self.session_export_dialog.session_id() {
-                        match self.build_session_transcript(session_id) {
+                        let options = self.transcript_options_from_export_dialog();
+                        match self.build_session_transcript(session_id, options) {
                             Some(text) => {
                                 if let Err(err) = Clipboard::write_text(&text) {
                                     self.alert_dialog.set_message(&format!(
@@ -2058,7 +2067,7 @@ impl App {
             self.alert_dialog.open();
             return;
         };
-        match self.build_session_transcript(&session_id) {
+        match self.build_session_transcript(&session_id, TranscriptOptions::default()) {
             Some(text) => {
                 if let Err(err) = Clipboard::write_text(&text) {
                     self.alert_dialog
@@ -2155,16 +2164,35 @@ impl App {
         self.fork_dialog.open(session_id, entries);
     }
 
-    fn build_session_transcript(&self, session_id: &str) -> Option<String> {
+    fn transcript_options_from_export_dialog(&self) -> TranscriptOptions {
+        TranscriptOptions {
+            include_thinking: self.session_export_dialog.include_thinking,
+            include_tool_details: self.session_export_dialog.include_tool_details,
+            include_assistant_metadata: self.session_export_dialog.include_metadata,
+        }
+    }
+
+    fn build_session_transcript(
+        &self,
+        session_id: &str,
+        options: TranscriptOptions,
+    ) -> Option<String> {
         let session_ctx = self.context.session.read();
         let session = session_ctx.sessions.get(session_id)?;
         let messages = session_ctx.messages.get(session_id)?;
 
         let mut output = String::new();
         output.push_str(&format!("# {}\n\n", session.title));
-        output.push_str(&format!("Session ID: `{}`\n", session.id));
-        output.push_str(&format!("Created: {}\n", session.created_at.to_rfc3339()));
-        output.push_str(&format!("Updated: {}\n\n", session.updated_at.to_rfc3339()));
+        output.push_str(&format!("**Session ID:** {}\n", session.id));
+        output.push_str(&format!(
+            "**Created:** {}\n",
+            session.created_at.to_rfc3339()
+        ));
+        output.push_str(&format!(
+            "**Updated:** {}\n\n",
+            session.updated_at.to_rfc3339()
+        ));
+        output.push_str("---\n\n");
 
         if messages.is_empty() {
             output.push_str("_No messages_\n");
@@ -2172,27 +2200,28 @@ impl App {
         }
 
         for message in messages {
-            let role = match message.role {
-                MessageRole::User => "User",
-                MessageRole::Assistant => "Assistant",
-                MessageRole::System => "System",
-            };
-            output.push_str(&format!("## {}\n\n", role));
-            if message.content.trim().is_empty() {
-                output.push_str("_Empty message_\n\n");
-            } else {
-                output.push_str(&message.content);
-                output.push_str("\n\n");
+            let rendered = format_transcript_message(message, options);
+            if rendered.trim().is_empty() {
+                continue;
             }
+            output.push_str(&rendered);
+            output.push_str("---\n\n");
         }
 
         Some(output)
     }
 
-    fn export_session_to_file(&self, session_id: &str, filename: &str) -> anyhow::Result<PathBuf> {
-        let transcript = self.build_session_transcript(session_id).ok_or_else(|| {
-            anyhow::anyhow!("No transcript available for session `{}`", session_id)
-        })?;
+    fn export_session_to_file(
+        &self,
+        session_id: &str,
+        filename: &str,
+        options: TranscriptOptions,
+    ) -> anyhow::Result<PathBuf> {
+        let transcript = self
+            .build_session_transcript(session_id, options)
+            .ok_or_else(|| {
+                anyhow::anyhow!("No transcript available for session `{}`", session_id)
+            })?;
 
         let mut path = PathBuf::from(filename.trim());
         if path.as_os_str().is_empty() {
@@ -3389,6 +3418,151 @@ impl Drop for App {
     }
 }
 
+fn format_transcript_message(message: &Message, options: TranscriptOptions) -> String {
+    let mut output = String::new();
+    match message.role {
+        MessageRole::User => output.push_str("## User\n\n"),
+        MessageRole::Assistant => output.push_str(&assistant_header(message, options)),
+        MessageRole::System => output.push_str("## System\n\n"),
+    }
+
+    let mut tool_names = HashMap::new();
+    let mut wrote_body = false;
+    for part in &message.parts {
+        let rendered = format_transcript_part(part, options, &mut tool_names);
+        if rendered.is_empty() {
+            continue;
+        }
+        wrote_body = true;
+        output.push_str(&rendered);
+    }
+
+    if !wrote_body {
+        if message.content.trim().is_empty() {
+            output.push_str("_Empty message_\n\n");
+        } else {
+            output.push_str(&message.content);
+            output.push_str("\n\n");
+        }
+    }
+
+    output
+}
+
+fn assistant_header(message: &Message, options: TranscriptOptions) -> String {
+    if !options.include_assistant_metadata {
+        return "## Assistant\n\n".to_string();
+    }
+
+    let mut parts = Vec::new();
+    if let Some(agent) = message
+        .agent
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        parts.push(title_case(agent));
+    }
+    if let Some(model) = message
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        parts.push(model.to_string());
+    }
+    if let Some(completed_at) = message.completed_at {
+        let duration_ms = completed_at
+            .signed_duration_since(message.created_at)
+            .num_milliseconds();
+        if duration_ms > 0 {
+            parts.push(format_duration(duration_ms));
+        }
+    }
+
+    if parts.is_empty() {
+        "## Assistant\n\n".to_string()
+    } else {
+        format!("## Assistant ({})\n\n", parts.join(" · "))
+    }
+}
+
+fn format_transcript_part(
+    part: &ContextMessagePart,
+    options: TranscriptOptions,
+    tool_names: &mut HashMap<String, String>,
+) -> String {
+    match part {
+        ContextMessagePart::Text { text } => {
+            if text.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{}\n\n", text)
+            }
+        }
+        ContextMessagePart::Reasoning { text } => {
+            if options.include_thinking && !text.trim().is_empty() {
+                format!("_Thinking:_\n\n{}\n\n", text)
+            } else {
+                String::new()
+            }
+        }
+        ContextMessagePart::File { path, .. } => format!("**File:** `{}`\n\n", path),
+        ContextMessagePart::Image { url } => format!("**Image:** {}\n\n", url),
+        ContextMessagePart::ToolCall {
+            id,
+            name,
+            arguments,
+        } => {
+            tool_names.insert(id.clone(), name.clone());
+            let mut output = format!("**Tool: {}**\n", name);
+            if options.include_tool_details && !arguments.trim().is_empty() {
+                output.push_str("\n**Input:**\n```json\n");
+                output.push_str(arguments);
+                output.push_str("\n```\n");
+            }
+            output.push('\n');
+            output
+        }
+        ContextMessagePart::ToolResult {
+            id,
+            result,
+            is_error,
+        } => {
+            if !options.include_tool_details || result.trim().is_empty() {
+                return String::new();
+            }
+            let label = if *is_error { "Error" } else { "Output" };
+            let mut output = String::new();
+            if !tool_names.contains_key(id) {
+                output.push_str("**Tool**\n\n");
+            }
+            output.push_str(&format!("**{}:**\n```\n{}\n```\n\n", label, result));
+            output
+        }
+    }
+}
+
+fn format_duration(duration_ms: i64) -> String {
+    format!("{:.1}s", duration_ms as f64 / 1000.0)
+}
+
+fn title_case(input: &str) -> String {
+    input
+        .split(|c: char| c == '-' || c == '_' || c.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            let Some(first) = chars.next() else {
+                return String::new();
+            };
+            let mut word = String::new();
+            word.extend(first.to_uppercase());
+            word.push_str(&chars.as_str().to_ascii_lowercase());
+            word
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn map_api_session(session: &SessionInfo) -> Session {
     Session {
         id: session.id.clone(),
@@ -3908,4 +4082,94 @@ fn default_export_filename(title: &str, session_id: &str) -> String {
         slug = format!("session-{}", short_id);
     }
     format!("{slug}.md")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assistant_message(parts: Vec<ContextMessagePart>) -> Message {
+        Message {
+            id: "msg_1".to_string(),
+            role: MessageRole::Assistant,
+            content: String::new(),
+            created_at: Utc
+                .timestamp_millis_opt(1_700_000_000_000)
+                .single()
+                .unwrap(),
+            agent: Some("build".to_string()),
+            model: Some("openai/gpt-5".to_string()),
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: Utc.timestamp_millis_opt(1_700_000_001_500).single(),
+            cost: 0.0,
+            tokens: TokenUsage::default(),
+            parts,
+        }
+    }
+
+    #[test]
+    fn transcript_hides_reasoning_and_tool_details_by_default() {
+        let message = assistant_message(vec![
+            ContextMessagePart::Text {
+                text: "answer".to_string(),
+            },
+            ContextMessagePart::Reasoning {
+                text: "private reasoning".to_string(),
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "read".to_string(),
+                arguments: "{\"file\":\"src/main.rs\"}".to_string(),
+            },
+            ContextMessagePart::ToolResult {
+                id: "tool_1".to_string(),
+                result: "file contents".to_string(),
+                is_error: false,
+            },
+        ]);
+
+        let transcript = format_transcript_message(&message, TranscriptOptions::default());
+        assert!(transcript.contains("## Assistant"));
+        assert!(transcript.contains("answer"));
+        assert!(transcript.contains("**Tool: read**"));
+        assert!(!transcript.contains("private reasoning"));
+        assert!(!transcript.contains("**Input:**"));
+        assert!(!transcript.contains("**Output:**"));
+    }
+
+    #[test]
+    fn transcript_includes_optional_sections_when_enabled() {
+        let message = assistant_message(vec![
+            ContextMessagePart::Reasoning {
+                text: "private reasoning".to_string(),
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "read".to_string(),
+                arguments: "{\"file\":\"src/main.rs\"}".to_string(),
+            },
+            ContextMessagePart::ToolResult {
+                id: "tool_1".to_string(),
+                result: "file contents".to_string(),
+                is_error: false,
+            },
+        ]);
+
+        let transcript = format_transcript_message(
+            &message,
+            TranscriptOptions {
+                include_thinking: true,
+                include_tool_details: true,
+                include_assistant_metadata: true,
+            },
+        );
+
+        assert!(transcript.contains("## Assistant (Build · openai/gpt-5 · 1.5s)"));
+        assert!(transcript.contains("_Thinking:_"));
+        assert!(transcript.contains("private reasoning"));
+        assert!(transcript.contains("**Input:**"));
+        assert!(transcript.contains("**Output:**"));
+    }
 }
