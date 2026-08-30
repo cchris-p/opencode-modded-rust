@@ -5,7 +5,7 @@ priority: "P1"
 type: "research"
 area: "START"
 spec: "wiki/v1.md"
-status: "todo"
+status: "qa"
 created: "2026-08-29"
 ---
 
@@ -37,6 +37,18 @@ Specify the authoritative task-state model the Rust runtime should use for V1 so
 
 - Keep this focused on the model and persistence boundary, not full runtime orchestration.
 - Coordinate with `START-005` so runtime stages and task state do not drift apart.
+
+## Dev Notes
+
+- Landed the concrete model in `wiki/v1-task-state.md`.
+- Expanded `invariants/task-state.md` to capture the new authority and persistence rules.
+- Aligned `wiki/v1-runtime-loop.md` to reference the durable task-state document as the schema authority.
+- Chose a dedicated `session_tasks` record keyed by `session_id` instead of overloading `SessionStatus`, transcript history, or todo rows.
+- Verification: `git diff --check`
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/15
 
 ## Related Items
 

@@ -87,7 +87,7 @@ At minimum, the runtime-owned task state must record:
 
 Conversation history is supporting evidence only. The transcript must not be the only place where the current objective, stage, or completion decision lives.
 
-`START-016` should refine this into the durable persisted model and field-level authority rules.
+The durable persisted model and field-level authority rules for this task object are defined in `wiki/v1-task-state.md`.
 
 ### Context Construction Inputs
 
@@ -179,7 +179,7 @@ If any of those conditions fail, the runtime reopens the task into `repairing` i
 
 ### What This Leaves To Follow-Up Work
 
-- `START-016` defines the durable task-state schema and authority rules.
+- `START-016` defines the durable task-state schema and authority rules in `wiki/v1-task-state.md`.
 - `START-017` enforces the verification and review gates in runtime behavior.
 - `START-018` completes TUI approval and question handling for runtime stage events.
 - `START-019` defines the minimum provider path required for dependable local-model execution in this loop.
