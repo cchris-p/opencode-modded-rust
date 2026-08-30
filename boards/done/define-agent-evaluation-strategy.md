@@ -36,10 +36,10 @@ The project still needs a way to judge whether the runtime is improving, even th
 
 ## Follow-up items created
 
-- `START-016` Define V1 evaluation task pack
-- `START-017` Define review quality rubric and fixtures
-- `START-018` Persist structured evaluation results
-- `START-019` Add lightweight evaluation rerun workflow
+- `START-021` Define V1 evaluation task pack
+- `START-022` Define review quality rubric and fixtures
+- `START-023` Persist structured evaluation results
+- `START-024` Add lightweight evaluation rerun workflow
 
 ## Done when
 

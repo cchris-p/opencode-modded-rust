@@ -1,5 +1,5 @@
 ---
-id: "START-019"
+id: "START-024"
 title: "Add lightweight evaluation rerun workflow"
 priority: "P2"
 type: "feature"
@@ -34,8 +34,8 @@ The evaluation strategy only becomes useful if reruns happen often enough to cat
 ## Related items
 
 - `START-006` Define agent evaluation strategy
-- `START-016` Define V1 evaluation task pack
-- `START-018` Persist structured evaluation results
+- `START-021` Define V1 evaluation task pack
+- `START-023` Persist structured evaluation results
 
 ## Notes
 

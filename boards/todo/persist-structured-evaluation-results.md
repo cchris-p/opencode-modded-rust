@@ -1,5 +1,5 @@
 ---
-id: "START-018"
+id: "START-023"
 title: "Persist structured evaluation results"
 priority: "P2"
 type: "feature"
@@ -34,8 +34,8 @@ The evaluation strategy needs more than anecdotal notes if the project is going 
 ## Related items
 
 - `START-006` Define agent evaluation strategy
-- `START-016` Define V1 evaluation task pack
-- `START-017` Define review quality rubric and fixtures
+- `START-021` Define V1 evaluation task pack
+- `START-022` Define review quality rubric and fixtures
 
 ## Notes
 
