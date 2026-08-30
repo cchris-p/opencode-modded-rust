@@ -1,4 +1,7 @@
-use opencode_session::{MessageRole, Session};
+use opencode_session::{
+    MessageRole, Session, SessionStatus, SessionTask, TaskAction, TaskReviewStatus, TaskStage,
+    TaskStageError, TaskVerificationStatus,
+};
 
 #[test]
 fn test_session_creation() {
@@ -86,4 +89,108 @@ fn test_session_message_id() {
     session.add_user_message("Test message");
     assert!(session.messages[0].id.len() > 0);
     assert_eq!(session.messages[0].role, MessageRole::User);
+}
+
+#[test]
+fn test_task_transitions_require_verification_and_review() {
+    let mut session = Session::new("test-project", "/test/directory");
+    session.set_task(SessionTask::new(
+        "Enforce runtime gates",
+        vec!["Verification passed".to_string()],
+        "/test/directory",
+        vec!["cargo test -p opencode-session".to_string()],
+    ));
+
+    session.advance_task(TaskAction::PrepareContext).unwrap();
+    session.advance_task(TaskAction::StartImplementing).unwrap();
+
+    let err = session.complete().unwrap_err();
+    assert_eq!(err, TaskStageError::VerificationRequired);
+
+    session.advance_task(TaskAction::StartVerifying).unwrap();
+    session
+        .advance_task(TaskAction::RecordVerification {
+            status: TaskVerificationStatus::Passed,
+            notes: Some("session tests passed".to_string()),
+        })
+        .unwrap();
+
+    let err = session.complete().unwrap_err();
+    assert_eq!(err, TaskStageError::ReviewApprovalRequired);
+
+    session
+        .advance_task(TaskAction::RecordReview {
+            status: TaskReviewStatus::Approved,
+            notes: Some("review approved".to_string()),
+        })
+        .unwrap();
+
+    assert_eq!(session.task.as_ref().unwrap().stage, TaskStage::Completed);
+    assert_eq!(session.status, SessionStatus::Completed);
+    session.complete().unwrap();
+}
+
+#[test]
+fn test_failed_verification_reopens_into_repairing() {
+    let mut session = Session::new("test-project", "/test/directory");
+    session.set_task(SessionTask::new(
+        "Enforce runtime gates",
+        vec!["Verification passed".to_string()],
+        "/test/directory",
+        vec!["cargo test -p opencode-session".to_string()],
+    ));
+
+    session.advance_task(TaskAction::PrepareContext).unwrap();
+    session.advance_task(TaskAction::StartImplementing).unwrap();
+    session.advance_task(TaskAction::StartVerifying).unwrap();
+    session
+        .advance_task(TaskAction::RecordVerification {
+            status: TaskVerificationStatus::Failed,
+            notes: Some("cargo test failed".to_string()),
+        })
+        .unwrap();
+
+    let task = session.task.as_ref().unwrap();
+    assert_eq!(task.stage, TaskStage::Repairing);
+    assert_eq!(task.reopen_reason.as_deref(), Some("cargo test failed"));
+
+    session
+        .advance_task(TaskAction::RestartImplementation)
+        .unwrap();
+    assert_eq!(
+        session.task.as_ref().unwrap().stage,
+        TaskStage::Implementing
+    );
+}
+
+#[test]
+fn test_blocking_review_reopens_into_repairing() {
+    let mut session = Session::new("test-project", "/test/directory");
+    session.set_task(SessionTask::new(
+        "Enforce runtime gates",
+        vec!["Verification passed".to_string()],
+        "/test/directory",
+        vec!["cargo test -p opencode-session".to_string()],
+    ));
+
+    session.advance_task(TaskAction::PrepareContext).unwrap();
+    session.advance_task(TaskAction::StartImplementing).unwrap();
+    session.advance_task(TaskAction::StartVerifying).unwrap();
+    session
+        .advance_task(TaskAction::RecordVerification {
+            status: TaskVerificationStatus::Passed,
+            notes: Some("cargo test passed".to_string()),
+        })
+        .unwrap();
+    session
+        .advance_task(TaskAction::RecordReview {
+            status: TaskReviewStatus::ChangesRequested,
+            notes: Some("fix blocking issue".to_string()),
+        })
+        .unwrap();
+
+    let task = session.task.as_ref().unwrap();
+    assert_eq!(task.stage, TaskStage::Repairing);
+    assert_eq!(task.reopen_reason.as_deref(), Some("fix blocking issue"));
+    assert_eq!(session.status, SessionStatus::Active);
 }

@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::SessionTask;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionSummary {
     pub additions: u64,
@@ -123,6 +125,8 @@ pub struct Session {
     pub usage: Option<SessionUsage>,
     #[serde(default)]
     pub status: SessionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<SessionTask>,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
     #[serde(default, skip_serializing)]

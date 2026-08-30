@@ -528,6 +528,7 @@ pub async fn run_server_with_state(
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use opencode_session::{SessionTask, TaskAction, TaskReviewStatus, TaskVerificationStatus};
 
     fn state_with_repos(
         session_repo: SessionRepository,
@@ -567,6 +568,33 @@ mod tests {
             let session = manager
                 .get_mut(&session_id)
                 .expect("session should be available for mutation");
+            session.set_task(SessionTask::new(
+                "Persist task gates",
+                vec!["Verification passes".to_string()],
+                ".",
+                vec!["cargo test -p opencode-session".to_string()],
+            ));
+            session
+                .advance_task(TaskAction::PrepareContext)
+                .expect("task should prepare context");
+            session
+                .advance_task(TaskAction::StartImplementing)
+                .expect("task should enter implementing");
+            session
+                .advance_task(TaskAction::StartVerifying)
+                .expect("task should enter verifying");
+            session
+                .advance_task(TaskAction::RecordVerification {
+                    status: TaskVerificationStatus::Passed,
+                    notes: Some("cargo test passed".to_string()),
+                })
+                .expect("verification should pass");
+            session
+                .advance_task(TaskAction::RecordReview {
+                    status: TaskReviewStatus::Approved,
+                    notes: Some("review approved".to_string()),
+                })
+                .expect("review should approve completion");
             let user = session.add_user_message("hello");
             user.created_at = fixed_user_time;
             if let Some(part) = user.parts.first_mut() {
@@ -606,6 +634,9 @@ mod tests {
         assert_eq!(session.messages[1].created_at, assistant_created_at);
         assert_eq!(session.messages[0].get_text(), "hello");
         assert_eq!(session.messages[1].get_text(), "world");
+        let task = session.task.as_ref().expect("task should round-trip");
+        assert_eq!(task.verification_status, TaskVerificationStatus::Passed);
+        assert_eq!(task.review_status, TaskReviewStatus::Approved);
     }
 
     #[tokio::test]

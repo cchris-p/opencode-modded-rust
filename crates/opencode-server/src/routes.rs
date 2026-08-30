@@ -7,7 +7,7 @@ use axum::{
     middleware::{self, Next},
     response::sse::{Event, Sse},
     response::{Html, IntoResponse, Response},
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use futures::stream::Stream;
@@ -164,6 +164,7 @@ pub struct SessionInfo {
     pub share: Option<SessionShareInfo>,
     pub revert: Option<SessionRevertInfo>,
     pub permission: Option<PermissionRulesetInfo>,
+    pub task: Option<opencode_types::SessionTask>,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,6 +237,7 @@ fn session_to_info(session: &opencode_session::Session) -> SessionInfo {
             deny: p.deny.clone(),
             mode: p.mode.clone(),
         }),
+        task: session.task.clone(),
     }
 }
 

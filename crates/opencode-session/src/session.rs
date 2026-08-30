@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use opencode_types::{SessionTask, TaskReviewStatus, TaskStage, TaskVerificationStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -304,6 +305,8 @@ pub struct Session {
     pub usage: Option<SessionUsage>,
     #[serde(default)]
     pub status: SessionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<SessionTask>,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
     #[serde(default, skip_serializing)]
@@ -314,6 +317,28 @@ pub struct Session {
 
 impl Session {
     const VERSION: &'static str = "1.0.0";
+
+    fn require_stage(
+        current: &TaskStage,
+        expected: TaskStage,
+        target: &TaskStage,
+    ) -> Result<(), TaskStageError> {
+        if *current == expected {
+            return Ok(());
+        }
+        Err(TaskStageError::InvalidTransition {
+            from: current.clone(),
+            to: target.clone(),
+        })
+    }
+
+    fn notes_or_default(notes: Option<&str>, default: &str) -> String {
+        notes
+            .map(str::trim)
+            .filter(|notes| !notes.is_empty())
+            .unwrap_or(default)
+            .to_string()
+    }
 
     /// Create a new session
     pub fn new(project_id: impl Into<String>, directory: impl Into<String>) -> Self {
@@ -336,6 +361,7 @@ impl Session {
             permission: None,
             usage: None,
             status: SessionStatus::Active,
+            task: None,
             metadata: HashMap::new(),
             created_at: now,
             updated_at: now,
@@ -363,6 +389,7 @@ impl Session {
             permission: parent.permission.clone(),
             usage: None,
             status: SessionStatus::Active,
+            task: None,
             metadata: HashMap::new(),
             created_at: now,
             updated_at: now,
@@ -620,6 +647,122 @@ impl Session {
         self.touch();
     }
 
+    pub fn set_task(&mut self, task: SessionTask) {
+        self.task = Some(task);
+        if !matches!(
+            self.status,
+            SessionStatus::Archived | SessionStatus::Compacting
+        ) {
+            self.status = SessionStatus::Active;
+        }
+        self.touch();
+    }
+
+    pub fn advance_task(&mut self, action: TaskAction) -> Result<(), TaskStageError> {
+        let task = self.task.as_mut().ok_or(TaskStageError::MissingTask)?;
+        let target_stage = action.target_stage();
+        let current_stage = task.stage.clone();
+
+        match action {
+            TaskAction::PrepareContext => {
+                Self::require_stage(&current_stage, TaskStage::Selected, &target_stage)?;
+                task.stage = TaskStage::ContextPrepared;
+                task.reopen_reason = None;
+            }
+            TaskAction::StartImplementing => {
+                Self::require_stage(&current_stage, TaskStage::ContextPrepared, &target_stage)?;
+                task.stage = TaskStage::Implementing;
+                task.reopen_reason = None;
+            }
+            TaskAction::StartVerifying => {
+                Self::require_stage(&current_stage, TaskStage::Implementing, &target_stage)?;
+                task.stage = TaskStage::Verifying;
+                task.reopen_reason = None;
+            }
+            TaskAction::RecordVerification { status, notes } => {
+                Self::require_stage(&current_stage, TaskStage::Verifying, &target_stage)?;
+                if matches!(status, TaskVerificationStatus::NotRun) {
+                    return Err(TaskStageError::VerificationRequired);
+                }
+                task.verification_status = status.clone();
+                task.verification_notes = notes;
+                task.review_status = TaskReviewStatus::NotReviewed;
+                task.review_notes = None;
+                match status {
+                    TaskVerificationStatus::Passed => {
+                        task.stage = TaskStage::Reviewing;
+                        task.reopen_reason = None;
+                    }
+                    TaskVerificationStatus::Failed | TaskVerificationStatus::Incomplete => {
+                        task.stage = TaskStage::Repairing;
+                        task.reopen_reason = Some(Self::notes_or_default(
+                            task.verification_notes.as_deref(),
+                            "verification did not pass",
+                        ));
+                    }
+                    TaskVerificationStatus::NotRun => unreachable!(),
+                }
+            }
+            TaskAction::RecordReview { status, notes } => {
+                Self::require_stage(&current_stage, TaskStage::Reviewing, &target_stage)?;
+                if task.verification_status != TaskVerificationStatus::Passed {
+                    return Err(TaskStageError::VerificationRequired);
+                }
+                if matches!(status, TaskReviewStatus::NotReviewed) {
+                    return Err(TaskStageError::ReviewApprovalRequired);
+                }
+                task.review_status = status.clone();
+                task.review_notes = notes;
+                match status {
+                    TaskReviewStatus::Approved => {
+                        task.stage = TaskStage::Completed;
+                        task.reopen_reason = None;
+                        self.status = SessionStatus::Completed;
+                    }
+                    TaskReviewStatus::ChangesRequested => {
+                        task.stage = TaskStage::Repairing;
+                        task.reopen_reason = Some(Self::notes_or_default(
+                            task.review_notes.as_deref(),
+                            "review requested changes",
+                        ));
+                        if !matches!(
+                            self.status,
+                            SessionStatus::Archived | SessionStatus::Compacting
+                        ) {
+                            self.status = SessionStatus::Active;
+                        }
+                    }
+                    TaskReviewStatus::NotReviewed => unreachable!(),
+                }
+            }
+            TaskAction::RestartImplementation => {
+                Self::require_stage(&current_stage, TaskStage::Repairing, &target_stage)?;
+                task.stage = TaskStage::Implementing;
+                task.reopen_reason = None;
+                if !matches!(
+                    self.status,
+                    SessionStatus::Archived | SessionStatus::Compacting
+                ) {
+                    self.status = SessionStatus::Active;
+                }
+            }
+            TaskAction::RebuildContext => {
+                Self::require_stage(&current_stage, TaskStage::Repairing, &target_stage)?;
+                task.stage = TaskStage::ContextPrepared;
+                if !matches!(
+                    self.status,
+                    SessionStatus::Archived | SessionStatus::Compacting
+                ) {
+                    self.status = SessionStatus::Active;
+                }
+            }
+        }
+
+        task.touch();
+        self.touch();
+        Ok(())
+    }
+
     /// Start compacting
     pub fn start_compacting(&mut self) {
         self.time.compacting = Some(Utc::now().timestamp_millis());
@@ -634,9 +777,17 @@ impl Session {
     }
 
     /// Mark as completed
-    pub fn complete(&mut self) {
+    pub fn complete(&mut self) -> Result<(), TaskStageError> {
+        let task = self.task.as_ref().ok_or(TaskStageError::MissingTask)?;
+        if task.verification_status != TaskVerificationStatus::Passed {
+            return Err(TaskStageError::VerificationRequired);
+        }
+        if task.review_status != TaskReviewStatus::Approved || task.stage != TaskStage::Completed {
+            return Err(TaskStageError::ReviewApprovalRequired);
+        }
         self.status = SessionStatus::Completed;
         self.touch();
+        Ok(())
     }
 
     // ========================================================================
@@ -716,6 +867,7 @@ impl Session {
             permission: row.permission,
             usage: None,
             status,
+            task: None,
             metadata: HashMap::new(),
             created_at,
             updated_at,
@@ -743,6 +895,59 @@ pub struct SessionRow {
     pub summary_files: Option<u64>,
     pub revert: Option<SessionRevert>,
     pub permission: Option<PermissionRuleset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskAction {
+    PrepareContext,
+    StartImplementing,
+    StartVerifying,
+    RecordVerification {
+        status: TaskVerificationStatus,
+        notes: Option<String>,
+    },
+    RecordReview {
+        status: TaskReviewStatus,
+        notes: Option<String>,
+    },
+    RestartImplementation,
+    RebuildContext,
+}
+
+impl TaskAction {
+    fn target_stage(&self) -> TaskStage {
+        match self {
+            TaskAction::PrepareContext => TaskStage::ContextPrepared,
+            TaskAction::StartImplementing => TaskStage::Implementing,
+            TaskAction::StartVerifying => TaskStage::Verifying,
+            TaskAction::RecordVerification { status, .. } => match status {
+                TaskVerificationStatus::Passed => TaskStage::Reviewing,
+                TaskVerificationStatus::Failed | TaskVerificationStatus::Incomplete => {
+                    TaskStage::Repairing
+                }
+                TaskVerificationStatus::NotRun => TaskStage::Verifying,
+            },
+            TaskAction::RecordReview { status, .. } => match status {
+                TaskReviewStatus::Approved => TaskStage::Completed,
+                TaskReviewStatus::ChangesRequested => TaskStage::Repairing,
+                TaskReviewStatus::NotReviewed => TaskStage::Reviewing,
+            },
+            TaskAction::RestartImplementation => TaskStage::Implementing,
+            TaskAction::RebuildContext => TaskStage::ContextPrepared,
+        }
+    }
+}
+
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum TaskStageError {
+    #[error("session has no active task")]
+    MissingTask,
+    #[error("invalid task transition from {from:?} to {to:?}")]
+    InvalidTransition { from: TaskStage, to: TaskStage },
+    #[error("verification must pass before completion can continue")]
+    VerificationRequired,
+    #[error("review approval is required before completion")]
+    ReviewApprovalRequired,
 }
 
 // ============================================================================
