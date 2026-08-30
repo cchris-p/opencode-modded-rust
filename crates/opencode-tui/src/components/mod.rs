@@ -43,7 +43,7 @@ pub use permission::{PermissionAction, PermissionPrompt, PermissionRequest, Perm
 pub use prompt::{Prompt, PromptStashEntry};
 pub use question::{QuestionPrompt, QuestionRequest, QuestionType};
 pub use session::SessionView;
-pub use settings::SettingsView;
+pub use settings::{SettingsInputMode, SettingsView};
 pub use sidebar::Sidebar;
 pub use slash_command::SlashCommandPopup;
 pub use spinner::{KnightRiderSpinner, Spinner, SpinnerMode, TaskKind};

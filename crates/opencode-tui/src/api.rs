@@ -212,6 +212,45 @@ pub struct McpAuthStartInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAuthMethodInfo {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAuthStatusInfo {
+    pub configured: bool,
+    #[serde(default)]
+    pub auth_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderOAuthStartInfo {
+    pub url: String,
+    #[serde(rename = "method")]
+    pub method_type: String,
+    pub instructions: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProviderOAuthAuthorizeRequest {
+    method: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProviderOAuthCallbackRequest {
+    method: usize,
+    code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ApiAuthWriteRequest {
+    #[serde(rename = "type")]
+    auth_type: String,
+    key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LspStatusResponse {
     servers: Vec<String>,
 }
@@ -457,6 +496,146 @@ impl ApiClient {
 
         let providers: ProviderListResponse = response.json()?;
         Ok(providers)
+    }
+
+    pub fn get_provider_auth_methods(
+        &self,
+    ) -> anyhow::Result<HashMap<String, Vec<ProviderAuthMethodInfo>>> {
+        let url = format!("{}/provider/auth", self.base_url);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to get provider auth methods: {} - {}", status, text);
+        }
+
+        Ok(response.json::<HashMap<String, Vec<ProviderAuthMethodInfo>>>()?)
+    }
+
+    pub fn get_provider_auth_status(
+        &self,
+        provider_id: &str,
+    ) -> anyhow::Result<ProviderAuthStatusInfo> {
+        let url = format!("{}/auth/{}", self.base_url, provider_id);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to get auth status for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<ProviderAuthStatusInfo>()?)
+    }
+
+    pub fn start_provider_oauth(
+        &self,
+        provider_id: &str,
+        method: usize,
+    ) -> anyhow::Result<ProviderOAuthStartInfo> {
+        let url = format!("{}/provider/{}/oauth/authorize", self.base_url, provider_id);
+        let response = self
+            .client
+            .post(&url)
+            .json(&ProviderOAuthAuthorizeRequest { method })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to start provider auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<ProviderOAuthStartInfo>()?)
+    }
+
+    pub fn complete_provider_oauth(
+        &self,
+        provider_id: &str,
+        method: usize,
+        code: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let url = format!("{}/provider/{}/oauth/callback", self.base_url, provider_id);
+        let response = self
+            .client
+            .post(&url)
+            .json(&ProviderOAuthCallbackRequest { method, code })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to complete provider auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<bool>()?)
+    }
+
+    pub fn set_provider_api_key(&self, provider_id: &str, key: String) -> anyhow::Result<bool> {
+        let url = format!("{}/auth/{}", self.base_url, provider_id);
+        let response = self
+            .client
+            .put(&url)
+            .json(&ApiAuthWriteRequest {
+                auth_type: "api".to_string(),
+                key,
+            })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to set auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response
+            .json::<serde_json::Value>()?
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true))
+    }
+
+    pub fn delete_provider_auth(&self, provider_id: &str) -> anyhow::Result<bool> {
+        let url = format!("{}/auth/{}", self.base_url, provider_id);
+        let response = self.client.delete(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to delete auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response
+            .json::<serde_json::Value>()?
+            .get("deleted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true))
     }
 
     pub fn list_agents(&self) -> anyhow::Result<Vec<AgentInfo>> {

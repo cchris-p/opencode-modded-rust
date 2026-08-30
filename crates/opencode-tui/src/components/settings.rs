@@ -8,6 +8,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::api::{ProviderAuthMethodInfo, ProviderAuthStatusInfo, ProviderOAuthStartInfo};
 use crate::components::Prompt;
 use crate::context::{AppContext, ProviderInfo};
 
@@ -18,6 +19,18 @@ const V1_PROVIDER_IDS: &[&str] = &["openai", "anthropic", "deepseek", "openroute
 pub struct SettingsView {
     selected_provider: usize,
     selected_model: usize,
+    openai_auth_status: Option<ProviderAuthStatusInfo>,
+    openai_auth_methods: Vec<ProviderAuthMethodInfo>,
+    input_mode: Option<SettingsInputMode>,
+    input_value: String,
+    oauth_prompt: Option<ProviderOAuthStartInfo>,
+    oauth_method: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsInputMode {
+    ApiKey,
+    OAuthCode,
 }
 
 impl SettingsView {
@@ -25,7 +38,62 @@ impl SettingsView {
         Self {
             selected_provider: 0,
             selected_model: 0,
+            openai_auth_status: None,
+            openai_auth_methods: Vec::new(),
+            input_mode: None,
+            input_value: String::new(),
+            oauth_prompt: None,
+            oauth_method: None,
         }
+    }
+
+    pub fn set_openai_auth_status(&mut self, status: Option<ProviderAuthStatusInfo>) {
+        self.openai_auth_status = status;
+    }
+
+    pub fn set_openai_auth_methods(&mut self, methods: Vec<ProviderAuthMethodInfo>) {
+        self.openai_auth_methods = methods;
+    }
+
+    pub fn begin_api_key_input(&mut self) {
+        self.input_mode = Some(SettingsInputMode::ApiKey);
+        self.input_value.clear();
+        self.oauth_prompt = None;
+        self.oauth_method = None;
+    }
+
+    pub fn begin_oauth_input(&mut self, method: usize, prompt: ProviderOAuthStartInfo) {
+        self.input_mode = Some(SettingsInputMode::OAuthCode);
+        self.input_value.clear();
+        self.oauth_prompt = Some(prompt);
+        self.oauth_method = Some(method);
+    }
+
+    pub fn cancel_input(&mut self) {
+        self.input_mode = None;
+        self.input_value.clear();
+        self.oauth_prompt = None;
+        self.oauth_method = None;
+    }
+
+    pub fn input_mode(&self) -> Option<SettingsInputMode> {
+        self.input_mode
+    }
+
+    pub fn oauth_method(&self) -> Option<usize> {
+        self.oauth_method
+    }
+
+    pub fn input_value(&self) -> String {
+        self.input_value.trim().to_string()
+    }
+
+    pub fn handle_input(&mut self, c: char) {
+        self.input_value.push(c);
+    }
+
+    pub fn handle_backspace(&mut self) {
+        self.input_value.pop();
     }
 
     pub fn sync_from_context(&mut self, context: &Arc<AppContext>) {
@@ -116,6 +184,13 @@ impl SettingsView {
         Some((model.id.clone(), provider.id.clone()))
     }
 
+    pub fn selected_provider_ref(&self, context: &Arc<AppContext>) -> Option<String> {
+        let providers = filtered_providers(context);
+        providers
+            .get(self.selected_provider)
+            .map(|provider| provider.id.clone())
+    }
+
     pub fn render(
         &self,
         frame: &mut Frame,
@@ -147,6 +222,7 @@ impl SettingsView {
             .constraints([
                 Constraint::Length(5),
                 Constraint::Min(10),
+                Constraint::Length(8),
                 Constraint::Length(6),
                 Constraint::Length(4),
             ])
@@ -256,6 +332,16 @@ impl SettingsView {
             .border_style(Style::default().fg(theme.border));
         frame.render_widget(List::new(model_items).block(model_block), body[1]);
 
+        let auth_panel = Paragraph::new(self.auth_lines(&providers, &theme))
+            .block(
+                Block::default()
+                    .title(" Auth ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.border)),
+            )
+            .wrap(Wrap { trim: true });
+        frame.render_widget(auth_panel, layout[2]);
+
         let notes = Paragraph::new(vec![
             Line::from(vec![
                 Span::styled("Use ", Style::default().fg(theme.text_muted)),
@@ -274,7 +360,7 @@ impl SettingsView {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "Credential entry and OpenAI login are deferred to START-015.",
+                "Press a for API key, l for login, x to clear auth, r to refresh.",
                 Style::default().fg(theme.warning),
             )),
             Line::from(Span::styled(
@@ -289,9 +375,9 @@ impl SettingsView {
                 .border_style(Style::default().fg(theme.border)),
         )
         .wrap(Wrap { trim: true });
-        frame.render_widget(notes, layout[2]);
+        frame.render_widget(notes, layout[3]);
 
-        prompt.render(frame, layout[3]);
+        prompt.render(frame, layout[4]);
     }
 
     fn clamp_model_selection(&mut self, providers: &[ProviderInfo]) {
@@ -310,6 +396,108 @@ impl SettingsView {
         } else {
             self.selected_model = self.selected_model.min(model_count.saturating_sub(1));
         }
+    }
+}
+
+impl SettingsView {
+    fn auth_lines(
+        &self,
+        providers: &[ProviderInfo],
+        theme: &crate::theme::Theme,
+    ) -> Vec<Line<'static>> {
+        if providers
+            .get(self.selected_provider)
+            .map(|provider| provider.id.as_str())
+            != Some("openai")
+        {
+            return vec![
+                Line::from(Span::styled(
+                    "OpenAI auth actions appear when OpenAI is highlighted.",
+                    Style::default().fg(theme.text_muted),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Other providers keep the current model-selection-only flow for now.",
+                    Style::default().fg(theme.text_muted),
+                )),
+            ];
+        }
+
+        let (status_text, status_color) = match self
+            .openai_auth_status
+            .as_ref()
+            .and_then(|status| status.auth_type.as_deref())
+        {
+            Some("api") => ("API key saved", theme.success),
+            Some("oauth") => ("Login token saved", theme.success),
+            Some("wellknown") => ("Auth saved", theme.success),
+            Some(_) => ("Configured", theme.success),
+            None if self
+                .openai_auth_status
+                .as_ref()
+                .map(|status| status.configured)
+                .unwrap_or(false) =>
+            {
+                ("Configured", theme.success)
+            }
+            None => ("Not configured", theme.warning),
+        };
+
+        let mut lines = vec![Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(theme.text_muted)),
+            Span::styled(status_text, Style::default().fg(status_color)),
+        ])];
+
+        if let Some(method) = self.openai_auth_methods.first() {
+            lines.push(Line::from(vec![
+                Span::styled("Login flow: ", Style::default().fg(theme.text_muted)),
+                Span::styled(method.name.clone(), Style::default().fg(theme.text)),
+            ]));
+        }
+
+        match self.input_mode {
+            Some(SettingsInputMode::ApiKey) => {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Enter OpenAI API key:",
+                    Style::default().fg(theme.text),
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("> {}", "*".repeat(self.input_value.chars().count())),
+                    Style::default().fg(theme.primary),
+                )));
+            }
+            Some(SettingsInputMode::OAuthCode) => {
+                lines.push(Line::from(""));
+                if let Some(prompt) = &self.oauth_prompt {
+                    if !prompt.url.trim().is_empty() {
+                        lines.push(Line::from(vec![
+                            Span::styled("Open: ", Style::default().fg(theme.text_muted)),
+                            Span::styled(prompt.url.clone(), Style::default().fg(theme.primary)),
+                        ]));
+                    }
+                    if !prompt.instructions.trim().is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            prompt.instructions.clone(),
+                            Style::default().fg(theme.text),
+                        )));
+                    }
+                }
+                lines.push(Line::from(Span::styled(
+                    format!("> {}", self.input_value),
+                    Style::default().fg(theme.primary),
+                )));
+            }
+            None => {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "a API key   l Login   x Clear",
+                    Style::default().fg(theme.text),
+                )));
+            }
+        }
+
+        lines
     }
 }
 

@@ -20,8 +20,8 @@ use crate::components::{
     HomeView, McpDialog, McpItem, Model, ModelSelectDialog, PermissionAction, PermissionPrompt,
     Prompt, PromptStashDialog, ProviderDialog, QuestionPrompt, SessionDeleteState,
     SessionExportDialog, SessionItem, SessionListDialog, SessionRenameDialog, SessionView,
-    SettingsView, SkillListDialog, SlashCommandPopup, StashItem, StatusDialog, StatusLine,
-    SubagentDialog, TagDialog, TaskKind, ThemeListDialog, ThemeOption, TimelineDialog,
+    SettingsInputMode, SettingsView, SkillListDialog, SlashCommandPopup, StashItem, StatusDialog,
+    StatusLine, SubagentDialog, TagDialog, TaskKind, ThemeListDialog, ThemeOption, TimelineDialog,
     TimelineEntry, Toast, ToastVariant,
 };
 use crate::context::keybind::LeaderKeyState;
@@ -2506,11 +2506,76 @@ impl App {
 
     fn open_provider_settings(&mut self) {
         self.refresh_model_dialog();
+        let _ = self.refresh_settings_auth_state();
         self.settings_view.sync_from_context(&self.context);
         self.context.navigate(Route::Settings);
     }
 
     fn handle_settings_key(&mut self, key: KeyEvent) -> bool {
+        if let Some(mode) = self.settings_view.input_mode() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.settings_view.cancel_input();
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    self.settings_view.handle_backspace();
+                    return true;
+                }
+                KeyCode::Enter if key.modifiers.is_empty() => {
+                    let Some(client) = self.context.get_api_client() else {
+                        self.toast
+                            .show(ToastVariant::Error, "No API client available", 2200);
+                        return true;
+                    };
+                    let input = self.settings_view.input_value();
+                    if input.is_empty() {
+                        self.toast
+                            .show(ToastVariant::Warning, "Input cannot be empty", 2200);
+                        return true;
+                    }
+
+                    let result = match mode {
+                        SettingsInputMode::ApiKey => client
+                            .set_provider_api_key("openai", input)
+                            .map(|_| "OpenAI API key saved".to_string()),
+                        SettingsInputMode::OAuthCode => client
+                            .complete_provider_oauth(
+                                "openai",
+                                self.settings_view.oauth_method().unwrap_or(0),
+                                Some(input),
+                            )
+                            .map(|_| "OpenAI login saved".to_string()),
+                    };
+
+                    match result {
+                        Ok(message) => {
+                            self.settings_view.cancel_input();
+                            self.refresh_model_dialog();
+                            let _ = self.refresh_settings_auth_state();
+                            self.toast.show(ToastVariant::Success, &message, 2200);
+                        }
+                        Err(err) => {
+                            self.toast.show(
+                                ToastVariant::Error,
+                                &format!("OpenAI auth failed: {}", err),
+                                3200,
+                            );
+                        }
+                    }
+                    return true;
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.settings_view.handle_input(c);
+                    return true;
+                }
+                _ => return true,
+            }
+        }
+
         match key.code {
             KeyCode::Esc => {
                 self.context.router.write().go_back();
@@ -2534,6 +2599,64 @@ impl App {
             }
             KeyCode::Char('r') if key.modifiers.is_empty() => {
                 self.refresh_model_dialog();
+                let _ = self.refresh_settings_auth_state();
+                true
+            }
+            KeyCode::Char('a') if key.modifiers.is_empty() => {
+                if self
+                    .settings_view
+                    .selected_provider_ref(&self.context)
+                    .as_deref()
+                    == Some("openai")
+                {
+                    self.settings_view.begin_api_key_input();
+                }
+                true
+            }
+            KeyCode::Char('l') if key.modifiers.is_empty() => {
+                if self
+                    .settings_view
+                    .selected_provider_ref(&self.context)
+                    .as_deref()
+                    == Some("openai")
+                {
+                    if let Some(client) = self.context.get_api_client() {
+                        match client.start_provider_oauth("openai", 0) {
+                            Ok(prompt) => self.settings_view.begin_oauth_input(0, prompt),
+                            Err(err) => self.toast.show(
+                                ToastVariant::Error,
+                                &format!("Failed to start OpenAI login: {}", err),
+                                3200,
+                            ),
+                        }
+                    }
+                }
+                true
+            }
+            KeyCode::Char('x') if key.modifiers.is_empty() => {
+                if self
+                    .settings_view
+                    .selected_provider_ref(&self.context)
+                    .as_deref()
+                    == Some("openai")
+                {
+                    if let Some(client) = self.context.get_api_client() {
+                        match client.delete_provider_auth("openai") {
+                            Ok(_) => {
+                                self.settings_view.cancel_input();
+                                self.refresh_model_dialog();
+                                let _ = self.refresh_settings_auth_state();
+                                self.toast
+                                    .show(ToastVariant::Success, "OpenAI auth cleared", 2200);
+                            }
+                            Err(err) => self.toast.show(
+                                ToastVariant::Error,
+                                &format!("Failed to clear OpenAI auth: {}", err),
+                                3200,
+                            ),
+                        }
+                    }
+                }
                 true
             }
             KeyCode::Enter if key.modifiers.is_empty() => {
@@ -2551,6 +2674,19 @@ impl App {
             }
             _ => false,
         }
+    }
+
+    fn refresh_settings_auth_state(&mut self) -> anyhow::Result<()> {
+        let Some(client) = self.context.get_api_client() else {
+            return Ok(());
+        };
+
+        let methods = client.get_provider_auth_methods()?;
+        let status = client.get_provider_auth_status("openai")?;
+        self.settings_view
+            .set_openai_auth_methods(methods.get("openai").cloned().unwrap_or_default());
+        self.settings_view.set_openai_auth_status(Some(status));
+        Ok(())
     }
 
     fn refresh_agent_dialog(&mut self) {

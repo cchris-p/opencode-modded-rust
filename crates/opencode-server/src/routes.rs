@@ -5,9 +5,9 @@ use axum::{
     },
     http::Request,
     middleware::{self, Next},
-    response::{Html, IntoResponse, Response},
     response::sse::{Event, Sse},
-    routing::{delete, get, patch, post, put},
+    response::{Html, IntoResponse, Response},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use futures::stream::Stream;
@@ -52,10 +52,16 @@ pub fn router() -> Router<Arc<ServerState>> {
         .route("/skill", get(list_skills))
         .route("/lsp", get(get_lsp_status))
         .route("/formatter", get(get_formatter_status))
-        .route("/auth/{id}", put(set_auth).delete(delete_auth))
+        .route(
+            "/auth/{id}",
+            get(get_auth).put(set_auth).delete(delete_auth),
+        )
         .route("/doc", get(get_doc))
         .route("/log", post(write_log))
-        .nest("/session", session_routes().layer(middleware::from_fn(inject_opencode_directory)))
+        .nest(
+            "/session",
+            session_routes().layer(middleware::from_fn(inject_opencode_directory)),
+        )
         .nest("/provider", provider_routes())
         .nest("/config", config_routes())
         .nest("/mcp", mcp_routes())
@@ -1028,15 +1034,15 @@ fn session_messages_to_provider_messages(
         .collect()
 }
 
-fn resolve_provider_and_model(
+async fn resolve_provider_and_model(
     state: &ServerState,
     request_model: Option<&str>,
     config_model: Option<&str>,
     config_provider: Option<&str>,
 ) -> Result<(Arc<dyn opencode_provider::Provider>, String, String)> {
+    let providers = state.providers.read().unwrap();
     let resolve_from_model = |model: &str| -> Result<(String, String)> {
-        state
-            .providers
+        providers
             .parse_model_string(model)
             .ok_or_else(|| ApiError::BadRequest(format!("Model not found: {}", model)))
     };
@@ -1050,8 +1056,7 @@ fn resolve_provider_and_model(
             resolve_from_model(model)?
         }
     } else {
-        let first = state
-            .providers
+        let first = providers
             .list_models()
             .into_iter()
             .next()
@@ -1059,8 +1064,7 @@ fn resolve_provider_and_model(
         (first.provider, first.id)
     };
 
-    let provider = state
-        .providers
+    let provider = providers
         .get_provider(&provider_id)
         .map_err(|e| ApiError::ProviderError(e.to_string()))?;
     if provider.get_model(&model_id).is_none() {
@@ -1299,7 +1303,8 @@ async fn stream_message(
 {
     let config = CONFIG_STATE.read().await;
     let (provider, provider_id, model_id) =
-        resolve_provider_and_model(&state, req.model.as_deref(), config.model.as_deref(), None)?;
+        resolve_provider_and_model(&state, req.model.as_deref(), config.model.as_deref(), None)
+            .await?;
     drop(config);
 
     let (history, msg_id, selected_variant) = {
@@ -1656,7 +1661,8 @@ async fn session_prompt(
 
     let config = CONFIG_STATE.read().await;
     let (provider, provider_id, model_id) =
-        resolve_provider_and_model(&state, req.model.as_deref(), config.model.as_deref(), None)?;
+        resolve_provider_and_model(&state, req.model.as_deref(), config.model.as_deref(), None)
+            .await?;
     drop(config);
 
     let task_state = state.clone();
@@ -2001,10 +2007,17 @@ async fn prompt_async(
         .message
         .clone()
         .or_else(|| {
-            req.parts.as_ref().map(|p| {
-                let s = text_from_parts(p);
-                if s.is_empty() { None } else { Some(s) }
-            }).flatten()
+            req.parts
+                .as_ref()
+                .map(|p| {
+                    let s = text_from_parts(p);
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
+                })
+                .flatten()
         })
         .unwrap_or_default();
     session.add_user_message(&message_text);
@@ -2278,7 +2291,7 @@ fn is_v1_catalog_provider(provider_id: &str) -> bool {
 
 async fn list_providers(State(state): State<Arc<ServerState>>) -> Json<ProviderListResponse> {
     let variant_lookup = get_model_variant_lookup().await;
-    let models = state.providers.list_models();
+    let models = state.providers.read().unwrap().list_models();
     let mut provider_map: HashMap<String, Vec<ModelInfo>> = HashMap::new();
     for m in models {
         let provider_id = m.provider.clone();
@@ -2415,6 +2428,11 @@ async fn oauth_callback(
         }
     }
 
+    state
+        .refresh_providers()
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
     Ok(Json(true))
 }
 
@@ -2458,7 +2476,7 @@ async fn get_config_providers(
     State(state): State<Arc<ServerState>>,
 ) -> Json<ConfigProvidersResponse> {
     let variant_lookup = get_model_variant_lookup().await;
-    let models = state.providers.list_models();
+    let models = state.providers.read().unwrap().list_models();
     let mut provider_map: HashMap<String, Vec<ModelInfo>> = HashMap::new();
     for m in models {
         let provider_id = m.provider.clone();
@@ -4505,6 +4523,38 @@ struct SetAuthRequest {
     body: serde_json::Value,
 }
 
+#[derive(Debug, Serialize)]
+struct AuthStatusResponse {
+    configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_type: Option<String>,
+}
+
+async fn get_auth(
+    State(state): State<Arc<ServerState>>,
+    Path(id): Path<String>,
+) -> Result<Json<AuthStatusResponse>> {
+    let response = match state.auth_manager.get(&id).await {
+        Some(AuthInfo::Api { .. }) => AuthStatusResponse {
+            configured: true,
+            auth_type: Some("api".to_string()),
+        },
+        Some(AuthInfo::OAuth { .. }) => AuthStatusResponse {
+            configured: true,
+            auth_type: Some("oauth".to_string()),
+        },
+        Some(AuthInfo::WellKnown { .. }) => AuthStatusResponse {
+            configured: true,
+            auth_type: Some("wellknown".to_string()),
+        },
+        None => AuthStatusResponse {
+            configured: false,
+            auth_type: None,
+        },
+    };
+    Ok(Json(response))
+}
+
 async fn set_auth(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
@@ -4513,6 +4563,10 @@ async fn set_auth(
     let auth_info = parse_auth_info_payload(req.body)
         .ok_or_else(|| ApiError::BadRequest("Invalid auth payload".to_string()))?;
     state.auth_manager.set(&id, auth_info).await;
+    state
+        .refresh_providers()
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -4521,6 +4575,10 @@ async fn delete_auth(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     state.auth_manager.remove(&id).await;
+    state
+        .refresh_providers()
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
