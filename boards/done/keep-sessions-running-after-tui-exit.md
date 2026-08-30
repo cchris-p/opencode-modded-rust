@@ -70,8 +70,8 @@ The current Rust product already has server-side session execution and live sess
 
 ## PR
 
-- Pending
+- https://github.com/cchris-p/opencode-modded-rust/pull/8
 
 ## Completion
 
-- Implemented and ready for merge on 2026-08-29.
+- Merged into `development` on 2026-08-29.
