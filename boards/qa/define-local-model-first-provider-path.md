@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-08-29"
 ---
 
@@ -103,6 +103,10 @@ This means Ollama is not part of the curated four-provider V1 breadth surface, b
 - `cargo fmt`
 - `cargo check -p opencode-provider -p opencode-server -p opencode-tui`
 - `cargo test -p opencode-provider ollama -- --nocapture`
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/18
 
 ## Related Items
 
