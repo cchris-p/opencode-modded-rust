@@ -1058,6 +1058,17 @@ async fn resolve_provider_and_model(
         } else {
             resolve_from_model(model)?
         }
+    } else if let Some(ollama) = providers.get_provider("ollama").ok() {
+        if ollama.get_model("qwen3:30b").is_some() {
+            ("ollama".to_string(), "qwen3:30b".to_string())
+        } else {
+            let first = providers
+                .list_models()
+                .into_iter()
+                .next()
+                .ok_or_else(|| ApiError::BadRequest("No providers configured".to_string()))?;
+            (first.provider, first.id)
+        }
     } else {
         let first = providers
             .list_models()
@@ -2288,7 +2299,7 @@ fn variants_for_model(
 fn is_v1_catalog_provider(provider_id: &str) -> bool {
     matches!(
         provider_id,
-        "openai" | "anthropic" | "deepseek" | "openrouter"
+        "ollama" | "openai" | "anthropic" | "deepseek" | "openrouter"
     )
 }
 

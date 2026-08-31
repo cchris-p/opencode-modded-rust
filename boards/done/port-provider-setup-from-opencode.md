@@ -63,6 +63,7 @@ The current provider configuration surface feels incomplete compared with the re
 
 - Mirror the reference flow selectively rather than treating full parity as required.
 - This story is for settings-time reconfiguration, not first-run onboarding.
+- The visible settings provider list in this story is the curated V1 breadth surface, not the full set of execution paths the product may support; native Ollama local-model support is tracked separately under `START-019`.
 
 ## Dev Notes
 
@@ -71,6 +72,7 @@ The current provider configuration surface feels incomplete compared with the re
 - Reused the existing session-local model selection wiring instead of introducing credential persistence or first-run onboarding in this story.
 - Credential entry and OpenAI login remain explicitly deferred to `START-015`, which is surfaced directly inside the settings screen.
 - Intentional deviation from `/Users/cchrisleepyles/repos/opencode-modded`: this branch provides settings-time provider/model re-selection only, not the fuller upstream auth/setup flow.
+- If the product needs an explicit local-model path through Ollama, that should land as `START-019` rather than silently broadening this card's provider-setup scope.
 
 ## Verification
 

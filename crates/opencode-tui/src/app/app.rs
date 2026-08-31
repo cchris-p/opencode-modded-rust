@@ -2524,7 +2524,12 @@ impl App {
 
         let model_missing = self.context.current_model.read().is_none();
         if model_missing {
-            if let Some((provider, model_id)) = providers.default_model.iter().next() {
+            if let Some(model_id) = providers.default_model.get("ollama") {
+                self.set_active_model_selection(
+                    format!("ollama/{}", model_id),
+                    Some("ollama".to_string()),
+                );
+            } else if let Some((provider, model_id)) = providers.default_model.iter().next() {
                 self.set_active_model_selection(
                     format!("{}/{}", provider, model_id),
                     Some(provider.clone()),
