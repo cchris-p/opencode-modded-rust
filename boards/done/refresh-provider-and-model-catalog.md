@@ -57,6 +57,7 @@ The current model and provider surface is visibly stale in the TUI, which makes 
 - Prefer a structured catalog refresh over one-off model name edits.
 - `/Users/cchrisleepyles/repos/opencode-modded` is the canonical reference repo for provider/model comparisons in this product.
 - OpenAI auth configuration dependencies should link to `START-015` instead of being folded into this catalog story.
+- The curated V1 provider breadth for this story was intentionally limited to `openai`, `anthropic`, `deepseek`, and `openrouter`; native Ollama support is tracked separately under `START-019` as the explicit local-model execution path rather than a general catalog-breadth expansion.
 
 ## Dev Notes
 
@@ -64,6 +65,7 @@ The current model and provider surface is visibly stale in the TUI, which makes 
 - Limited the user-facing CLI and server provider/model listings to the current V1 surface: `openai`, `anthropic`, `deepseek`, and `openrouter`.
 - Refreshed the TUI model-picker placeholder data to current model families for those four providers.
 - OpenAI-specific auth/setup follow-up remains tracked under `START-015` rather than expanding this story into provider setup work.
+- Native Ollama support was intentionally left out of this card's visible catalog scope and is owned by `START-019`.
 
 ## Verification
 

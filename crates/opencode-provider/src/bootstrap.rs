@@ -88,6 +88,92 @@ pub static BUNDLED_PROVIDERS: Lazy<HashMap<&'static str, &'static str>> = Lazy::
     m
 });
 
+const OLLAMA_PROVIDER_ID: &str = "ollama";
+const OLLAMA_DEFAULT_MODEL_ID: &str = "qwen3:30b";
+const OLLAMA_DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+const OLLAMA_PLACEHOLDER_API_KEY: &str = "ollama";
+
+fn normalize_ollama_base_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return OLLAMA_DEFAULT_BASE_URL.to_string();
+    }
+
+    let with_scheme = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{}", trimmed)
+    };
+    let normalized = with_scheme.trim_end_matches('/');
+
+    if normalized.ends_with("/v1") {
+        normalized.to_string()
+    } else {
+        format!("{}/v1", normalized)
+    }
+}
+
+fn default_ollama_base_url() -> String {
+    std::env::var("OLLAMA_HOST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| normalize_ollama_base_url(&value))
+        .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.to_string())
+}
+
+fn default_ollama_models_provider() -> ModelsProviderInfo {
+    let model = ModelInfo {
+        id: OLLAMA_DEFAULT_MODEL_ID.to_string(),
+        name: "Qwen3 30B".to_string(),
+        family: Some("qwen3".to_string()),
+        release_date: None,
+        attachment: false,
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        interleaved: Some(ModelInterleaved::Bool(false)),
+        cost: Some(ModelCost {
+            input: 0.0,
+            output: 0.0,
+            cache_read: None,
+            cache_write: None,
+            context_over_200k: None,
+        }),
+        limit: ModelLimit {
+            context: 65_536,
+            input: None,
+            output: 8_192,
+        },
+        modalities: Some(ModelModalities {
+            input: vec!["text".to_string()],
+            output: vec!["text".to_string()],
+        }),
+        experimental: None,
+        status: Some("active".to_string()),
+        options: HashMap::new(),
+        headers: None,
+        provider: Some(ModelProvider {
+            npm: Some("@ai-sdk/openai-compatible".to_string()),
+            api: Some(OLLAMA_DEFAULT_BASE_URL.to_string()),
+        }),
+        variants: None,
+    };
+
+    ModelsProviderInfo {
+        api: Some(OLLAMA_DEFAULT_BASE_URL.to_string()),
+        name: "Ollama".to_string(),
+        env: vec![],
+        id: OLLAMA_PROVIDER_ID.to_string(),
+        npm: Some("@ai-sdk/openai-compatible".to_string()),
+        models: HashMap::from([(OLLAMA_DEFAULT_MODEL_ID.to_string(), model)]),
+    }
+}
+
+fn ensure_ollama_provider(data: &mut ModelsData) {
+    data.entry(OLLAMA_PROVIDER_ID.to_string())
+        .or_insert_with(default_ollama_models_provider);
+}
+
 fn bundled_v1_models_data() -> ModelsData {
     fn model(
         id: &str,
@@ -173,6 +259,28 @@ fn bundled_v1_models_data() -> ModelsData {
     }
 
     HashMap::from([
+        provider(
+            "ollama",
+            "Ollama",
+            &[],
+            "@ai-sdk/openai-compatible",
+            OLLAMA_DEFAULT_BASE_URL,
+            vec![model(
+                OLLAMA_DEFAULT_MODEL_ID,
+                "Qwen3 30B",
+                "2026-01-01",
+                65_536,
+                8_192,
+                true,
+                true,
+                true,
+                false,
+                0.0,
+                0.0,
+                "@ai-sdk/openai-compatible",
+                OLLAMA_DEFAULT_BASE_URL,
+            )],
+        ),
         provider(
             "openai",
             "OpenAI",
@@ -1295,6 +1403,27 @@ impl CustomLoader for CerebrasLoader {
     }
 }
 
+struct OllamaLoader;
+
+impl CustomLoader for OllamaLoader {
+    fn load(
+        &self,
+        _provider: &ModelsProviderInfo,
+        provider_state: Option<&ProviderState>,
+    ) -> CustomLoaderResult {
+        let mut result = CustomLoaderResult::default();
+        result.autoload = true;
+        let base_url = provider_state
+            .and_then(|state| provider_option_string(state, &["baseURL", "baseUrl", "url", "api"]))
+            .map(|value| normalize_ollama_base_url(&value))
+            .unwrap_or_else(default_ollama_base_url);
+        result
+            .options
+            .insert("baseURL".to_string(), serde_json::Value::String(base_url));
+        result
+    }
+}
+
 /// Get the custom loader for a provider ID.
 fn get_custom_loader(provider_id: &str) -> Option<Box<dyn CustomLoader>> {
     match provider_id {
@@ -1316,6 +1445,7 @@ fn get_custom_loader(provider_id: &str) -> Option<Box<dyn CustomLoader>> {
         "cloudflare-workers-ai" => Some(Box::new(CloudflareWorkersAiLoader)),
         "cloudflare-ai-gateway" => Some(Box::new(CloudflareAiGatewayLoader)),
         "cerebras" => Some(Box::new(CerebrasLoader)),
+        "ollama" => Some(Box::new(OllamaLoader)),
         _ => None,
     }
 }
@@ -2519,6 +2649,11 @@ fn provider_secret(provider: &ProviderState, fallback_env: &[&str]) -> Option<St
         .or_else(|| env_any(fallback_env))
 }
 
+fn ollama_api_key(provider: &ProviderState) -> String {
+    provider_secret(provider, &["OLLAMA_API_KEY"])
+        .unwrap_or_else(|| OLLAMA_PLACEHOLDER_API_KEY.to_string())
+}
+
 fn provider_base_url(provider: &ProviderState) -> Option<String> {
     provider_option_string(provider, &["baseURL", "baseUrl", "url", "api"])
         .or_else(|| {
@@ -2543,6 +2678,15 @@ fn create_concrete_provider(
     provider: &ProviderState,
 ) -> Option<Arc<dyn RuntimeProvider>> {
     match provider_id {
+        "ollama" => {
+            let base_url = provider_option_string(provider, &["baseURL", "baseUrl", "url", "api"])
+                .map(|value| normalize_ollama_base_url(&value))
+                .unwrap_or_else(default_ollama_base_url);
+            Some(Arc::new(OpenAIProvider::openai_compatible(
+                base_url,
+                ollama_api_key(provider),
+            )))
+        }
         "anthropic" => {
             let api_key = provider_secret(provider, &["ANTHROPIC_API_KEY"])?;
             Some(Arc::new(AnthropicProvider::new(api_key)))
@@ -2819,7 +2963,8 @@ fn load_models_dev_cache() -> ModelsData {
         return bundled_v1_models_data();
     };
 
-    if let Ok(parsed) = serde_json::from_str::<ModelsData>(&raw) {
+    if let Ok(mut parsed) = serde_json::from_str::<ModelsData>(&raw) {
+        ensure_ollama_provider(&mut parsed);
         return parsed;
     }
 
@@ -2853,6 +2998,7 @@ fn load_models_dev_cache() -> ModelsData {
     if data.is_empty() {
         bundled_v1_models_data()
     } else {
+        ensure_ollama_provider(&mut data);
         data
     }
 }
@@ -3179,15 +3325,17 @@ mod tests {
     }
 
     #[test]
-    fn bundled_v1_catalog_stays_limited_to_curated_provider_surface() {
+    fn bundled_v1_catalog_includes_ollama_local_path() {
         let data = bundled_v1_models_data();
 
-        assert_eq!(data.len(), 4);
+        assert_eq!(data.len(), 5);
+        assert!(data.contains_key("ollama"));
         assert!(data.contains_key("openai"));
         assert!(data.contains_key("anthropic"));
         assert!(data.contains_key("deepseek"));
         assert!(data.contains_key("openrouter"));
 
+        assert!(data["ollama"].models.contains_key(OLLAMA_DEFAULT_MODEL_ID));
         assert!(data["openai"].models.contains_key("gpt-5.3-codex"));
         assert!(data["anthropic"].models.contains_key("claude-sonnet-5"));
         assert!(data["deepseek"].models.contains_key("deepseek-v4-pro"));
@@ -3203,6 +3351,34 @@ mod tests {
 
         let provider = create_concrete_provider("openai", &state).expect("provider should exist");
         assert_eq!(provider.id(), "openai");
+    }
+
+    #[test]
+    fn creates_ollama_provider_without_api_key() {
+        let registry =
+            create_registry_from_bootstrap_config(&BootstrapConfig::default(), &HashMap::new());
+
+        let provider = registry
+            .get_provider("ollama")
+            .expect("provider should exist");
+        assert_eq!(provider.id(), "ollama");
+        assert!(provider.get_model(OLLAMA_DEFAULT_MODEL_ID).is_some());
+    }
+
+    #[test]
+    fn normalize_ollama_host_adds_scheme_and_v1_suffix() {
+        assert_eq!(
+            normalize_ollama_base_url("127.0.0.1:11434"),
+            OLLAMA_DEFAULT_BASE_URL
+        );
+        assert_eq!(
+            normalize_ollama_base_url("http://127.0.0.1:11434"),
+            OLLAMA_DEFAULT_BASE_URL
+        );
+        assert_eq!(
+            normalize_ollama_base_url(OLLAMA_DEFAULT_BASE_URL),
+            OLLAMA_DEFAULT_BASE_URL
+        );
     }
 
     #[test]
