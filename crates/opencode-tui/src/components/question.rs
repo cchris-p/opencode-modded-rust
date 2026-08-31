@@ -137,10 +137,10 @@ impl QuestionPrompt {
         }
     }
 
-    pub fn confirm(&mut self) -> Option<(QuestionRequest, String)> {
+    pub fn confirm(&mut self) -> Option<(QuestionRequest, Vec<String>)> {
         let q = self.current_question.as_ref()?;
-        let answer = if q.question_type == QuestionType::Text {
-            self.text_input.clone()
+        let answers = if q.question_type == QuestionType::Text {
+            vec![self.text_input.clone()]
         } else {
             // Collect selected option IDs
             q.options
@@ -149,14 +149,13 @@ impl QuestionPrompt {
                 .filter(|(i, _)| self.selected_options.get(*i).copied().unwrap_or(false))
                 .map(|(_, opt)| opt.id.clone())
                 .collect::<Vec<_>>()
-                .join(",")
         };
         let request = self.current_question.take()?;
         self.is_open = false;
         self.selected_index = 0;
         self.selected_options.clear();
         self.text_input.clear();
-        Some((request, answer))
+        Some((request, answers))
     }
 
     pub fn handle_click(&mut self, col: u16, row: u16) {

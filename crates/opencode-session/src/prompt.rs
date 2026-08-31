@@ -139,6 +139,8 @@ pub struct SessionPrompt {
     session_state: Arc<RwLock<SessionStateManager>>,
     mcp_clients: Option<Arc<opencode_mcp::McpClientRegistry>>,
     lsp_registry: Option<Arc<opencode_lsp::LspClientRegistry>>,
+    ask_callback: Option<opencode_tool::AskCallback>,
+    ask_question_callback: Option<opencode_tool::QuestionCallback>,
 }
 
 impl SessionPrompt {
@@ -148,6 +150,8 @@ impl SessionPrompt {
             session_state,
             mcp_clients: None,
             lsp_registry: None,
+            ask_callback: None,
+            ask_question_callback: None,
         }
     }
 
@@ -158,6 +162,16 @@ impl SessionPrompt {
 
     pub fn with_lsp_registry(mut self, registry: Arc<opencode_lsp::LspClientRegistry>) -> Self {
         self.lsp_registry = Some(registry);
+        self
+    }
+
+    pub fn with_ask_callback(mut self, callback: opencode_tool::AskCallback) -> Self {
+        self.ask_callback = Some(callback);
+        self
+    }
+
+    pub fn with_ask_question_callback(mut self, callback: opencode_tool::QuestionCallback) -> Self {
+        self.ask_question_callback = Some(callback);
         self
     }
 
@@ -840,6 +854,8 @@ impl SessionPrompt {
             system_prompt,
             tools,
             &agent_params,
+            self.ask_callback.clone(),
+            self.ask_question_callback.clone(),
             update_hook,
         )
         .await;
@@ -920,6 +936,8 @@ impl SessionPrompt {
             system_prompt,
             tools,
             &agent_params,
+            self.ask_callback.clone(),
+            self.ask_question_callback.clone(),
             None,
         )
         .await;
@@ -945,6 +963,8 @@ impl SessionPrompt {
         system_prompt: Option<String>,
         tools: Vec<ToolDefinition>,
         agent_params: &AgentParams,
+        ask_callback: Option<opencode_tool::AskCallback>,
+        ask_question_callback: Option<opencode_tool::QuestionCallback>,
         update_hook: Option<SessionUpdateHook>,
     ) -> anyhow::Result<()> {
         let mut step = 0u32;
@@ -1311,7 +1331,7 @@ impl SessionPrompt {
             if has_tool_calls {
                 tracing::info!("Processing tool calls for session {}", session_id);
 
-                let tool_context = opencode_tool::ToolContext::new(
+                let mut tool_context = opencode_tool::ToolContext::new(
                     session_id.clone(),
                     session
                         .messages
@@ -1322,6 +1342,20 @@ impl SessionPrompt {
                 )
                 .with_agent(String::new())
                 .with_abort(token.clone());
+
+                if let Some(ask_callback) = ask_callback.clone() {
+                    tool_context = tool_context.with_ask(move |request| {
+                        let ask_callback = ask_callback.clone();
+                        async move { ask_callback(request).await }
+                    });
+                }
+
+                if let Some(ask_question_callback) = ask_question_callback.clone() {
+                    tool_context = tool_context.with_ask_question(move |questions| {
+                        let ask_question_callback = ask_question_callback.clone();
+                        async move { ask_question_callback(questions).await }
+                    });
+                }
 
                 let registry = Arc::new(opencode_tool::create_default_registry().await);
                 if let Err(e) = Self::execute_tool_calls(

@@ -18,11 +18,12 @@ use std::convert::Infallible;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, Mutex, Notify, OnceCell, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify, OnceCell, RwLock};
 use tokio_stream::{
     wrappers::{BroadcastStream, ReceiverStream},
     StreamExt,
 };
+use uuid::Uuid;
 
 use crate::mcp_oauth::{
     LocalMcpConfig, McpOAuthError, McpOAuthManager, McpRuntimeConfig,
@@ -1739,9 +1740,129 @@ async fn session_prompt(
             let _ = update_tx.send(snapshot.clone());
         });
 
+        let permission_state = task_state.clone();
+        let permission_session_id = session_id.clone();
+        let permission_callback: opencode_tool::AskCallback = Arc::new(move |request| {
+            let state = permission_state.clone();
+            let session_id = permission_session_id.clone();
+            Box::pin(async move {
+                let request_id = format!("perm_{}", Uuid::new_v4().simple());
+                let tool_name = request
+                    .metadata
+                    .get("tool")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(&request.permission)
+                    .to_string();
+                let message = if request.patterns.is_empty() {
+                    request.permission.clone()
+                } else {
+                    format!("{}: {}", request.permission, request.patterns.join(", "))
+                };
+                let info = PermissionRequestInfo {
+                    id: request_id.clone(),
+                    session_id: session_id.clone(),
+                    permission: request.permission.clone(),
+                    patterns: request.patterns.clone(),
+                    tool: tool_name,
+                    input: serde_json::json!(request.metadata),
+                    message,
+                };
+                let (tx, rx) = oneshot::channel();
+                PERMISSION_REQUESTS
+                    .write()
+                    .await
+                    .insert(request_id.clone(), info);
+                PERMISSION_WAITERS
+                    .write()
+                    .await
+                    .insert(request_id.clone(), tx);
+                state.broadcast(
+                    &serde_json::json!({
+                        "type": "session.updated",
+                        "sessionID": session_id,
+                        "source": "permission.request",
+                    })
+                    .to_string(),
+                );
+
+                match rx.await {
+                    Ok(reply) if reply.reply == "reject" => {
+                        Err(opencode_tool::ToolError::PermissionDenied(
+                            reply
+                                .message
+                                .unwrap_or_else(|| "Permission request rejected".to_string()),
+                        ))
+                    }
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(opencode_tool::ToolError::ExecutionError(
+                        "Permission request dropped before reply".to_string(),
+                    )),
+                }
+            })
+        });
+
+        let question_state = task_state.clone();
+        let question_session_id = session_id.clone();
+        let question_callback: opencode_tool::QuestionCallback = Arc::new(move |questions| {
+            let state = question_state.clone();
+            let session_id = question_session_id.clone();
+            Box::pin(async move {
+                let request_id = format!("question_{}", Uuid::new_v4().simple());
+                let info = QuestionInfo {
+                    id: request_id.clone(),
+                    session_id: session_id.clone(),
+                    questions: questions
+                        .into_iter()
+                        .map(|question| QuestionPromptInfo {
+                            question: question.question,
+                            header: question.header,
+                            options: question
+                                .options
+                                .into_iter()
+                                .map(|option| QuestionOptionInfo {
+                                    label: option.label,
+                                    description: option.description,
+                                })
+                                .collect(),
+                            multiple: question.multiple,
+                        })
+                        .collect(),
+                };
+                let (tx, rx) = oneshot::channel();
+                QUESTION_REQUESTS
+                    .write()
+                    .await
+                    .insert(request_id.clone(), info);
+                QUESTION_WAITERS
+                    .write()
+                    .await
+                    .insert(request_id.clone(), tx);
+                state.broadcast(
+                    &serde_json::json!({
+                        "type": "session.updated",
+                        "sessionID": session_id,
+                        "source": "question.request",
+                    })
+                    .to_string(),
+                );
+
+                match rx.await {
+                    Ok(QuestionResolution::Answered(answers)) => Ok(answers),
+                    Ok(QuestionResolution::Rejected) => Err(
+                        opencode_tool::ToolError::ExecutionError("question rejected".to_string()),
+                    ),
+                    Err(_) => Err(opencode_tool::ToolError::ExecutionError(
+                        "Question request dropped before reply".to_string(),
+                    )),
+                }
+            })
+        });
+
         let prompt_runner = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
             opencode_session::SessionStateManager::new(),
-        )));
+        )))
+        .with_ask_callback(permission_callback)
+        .with_ask_question_callback(question_callback);
         let input = opencode_session::PromptInput {
             session_id: session_id.clone(),
             message_id: None,
@@ -3240,12 +3361,16 @@ fn permission_routes() -> Router<Arc<ServerState>> {
 pub struct PermissionRequestInfo {
     pub id: String,
     pub session_id: String,
+    pub permission: String,
+    pub patterns: Vec<String>,
     pub tool: String,
     pub input: serde_json::Value,
     pub message: String,
 }
 
 static PERMISSION_REQUESTS: Lazy<RwLock<HashMap<String, PermissionRequestInfo>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+static PERMISSION_WAITERS: Lazy<RwLock<HashMap<String, oneshot::Sender<ReplyPermissionRequest>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 async fn list_permissions() -> Json<Vec<PermissionRequestInfo>> {
@@ -3280,6 +3405,13 @@ async fn reply_permission(
         .remove(&id)
         .ok_or_else(|| ApiError::NotFound(format!("Permission request not found: {}", id)))?;
 
+    if let Some(waiter) = PERMISSION_WAITERS.write().await.remove(&id) {
+        let _ = waiter.send(ReplyPermissionRequest {
+            reply: req.reply.clone(),
+            message: req.message.clone(),
+        });
+    }
+
     if req.reply == "reject" {
         pending.retain(|_, item| item.session_id != permission.session_id);
     }
@@ -3291,6 +3423,14 @@ async fn reply_permission(
             "sessionID": permission.session_id,
             "reply": req.reply,
             "message": req.message,
+        })
+        .to_string(),
+    );
+    state.broadcast(
+        &serde_json::json!({
+            "type": "session.updated",
+            "sessionID": permission.session_id,
+            "source": "permission.reply",
         })
         .to_string(),
     );
@@ -3652,12 +3792,32 @@ fn question_routes() -> Router<Arc<ServerState>> {
 pub struct QuestionInfo {
     pub id: String,
     pub session_id: String,
-    pub questions: Vec<String>,
-    pub options: Option<Vec<Vec<String>>>,
+    pub questions: Vec<QuestionPromptInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QuestionPromptInfo {
+    pub question: String,
+    pub header: Option<String>,
+    pub options: Vec<QuestionOptionInfo>,
+    pub multiple: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QuestionOptionInfo {
+    pub label: String,
+    pub description: Option<String>,
 }
 
 static QUESTION_REQUESTS: Lazy<RwLock<HashMap<String, QuestionInfo>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+static QUESTION_WAITERS: Lazy<RwLock<HashMap<String, oneshot::Sender<QuestionResolution>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+enum QuestionResolution {
+    Answered(Vec<Vec<String>>),
+    Rejected,
+}
 
 async fn list_questions() -> Json<Vec<QuestionInfo>> {
     let pending = QUESTION_REQUESTS.read().await;
@@ -3682,12 +3842,24 @@ async fn reply_question(
         .ok_or_else(|| ApiError::NotFound(format!("Question request not found: {}", id)))?;
     drop(pending);
 
+    if let Some(waiter) = QUESTION_WAITERS.write().await.remove(&id) {
+        let _ = waiter.send(QuestionResolution::Answered(req.answers.clone()));
+    }
+
     state.broadcast(
         &serde_json::json!({
             "type": "question.replied",
             "requestID": id,
             "sessionID": question.session_id,
             "answers": req.answers,
+        })
+        .to_string(),
+    );
+    state.broadcast(
+        &serde_json::json!({
+            "type": "session.updated",
+            "sessionID": question.session_id,
+            "source": "question.reply",
         })
         .to_string(),
     );
@@ -3704,11 +3876,23 @@ async fn reject_question(
         .ok_or_else(|| ApiError::NotFound(format!("Question request not found: {}", id)))?;
     drop(pending);
 
+    if let Some(waiter) = QUESTION_WAITERS.write().await.remove(&id) {
+        let _ = waiter.send(QuestionResolution::Rejected);
+    }
+
     state.broadcast(
         &serde_json::json!({
             "type": "question.rejected",
             "requestID": id,
             "sessionID": question.session_id,
+        })
+        .to_string(),
+    );
+    state.broadcast(
+        &serde_json::json!({
+            "type": "session.updated",
+            "sessionID": question.session_id,
+            "source": "question.reject",
         })
         .to_string(),
     );

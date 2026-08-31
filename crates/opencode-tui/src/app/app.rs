@@ -12,7 +12,9 @@ use chrono::{TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::api::{
-    ApiClient, McpStatusInfo, MessageInfo, SessionInfo, SessionRevertInfo, SkillSummary,
+    ApiClient, McpStatusInfo, MessageInfo, PermissionRequestInfo as ApiPermissionRequestInfo,
+    QuestionInfo as ApiQuestionInfo, QuestionPromptInfo as ApiQuestionPromptInfo, SessionInfo,
+    SessionRevertInfo, SkillSummary,
 };
 use crate::app::state::AppState;
 use crate::app::terminal;
@@ -20,11 +22,11 @@ use crate::command::CommandAction;
 use crate::components::{
     Agent, AgentSelectDialog, AlertDialog, CommandPalette, ForkDialog, ForkEntry, HelpDialog,
     HomeView, McpDialog, McpItem, Model, ModelSelectDialog, PermissionAction, PermissionPrompt,
-    Prompt, PromptStashDialog, ProviderDialog, QuestionPrompt, SessionDeleteState,
-    SessionExportDialog, SessionItem, SessionListDialog, SessionRenameDialog, SessionView,
-    SettingsInputMode, SettingsView, SkillListDialog, SlashCommandPopup, StashItem, StatusDialog,
-    StatusLine, SubagentDialog, TagDialog, TaskKind, ThemeListDialog, ThemeOption, TimelineDialog,
-    TimelineEntry, Toast, ToastVariant,
+    Prompt, PromptStashDialog, ProviderDialog, QuestionOption, QuestionPrompt, QuestionRequest,
+    QuestionType, SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog,
+    SessionRenameDialog, SessionView, SettingsInputMode, SettingsView, SkillListDialog,
+    SlashCommandPopup, StashItem, StatusDialog, StatusLine, SubagentDialog, TagDialog, TaskKind,
+    ThemeListDialog, ThemeOption, TimelineDialog, TimelineEntry, Toast, ToastVariant,
 };
 use crate::context::keybind::LeaderKeyState;
 use crate::context::{
@@ -44,6 +46,14 @@ struct TranscriptOptions {
     include_thinking: bool,
     include_tool_details: bool,
     include_assistant_metadata: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PendingQuestionFlow {
+    id: String,
+    steps: Vec<ApiQuestionPromptInfo>,
+    answers: Vec<Vec<String>>,
+    current_index: usize,
 }
 
 pub struct App {
@@ -84,6 +94,7 @@ pub struct App {
     available_models: HashSet<String>,
     model_variants: HashMap<String, Vec<String>>,
     model_variant_selection: HashMap<String, Option<String>>,
+    pending_question_flow: Option<PendingQuestionFlow>,
     pending_initial_submit: bool,
     pending_session_sync: Option<String>,
     last_session_sync: Instant,
@@ -223,6 +234,7 @@ impl App {
             available_models: HashSet::new(),
             model_variants: HashMap::new(),
             model_variant_selection: HashMap::new(),
+            pending_question_flow: None,
             pending_initial_submit,
             pending_session_sync: None,
             last_session_sync: Instant::now(),
@@ -324,19 +336,28 @@ impl App {
                 if self.permission_prompt.is_open {
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Enter => {
-                            if let Some(_request) = self.permission_prompt.approve() {
-                                // TODO: Call API when available
-                                // self.api_client.reply_permission(&request.id, "once");
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "once", None);
                             }
                         }
                         KeyCode::Char('n') => {
-                            let _ = self.permission_prompt.deny();
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "reject", None);
+                            }
                         }
                         KeyCode::Char('a') => {
-                            let _ = self.permission_prompt.approve_always();
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "always", None);
+                            }
                         }
                         KeyCode::Esc => {
-                            self.permission_prompt.deny();
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "reject", None);
+                            }
                         }
                         _ => {}
                     }
@@ -350,12 +371,12 @@ impl App {
                         KeyCode::Down => self.question_prompt.move_down(),
                         KeyCode::Char(' ') => self.question_prompt.toggle_selected(),
                         KeyCode::Enter => {
-                            if let Some((_question, _answer)) = self.question_prompt.confirm() {
-                                // TODO: Call API when available
+                            if let Some((_question, answer)) = self.question_prompt.confirm() {
+                                self.advance_question_flow(answer);
                             }
                         }
                         KeyCode::Esc => {
-                            self.question_prompt.close();
+                            self.reject_question_flow();
                         }
                         KeyCode::Char(c) => self.question_prompt.type_char(c),
                         KeyCode::Backspace => self.question_prompt.backspace(),
@@ -603,15 +624,19 @@ impl App {
                         if self.permission_prompt.is_open {
                             self.permission_prompt.handle_click(col, row);
                             if let Some(action) = self.permission_prompt.take_pending_action() {
-                                match action {
-                                    PermissionAction::Approve => {
-                                        let _ = self.permission_prompt.approve();
-                                    }
-                                    PermissionAction::Deny => {
-                                        let _ = self.permission_prompt.deny();
-                                    }
-                                    PermissionAction::ApproveAlways => {
-                                        let _ = self.permission_prompt.approve_always();
+                                if let Some(request) =
+                                    self.permission_prompt.current_request().cloned()
+                                {
+                                    match action {
+                                        PermissionAction::Approve => {
+                                            self.respond_to_permission(&request.id, "once", None);
+                                        }
+                                        PermissionAction::Deny => {
+                                            self.respond_to_permission(&request.id, "reject", None);
+                                        }
+                                        PermissionAction::ApproveAlways => {
+                                            self.respond_to_permission(&request.id, "always", None);
+                                        }
                                     }
                                 }
                             }
@@ -755,6 +780,12 @@ impl App {
                             tick_changed = true;
                         }
                     }
+                } else {
+                    self.pending_session_sync = None;
+                    self.permission_prompt.close();
+                    self.question_prompt.close();
+                    self.pending_question_flow = None;
+                    self.context.set_pending_permissions(0);
                 }
                 if self.last_aux_sync.elapsed() >= Duration::from_secs(5) {
                     self.refresh_session_list_dialog();
@@ -2854,6 +2885,216 @@ impl App {
         Ok(())
     }
 
+    fn sync_pending_interactions(&mut self, session_id: &str) -> anyhow::Result<()> {
+        let Some(client) = self.context.get_api_client() else {
+            self.permission_prompt.close();
+            self.question_prompt.close();
+            self.pending_question_flow = None;
+            self.context.set_pending_permissions(0);
+            return Ok(());
+        };
+
+        let permissions = client
+            .list_permissions()?
+            .into_iter()
+            .filter(|request| request.session_id == session_id)
+            .map(|request| map_api_permission_request(&request))
+            .collect::<Vec<_>>();
+        self.context.set_pending_permissions(permissions.len());
+        self.permission_prompt.set_requests(permissions);
+
+        let question = client
+            .list_questions()?
+            .into_iter()
+            .find(|request| request.session_id == session_id);
+        self.sync_question_prompt(question);
+        Ok(())
+    }
+
+    fn sync_question_prompt(&mut self, question: Option<ApiQuestionInfo>) {
+        let Some(question) = question else {
+            self.question_prompt.close();
+            self.pending_question_flow = None;
+            return;
+        };
+
+        if self
+            .pending_question_flow
+            .as_ref()
+            .map(|flow| flow.id.as_str())
+            == Some(question.id.as_str())
+        {
+            return;
+        }
+
+        if question.questions.is_empty() {
+            self.question_prompt.close();
+            self.pending_question_flow = None;
+            return;
+        }
+
+        let mut flow = PendingQuestionFlow {
+            id: question.id,
+            answers: Vec::new(),
+            current_index: 0,
+            steps: question.questions,
+        };
+        self.open_question_flow_step(&mut flow);
+        self.pending_question_flow = Some(flow);
+    }
+
+    fn open_question_flow_step(&mut self, flow: &mut PendingQuestionFlow) {
+        let Some(step) = flow.steps.get(flow.current_index) else {
+            self.question_prompt.close();
+            return;
+        };
+        let prompt_type = if step.options.is_empty() {
+            QuestionType::Text
+        } else if step.multiple {
+            QuestionType::MultipleChoice
+        } else {
+            QuestionType::SingleChoice
+        };
+        let prompt = QuestionRequest {
+            id: flow.id.clone(),
+            question: step
+                .header
+                .as_ref()
+                .map(|header| format!("{}\n\n{}", header, step.question))
+                .unwrap_or_else(|| step.question.clone()),
+            question_type: prompt_type,
+            options: step
+                .options
+                .iter()
+                .map(|option| QuestionOption {
+                    id: option.label.clone(),
+                    label: option.label.clone(),
+                })
+                .collect(),
+        };
+        self.question_prompt.ask(prompt);
+    }
+
+    fn advance_question_flow(&mut self, answer: Vec<String>) {
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+        let Some(mut flow) = self.pending_question_flow.take() else {
+            self.question_prompt.close();
+            return;
+        };
+
+        flow.answers.push(answer);
+        flow.current_index += 1;
+
+        if flow.current_index < flow.steps.len() {
+            self.open_question_flow_step(&mut flow);
+            self.pending_question_flow = Some(flow);
+            return;
+        }
+
+        match client.reply_question(&flow.id, flow.answers.clone()) {
+            Ok(_) => {
+                self.question_prompt.close();
+                self.toast
+                    .show(ToastVariant::Success, "Question answered", 1800);
+            }
+            Err(err) => {
+                self.toast.show(
+                    ToastVariant::Error,
+                    &format!("Failed to answer question: {}", err),
+                    3200,
+                );
+                if let Some(question) = flow
+                    .steps
+                    .get(flow.current_index.saturating_sub(1))
+                    .cloned()
+                {
+                    flow.current_index = flow.current_index.saturating_sub(1);
+                    flow.answers.pop();
+                    self.question_prompt.ask(QuestionRequest {
+                        id: flow.id.clone(),
+                        question: question
+                            .header
+                            .as_ref()
+                            .map(|header| format!("{}\n\n{}", header, question.question))
+                            .unwrap_or(question.question),
+                        question_type: if question.options.is_empty() {
+                            QuestionType::Text
+                        } else if question.multiple {
+                            QuestionType::MultipleChoice
+                        } else {
+                            QuestionType::SingleChoice
+                        },
+                        options: question
+                            .options
+                            .into_iter()
+                            .map(|option| QuestionOption {
+                                id: option.label.clone(),
+                                label: option.label,
+                            })
+                            .collect(),
+                    });
+                }
+                self.pending_question_flow = Some(flow);
+            }
+        }
+    }
+
+    fn reject_question_flow(&mut self) {
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+        let Some(flow) = self.pending_question_flow.take() else {
+            self.question_prompt.close();
+            return;
+        };
+
+        match client.reject_question(&flow.id) {
+            Ok(_) => {
+                self.question_prompt.close();
+                self.toast
+                    .show(ToastVariant::Info, "Question rejected", 1800);
+            }
+            Err(err) => {
+                self.toast.show(
+                    ToastVariant::Error,
+                    &format!("Failed to reject question: {}", err),
+                    3200,
+                );
+                self.pending_question_flow = Some(flow);
+            }
+        }
+    }
+
+    fn respond_to_permission(&mut self, request_id: &str, reply: &str, message: Option<String>) {
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+
+        match client.reply_permission(request_id, reply, message) {
+            Ok(_) => {
+                let feedback = match reply {
+                    "always" => "Permission approved",
+                    "reject" => "Permission rejected",
+                    _ => "Permission approved",
+                };
+                self.toast.show(ToastVariant::Info, feedback, 1800);
+            }
+            Err(err) => self.toast.show(
+                ToastVariant::Error,
+                &format!("Failed to reply to permission request: {}", err),
+                3200,
+            ),
+        }
+    }
+
     fn refresh_lsp_status(&mut self) -> anyhow::Result<()> {
         let Some(client) = self.context.get_api_client() else {
             return Ok(());
@@ -3287,6 +3528,8 @@ impl App {
             session_ctx.revert.remove(session_id);
         }
         drop(session_ctx);
+
+        self.sync_pending_interactions(session_id)?;
 
         self.last_session_sync = Instant::now();
         Ok(())
@@ -4231,6 +4474,48 @@ fn default_export_filename(title: &str, session_id: &str) -> String {
     format!("{slug}.md")
 }
 
+fn map_api_permission_request(
+    request: &ApiPermissionRequestInfo,
+) -> crate::components::PermissionRequest {
+    let resource = request
+        .patterns
+        .first()
+        .cloned()
+        .or_else(|| {
+            request
+                .input
+                .get("path")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| request.message.clone());
+
+    crate::components::PermissionRequest {
+        id: request.id.clone(),
+        permission_type: map_permission_type(&request.permission),
+        resource,
+        tool_name: request.tool.clone(),
+    }
+}
+
+fn map_permission_type(permission: &str) -> crate::components::PermissionType {
+    match permission {
+        "read" | "todoread" => crate::components::PermissionType::ReadFile,
+        "write" | "todowrite" => crate::components::PermissionType::WriteFile,
+        "edit" => crate::components::PermissionType::Edit,
+        "bash" => crate::components::PermissionType::Bash,
+        "glob" => crate::components::PermissionType::Glob,
+        "grep" => crate::components::PermissionType::Grep,
+        "list" => crate::components::PermissionType::List,
+        "task" => crate::components::PermissionType::Task,
+        "webfetch" => crate::components::PermissionType::WebFetch,
+        "websearch" => crate::components::PermissionType::WebSearch,
+        "codesearch" => crate::components::PermissionType::CodeSearch,
+        "external_directory" => crate::components::PermissionType::ExternalDirectory,
+        _ => crate::components::PermissionType::ExecuteCommand,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4318,5 +4603,45 @@ mod tests {
         assert!(transcript.contains("private reasoning"));
         assert!(transcript.contains("**Input:**"));
         assert!(transcript.contains("**Output:**"));
+    }
+
+    #[test]
+    fn permission_requests_prefer_explicit_pattern_for_resource() {
+        let request = ApiPermissionRequestInfo {
+            id: "perm_1".to_string(),
+            session_id: "ses_1".to_string(),
+            permission: "read".to_string(),
+            patterns: vec!["src/main.rs".to_string()],
+            tool: "read".to_string(),
+            input: serde_json::json!({"path": "ignored.rs"}),
+            message: "Read src/main.rs".to_string(),
+        };
+
+        let mapped = map_api_permission_request(&request);
+        assert_eq!(mapped.resource, "src/main.rs");
+        assert_eq!(
+            mapped.permission_type,
+            crate::components::PermissionType::ReadFile
+        );
+    }
+
+    #[test]
+    fn permission_requests_fall_back_to_metadata_path() {
+        let request = ApiPermissionRequestInfo {
+            id: "perm_2".to_string(),
+            session_id: "ses_1".to_string(),
+            permission: "glob".to_string(),
+            patterns: Vec::new(),
+            tool: "glob".to_string(),
+            input: serde_json::json!({"path": "/tmp/workspace"}),
+            message: "Glob search".to_string(),
+        };
+
+        let mapped = map_api_permission_request(&request);
+        assert_eq!(mapped.resource, "/tmp/workspace");
+        assert_eq!(
+            mapped.permission_type,
+            crate::components::PermissionType::Glob
+        );
     }
 }
