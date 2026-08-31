@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "done"
+status: "qa"
 created: "2026-08-29"
 ---
 
@@ -107,10 +107,6 @@ This means Ollama is not part of the curated four-provider V1 breadth surface, b
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/18
-
-## Completion
-
-- Merged into `development` on 2026-08-31.
 
 ## Related Items
 
