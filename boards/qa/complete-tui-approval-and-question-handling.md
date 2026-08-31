@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-08-29"
 ---
 
@@ -79,6 +79,14 @@ Finish the TUI approval and question-response flow so the interactive V1 workflo
 ## Branch
 
 - `feature/START-018-tui-approval-question-handling`
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/19
+
+## Next QA Step
+
+- Check out `feature/START-018-tui-approval-question-handling` in the main workspace when it is safe to move the shared checkout, then verify a live approval request and a live question flow from the TUI session view.
 
 ## Related Items
 
