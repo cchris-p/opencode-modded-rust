@@ -239,6 +239,57 @@ pub struct ProviderOAuthStartInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionRequestInfo {
+    pub id: String,
+    #[serde(alias = "sessionID")]
+    pub session_id: String,
+    pub permission: String,
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    pub tool: String,
+    pub input: serde_json::Value,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionReplyRequest {
+    pub reply: String,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionOptionInfo {
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionPromptInfo {
+    pub question: String,
+    #[serde(default)]
+    pub header: Option<String>,
+    #[serde(default)]
+    pub options: Vec<QuestionOptionInfo>,
+    #[serde(default)]
+    pub multiple: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionInfo {
+    pub id: String,
+    #[serde(alias = "sessionID")]
+    pub session_id: String,
+    pub questions: Vec<QuestionPromptInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplyQuestionRequest {
+    pub answers: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProviderOAuthAuthorizeRequest {
     method: usize,
 }
@@ -670,6 +721,106 @@ impl ApiClient {
         }
 
         Ok(response.json::<Vec<SkillSummary>>()?)
+    }
+
+    pub fn list_permissions(&self) -> anyhow::Result<Vec<PermissionRequestInfo>> {
+        let url = format!("{}/permission", self.base_url);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to list permissions: {} - {}", status, text);
+        }
+
+        Ok(response.json::<Vec<PermissionRequestInfo>>()?)
+    }
+
+    pub fn reply_permission(
+        &self,
+        request_id: &str,
+        reply: &str,
+        message: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let url = format!("{}/permission/{}/reply", self.base_url, request_id);
+        let response = self
+            .client
+            .post(&url)
+            .json(&PermissionReplyRequest {
+                reply: reply.to_string(),
+                message,
+            })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to reply to permission request `{}`: {} - {}",
+                request_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<bool>()?)
+    }
+
+    pub fn list_questions(&self) -> anyhow::Result<Vec<QuestionInfo>> {
+        let url = format!("{}/question", self.base_url);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to list questions: {} - {}", status, text);
+        }
+
+        Ok(response.json::<Vec<QuestionInfo>>()?)
+    }
+
+    pub fn reply_question(
+        &self,
+        request_id: &str,
+        answers: Vec<Vec<String>>,
+    ) -> anyhow::Result<bool> {
+        let url = format!("{}/question/{}/reply", self.base_url, request_id);
+        let response = self
+            .client
+            .post(&url)
+            .json(&ReplyQuestionRequest { answers })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to reply to question request `{}`: {} - {}",
+                request_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<bool>()?)
+    }
+
+    pub fn reject_question(&self, request_id: &str) -> anyhow::Result<bool> {
+        let url = format!("{}/question/{}/reject", self.base_url, request_id);
+        let response = self.client.post(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to reject question request `{}`: {} - {}",
+                request_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<bool>()?)
     }
 
     pub fn get_mcp_status(&self) -> anyhow::Result<Vec<McpStatusInfo>> {

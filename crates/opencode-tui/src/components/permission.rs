@@ -108,6 +108,13 @@ impl PermissionPrompt {
         self.is_open = !self.requests.is_empty();
     }
 
+    pub fn set_requests(&mut self, requests: Vec<PermissionRequest>) {
+        self.requests = requests;
+        self.current_index = 0;
+        self.is_open = !self.requests.is_empty();
+        self.pending_action = None;
+    }
+
     pub fn current_request(&self) -> Option<&PermissionRequest> {
         self.requests.get(self.current_index)
     }
