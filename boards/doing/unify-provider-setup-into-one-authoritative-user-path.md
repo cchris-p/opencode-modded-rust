@@ -142,3 +142,7 @@ This leaves the product without one authoritative answer to "how do I set up or 
 
 - `cargo fmt --all`
 - `cargo check -p opencode-server -p opencode-tui`
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/21
