@@ -140,7 +140,7 @@ impl CommandRegistry {
             title: "New Session".to_string(),
             description: "Start a new conversation".to_string(),
             category: CommandCategory::Session,
-            keybind: Some("ctrl_n".to_string()),
+            keybind: None,
             suggested: true,
             action: CommandAction::NewSession,
         });
@@ -151,7 +151,7 @@ impl CommandRegistry {
             title: "Switch Session".to_string(),
             description: "Switch to another session".to_string(),
             category: CommandCategory::Session,
-            keybind: Some("ctrl_s".to_string()),
+            keybind: None,
             suggested: true,
             action: CommandAction::OpenSessionList,
         });
@@ -504,25 +504,36 @@ impl CommandRegistry {
     }
 
     pub fn search(&self, query: &str) -> Vec<&SlashCommand> {
-        let mut scored: Vec<(&SlashCommand, i32)> = self
-            .commands
-            .values()
-            .filter_map(|cmd| {
-                let name_score = fuzzy_match(query, &cmd.name);
-                let alias_score = cmd
-                    .aliases
-                    .iter()
-                    .filter_map(|a| fuzzy_match(query, a))
-                    .max();
-                let title_score = fuzzy_match(query, &cmd.title);
-                let best = name_score
-                    .into_iter()
-                    .chain(alias_score)
-                    .chain(title_score)
-                    .max();
-                best.map(|s| (cmd, s))
-            })
-            .collect();
+        let mut scored_by_name: HashMap<String, (&SlashCommand, i32)> = HashMap::new();
+
+        for cmd in self.commands.values() {
+            let name_score = fuzzy_match(query, &cmd.name);
+            let alias_score = cmd
+                .aliases
+                .iter()
+                .filter_map(|a| fuzzy_match(query, a))
+                .max();
+            let title_score = fuzzy_match(query, &cmd.title);
+            let Some(best) = name_score
+                .into_iter()
+                .chain(alias_score)
+                .chain(title_score)
+                .max()
+            else {
+                continue;
+            };
+
+            scored_by_name
+                .entry(cmd.name.clone())
+                .and_modify(|entry| {
+                    if best > entry.1 {
+                        *entry = (cmd, best);
+                    }
+                })
+                .or_insert((cmd, best));
+        }
+
+        let mut scored: Vec<(&SlashCommand, i32)> = scored_by_name.into_values().collect();
 
         scored.sort_by(|a, b| {
             b.1.cmp(&a.1)
@@ -563,5 +574,38 @@ impl CommandRegistry {
 impl Default for CommandRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandAction, CommandRegistry};
+
+    #[test]
+    fn search_deduplicates_commands_with_aliases() {
+        let registry = CommandRegistry::new();
+
+        let matching: Vec<_> = registry
+            .search("resume")
+            .into_iter()
+            .filter(|cmd| matches!(cmd.action, CommandAction::OpenSessionList))
+            .collect();
+
+        assert_eq!(matching.len(), 1);
+    }
+
+    #[test]
+    fn session_suggestions_do_not_expose_hotkey_hints() {
+        let registry = CommandRegistry::new();
+
+        let new_session = registry.get("/new").expect("/new command should exist");
+        let switch_session = registry
+            .get("/sessions")
+            .expect("/sessions command should exist");
+
+        assert_eq!(new_session.title, "New Session");
+        assert!(new_session.keybind.is_none());
+        assert_eq!(switch_session.title, "Switch Session");
+        assert!(switch_session.keybind.is_none());
     }
 }
