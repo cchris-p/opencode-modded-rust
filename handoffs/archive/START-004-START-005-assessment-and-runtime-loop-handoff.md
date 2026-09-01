@@ -59,3 +59,8 @@ This handoff does not define deployment to `main`.
 6. Update `START-005` with any summary links needed for later implementation work.
 7. Open one PR referencing both `START-004` and `START-005`, target `development`, and enumerate both item IDs in the PR body.
 8. Merge into `development` when ready, verify both planning outputs there, then delete the local and remote feature branch.
+
+## Archived Outcome
+- Archived on 2026-08-31 after handoff completion.
+- `START-004` landed earlier in PR #6, and `START-005` landed in PR #13: https://github.com/cchris-p/opencode-modded-rust/pull/13
+- The originally planned single-PR packet completed in two merged steps, but the assessment and runtime-loop outputs are both now delivered on `development`.

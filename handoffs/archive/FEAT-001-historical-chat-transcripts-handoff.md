@@ -47,3 +47,8 @@ This handoff does not define deployment to `main`.
 5. Document any intentional remaining differences from the reference implementation in the board item's dev notes and the PR description.
 6. Open a PR referencing `FEAT-001` and target `development`.
 7. Merge into `development` when ready, verify the export behavior there, then delete the local and remote feature branch.
+
+## Archived Outcome
+- Archived on 2026-08-31 after handoff completion.
+- `FEAT-001` landed in PR #12: https://github.com/cchris-p/opencode-modded-rust/pull/12
+- The Rust TUI transcript export path now honors the existing thinking, tool-details, and assistant-metadata options while leaving the CLI JSON export path unchanged.

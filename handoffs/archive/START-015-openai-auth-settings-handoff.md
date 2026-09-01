@@ -48,3 +48,8 @@ This handoff does not define deployment to `main`.
 5. Document any intentional deviations or newly discovered lower-level auth gaps on the board item and in the PR.
 6. Open a PR referencing `START-015`, target `development`, and keep the PR body specific about any remaining auth limitations.
 7. Merge into `development` when ready, verify the feature there, then delete the local and remote feature branch.
+
+## Archived Outcome
+- Archived on 2026-08-31 after handoff completion.
+- `START-015` landed in PR #7: https://github.com/cchris-p/opencode-modded-rust/pull/7
+- The settings flow now supports OpenAI API-key entry plus the existing pasted code/token callback login path using the shared persisted auth store.
