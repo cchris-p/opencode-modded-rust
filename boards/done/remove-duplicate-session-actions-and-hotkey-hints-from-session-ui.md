@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-08-31"
 ---
 
