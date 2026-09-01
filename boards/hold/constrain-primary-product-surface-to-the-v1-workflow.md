@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "START"
 spec: "wiki/v1.md"
-status: "todo"
+status: "hold"
 created: "2026-08-29"
 ---
 
@@ -36,6 +36,8 @@ Define which user-facing modes and capabilities are primary for V1, and which br
 
 - This is a product-boundary item, not a mandate to delete useful infrastructure.
 - Retain compatibility surfaces only where they improve product utility or reduce risk.
+- Blocked on completing the remaining current functionality-based stories first.
+- Evaluation stories do not count as blockers for this item because they are intentionally parked in the `hold` lane pending more real usage evidence.
 
 ## Related Items
 

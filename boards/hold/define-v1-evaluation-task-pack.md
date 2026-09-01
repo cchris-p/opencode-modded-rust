@@ -5,7 +5,7 @@ priority: "P1"
 type: "docs"
 area: "START"
 spec: "wiki/agent-evaluation-strategy.md"
-status: "todo"
+status: "hold"
 created: "2026-08-30"
 ---
 
@@ -39,3 +39,7 @@ Create the first stable set of bounded V1 evaluation tasks so runtime changes ca
 ## Notes
 
 - Prefer realistic tasks over synthetic benchmark prompts.
+- Blocked until more real product usage exists across current functionality stories.
+- Use all generated transcripts as raw evidence when this resumes.
+- Include the collected OpenCode OG session corpus alongside this repo's transcripts so evaluator candidates come from real workflows instead of invented scenarios.
+- Focus the future task pack on real functionality work, not synthetic evaluation-only exercises.
