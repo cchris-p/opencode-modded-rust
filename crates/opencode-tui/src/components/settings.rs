@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+
+use opencode_config::{Config as AppConfig, ProviderConfig};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -8,7 +11,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::api::{ProviderAuthMethodInfo, ProviderAuthStatusInfo, ProviderOAuthStartInfo};
+use crate::api::{
+    ProviderAuthMethodInfo, ProviderAuthStatusInfo, ProviderOAuthStartInfo, ProviderSetupInfo,
+};
 use crate::components::Prompt;
 use crate::context::{AppContext, ProviderInfo};
 
@@ -19,7 +24,7 @@ const V1_PROVIDER_IDS: &[&str] = &["ollama", "openai", "anthropic", "deepseek", 
 pub struct SettingsView {
     selected_provider: usize,
     selected_model: usize,
-    openai_auth_status: Option<ProviderAuthStatusInfo>,
+    provider_setup: ProviderSetupInfo,
     openai_auth_methods: Vec<ProviderAuthMethodInfo>,
     input_mode: Option<SettingsInputMode>,
     input_value: String,
@@ -31,6 +36,7 @@ pub struct SettingsView {
 pub enum SettingsInputMode {
     ApiKey,
     OAuthCode,
+    OllamaBaseUrl,
 }
 
 impl SettingsView {
@@ -38,7 +44,7 @@ impl SettingsView {
         Self {
             selected_provider: 0,
             selected_model: 0,
-            openai_auth_status: None,
+            provider_setup: ProviderSetupInfo::default(),
             openai_auth_methods: Vec::new(),
             input_mode: None,
             input_value: String::new(),
@@ -47,8 +53,8 @@ impl SettingsView {
         }
     }
 
-    pub fn set_openai_auth_status(&mut self, status: Option<ProviderAuthStatusInfo>) {
-        self.openai_auth_status = status;
+    pub fn set_provider_setup(&mut self, setup: ProviderSetupInfo) {
+        self.provider_setup = setup;
     }
 
     pub fn set_openai_auth_methods(&mut self, methods: Vec<ProviderAuthMethodInfo>) {
@@ -67,6 +73,13 @@ impl SettingsView {
         self.input_value.clear();
         self.oauth_prompt = Some(prompt);
         self.oauth_method = Some(method);
+    }
+
+    pub fn begin_ollama_base_url_input(&mut self) {
+        self.input_mode = Some(SettingsInputMode::OllamaBaseUrl);
+        self.input_value = self.provider_setup.ollama_base_url.clone();
+        self.oauth_prompt = None;
+        self.oauth_method = None;
     }
 
     pub fn cancel_input(&mut self) {
@@ -220,13 +233,19 @@ impl SettingsView {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),
-                Constraint::Min(10),
                 Constraint::Length(8),
-                Constraint::Length(6),
+                Constraint::Min(10),
+                Constraint::Length(9),
+                Constraint::Length(7),
                 Constraint::Length(4),
             ])
             .split(area);
+
+        let effective_auth = self
+            .provider_setup
+            .effective_provider
+            .as_ref()
+            .and_then(|provider_id| self.provider_setup.auth.get(provider_id));
 
         let summary = vec![
             Line::from(Span::styled(
@@ -237,20 +256,77 @@ impl SettingsView {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Current provider: ", Style::default().fg(theme.text_muted)),
                 Span::styled(
-                    current_provider
+                    "Authoritative path: ",
+                    Style::default().fg(theme.text_muted),
+                ),
+                Span::styled(
+                    if self.provider_setup.authoritative_path.is_empty() {
+                        "Settings > Provider".to_string()
+                    } else {
+                        self.provider_setup.authoritative_path.clone()
+                    },
+                    Style::default().fg(theme.text),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "Effective provider: ",
+                    Style::default().fg(theme.text_muted),
+                ),
+                Span::styled(
+                    self.provider_setup
+                        .effective_provider
                         .clone()
+                        .or(current_provider.clone())
                         .unwrap_or_else(|| "not selected".to_string()),
                     Style::default().fg(theme.text),
                 ),
             ]),
             Line::from(vec![
-                Span::styled("Current model: ", Style::default().fg(theme.text_muted)),
+                Span::styled("Effective model: ", Style::default().fg(theme.text_muted)),
                 Span::styled(
-                    current_model
+                    self.provider_setup
+                        .effective_model
                         .clone()
+                        .or(current_model.clone())
                         .unwrap_or_else(|| "not selected".to_string()),
+                    Style::default().fg(theme.text),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Selection source: ", Style::default().fg(theme.text_muted)),
+                Span::styled(
+                    self.provider_setup.selection_source.clone(),
+                    Style::default().fg(theme.warning),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Auth state: ", Style::default().fg(theme.text_muted)),
+                Span::styled(
+                    effective_auth
+                        .map(format_auth_summary)
+                        .unwrap_or_else(|| "Not configured".to_string()),
+                    Style::default().fg(
+                        if effective_auth
+                            .map(|status| status.configured)
+                            .unwrap_or(false)
+                        {
+                            theme.success
+                        } else {
+                            theme.warning
+                        },
+                    ),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Ollama host: ", Style::default().fg(theme.text_muted)),
+                Span::styled(
+                    format!(
+                        "{} ({})",
+                        self.provider_setup.ollama_base_url,
+                        self.provider_setup.ollama_base_url_source
+                    ),
                     Style::default().fg(theme.text),
                 ),
             ]),
@@ -354,17 +430,17 @@ impl SettingsView {
                 Span::styled("Press ", Style::default().fg(theme.text_muted)),
                 Span::styled("Enter", Style::default().fg(theme.text)),
                 Span::styled(
-                    " to apply the highlighted model for this session.",
+                    " to save the highlighted provider/model path.",
                     Style::default().fg(theme.text_muted),
                 ),
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "Press a for API key, l for login, x to clear auth, r to refresh.",
+                "Press a for API key, l for login, x to clear auth, u for Ollama host, r to refresh.",
                 Style::default().fg(theme.warning),
             )),
             Line::from(Span::styled(
-                "This screen intentionally reuses session-local model selection instead of first-run onboarding.",
+                "Config and environment overrides remain supported, but this screen is the authoritative setup path.",
                 Style::default().fg(theme.text_muted),
             )),
         ])
@@ -405,26 +481,65 @@ impl SettingsView {
         providers: &[ProviderInfo],
         theme: &crate::theme::Theme,
     ) -> Vec<Line<'static>> {
-        if providers
+        let selected_provider_id = providers
             .get(self.selected_provider)
-            .map(|provider| provider.id.as_str())
-            != Some("openai")
-        {
-            return vec![
-                Line::from(Span::styled(
-                    "OpenAI auth actions appear when OpenAI is highlighted.",
+            .map(|provider| provider.id.as_str());
+        let selected_status =
+            selected_provider_id.and_then(|provider_id| self.provider_setup.auth.get(provider_id));
+
+        if selected_provider_id != Some("openai") {
+            let mut lines = vec![Line::from(vec![
+                Span::styled("Status: ", Style::default().fg(theme.text_muted)),
+                Span::styled(
+                    selected_status
+                        .map(format_auth_summary)
+                        .unwrap_or_else(|| "Not configured".to_string()),
+                    Style::default().fg(
+                        if selected_status
+                            .map(|status| status.configured)
+                            .unwrap_or(false)
+                        {
+                            theme.success
+                        } else {
+                            theme.warning
+                        },
+                    ),
+                ),
+            ])];
+            lines.push(Line::from(""));
+            if selected_provider_id == Some("ollama") {
+                match self.input_mode {
+                    Some(SettingsInputMode::OllamaBaseUrl) => {
+                        lines.push(Line::from(Span::styled(
+                            "Enter Ollama host or base URL:",
+                            Style::default().fg(theme.text),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            format!("> {}", self.input_value),
+                            Style::default().fg(theme.primary),
+                        )));
+                    }
+                    _ => lines.push(Line::from(Span::styled(
+                        format!(
+                            "u Edit Ollama host ({})",
+                            self.provider_setup.ollama_base_url_source
+                        ),
+                        Style::default().fg(theme.text),
+                    ))),
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "Advanced auth overrides can still come from config or environment.",
                     Style::default().fg(theme.text_muted),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Other providers keep the current model-selection-only flow for now.",
-                    Style::default().fg(theme.text_muted),
-                )),
-            ];
+                )));
+            }
+            return lines;
         }
 
         let (status_text, status_color) = match self
-            .openai_auth_status
+            .provider_setup
+            .auth
+            .get("openai")
             .as_ref()
             .and_then(|status| status.auth_type.as_deref())
         {
@@ -433,7 +548,9 @@ impl SettingsView {
             Some("wellknown") => ("Auth saved", theme.success),
             Some(_) => ("Configured", theme.success),
             None if self
-                .openai_auth_status
+                .provider_setup
+                .auth
+                .get("openai")
                 .as_ref()
                 .map(|status| status.configured)
                 .unwrap_or(false) =>
@@ -488,12 +605,34 @@ impl SettingsView {
                     Style::default().fg(theme.primary),
                 )));
             }
+            Some(SettingsInputMode::OllamaBaseUrl) => {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Enter Ollama host or base URL:",
+                    Style::default().fg(theme.text),
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("> {}", self.input_value),
+                    Style::default().fg(theme.primary),
+                )));
+            }
             None => {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "a API key   l Login   x Clear",
                     Style::default().fg(theme.text),
                 )));
+                if let Some(source) = self
+                    .provider_setup
+                    .auth
+                    .get("openai")
+                    .and_then(|status| status.source.as_ref())
+                {
+                    lines.push(Line::from(Span::styled(
+                        format!("Credential source: {source}"),
+                        Style::default().fg(theme.text_muted),
+                    )));
+                }
             }
         }
 
@@ -504,6 +643,43 @@ impl SettingsView {
 impl Default for SettingsView {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn format_auth_summary(status: &ProviderAuthStatusInfo) -> String {
+    let base = match status.auth_type.as_deref() {
+        Some("api") => "API key configured",
+        Some("oauth") => "OAuth login configured",
+        Some("wellknown") => "Managed auth configured",
+        Some("local") => "Local provider ready",
+        Some(_) if status.configured => "Configured",
+        _ => "Not configured",
+    };
+    match status.source.as_deref() {
+        Some(source) if !source.is_empty() => format!("{base} via {source}"),
+        _ => base.to_string(),
+    }
+}
+
+pub fn provider_selection_patch(model_ref: String) -> AppConfig {
+    AppConfig {
+        model: Some(model_ref),
+        ..Default::default()
+    }
+}
+
+pub fn ollama_base_url_patch(base_url: String) -> AppConfig {
+    let mut providers = HashMap::new();
+    providers.insert(
+        "ollama".to_string(),
+        ProviderConfig {
+            base_url: Some(base_url),
+            ..Default::default()
+        },
+    );
+    AppConfig {
+        provider: Some(providers),
+        ..Default::default()
     }
 }
 

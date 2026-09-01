@@ -34,7 +34,9 @@ use crate::pty::{PtyManager, PtySession as PtySessionStruct, PtySubscription};
 use crate::worktree::{self, WorktreeInfo as WorktreeInfoStruct};
 use crate::{ApiError, Result, ServerState};
 use opencode_agent::{AgentMode, AgentRegistry};
-use opencode_config::{load_config, Config as AppConfig, McpServerConfig as LoadedMcpServerConfig};
+use opencode_config::{
+    load_config, update_config, Config as AppConfig, McpServerConfig as LoadedMcpServerConfig,
+};
 use opencode_plugin::subprocess::{PluginAuthBridge, PluginLoader, PluginSubprocessError};
 use opencode_provider::{
     temperature_for_model, top_p_for_model, AuthInfo, AuthMethodType, ModelsData, ModelsDevInfo,
@@ -2580,17 +2582,23 @@ fn config_routes() -> Router<Arc<ServerState>> {
 static CONFIG_STATE: Lazy<RwLock<AppConfig>> = Lazy::new(|| RwLock::new(AppConfig::default()));
 
 async fn get_config(State(_state): State<Arc<ServerState>>) -> Result<Json<AppConfig>> {
-    let config = CONFIG_STATE.read().await;
-    Ok(Json(config.clone()))
+    let config = load_runtime_config_from_disk()?;
+    *CONFIG_STATE.write().await = config.clone();
+    Ok(Json(config))
 }
 
 async fn patch_config(
     State(state): State<Arc<ServerState>>,
     Json(patch): Json<AppConfig>,
 ) -> Result<Json<AppConfig>> {
-    let mut config = CONFIG_STATE.write().await;
-    config.merge(patch);
-    let updated = config.clone();
+    let cwd = current_project_dir()?;
+    update_config(&cwd, &patch).map_err(|error| ApiError::InternalError(error.to_string()))?;
+    let updated = load_config(&cwd).map_err(|error| ApiError::InternalError(error.to_string()))?;
+    *CONFIG_STATE.write().await = updated.clone();
+    state
+        .refresh_providers()
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
     state.broadcast(
         &serde_json::json!({
             "type": "config.updated",
@@ -2605,11 +2613,13 @@ pub struct ConfigProvidersResponse {
     pub providers: Vec<ProviderInfo>,
     #[serde(rename = "default")]
     pub default_model: HashMap<String, String>,
+    pub setup: ProviderSetupInfo,
 }
 
 async fn get_config_providers(
     State(state): State<Arc<ServerState>>,
 ) -> Json<ConfigProvidersResponse> {
+    let config = load_runtime_config_from_disk().unwrap_or_default();
     let variant_lookup = get_model_variant_lookup().await;
     let models = state.providers.read().unwrap().list_models();
     let mut provider_map: HashMap<String, Vec<ModelInfo>> = HashMap::new();
@@ -2645,6 +2655,7 @@ async fn get_config_providers(
     Json(ConfigProvidersResponse {
         providers,
         default_model,
+        setup: effective_provider_setup(&state, &config).await,
     })
 }
 
@@ -4721,35 +4732,258 @@ struct SetAuthRequest {
     body: serde_json::Value,
 }
 
-#[derive(Debug, Serialize)]
-struct AuthStatusResponse {
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuthStatusResponse {
     configured: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     auth_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderSetupInfo {
+    pub authoritative_path: String,
+    pub effective_provider: Option<String>,
+    pub effective_model: Option<String>,
+    pub selection_source: String,
+    pub ollama_base_url: String,
+    pub ollama_base_url_source: String,
+    #[serde(default)]
+    pub auth: HashMap<String, AuthStatusResponse>,
+}
+
+fn current_project_dir() -> Result<PathBuf> {
+    std::env::current_dir().map_err(|error| ApiError::InternalError(error.to_string()))
+}
+
+fn load_runtime_config_from_disk() -> Result<AppConfig> {
+    let cwd = current_project_dir()?;
+    load_config(&cwd).map_err(|error| ApiError::InternalError(error.to_string()))
+}
+
+fn normalize_ollama_host(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "http://127.0.0.1:11434/v1".to_string();
+    }
+
+    let with_scheme = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    };
+    let normalized = with_scheme.trim_end_matches('/');
+    if normalized.ends_with("/v1") {
+        normalized.to_string()
+    } else {
+        format!("{normalized}/v1")
+    }
+}
+
+async fn provider_auth_status_from_runtime(
+    state: &ServerState,
+    provider_id: &str,
+    config: &AppConfig,
+) -> AuthStatusResponse {
+    if provider_id == "ollama" {
+        return AuthStatusResponse {
+            configured: true,
+            auth_type: Some("local".to_string()),
+            source: Some("local default".to_string()),
+        };
+    }
+
+    let provider_config = config
+        .provider
+        .as_ref()
+        .and_then(|providers| providers.get(provider_id));
+    if provider_config
+        .and_then(|provider| provider.api_key.as_ref())
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return AuthStatusResponse {
+            configured: true,
+            auth_type: Some("api".to_string()),
+            source: Some("config file".to_string()),
+        };
+    }
+
+    let env_names: &[&str] = match provider_id {
+        "openai" => &["OPENAI_API_KEY"],
+        "anthropic" => &["ANTHROPIC_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        _ => &[],
+    };
+    let env_name = env_names
+        .iter()
+        .copied()
+        .find(|name| {
+            std::env::var(name)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty())
+        })
+        .map(str::to_string);
+    if let Some(env_name) = env_name {
+        return AuthStatusResponse {
+            configured: true,
+            auth_type: Some("api".to_string()),
+            source: Some(format!("environment ({env_name})")),
+        };
+    }
+
+    match state.auth_manager.get(provider_id).await {
+        Some(AuthInfo::Api { .. }) => AuthStatusResponse {
+            configured: true,
+            auth_type: Some("api".to_string()),
+            source: Some("saved auth".to_string()),
+        },
+        Some(AuthInfo::OAuth { .. }) => AuthStatusResponse {
+            configured: true,
+            auth_type: Some("oauth".to_string()),
+            source: Some("saved auth".to_string()),
+        },
+        Some(AuthInfo::WellKnown { .. }) => AuthStatusResponse {
+            configured: true,
+            auth_type: Some("wellknown".to_string()),
+            source: Some("managed auth".to_string()),
+        },
+        None => AuthStatusResponse::default(),
+    }
+}
+
+fn effective_ollama_base_url(config: &AppConfig) -> (String, String) {
+    if let Some(provider) = config
+        .provider
+        .as_ref()
+        .and_then(|providers| providers.get("ollama"))
+    {
+        if let Some(base_url) = provider
+            .base_url
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            return (base_url.clone(), "config file".to_string());
+        }
+        if let Some(options) = provider.options.as_ref() {
+            for key in ["baseURL", "baseUrl", "url", "api"] {
+                if let Some(value) = options.get(key).and_then(|value| value.as_str()) {
+                    if !value.trim().is_empty() {
+                        return (value.to_string(), format!("config file ({key})"));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(host) = std::env::var("OLLAMA_HOST") {
+        if !host.trim().is_empty() {
+            return (
+                normalize_ollama_host(&host),
+                "environment (OLLAMA_HOST)".to_string(),
+            );
+        }
+    }
+
+    (
+        "http://127.0.0.1:11434/v1".to_string(),
+        "runtime default".to_string(),
+    )
+}
+
+async fn effective_provider_setup(state: &ServerState, config: &AppConfig) -> ProviderSetupInfo {
+    let (effective_provider, effective_model, selection_source) = {
+        let providers = state.providers.read().unwrap();
+        let resolve_from_model = |model: &str| providers.parse_model_string(model);
+        if let Ok(model) = std::env::var("OPENCODE_TUI_MODEL") {
+            let model = model.trim();
+            if !model.is_empty() {
+                let provider_id = resolve_from_model(model)
+                    .map(|(provider_id, _)| provider_id)
+                    .or_else(|| {
+                        model
+                            .split_once('/')
+                            .map(|(provider_id, _)| provider_id.to_string())
+                    });
+                (
+                    provider_id,
+                    Some(model.to_string()),
+                    "environment (OPENCODE_TUI_MODEL)".to_string(),
+                )
+            } else {
+                (None, None, "runtime default".to_string())
+            }
+        } else if let Some(model) = config
+            .model
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            let provider_id = resolve_from_model(model)
+                .map(|(provider_id, _)| provider_id)
+                .or_else(|| {
+                    model
+                        .split_once('/')
+                        .map(|(provider_id, _)| provider_id.to_string())
+                });
+            (
+                provider_id,
+                Some(model.to_string()),
+                "Settings > Provider".to_string(),
+            )
+        } else if let Some(ollama) = providers.get_provider("ollama").ok() {
+            if ollama.get_model("qwen3:30b").is_some() {
+                (
+                    Some("ollama".to_string()),
+                    Some("ollama/qwen3:30b".to_string()),
+                    "runtime default".to_string(),
+                )
+            } else if let Some(first) = providers.list_models().into_iter().next() {
+                (
+                    Some(first.provider.clone()),
+                    Some(format!("{}/{}", first.provider, first.id)),
+                    "runtime default".to_string(),
+                )
+            } else {
+                (None, None, "runtime default".to_string())
+            }
+        } else if let Some(first) = providers.list_models().into_iter().next() {
+            (
+                Some(first.provider.clone()),
+                Some(format!("{}/{}", first.provider, first.id)),
+                "runtime default".to_string(),
+            )
+        } else {
+            (None, None, "runtime default".to_string())
+        }
+    };
+
+    let (ollama_base_url, ollama_base_url_source) = effective_ollama_base_url(config);
+    let mut auth = HashMap::new();
+    for provider_id in ["ollama", "openai", "anthropic", "deepseek", "openrouter"] {
+        auth.insert(
+            provider_id.to_string(),
+            provider_auth_status_from_runtime(state, provider_id, config).await,
+        );
+    }
+
+    ProviderSetupInfo {
+        authoritative_path: "Settings > Provider".to_string(),
+        effective_provider,
+        effective_model,
+        selection_source,
+        ollama_base_url,
+        ollama_base_url_source,
+        auth,
+    }
 }
 
 async fn get_auth(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
 ) -> Result<Json<AuthStatusResponse>> {
-    let response = match state.auth_manager.get(&id).await {
-        Some(AuthInfo::Api { .. }) => AuthStatusResponse {
-            configured: true,
-            auth_type: Some("api".to_string()),
-        },
-        Some(AuthInfo::OAuth { .. }) => AuthStatusResponse {
-            configured: true,
-            auth_type: Some("oauth".to_string()),
-        },
-        Some(AuthInfo::WellKnown { .. }) => AuthStatusResponse {
-            configured: true,
-            auth_type: Some("wellknown".to_string()),
-        },
-        None => AuthStatusResponse {
-            configured: false,
-            auth_type: None,
-        },
-    };
+    let config = load_runtime_config_from_disk()?;
+    let response = provider_auth_status_from_runtime(&state, &id, &config).await;
     Ok(Json(response))
 }
 

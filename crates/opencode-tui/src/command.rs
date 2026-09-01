@@ -302,8 +302,8 @@ impl CommandRegistry {
         self.register(SlashCommand {
             name: "/connect".to_string(),
             aliases: vec![],
-            title: "Connect Provider".to_string(),
-            description: "Connect to a new LLM provider".to_string(),
+            title: "Open Provider Settings".to_string(),
+            description: "Open the authoritative provider setup screen".to_string(),
             category: CommandCategory::ModelAgent,
             keybind: None,
             suggested: false,
