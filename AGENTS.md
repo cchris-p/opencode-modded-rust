@@ -28,3 +28,10 @@
 - TUI is part of V1.
 - Full parity with OpenCode is deferred.
 - Upstream sync is optional and selective, not a standing maintenance obligation.
+
+## Local Launchers
+
+- `ort-build` builds the Rust TUI/CLI binary from `$HOME/repos/opencode-modded-rust`.
+- `ort` launches the most recently built Rust TUI binary without rebuilding first.
+- `ort` may print `Reusing local TUI server at http://127.0.0.1:<port>` when an existing local detached TUI server for the workspace is already running; in that case it attaches to the running server instead of starting a fresh one.
+- When testing code changes, run `ort-build` before `ort` so the reused TUI process has the latest binary available.
