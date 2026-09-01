@@ -1759,7 +1759,7 @@ impl App {
             }
             CommandAction::ExternalEditor => {}
             CommandAction::ConnectProvider => {
-                self.provider_dialog.open();
+                self.open_provider_settings();
             }
             CommandAction::ShareSession => {
                 self.handle_share_session();
@@ -2485,6 +2485,9 @@ impl App {
             self.context.set_has_connected_provider(false);
             return;
         };
+        let setup = providers.setup.clone();
+        let default_model = providers.default_model.clone();
+        self.settings_view.set_provider_setup(setup.clone());
         let has_connected_provider = providers.providers.iter().any(|p| !p.models.is_empty());
         self.context
             .set_has_connected_provider(has_connected_provider);
@@ -2555,12 +2558,14 @@ impl App {
 
         let model_missing = self.context.current_model.read().is_none();
         if model_missing {
-            if let Some(model_id) = providers.default_model.get("ollama") {
+            if let Some(model_ref) = setup.effective_model.as_ref() {
+                self.set_active_model_selection(model_ref.clone(), provider_from_model(model_ref));
+            } else if let Some(model_id) = default_model.get("ollama") {
                 self.set_active_model_selection(
                     format!("ollama/{}", model_id),
                     Some("ollama".to_string()),
                 );
-            } else if let Some((provider, model_id)) = providers.default_model.iter().next() {
+            } else if let Some((provider, model_id)) = default_model.iter().next() {
                 self.set_active_model_selection(
                     format!("{}/{}", provider, model_id),
                     Some(provider.clone()),
@@ -2613,6 +2618,9 @@ impl App {
                                 Some(input),
                             )
                             .map(|_| "OpenAI login saved".to_string()),
+                        SettingsInputMode::OllamaBaseUrl => client
+                            .patch_config(&crate::components::ollama_base_url_patch(input))
+                            .map(|_| "Ollama host saved".to_string()),
                     };
 
                     match result {
@@ -2680,6 +2688,17 @@ impl App {
                 }
                 true
             }
+            KeyCode::Char('u') if key.modifiers.is_empty() => {
+                if self
+                    .settings_view
+                    .selected_provider_ref(&self.context)
+                    .as_deref()
+                    == Some("ollama")
+                {
+                    self.settings_view.begin_ollama_base_url_input();
+                }
+                true
+            }
             KeyCode::Char('l') if key.modifiers.is_empty() => {
                 if self
                     .settings_view
@@ -2730,12 +2749,33 @@ impl App {
                 if let Some((model_ref, provider_id)) =
                     self.settings_view.selected_model_ref(&self.context)
                 {
-                    self.set_active_model_selection(model_ref.clone(), Some(provider_id));
-                    self.toast.show(
-                        ToastVariant::Info,
-                        &format!("Active model set to {}", model_ref),
-                        2200,
-                    );
+                    let Some(client) = self.context.get_api_client() else {
+                        self.toast
+                            .show(ToastVariant::Error, "No API client available", 2200);
+                        return true;
+                    };
+                    match client.patch_config(&crate::components::provider_selection_patch(
+                        model_ref.clone(),
+                    )) {
+                        Ok(_) => {
+                            self.set_active_model_selection(model_ref.clone(), Some(provider_id));
+                            self.refresh_model_dialog();
+                            let _ = self.refresh_settings_auth_state();
+                            self.toast.show(
+                                ToastVariant::Success,
+                                &format!(
+                                    "Provider setup saved to Settings > Provider: {}",
+                                    model_ref
+                                ),
+                                2400,
+                            );
+                        }
+                        Err(err) => self.toast.show(
+                            ToastVariant::Error,
+                            &format!("Failed to persist provider selection: {}", err),
+                            3200,
+                        ),
+                    }
                 }
                 true
             }
@@ -2749,10 +2789,8 @@ impl App {
         };
 
         let methods = client.get_provider_auth_methods()?;
-        let status = client.get_provider_auth_status("openai")?;
         self.settings_view
             .set_openai_auth_methods(methods.get("openai").cloned().unwrap_or_default());
-        self.settings_view.set_openai_auth_status(Some(status));
         Ok(())
     }
 

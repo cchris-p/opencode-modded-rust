@@ -1,3 +1,4 @@
+use opencode_config::Config as AppConfig;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -168,6 +169,26 @@ pub struct ProviderListResponse {
     pub providers: Vec<ProviderInfo>,
     #[serde(rename = "default")]
     pub default_model: HashMap<String, String>,
+    #[serde(default)]
+    pub setup: ProviderSetupInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderSetupInfo {
+    #[serde(default)]
+    pub authoritative_path: String,
+    #[serde(default)]
+    pub effective_provider: Option<String>,
+    #[serde(default)]
+    pub effective_model: Option<String>,
+    #[serde(default)]
+    pub selection_source: String,
+    #[serde(default)]
+    pub ollama_base_url: String,
+    #[serde(default)]
+    pub ollama_base_url_source: String,
+    #[serde(default)]
+    pub auth: HashMap<String, ProviderAuthStatusInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +249,8 @@ pub struct ProviderAuthStatusInfo {
     pub configured: bool,
     #[serde(default)]
     pub auth_type: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -553,6 +576,19 @@ impl ApiClient {
 
         let providers: ProviderListResponse = response.json()?;
         Ok(providers)
+    }
+
+    pub fn patch_config(&self, patch: &AppConfig) -> anyhow::Result<AppConfig> {
+        let url = format!("{}/config", self.base_url);
+        let response = self.client.patch(&url).json(patch).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to update config: {} - {}", status, text);
+        }
+
+        Ok(response.json::<AppConfig>()?)
     }
 
     pub fn get_provider_auth_methods(

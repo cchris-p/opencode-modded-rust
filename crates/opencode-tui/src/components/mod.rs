@@ -43,7 +43,9 @@ pub use permission::{PermissionAction, PermissionPrompt, PermissionRequest, Perm
 pub use prompt::{Prompt, PromptStashEntry};
 pub use question::{QuestionOption, QuestionPrompt, QuestionRequest, QuestionType};
 pub use session::SessionView;
-pub use settings::{SettingsInputMode, SettingsView};
+pub use settings::{
+    ollama_base_url_patch, provider_selection_patch, SettingsInputMode, SettingsView,
+};
 pub use sidebar::Sidebar;
 pub use slash_command::SlashCommandPopup;
 pub use spinner::{KnightRiderSpinner, Spinner, SpinnerMode, TaskKind};

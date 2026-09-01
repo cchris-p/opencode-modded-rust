@@ -138,6 +138,17 @@ Global config default:
 
 Recommendation: Start with a minimal project-level config, then add provider/mcp/agent/lsp as needed.
 
+## 4.1 Authoritative provider setup path
+
+For V1, `Settings > Provider` in the TUI is the authoritative setup flow for provider selection, model selection, auth visibility, and Ollama host visibility.
+
+- Use `/settings` or `/provider` to open it.
+- Use `Enter` to save the highlighted provider/model selection back to config.
+- When Ollama is highlighted, press `u` to edit the host from the same screen.
+- Environment variables and direct config edits still work, but the screen will label them as overrides when they are winning.
+
+See `docs/provider-setup.md` for the repo-local provider setup policy.
+
 ## 5. Using Claude (Anthropic) and testing a coding session
 
 Claude is supported via the **anthropic** provider. You can run interactive coding in the TUI or a one-off task with `run`.
