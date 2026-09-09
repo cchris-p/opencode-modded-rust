@@ -140,7 +140,7 @@ impl AppContext {
             current_provider: RwLock::new(None),
             current_variant: RwLock::new(None),
             directory: RwLock::new(String::new()),
-            show_sidebar: RwLock::new(true),
+            show_sidebar: RwLock::new(false),
             show_header: RwLock::new(ui_kv.get_bool("header_visible", true)),
             show_scrollbar: RwLock::new(ui_kv.get_bool("scrollbar_visible", false)),
             tips_hidden: RwLock::new(ui_kv.get_bool("tips_hidden", false)),
