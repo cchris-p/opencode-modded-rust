@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-09"
 ---
 
@@ -91,6 +91,12 @@ The stale-server failure was observed directly while QAing `BUG-004`:
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/27 (branch `feature/FEAT-014-single-local-tui-server`, base `development`)
+
+## Merge status
+
+- Merged into `development` on 2026-09-09 via PR #27 (merge commit `3b98900`).
+- PR branch `feature/FEAT-014-single-local-tui-server` deleted.
+- Item relaned to `qa`; awaiting user verification of the combined BUG-004 + FEAT-014 behavior on `development`.
 
 ## Notes
 

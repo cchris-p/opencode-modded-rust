@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "qa"
 created: "2026-09-09"
 ---
 
@@ -117,6 +117,13 @@ Foundation slice shipped on `bug/BUG-004-agentic-session-foundation`:
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/26 (branch `bug/BUG-004-agentic-session-foundation`, base `development`)
+
+## Merge status
+
+- Merged into `development` on 2026-09-09 via PR #26 (merge commit `1ca3ed9`).
+- PR branch `bug/BUG-004-agentic-session-foundation` deleted.
+- Item relaned to `qa`; awaiting user verification of the combined BUG-004 + FEAT-014 behavior on `development`.
+- QA note: the first QA attempt was invalid because a stale detached server (old binary, `/proc/<pid>/exe` deleted) was reused by `ort`. Stale servers were killed and the reuse record cleared; FEAT-014 now prevents stale-server reuse going forward.
 
 ## Related Items
 
