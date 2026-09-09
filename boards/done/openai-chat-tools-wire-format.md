@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-09"
 ---
 
@@ -69,6 +69,12 @@ The Responses-API path already had a dedicated converter (`crates/opencode-provi
 - PR branch `bug/BUG-005-openai-chat-tool-wire-format` deleted.
 - Item relaned to `qa`; awaiting user verification of normal messages and tool-call prompts on `development`.
 
+## QA Report - 2026-09-09 (user, session `ses_3c567f00846647feaa47e52d0b8e8dac`)
+
+- `Reply with exactly OK` → assistant `OK` (0.4s). Primary "every message errors" regression is fixed.
+- `Look at the files in this workspace and summarize them` → the model now issues real `ls` tool calls against the workspace and executes them, returning a directory listing. Tool transport is working.
+- Residual (tool-loop only): after the tool result, the follow-up request to deepseek fails with `400 The reasoning_content in the thinking mode must be passed back to the API`, and a split tool-call delta produces a stray empty-name `Tool: ` call. Both were already flagged on this card as follow-ups and are tracked by `BUG-006`.
+- Closing as completed for the wire-format regression scope; the deepseek tool-loop residuals move to `BUG-006`.
 ## Notes
 
 - This is a provider-boundary wire-format gap, not a session-loop issue; `BUG-004` simply exposed it by making tools reach the wire for the first time.
