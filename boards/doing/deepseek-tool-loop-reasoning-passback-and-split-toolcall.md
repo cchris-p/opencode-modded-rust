@@ -66,3 +66,32 @@ Stored messages for the QA session:
 ## Notes
 
 - Reproduced and recorded from the user QA session export; root-cause hypotheses need confirmation before implementing.
+
+## Implementation - 2026-09-09
+
+### Root cause (confirmed)
+
+The deepseek-family providers parsed OpenAI-compatible SSE with the **stateless** `parse_openai_sse`/`sse_event_stream(...openai_compat_line_events)`:
+
+1. **Split tool call**: a tool call's `id`/`name` arrive in one delta; argument-only fragments arrive in later deltas carrying only `{index}`. The stateless parser minted a fresh `tool-call-{index}` id for those fragments, so the session recorded two tool calls — the real one (empty input) plus a stray empty-name `tool-call-0` (with the arguments) → `Tool '' not found in registry`.
+2. **reasoning dropped**: `reasoning_content`/`reasoning_text` deltas were ignored, so a thinking model's reasoning never entered the session. DeepSeek requires the prior assistant `reasoning_content` to be echoed on follow-up requests → `400 reasoning_content ... must be passed back to the API`.
+
+### What changed
+
+- `crates/opencode-provider/src/stream.rs`:
+  - Added `OpenAiCompatParserState` (per-index tool-call id/name, reasoning-open flag) and `parse_openai_sse_stateful`, modeled on `OpenAIProvider::parse_legacy_sse_data`: retains tool-call id/name across fragments so argument-only deltas join the real call, and surfaces reasoning deltas as `ReasoningStart/Delta/End`.
+  - Added `openai_compat_sse_stream(chunks)` (buffered, stateful) so providers route raw bytes through the stateful parser.
+  - Unit tests: split-tool-call join, reasoning capture/close, multi-frame + trailing flush.
+- Routed the openai-compatible chat providers through `openai_compat_sse_stream`: `deepseek`, `openrouter`, `xai`, `together`, `perplexity`, `mistral`, `groq`, `cohere`, `cerebras`, `deepinfra`.
+- `crates/opencode-session/src/prompt.rs` `parts_to_content`: keep `PartType::Reasoning` as a `reasoning` content part so reasoning survives into provider messages.
+- `crates/opencode-provider/src/openai_chat.rs`: assistant `reasoning` parts are echoed as the message's `reasoning_content` field instead of dropped (deepseek wire requirement); assistant shell emitted when reasoning present.
+- `crates/opencode-provider/src/anthropic.rs`: skip `reasoning` content parts (Anthropic handles thinking via its own block, not echoed as text).
+
+### Verification
+
+- `cargo test -p opencode-provider` (90 lib + 7 integration), `opencode-session` (144), `opencode-server --lib` (11) pass.
+- Live on `deepseek/deepseek-v4-flash` (fresh server): "Look at the files in this workspace and summarize them" now reasons, issues well-formed `ls`/`read`/`bash` tool calls that execute, and returns a complete summary — **no 400 and no empty-name stray tool call**.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/29 (branch `bug/BUG-006-deepseek-tool-loop`, base `development`)
