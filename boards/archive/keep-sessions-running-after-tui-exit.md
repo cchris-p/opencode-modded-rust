@@ -5,8 +5,10 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "wiki/v1.md"
-status: "done"
+status: "archived"
 created: "2026-08-29"
+archived: "2026-09-09"
+superseded_by: "FEAT-014"
 ---
 
 # Keep sessions running after TUI exit
@@ -75,3 +77,9 @@ The current Rust product already has server-side session execution and live sess
 ## Completion
 
 - Merged into `development` on 2026-08-29.
+
+## Archived - 2026-09-09
+
+- Archived and superseded by `FEAT-014` "Enforce a single local TUI server per workspace".
+- The reusable detached-server design introduced by this card is the root cause of the stale-server QA trap: `ort` reuses a recorded server (`~/.local/state/opencode/tui-servers/*.json`) even when that process still maps a pre-fix binary (`/proc/<pid>/exe` reports `(deleted)`), so a user QAing a fresh build against the old server sees no change. See the archived `BUG-003` investigation notes for the concrete failure.
+- `FEAT-014` replaces the reuse model: at most one local server per workspace at a time, and each additional `ort` run increments the server instance/port instead of silently reusing a possibly-stale process.
