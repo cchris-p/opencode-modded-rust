@@ -979,19 +979,16 @@ impl SessionPrompt {
 
             let mut filtered_messages = Self::filter_compacted_messages(&session.messages);
 
-            let last_user = filtered_messages
+            let last_user_idx = filtered_messages
                 .iter()
-                .rev()
-                .find(|m| matches!(m.role, MessageRole::User));
-
-            let last_assistant = filtered_messages
+                .rposition(|m| matches!(m.role, MessageRole::User));
+            let last_assistant_idx = filtered_messages
                 .iter()
-                .rev()
-                .find(|m| matches!(m.role, MessageRole::Assistant));
+                .rposition(|m| matches!(m.role, MessageRole::Assistant));
 
-            let last_user = match last_user {
-                Some(m) => m,
-                None => return Err(anyhow::anyhow!("No user message found")),
+            let (last_user_idx, last_assistant_idx) = match (last_user_idx, last_assistant_idx) {
+                (Some(ui), _) => (ui, last_assistant_idx),
+                (None, _) => return Err(anyhow::anyhow!("No user message found")),
             };
 
             if Self::process_pending_subtasks(session, provider.clone(), &model_id, &provider_id)
@@ -1001,15 +998,22 @@ impl SessionPrompt {
                 continue;
             }
 
-            if let Some(ref assistant) = last_assistant {
-                let has_finish = assistant.parts.iter().any(|p| match &p.part_type {
-                    PartType::Text { text, .. } => !text.is_empty(),
-                    _ => false,
-                });
-
-                if has_finish && last_user.id < assistant.id {
-                    tracing::info!("Prompt loop complete for session {}", session_id);
-                    break;
+            // A conversation that already ends in a finished assistant reply to the
+            // newest user prompt has nothing left to answer. Compare *positions*
+            // (assistant newer than user) rather than message ids: message ids are
+            // random UUIDs (user) vs time/base62 (assistant) and are not ordered,
+            // so an id comparison misfires on follow-up prompts and stalls the loop.
+            if let Some(ai) = last_assistant_idx {
+                if ai > last_user_idx {
+                    let assistant = &filtered_messages[ai];
+                    let has_finish = assistant.parts.iter().any(|p| match &p.part_type {
+                        PartType::Text { text, .. } => !text.is_empty(),
+                        _ => false,
+                    });
+                    if has_finish {
+                        tracing::info!("Prompt loop complete for session {}", session_id);
+                        break;
+                    }
                 }
             }
 
@@ -3497,7 +3501,9 @@ mod tests {
     use opencode_provider::{
         ChatRequest, ChatResponse, ModelInfo, ProviderError, StreamEvent, StreamResult, StreamUsage,
     };
+    use std::collections::VecDeque;
     use std::sync::Mutex as StdMutex;
+    use std::sync::Arc;
 
     struct StaticModelProvider {
         model: Option<ModelInfo>,
@@ -4515,5 +4521,162 @@ mod tests {
             3,
             "All three pending calls should be aborted"
         );
+    }
+
+    /// Provider that returns the next canned reply for each `chat_stream` call,
+    /// in order, so consecutive prompts in one session get distinct answers.
+    struct SequencedStreamProvider {
+        model: ModelInfo,
+        replies: Arc<StdMutex<VecDeque<String>>>,
+    }
+
+    impl SequencedStreamProvider {
+        fn with_replies(model_id: &str, replies: Vec<String>) -> Self {
+            Self {
+                model: ModelInfo {
+                    id: model_id.to_string(),
+                    name: "Sequenced Model".to_string(),
+                    provider: "mock".to_string(),
+                    context_window: 8192,
+                    max_output_tokens: 1024,
+                    supports_vision: false,
+                    supports_tools: false,
+                    cost_per_million_input: 0.0,
+                    cost_per_million_output: 0.0,
+                },
+                replies: Arc::new(StdMutex::new(replies.into())),
+            }
+        }
+
+        fn reply_stream(&self) -> Vec<StreamEvent> {
+            let mut guard = self.replies.lock().expect("reply lock should not poison");
+            let text = guard
+                .pop_front()
+                .unwrap_or_else(|| "FALLBACK".to_string());
+            vec![
+                StreamEvent::Start,
+                StreamEvent::TextDelta(text),
+                StreamEvent::FinishStep {
+                    finish_reason: Some("stop".to_string()),
+                    usage: StreamUsage {
+                        prompt_tokens: 3,
+                        completion_tokens: 2,
+                        ..Default::default()
+                    },
+                    provider_metadata: None,
+                },
+                StreamEvent::Done,
+            ]
+        }
+    }
+
+    #[async_trait]
+    impl Provider for SequencedStreamProvider {
+        fn id(&self) -> &str {
+            "mock"
+        }
+
+        fn name(&self) -> &str {
+            "Mock"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            vec![self.model.clone()]
+        }
+
+        fn get_model(&self, id: &str) -> Option<&ModelInfo> {
+            if self.model.id == id {
+                Some(&self.model)
+            } else {
+                None
+            }
+        }
+
+        async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest(
+                "chat() not used in this test".to_string(),
+            ))
+        }
+
+        async fn chat_stream(&self, _request: ChatRequest) -> Result<StreamResult, ProviderError> {
+            Ok(Box::pin(stream::iter(
+                self.reply_stream()
+                    .into_iter()
+                    .map(Result::<StreamEvent, ProviderError>::Ok),
+            )))
+        }
+    }
+
+    fn test_prompt_input(session_id: &str, text: &str) -> PromptInput {
+        PromptInput {
+            session_id: session_id.to_string(),
+            message_id: None,
+            model: Some(ModelRef {
+                provider_id: "mock".to_string(),
+                model_id: "test-model".to_string(),
+            }),
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            parts: vec![PartInput::Text {
+                text: text.to_string(),
+            }],
+            tools: None,
+        }
+    }
+
+    /// Regression for BUG-003's second root cause: the session loop previously
+    /// compared unordered message IDs to decide a follow-up prompt was already
+    /// answered, which stalled every prompt after the first. Three consecutive
+    /// prompts on one session must each complete with the correct reply.
+    #[tokio::test]
+    async fn session_handles_three_consecutive_prompts() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+        let provider = Arc::new(SequencedStreamProvider::with_replies(
+            "test-model",
+            vec![
+                "answer-one".to_string(),
+                "answer-two".to_string(),
+                "answer-three".to_string(),
+            ],
+        ));
+
+        let prompts = ["prompt one", "prompt two", "prompt three"];
+        for (i, text) in prompts.iter().enumerate() {
+            prompt
+                .prompt_with_update_hook(
+                    test_prompt_input(&session.id, text),
+                    &mut session,
+                    provider.clone(),
+                    None,
+                    Vec::new(),
+                    AgentParams::default(),
+                    None,
+                )
+                .await
+                .unwrap_or_else(|e| panic!("prompt {} should succeed: {}", i + 1, e));
+
+            let assistant_texts: Vec<String> = session
+                .messages
+                .iter()
+                .filter(|m| matches!(m.role, MessageRole::Assistant))
+                .map(SessionMessage::get_text)
+                .collect();
+            assert_eq!(
+                assistant_texts.len(),
+                i + 1,
+                "after prompt {} there should be {} assistant reply(ies)",
+                i + 1,
+                i + 1
+            );
+            assert_eq!(
+                assistant_texts[i],
+                format!("answer-{}", ["one", "two", "three"][i]),
+                "reply {} should match the sequenced answer",
+                i + 1
+            );
+        }
     }
 }

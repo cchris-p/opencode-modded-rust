@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "qa"
+status: "doing"
 created: "2026-09-01"
 ---
 
@@ -226,3 +226,59 @@ Note: this is the concrete, provider-agnostic root cause behind the repeated "se
 - PR branch `bug/BUG-003-buffered-sse-streaming` deleted remotely and locally.
 - Local `development` is checked out, current with origin, and contains the merged fix.
 - Item remains in `qa` pending post-merge QA on `development` by the user; no QA report recorded yet.
+
+## Investigation - 2026-09-09 (post-merge multi-turn verification) - SECOND ROOT CAUSE FOUND + FIXED
+
+### Context
+
+Post-merge QA on a freshly rebuilt server exposed a second, independent defect: the first prompt completes correctly on the fixed SSE path, but a second prompt ("Reply with exactly TWO.") is accepted (HTTP 200) and never produces an assistant reply. The session appeared to "just stop" — matching the original BUG-003 symptom, which is why the fix attribution was initially confusing.
+
+### Environment correction (why the earlier "with your change applied" report was inconclusive)
+
+- The detached TUI server that `ort` reuses (PID `1566082`, port 3000) had started at 01:50 — before PR #24 was merged (~04:21). Its on-disk file was replaced at 04:23:17 but the running process still mapped the pre-fix inode (`/proc/<pid>/exe` reported `(deleted)`).
+- `ort` reuses a ready server at the recorded base URL instead of launching fresh, so the user's first test executed the pre-fix binary.
+- Corrected procedure used here: kill the stale server + plugin children, remove `~/.local/state/opencode/tui-servers/*.json`, rebuild from `development` HEAD, and launch a fresh detached server on port 3000.
+
+### Second root cause (session loop guard)
+
+`crates/opencode-session/src/prompt.rs`, `loop_inner`:
+
+```rust
+if let Some(ref assistant) = last_assistant {
+    let has_finish = /* assistant text non-empty */;
+    if has_finish && last_user.id < assistant.id {
+        break; // "Prompt loop complete"
+    }
+}
+```
+
+The guard intends to stop the loop only when the newest user prompt has already been answered by a *later* assistant message. But it compares `last_user.id < assistant.id`, and message IDs are unordered:
+- user messages: `msg_<random-uuid>` (`SessionMessage::user`),
+- assistant messages: `msg_<uuid>` in the placeholder path (and `id::create(Prefix::Message, true, None)` time/base62 elsewhere).
+
+Lexicographic comparison of these different-format, random IDs does not encode chronology, so on a follow-up prompt the guard can (and did) decide the last user was already answered and break before the model ever runs. The stored session then shows only the new user message with no assistant reply and run status idle.
+
+### Fix
+
+Replace the ID comparison with a positional check using indexes into the message list:
+
+- Find the last user index and the last assistant index in `filtered_messages`.
+- Break only when the last assistant sits *after* the last user (`assistant_idx > user_idx`) and has finished text — i.e. the conversation genuinely ends in an answer to the newest prompt.
+- Otherwise continue and run the next model step.
+
+This preserves the intended "already answered → stop" semantics for resumes/tool-call continuations while letting genuine follow-up prompts run.
+
+### Verification (fresh fixed server, deepseek, live HTTP)
+
+Session `ses_c24accc8889f42e58249ec28885e5eaf`:
+
+- P1 "Reply with exactly ONE." → assistant `ONE` (completed)
+- P2 "Reply with exactly TWO." → assistant `TWO` (completed)
+- P3 "Summarize prior two answers in one line." → assistant `The prior answers were "ONE" and "TWO".` (completed)
+
+Three turns, three completed assistant replies, run idle after each. `cargo test -p opencode-session` (143 tests incl. prompt module) passes.
+
+### Follow-up
+
+- QA-001 (new card, `doing`): build a repeatable debug/QA verification suite (deterministic SSE integrity tests, deterministic multi-turn session-loop test, env-gated live smoke script) so both BUG-003 failure classes are covered by automated regression checks.
+- Commit of the guard fix is made directly to `development` (no PR) per the current workflow.

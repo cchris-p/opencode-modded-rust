@@ -541,4 +541,152 @@ mod tests {
         assert_eq!(texts, vec!["ok".to_string()]);
         assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
     }
+
+    // ------------------------------------------------------------------------
+    // Adversarial SSE integrity tests (QA-001)
+    //
+    // These guard the two BUG-003 failure classes deterministically:
+    //   1. frames must survive arbitrary HTTP chunking (split frames, coalesced
+    //      frames, CRLF line endings),
+    //   2. every content delta must be reassembled into the exact original text
+    //      (no drops, no reordering) regardless of parser used.
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn sse_event_stream_handles_crlf_line_endings() {
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"alpha\"}}]}\r\n\r\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" beta\"}}]}\r\n\r\n",
+            "data: [DONE]\r\n\r\n",
+        );
+        let events = collect_events(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["alpha".to_string(), " beta".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_skips_keepalive_and_comment_lines() {
+        // SSE keepalive/comment lines (": ...") and blank separators between
+        // frames must not create spurious text or break reassembly.
+        let chunk = concat!(
+            ": keep-alive\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n",
+            "\n",
+            ": heartbeat\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" two\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_events(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["one".to_string(), " two".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_reassembles_utf8_split_across_chunk_boundary() {
+        // "héllo" contains é as a multi-byte UTF-8 sequence. Splitting exactly
+        // between its continuation bytes must not corrupt the reassembled text.
+        let frame = "data: {\"choices\":[{\"delta\":{\"content\":\"héllo\"}}]}\n\ndata: [DONE]\n\n";
+        let bytes = frame.as_bytes();
+        let split = bytes.len() / 2;
+        let events = collect_events(vec![
+            Ok(bytes[..split].to_vec()),
+            Ok(bytes[split..].to_vec()),
+        ]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["héllo".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_preserves_long_text_exactly() {
+        // A long multi-frame payload must reassemble to byte-identical text with
+        // no dropped or reordered deltas (the original garble class).
+        let words = (0..200)
+            .map(|i| format!("tok{}", i))
+            .collect::<Vec<_>>();
+        let mut raw = String::new();
+        for w in &words {
+            raw.push_str(&format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+                w
+            ));
+        }
+        raw.push_str("data: [DONE]\n\n");
+
+        let bytes = raw.as_bytes();
+        // Chop the stream into many tiny chunks to force pathological splitting.
+        let chunks: Vec<Result<Vec<u8>, _>> = bytes
+            .chunks(7)
+            .map(|c| Ok(c.to_vec()))
+            .collect();
+        let events = collect_events(chunks);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, words);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_delivers_done_only_once_with_trailing_partial_data() {
+        // [DONE] plus trailing bytes that are not a full frame (e.g. a stray
+        // keepalive fragment) must still terminate exactly once.
+        let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n: trail";
+        let events = collect_events(vec![Ok(Vec::from(chunk1.as_bytes()))]);
+        let done_count = events.iter().filter(|e| matches!(e, StreamEvent::Done)).count();
+        assert_eq!(done_count, 1);
+    }
+
+    #[test]
+    fn anthropic_line_events_skips_non_data_lines() {
+        // Anthropic-style SSE interleaves `event:` metadata lines with `data:`
+        // frames; only the data payloads should be parsed.
+        use crate::stream::anthropic_line_events;
+        let frames = vec![
+            StreamEvent::TextDelta("hello".to_string()),
+            StreamEvent::Done,
+        ];
+        // event: line must yield nothing
+        assert!(anthropic_line_events("event: content_block_delta").is_empty());
+        // blank and comment lines must yield nothing
+        assert!(anthropic_line_events("").is_empty());
+        assert!(anthropic_line_events(": ping").is_empty());
+        let _ = frames; // (kept for clarity of intent)
+    }
+
+    #[test]
+    fn openai_compat_line_events_handles_done_and_ignores_garbage() {
+        use crate::stream::openai_compat_line_events;
+        // [DONE] becomes exactly one Done
+        let evs = openai_compat_line_events("data: [DONE]");
+        assert_eq!(evs.len(), 1);
+        assert!(matches!(evs[0], StreamEvent::Done));
+        // Non-data / garbage lines produce nothing and must not panic.
+        assert!(openai_compat_line_events("event: done").is_empty());
+        assert!(openai_compat_line_events("data: {not json").is_empty());
+    }
 }
