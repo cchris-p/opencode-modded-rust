@@ -136,3 +136,4 @@ The bug should not be considered closed until the user confirms the session no l
 - Implemented fix: parse nested OpenAI Responses `error` events and `response.failed` events so provider failures surface to the user instead of producing blank assistant output.
 - Verification after the fix: `./target/debug/opencode run -m openai/gpt-5-mini 'reply with exactly OK'` now reports `You have no credits remaining...` instead of a blank response.
 - Residual blockers are configuration/environment issues, not fixed by this parser patch: OpenRouter credentials currently fail with 401, Ollama is not reachable locally, and OpenAI account credits are exhausted.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/22
