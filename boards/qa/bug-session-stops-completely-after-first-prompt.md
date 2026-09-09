@@ -138,3 +138,84 @@ The bug should not be considered closed until the user confirms the session no l
 - Residual blockers are configuration/environment issues, not fixed by this parser patch: OpenRouter credentials currently fail with 401, Ollama is not reachable locally, and OpenAI account credits are exhausted.
 - PR: https://github.com/cchris-p/opencode-modded-rust/pull/22
 - Merged into `development` on 2026-09-08 20:48 EDT via PR #22; awaiting QA on configured provider paths.
+
+## Investigation - 2026-09-09 (deepseek/OpenRouter reproduction) - ROOT CAUSE FOUND
+
+### Repro contract
+
+- Surface: rust TUI/server session prompt + `opencode run` streaming path
+- Input: `Hello, please analyze what we need to work on. I am testing out BUG-003 in this opencode session` and later longer verbose prompts
+- Entity: rust session `ses_ce2007be05e04f1e8386c49203674344` (rust-schema `sessions`/`messages` tables), model `openrouter/deepseek/deepseek-v4-flash:free` (default config), later reproduced with `deepseek/deepseek-v4-flash` via `DEEPSEEK_API_KEY`
+- Expected: full coherent assistant reply; session stays usable for follow-up prompts
+- Actual: assistant reply persisted as scrambled fragments (`I dont context in yet analyze work, could1./ticket...`), then the next prompt (`hello again?`) was stored but never produced an assistant turn; the session visually "just stops"
+
+### Runtime target
+
+- Rust product binary `target/debug/opencode`; reused detached local TUI server on port 3000 (PID observed)
+- DB evidence from `~/.local/share/opencode/opencode.db`: the garbled assistant text is stored verbatim in the rust `messages.data` column. This proves the corruption happened during stream assembly/persistence, NOT during markdown export. The `hello-please-analyze-...md` file in the repo is a faithful export of that stored (already corrupt) message.
+- The same OpenRouter `deepseek-v4-flash:free` model works correctly in the reference (non-rust) product in the same session, which isolates the defect to the rust provider/session stream layer.
+
+### Evidence chain
+
+1. Data source (DB): `messages.data` for the failing assistant message contains garbled text exactly as exported. Confirmed by direct SQLite read.
+2. Provider output: direct `curl` to `https://api.deepseek.com/chat/completions` and `https://openrouter.ai/api/v1/chat/completions` with the same prompts returns coherent SSE JSON. Raw model text reconstructed from the SSE stream is complete and well-formed.
+3. Rust reproduction: `./target/debug/opencode run -m deepseek/deepseek-v4-flash "Write three complete sentences describing what boards workflow is..."` produced visibly garbled/truncated output; `reply with exactly OK` (very short) happened to survive.
+4. Root-cause code inspection: all of the SSE-streaming providers that garbled share one broken pattern in `chat_stream`:
+
+   ```rust
+   response.bytes_stream().map(move |chunk_result| {
+       // loop over text.lines() and `return Ok(event)` for the FIRST parseable data: line
+   })
+   ```
+
+   Because `.map()` emits exactly one item per HTTP chunk, this parser:
+   - keeps only the first SSE `data:` frame in any chunk and silently DROPS all later frames in that same chunk (the dominant cause of the missing text), and
+   - cannot reassemble an SSE frame that is split across two network chunks (partial JSON fails to parse and is dropped).
+5. Only `openai.rs` `chat_stream_legacy` already used a correct buffered drain (`try_unfold` + `drain_legacy_sse_events`). Every other provider (deepseek, openrouter, anthropic, google, vertex, groq, mistral, perplexity, cohere, together, xai, azure, vercel, cerebras, deepinfra, github_copilot legacy, gitlab) duplicated the lossy per-chunk parser.
+
+### Failure point
+
+The item is lost in the provider SSE parsing stage (stage 3 in the evidence pipeline): the HTTP chunk stream is converted to `StreamEvent`s before any session/session-loop logic runs. When the provider is a streaming text model and a single network chunk contains multiple deltas (or a delta straddles two chunks), most text deltas never become `TextDelta` events, so the assistant message assembled by the session layer is missing most of its content. This also explains why the stored provider/model/token metadata looked incomplete and why short canned replies sometimes "worked".
+
+Note: this is the concrete, provider-agnostic root cause behind the repeated "session stops / unusable after first prompt" reports on Codex/OpenAI, Anthropic, and now deepseek. It is not a TUI-refresh or backend-idle hang. The separate "second prompt never answered" symptom is a downstream consequence of the first turn's stream being broken (event stream ends early / hangs on garbled partial frames), and must be re-verified on a fixed stream path.
+
+## Implementation - 2026-09-09 (buffered SSE streaming fix)
+
+### What changed
+
+- Added a shared buffered SSE adapter `opencode_provider::stream::sse_event_stream(chunks, parse_line)` in `crates/opencode-provider/src/stream.rs`:
+  - buffers raw bytes across HTTP chunk boundaries,
+  - splits complete lines (CRLF-aware),
+  - feeds every complete line to a provider parse closure and emits EVERY returned event (zero-or-more per line),
+  - flushes a trailing partial frame at end-of-stream so the final frame without a trailing newline is not lost,
+  - propagates transport errors as `ProviderError::StreamError`.
+- Added shared per-line parse helpers:
+  - `openai_compat_line_events` (handles `data: [DONE]` and OpenAI-compatible payloads),
+  - `anthropic_line_events`,
+  - module-local `google_line_events`, `vertex_line_events`, `vercel_line_events`, `gitlab_line_events`, `copilot_line_events`.
+- Converted every provider that used the lossy per-chunk pattern to call `sse_event_stream` with its parser: `deepseek`, `openrouter`, `anthropic`, `google`, `vertex`, `groq`, `mistral`, `perplexity`, `cohere`, `together`, `xai`, `azure`, `vercel`, `cerebras`, `deepinfra`, `github_copilot` (legacy stream), `gitlab`. `openai.rs` already had a correct buffered path and was left unchanged; `responses.rs` already buffers frames correctly and was left unchanged.
+- Removed the now-unused `TextDelta("")` no-op emissions and the first-event-`return` behavior that caused the data loss.
+
+### Tests
+
+- Added regression tests in `crates/opencode-provider/src/stream.rs`:
+  - `sse_event_stream_emits_every_event_when_one_chunk_has_many_frames` — guards the primary bug (multiple SSE frames in one chunk are all delivered).
+  - `sse_event_stream_reassembles_frames_split_across_chunks` — guards cross-chunk frame reassembly.
+  - `sse_event_stream_flushes_trailing_frame_without_newline` — guards end-of-stream flush.
+- All three pass; full `cargo test -p opencode-provider` (74+ tests) and `cargo test -p opencode-session` pass.
+
+### Verification (live)
+
+- Before: `./target/debug/opencode run -m deepseek/deepseek-v4-flash "Write three complete sentences..."` garbles output.
+- After rebuild: the same verbose prompts return complete, coherent multi-sentence replies across repeated runs, e.g. a seashells prompt returned three full sentences and a moon prompt returned coherent multi-sentence output on repeated runs (one transient network error retried successfully).
+- Unit regression: multi-frame-per-chunk and split-frame cases both pass.
+
+### Residual / follow-ups (not fixed here)
+
+- The streaming text is now reliable, but the multi-turn "second prompt never answers" behavior must be re-verified on the fixed provider path via the full TUI/server loop on the checked-out branch. If it still reproduces after the stream fix, that residual is a separate session-loop defect and should be split into its own card.
+- Bedrock uses a binary Amazon eventstream framing rather than newline-delimited SSE and was intentionally left out of this change; it should be reviewed separately if it shows similar symptoms.
+- After user verification, provider-path checks required by this card (Codex/OpenAI, Ollama, Anthropic, deepseek/OpenRouter) should be run per the "Required verification" section above.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/24 (branch `bug/BUG-003-buffered-sse-streaming`, base `development`)

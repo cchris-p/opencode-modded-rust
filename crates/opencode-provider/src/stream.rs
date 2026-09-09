@@ -124,6 +124,120 @@ pub struct StreamUsage {
 
 pub type StreamResult = Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>;
 
+/// Build a provider event stream from a raw SSE byte stream.
+///
+/// Raw HTTP chunk boundaries do not align with SSE frame boundaries: a single
+/// network chunk can carry several `data:` frames and a single frame can be
+/// split across two chunks. Naive per-chunk line parsing silently drops every
+/// frame except the first one in each chunk, which garbles or truncates model
+/// output. This adapter buffers bytes across chunks, splits complete lines,
+/// and emits every event produced for each line so no frame is lost.
+///
+/// `parse_line` receives each complete, CRLF-trimmed line and returns zero or
+/// more events for it. Lines that produce no events (comments, keepalives,
+/// malformed frames, etc.) are simply skipped.
+pub fn sse_event_stream<S, B, F>(
+    chunks: S,
+    parse_line: F,
+) -> StreamResult
+where
+    S: Stream<Item = Result<B, reqwest::Error>> + Unpin + Send + 'static,
+    B: AsRef<[u8]> + Send + 'static,
+    F: Fn(&str) -> Vec<StreamEvent> + Send + Sync + 'static,
+{
+    use futures::StreamExt;
+    use std::collections::VecDeque;
+
+    let stream = futures::stream::try_unfold(
+        (
+            chunks,
+            String::new(),
+            VecDeque::<StreamEvent>::new(),
+            false,
+            parse_line,
+        ),
+        |(mut chunks, mut buffer, mut pending, mut exhausted, parse_line)| async move {
+            loop {
+                if let Some(event) = pending.pop_front() {
+                    return Ok(Some((
+                        event,
+                        (chunks, buffer, pending, exhausted, parse_line),
+                    )));
+                }
+
+                if let Some(idx) = buffer.find('\n') {
+                    let mut line = buffer[..idx].to_string();
+                    buffer.drain(..=idx);
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    pending.extend(parse_line(line.trim()));
+                    continue;
+                }
+
+                if exhausted {
+                    let tail = std::mem::take(&mut buffer);
+                    if !tail.trim().is_empty() {
+                        pending.extend(parse_line(tail.trim()));
+                    }
+                    if let Some(event) = pending.pop_front() {
+                        return Ok(Some((
+                            event,
+                            (chunks, buffer, pending, true, parse_line),
+                        )));
+                    }
+                    return Ok(None);
+                }
+
+                match chunks.next().await {
+                    Some(Ok(bytes)) => {
+                        buffer.push_str(&String::from_utf8_lossy(bytes.as_ref()));
+                    }
+                    Some(Err(e)) => {
+                        return Err(ProviderError::StreamError(e.to_string()));
+                    }
+                    None => exhausted = true,
+                }
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
+/// Parse one complete SSE line in the OpenAI-compatible `data: <json>` shape.
+///
+/// Handles the `data: [DONE]` terminator and delegates every other payload to
+/// [`parse_openai_sse`]. Lines that are not `data:` frames produce no events.
+pub fn openai_compat_line_events(line: &str) -> Vec<StreamEvent> {
+    let Some(payload) = line.strip_prefix("data:") else {
+        return Vec::new();
+    };
+    let payload = payload.trim();
+    if payload.is_empty() {
+        return Vec::new();
+    }
+    if payload == "[DONE]" {
+        return vec![StreamEvent::Done];
+    }
+    parse_openai_sse(payload).into_iter().collect()
+}
+
+/// Parse one complete SSE line in the Anthropic `data: <json>` shape.
+pub fn anthropic_line_events(line: &str) -> Vec<StreamEvent> {
+    let Some(payload) = line.strip_prefix("data:") else {
+        return Vec::new();
+    };
+    let payload = payload.trim();
+    if payload.is_empty() || payload == "[DONE]" {
+        return Vec::new();
+    }
+    parse_anthropic_sse(payload).into_iter().collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAISSEvent {
     #[serde(default)]
@@ -349,5 +463,82 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+    }
+
+    /// Helper: run a buffered `sse_event_stream` to completion and collect events.
+    fn collect_events<B>(chunks: Vec<Result<B, reqwest::Error>>) -> Vec<StreamEvent>
+    where
+        B: AsRef<[u8]> + Send + 'static,
+    {
+        use futures::StreamExt;
+        let stream = sse_event_stream(futures::stream::iter(chunks), openai_compat_line_events);
+        futures::executor::block_on(stream.map(Result::unwrap).collect())
+    }
+
+    #[test]
+    fn sse_event_stream_emits_every_event_when_one_chunk_has_many_frames() {
+        // One network chunk carries several SSE frames. The old per-chunk parser
+        // returned only the first frame and dropped the rest, garbling output.
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" \"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_events(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["Hello".to_string(), " ".to_string(), "world".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_reassembles_frames_split_across_chunks() {
+        // A single SSE frame split across two network chunks must be reassembled,
+        // not dropped as a partial parse failure.
+        let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Hel";
+        let chunk2 = concat!(
+            "lo\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_events(vec![
+            Ok(Vec::from(chunk1.as_bytes())),
+            Ok(Vec::from(chunk2.as_bytes())),
+        ]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["Hello".to_string(), "!".to_string()]);
+    }
+
+    #[test]
+    fn sse_event_stream_flushes_trailing_frame_without_newline() {
+        // The final frame may arrive without a trailing newline before EOF; the
+        // buffered parser must still emit it.
+        let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: ";
+        let chunk2 = "[DONE]";
+        let events = collect_events(vec![
+            Ok(Vec::from(chunk1.as_bytes())),
+            Ok(Vec::from(chunk2.as_bytes())),
+        ]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["ok".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
     }
 }

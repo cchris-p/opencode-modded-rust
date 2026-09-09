@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use futures::StreamExt;
 use reqwest::Client;
 
 use crate::{
-    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamEvent, StreamResult,
+    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult,
 };
 
 const OPENROUTER_API_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
@@ -226,24 +225,9 @@ impl Provider for OpenRouterProvider {
             return Err(ProviderError::ApiError(format!("{}: {}", status, body)));
         }
 
-        let stream = response
-            .bytes_stream()
-            .map(move |chunk_result| match chunk_result {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    for line in text.lines() {
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
-                            if let Some(event) = crate::stream::parse_openai_sse(data) {
-                                return Ok(event);
-                            }
-                        }
-                    }
-                    Ok(StreamEvent::TextDelta(String::new()))
-                }
-                Err(e) => Err(ProviderError::StreamError(e.to_string())),
-            });
+        let stream =
+            crate::stream::sse_event_stream(response.bytes_stream(), crate::stream::openai_compat_line_events);
 
-        Ok(Box::pin(stream))
+        Ok(stream)
     }
 }
