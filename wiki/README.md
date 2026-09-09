@@ -15,6 +15,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `product-boundary.md` defines what this product is and is not.
 - `reference-strategy.md` explains how the TypeScript repo is used as a reference line.
 - `agent-evaluation-strategy.md` defines how the Rust runtime is judged across V1 through V3.
+- `advanced-coding-session-polling.md` defines the high-level direction for low-context waits on coding-session state.
 - `v1.md` defines the first serious personal daily-driver target.
 - `v1-runtime-loop.md` defines the concrete bounded-task execution model for V1.
 - `v2.md` defines the next reliability and retrieval step.
