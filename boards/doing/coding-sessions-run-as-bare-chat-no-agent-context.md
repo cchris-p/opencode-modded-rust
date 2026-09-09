@@ -114,6 +114,10 @@ Foundation slice shipped on `bug/BUG-004-agentic-session-foundation`:
 - Verify the live TUI path via `ort-build`/`ort` on a real provider: "Look at the files in this workspace" should issue read/glob/grep/bash without prompting for every call.
 - Confirm the ask callback doesn't regress `START-018` approval UX for `Ask`/`Deny` cases.
 
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/26 (branch `bug/BUG-004-agentic-session-foundation`, base `development`)
+
 ## Related Items
 
 - `BUG-003` Session stops completely after first prompt
