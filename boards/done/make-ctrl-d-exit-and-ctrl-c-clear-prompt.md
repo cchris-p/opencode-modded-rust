@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-09"
 ---
 
@@ -79,4 +79,10 @@ The current TUI treats plain `Ctrl+C` (with no active text selection) as quit (`
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/23
+
+## Completion
+
+- Merged into `development` on 2026-09-09 (PR #23).
+- Branch `feature/FEAT-006-ctrl-d-exit-ctrl-c-clear-prompt` deleted locally and remotely.
+- Closed out on user direction; awaiting post-merge QA on `development` if desired.
 
