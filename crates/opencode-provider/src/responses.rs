@@ -429,6 +429,8 @@ pub enum ResponsesStreamChunk {
     ResponseCompleted { response: ResponseFinishedData },
     #[serde(rename = "response.incomplete")]
     ResponseIncomplete { response: ResponseFinishedData },
+    #[serde(rename = "response.failed")]
+    ResponseFailed { response: ResponseFailedData },
 
     /// `response.output_item.added`
     #[serde(rename = "response.output_item.added")]
@@ -498,8 +500,12 @@ pub enum ResponsesStreamChunk {
     /// `error`
     #[serde(rename = "error")]
     Error {
-        code: String,
-        message: String,
+        #[serde(default)]
+        error: Option<ResponseErrorData>,
+        #[serde(default)]
+        code: Option<String>,
+        #[serde(default)]
+        message: Option<String>,
         #[serde(default)]
         param: Option<String>,
         #[serde(default)]
@@ -544,6 +550,26 @@ pub struct ResponseFinishedData {
     pub usage: ResponsesUsage,
     #[serde(default)]
     pub service_tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseFailedData {
+    #[serde(default)]
+    pub error: Option<ResponseErrorData>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseErrorData {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default, rename = "type")]
+    pub error_type: Option<String>,
+    #[serde(default)]
+    pub param: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2038,15 +2064,46 @@ fn process_stream_chunk(
                 *has_function_call,
             );
         }
+        ResponsesStreamChunk::ResponseFailed { response } => {
+            *service_tier = response.service_tier;
+            if let Some(message) = response.error.as_ref().and_then(response_error_message) {
+                events.push(StreamEvent::Error(message));
+            }
+            *finish_reason = FinishReason::Error;
+        }
         ResponsesStreamChunk::AnnotationAdded { .. } => {}
-        ResponsesStreamChunk::Error { message, .. } => {
-            events.push(StreamEvent::Error(message));
+        ResponsesStreamChunk::Error { error, message, .. } => {
+            if let Some(message) = error.as_ref().and_then(response_error_message).or(message) {
+                events.push(StreamEvent::Error(message));
+            }
             *finish_reason = FinishReason::Error;
         }
         ResponsesStreamChunk::Unknown => {}
     }
 
     events
+}
+
+fn response_error_message(error: &ResponseErrorData) -> Option<String> {
+    error
+        .message
+        .as_deref()
+        .filter(|message| !message.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            error
+                .code
+                .as_deref()
+                .filter(|code| !code.trim().is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            error
+                .error_type
+                .as_deref()
+                .filter(|error_type| !error_type.trim().is_empty())
+                .map(ToString::to_string)
+        })
 }
 
 fn parse_output_items(output: &[Value]) -> (Vec<ContentPart>, bool, Vec<Vec<LogprobEntry>>) {
@@ -2558,6 +2615,109 @@ mod runtime_tests {
             .iter()
             .any(|e| matches!(e, StreamEvent::ToolCallEnd { .. })));
         assert!(has_function_call);
+    }
+
+    #[test]
+    fn test_stream_state_machine_nested_error_event() {
+        let mut finish_reason = FinishReason::Unknown;
+        let mut usage = ResponsesUsage::default();
+        let mut logprobs = Vec::new();
+        let mut response_id = None;
+        let mut ongoing_tool_calls = HashMap::new();
+        let mut has_function_call = false;
+        let mut active_reasoning = HashMap::new();
+        let mut current_reasoning_output_index = None;
+        let mut reasoning_item_to_output_index = HashMap::new();
+        let mut current_text_id = None;
+        let mut text_open = false;
+        let mut service_tier = None;
+
+        let chunk: ResponsesStreamChunk = serde_json::from_value(json!({
+            "type": "error",
+            "error": {
+                "type": "insufficient_quota",
+                "code": "credit_balance_exhausted",
+                "message": "You have no credits remaining.",
+                "param": null
+            },
+            "sequence_number": 2
+        }))
+        .expect("nested error chunk should parse");
+
+        let events = process_stream_chunk(
+            chunk,
+            &mut finish_reason,
+            &mut usage,
+            &mut logprobs,
+            &mut response_id,
+            &mut ongoing_tool_calls,
+            &mut has_function_call,
+            &mut active_reasoning,
+            &mut current_reasoning_output_index,
+            &mut reasoning_item_to_output_index,
+            &mut current_text_id,
+            &mut text_open,
+            &mut service_tier,
+        );
+
+        assert_eq!(finish_reason, FinishReason::Error);
+        assert!(matches!(
+            events.first(),
+            Some(StreamEvent::Error(message)) if message == "You have no credits remaining."
+        ));
+    }
+
+    #[test]
+    fn test_stream_state_machine_response_failed_event() {
+        let mut finish_reason = FinishReason::Unknown;
+        let mut usage = ResponsesUsage::default();
+        let mut logprobs = Vec::new();
+        let mut response_id = None;
+        let mut ongoing_tool_calls = HashMap::new();
+        let mut has_function_call = false;
+        let mut active_reasoning = HashMap::new();
+        let mut current_reasoning_output_index = None;
+        let mut reasoning_item_to_output_index = HashMap::new();
+        let mut current_text_id = None;
+        let mut text_open = false;
+        let mut service_tier = None;
+
+        let chunk: ResponsesStreamChunk = serde_json::from_value(json!({
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {
+                    "code": "credit_balance_exhausted",
+                    "message": "Add credits to continue using the API."
+                },
+                "service_tier": "auto"
+            },
+            "sequence_number": 3
+        }))
+        .expect("failed response chunk should parse");
+
+        let events = process_stream_chunk(
+            chunk,
+            &mut finish_reason,
+            &mut usage,
+            &mut logprobs,
+            &mut response_id,
+            &mut ongoing_tool_calls,
+            &mut has_function_call,
+            &mut active_reasoning,
+            &mut current_reasoning_output_index,
+            &mut reasoning_item_to_output_index,
+            &mut current_text_id,
+            &mut text_open,
+            &mut service_tier,
+        );
+
+        assert_eq!(finish_reason, FinishReason::Error);
+        assert_eq!(service_tier.as_deref(), Some("auto"));
+        assert!(matches!(
+            events.first(),
+            Some(StreamEvent::Error(message)) if message == "Add credits to continue using the API."
+        ));
     }
 
     #[tokio::test]
