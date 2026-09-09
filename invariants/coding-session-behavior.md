@@ -7,5 +7,8 @@
 - The TUI/server prompt path and the CLI prompt path must both attach the agent system prompt, environment context, and tools; neither path may silently degrade into a bare chat request.
 - The runtime must not rely on a provider auto-injecting tools or a default system prompt; tool and system attachment is the session layer's responsibility for every provider.
 - Session persistence must round-trip the resolved agent, model, and tool context so that a resumed session reconstructs the same agentic behavior instead of losing context.
+- Tool-call execution must enforce permission decisions from the merged agent and session ruleset before prompting or running: `Allow` runs without prompting, `Ask` prompts, `Deny` returns an error to the model. Tool execution must never prompt unconditionally for every invocation.
+- Tool attachment must be gated on the resolved model's actual tool-calling capability; a model that cannot call tools is handled explicitly and visibly, not handed a dead tool set.
 - A model that is not capable of tool calling must be gated explicitly and visibly; it must not cause a coding session to silently run without tools or environment context.
 - Tool-call execution must remain reachable end-to-end: once tools are declared on a request, the registry must be able to execute them and return results into the same session.
+- The session prompt loop is a single source of truth for agentic request construction; duplicate parallel loops that drift in behavior are a defect.
