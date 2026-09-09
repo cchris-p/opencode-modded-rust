@@ -121,3 +121,18 @@ The bug should not be considered closed until the user confirms the session no l
 - Treat this as a real runtime blocker until disproven, not as a minor UX glitch.
 - Investigation should prefer evidence from real runs, session state, and logs over speculative fixes.
 - If the bug turns out to be a reused-server state issue, document that explicitly and verify both reused and fresh-launch behavior after the fix.
+
+## Investigation - 2026-09-08 20:18 EDT
+
+- User reported the current Rust product is unusable.
+- Matched this report to `BUG-003` because the active card already tracks the session-blocking unusable behavior.
+- Initial investigation will distinguish backend runtime failure from TUI/API update failure before proposing an implementation fix.
+- Ruled out the initial backend idle-status hang hypothesis with a route-level regression probe: `/session/{id}/prompt` emits `session.status: idle` after mock stream completion.
+- Direct build evidence: `cargo build -p opencode-cli -p opencode-tui` succeeds; `ort-build` is not available in this shell.
+- Direct runtime evidence with current config/default: `./target/debug/opencode run 'reply with exactly OK'` fails through OpenRouter with `401 Unauthorized: User not found`.
+- Direct runtime evidence with Ollama: `./target/debug/opencode run -m ollama/qwen3:30b 'reply with exactly OK'` fails because `http://127.0.0.1:11434/v1/chat/completions` is unreachable.
+- Direct runtime evidence with Anthropic: `./target/debug/opencode run -m anthropic/claude-haiku-4-5 'reply with exactly OK'` succeeds and returns `OK`.
+- Direct runtime evidence with OpenAI before the fix: OpenAI models returned a blank assistant response. A direct Responses API stream showed the real failure was `credit_balance_exhausted`, emitted as nested `error.error.message` followed by `response.failed`; the Rust parser treated those event shapes as unknown/empty.
+- Implemented fix: parse nested OpenAI Responses `error` events and `response.failed` events so provider failures surface to the user instead of producing blank assistant output.
+- Verification after the fix: `./target/debug/opencode run -m openai/gpt-5-mini 'reply with exactly OK'` now reports `You have no credits remaining...` instead of a blank response.
+- Residual blockers are configuration/environment issues, not fixed by this parser patch: OpenRouter credentials currently fail with 401, Ollama is not reachable locally, and OpenAI account credits are exhausted.
