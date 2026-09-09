@@ -505,8 +505,11 @@ impl OpenAIProvider {
     }
 
     fn build_request_body(request: &ChatRequest) -> Result<Value, ProviderError> {
-        let mut value = serde_json::to_value(request)
-            .map_err(|e| ProviderError::InvalidRequest(e.to_string()))?;
+        // OpenAI-compatible /chat/completions requires tools wrapped in
+        // `{ type: "function", function: {...} }` and tool messages in OpenAI
+        // wire form (tool_calls + role:tool). Serialize via the shared chat
+        // converter instead of the raw provider-neutral model. BUG-005.
+        let mut value = crate::openai_chat::openai_chat_completions_body(request)?;
 
         if let Value::Object(obj) = &mut value {
             // Merge provider_options into the top-level body (matching TS SDK behavior).

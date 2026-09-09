@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 
-use crate::{
-    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult,
-};
+use crate::{ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult};
 
 const OPENROUTER_API_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -182,7 +180,7 @@ impl Provider for OpenRouterProvider {
             .client
             .post(url)
             .headers(self.build_headers())
-            .json(&request)
+            .json(&crate::openai_chat::openai_chat_completions_body(&request)?)
             .send()
             .await
             .map_err(|e| ProviderError::NetworkError(e.to_string()))?;
@@ -214,7 +212,9 @@ impl Provider for OpenRouterProvider {
             .post(url)
             .headers(self.build_headers())
             .header("Accept", "text/event-stream")
-            .json(&stream_request)
+            .json(&crate::openai_chat::openai_chat_completions_body(
+                &stream_request,
+            )?)
             .send()
             .await
             .map_err(|e| ProviderError::NetworkError(e.to_string()))?;
@@ -225,8 +225,10 @@ impl Provider for OpenRouterProvider {
             return Err(ProviderError::ApiError(format!("{}: {}", status, body)));
         }
 
-        let stream =
-            crate::stream::sse_event_stream(response.bytes_stream(), crate::stream::openai_compat_line_events);
+        let stream = crate::stream::sse_event_stream(
+            response.bytes_stream(),
+            crate::stream::openai_compat_line_events,
+        );
 
         Ok(stream)
     }

@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 
-use crate::{
-    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult,
-};
+use crate::{ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult};
 
 const DEEPINFRA_API_URL: &str = "https://api.deepinfra.com/v1/openai/chat/completions";
 
@@ -90,7 +88,7 @@ impl Provider for DeepInfraProvider {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": request.messages,
+            "messages": crate::openai_chat::convert_messages(&request.messages),
         });
 
         if let Some(temp) = request.temperature {
@@ -101,7 +99,7 @@ impl Provider for DeepInfraProvider {
         }
         if let Some(tools) = &request.tools {
             if !tools.is_empty() {
-                body["tools"] = serde_json::json!(tools);
+                body["tools"] = crate::openai_chat::openai_chat_tools(tools);
             }
         }
 
@@ -131,7 +129,7 @@ impl Provider for DeepInfraProvider {
     async fn chat_stream(&self, request: ChatRequest) -> Result<StreamResult, ProviderError> {
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": request.messages,
+            "messages": crate::openai_chat::convert_messages(&request.messages),
             "stream": true,
         });
 
@@ -143,7 +141,7 @@ impl Provider for DeepInfraProvider {
         }
         if let Some(tools) = &request.tools {
             if !tools.is_empty() {
-                body["tools"] = serde_json::json!(tools);
+                body["tools"] = crate::openai_chat::openai_chat_tools(tools);
             }
         }
 
@@ -162,8 +160,10 @@ impl Provider for DeepInfraProvider {
             return Err(ProviderError::ApiError(error_text));
         }
 
-        let stream =
-            crate::stream::sse_event_stream(response.bytes_stream(), crate::stream::openai_compat_line_events);
+        let stream = crate::stream::sse_event_stream(
+            response.bytes_stream(),
+            crate::stream::openai_compat_line_events,
+        );
 
         Ok(stream)
     }

@@ -16,6 +16,7 @@ pub mod message;
 pub mod mistral;
 pub mod models;
 pub mod openai;
+pub mod openai_chat;
 pub mod openrouter;
 pub mod perplexity;
 pub mod provider;

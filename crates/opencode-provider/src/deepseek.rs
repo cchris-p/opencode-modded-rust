@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 
-use crate::{
-    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult,
-};
+use crate::{ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult};
 
 const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/chat/completions";
 
@@ -63,12 +61,13 @@ impl Provider for DeepSeekProvider {
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        let body = crate::openai_chat::openai_chat_completions_body(&request)?;
         let response = self
             .client
             .post(DEEPSEEK_API_URL)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&request)
+            .json(&body)
             .send()
             .await
             .map_err(|e| ProviderError::NetworkError(e.to_string()))?;
@@ -88,6 +87,7 @@ impl Provider for DeepSeekProvider {
     async fn chat_stream(&self, request: ChatRequest) -> Result<StreamResult, ProviderError> {
         let mut stream_request = request;
         stream_request.stream = Some(true);
+        let body = crate::openai_chat::openai_chat_completions_body(&stream_request)?;
 
         let response = self
             .client
@@ -95,7 +95,7 @@ impl Provider for DeepSeekProvider {
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
-            .json(&stream_request)
+            .json(&body)
             .send()
             .await
             .map_err(|e| ProviderError::NetworkError(e.to_string()))?;
@@ -106,8 +106,10 @@ impl Provider for DeepSeekProvider {
             return Err(ProviderError::ApiError(format!("{}: {}", status, body)));
         }
 
-        let stream =
-            crate::stream::sse_event_stream(response.bytes_stream(), crate::stream::openai_compat_line_events);
+        let stream = crate::stream::sse_event_stream(
+            response.bytes_stream(),
+            crate::stream::openai_compat_line_events,
+        );
 
         Ok(stream)
     }
