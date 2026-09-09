@@ -57,8 +57,9 @@ The personal daily-driver workflow does not need the sidebar (LSP/MCP/todo/pendi
 
 ### PR Link
 
-- https://github.com/cchris-p/opencode-modded-rust/pull/25 (targets `development`)
+- https://github.com/cchris-p/opencode-modded-rust/pull/25 (merged into `development`)
 
 ## Notes
 
+- Fixed and merged into `development` on 2026-09-09 via PR #25; branch `feature/FEAT-008-disable-tui-sidebar-by-default` deleted remote and local. Awaiting post-merge QA before completion.
 - `tui.sidebar: Option<bool>` already exists in the config schema but is not consumed by the startup default; this card intentionally does not wire it.
