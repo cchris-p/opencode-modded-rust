@@ -1871,6 +1871,17 @@ impl SessionPrompt {
                     media_type: None,
                     provider_options: None,
                 }),
+                PartType::Reasoning { text } => Some(ContentPart {
+                    content_type: "reasoning".to_string(),
+                    text: Some(text.clone()),
+                    image_url: None,
+                    tool_use: None,
+                    tool_result: None,
+                    cache_control: None,
+                    filename: None,
+                    media_type: None,
+                    provider_options: None,
+                }),
                 _ => None,
             })
             .collect();
@@ -3502,8 +3513,8 @@ mod tests {
         ChatRequest, ChatResponse, ModelInfo, ProviderError, StreamEvent, StreamResult, StreamUsage,
     };
     use std::collections::VecDeque;
-    use std::sync::Mutex as StdMutex;
     use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
 
     struct StaticModelProvider {
         model: Option<ModelInfo>,
@@ -4550,9 +4561,7 @@ mod tests {
 
         fn reply_stream(&self) -> Vec<StreamEvent> {
             let mut guard = self.replies.lock().expect("reply lock should not poison");
-            let text = guard
-                .pop_front()
-                .unwrap_or_else(|| "FALLBACK".to_string());
+            let text = guard.pop_front().unwrap_or_else(|| "FALLBACK".to_string());
             vec![
                 StreamEvent::Start,
                 StreamEvent::TextDelta(text),
