@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-09"
 ---
 
@@ -61,6 +61,32 @@ The stale-server failure was observed directly while QAing `BUG-004`:
 - `FEAT-002` Keep sessions running after TUI exit (archived; superseded by this card)
 - `BUG-003` Session stops completely after first prompt (documents the stale-server trap)
 - `BUG-004` Coding sessions run as bare chat (this card exists to make that QA trustworthy)
+
+## Implementation - 2026-09-09
+
+### Decision
+
+- Selected "always fresh + next port" semantics: each additional `ort` run stops the previously recorded server and starts a fresh instance on the next port, recording only the newest. Background sessions on the superseded server end when it is stopped.
+
+### What changed
+
+- `crates/opencode-cli/src/main.rs`:
+  - `LocalTuiServerRecord` now records `port` and `pid` in addition to `base_url` (both `Option` with serde defaults, so legacy records still load).
+  - `prepare_local_tui_server` no longer reuses a recorded server blindly. If a recorded server is reachable it is stopped (via pid) before a fresh instance is started; stale records with an unknown pid are surfaced with guidance instead of silently reused.
+  - Port selection now increments: `next_local_server_port(base_port, previous)` returns the previous recorded port + 1 (falling back to parsing the port from a legacy `base_url`), so repeated `ort` runs walk 3000 -> 3001 -> ... and never silently attach to an out-of-date process.
+  - `spawn_detached_tui_server` returns the child pid; the new record stores port + pid.
+  - Added `terminate_local_tui_server` (SIGTERM on unix, taskkill on windows), `port_from_base_url`, and `next_local_server_port`.
+- Legacy records that carry no pid and are still reachable are not auto-killed (no pid to signal); they are reported and left running, and the launcher proceeds to the next port.
+
+### Tests
+
+- `cargo test -p opencode-cli`: 3 unit tests for `port_from_base_url` and `next_local_server_port` (defaults, increment from recorded port, legacy base_url parse).
+- `cargo check -p opencode-cli -p opencode-server` passes.
+
+### Still open (this card)
+
+- Live verification with `ort-build`/`ort`: confirm repeated runs increment the port and stop the prior server, and that `opencode attach <url>` is unaffected.
+- Confirm no stale recorded server is ever reused for QA.
 
 ## Notes
 
