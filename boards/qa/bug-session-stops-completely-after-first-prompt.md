@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-09-01"
 ---
 
@@ -137,3 +137,4 @@ The bug should not be considered closed until the user confirms the session no l
 - Verification after the fix: `./target/debug/opencode run -m openai/gpt-5-mini 'reply with exactly OK'` now reports `You have no credits remaining...` instead of a blank response.
 - Residual blockers are configuration/environment issues, not fixed by this parser patch: OpenRouter credentials currently fail with 401, Ollama is not reachable locally, and OpenAI account credits are exhausted.
 - PR: https://github.com/cchris-p/opencode-modded-rust/pull/22
+- Merged into `development` on 2026-09-08 20:48 EDT via PR #22; awaiting QA on configured provider paths.
