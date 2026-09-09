@@ -118,7 +118,15 @@ Foundation slice shipped on `bug/BUG-004-agentic-session-foundation`:
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/26 (branch `bug/BUG-004-agentic-session-foundation`, base `development`)
 
-## Merge status
+## QA Report - 2026-09-09 (user)
+
+- User QA on `development` after BUG-005 merged:
+  - "Reply with exactly OK" → returns `OK` on deepseek (agentic system prompt + tools attached and accepted; no bare-chat confusion).
+  - "Look at the files in this workspace and summarize them" → the agent now issues real `ls` tool calls that execute against the working directory (tool parts appear in the transcript).
+- Residual (tool-loop only, tracked by `BUG-006`): the follow-up request after a tool result fails on deepseek with `400 reasoning_content ... must be passed back to the API`, and a split tool-call delta produces a stray empty-name tool call.
+- Note: an earlier QA attempt on this card was invalid because a stale detached server reused a pre-fix binary; cleared and re-verified on a fresh server.
+
+## Merge status (BUG-004 / PR #26)
 
 - Merged into `development` on 2026-09-09 via PR #26 (merge commit `1ca3ed9`).
 - PR branch `bug/BUG-004-agentic-session-foundation` deleted.
