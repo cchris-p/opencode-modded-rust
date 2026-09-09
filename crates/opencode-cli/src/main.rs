@@ -851,6 +851,10 @@ async fn run_tui(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LocalTuiServerRecord {
     base_url: String,
+    #[serde(default)]
+    port: Option<u16>,
+    #[serde(default)]
+    pid: Option<u32>,
 }
 
 async fn prepare_local_tui_server(
@@ -871,16 +875,42 @@ async fn prepare_local_tui_server(
     } else {
         bind_host.clone()
     };
-    let bind_port = if port == 0 { 3000 } else { port };
-    let base_url = format!("http://{}:{}", client_host, bind_port);
+    let base_port = if port == 0 { 3000 } else { port };
     let record_path = local_tui_server_record_path(&cwd)?;
 
-    if let Some(record) = load_local_tui_server_record(&record_path) {
-        if record.base_url == base_url && server_is_ready(&record.base_url).await {
-            eprintln!("Reusing local TUI server at {}", record.base_url);
-            return Ok(record.base_url);
+    // Enforce at most one local server per workspace. If a previous server was
+    // recorded for this workspace and is still live, stop it before starting a
+    // fresh instance so a stale (pre-fix) process can never silently serve QA.
+    // FEAT-014.
+    let previous = load_local_tui_server_record(&record_path);
+    if let Some(record) = &previous {
+        if server_is_ready(&record.base_url).await {
+            if let Some(pid) = record.pid {
+                eprintln!(
+                    "Stopping previous local TUI server at {} (pid {})",
+                    record.base_url, pid
+                );
+                terminate_local_tui_server(pid);
+                // Give the old process a moment to release its port.
+                for _ in 0..10 {
+                    if !server_is_ready(&record.base_url).await {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+            } else {
+                eprintln!(
+                    "Stale local TUI server at {} is reachable but its process id is unknown; it will be left running. Remove ~/.local/state/opencode/tui-servers/*.json and the process manually if it blocks the next port.",
+                    record.base_url
+                );
+            }
         }
     }
+
+    // Each additional ort run that starts a new instance increments the server
+    // by one instead of reusing the recorded (possibly stale) process.
+    let bind_port = next_local_server_port(base_port, previous.as_ref());
+    let base_url = format!("http://{}:{}", client_host, bind_port);
 
     if server_is_ready(&base_url).await {
         anyhow::bail!(
@@ -891,12 +921,14 @@ async fn prepare_local_tui_server(
     }
 
     eprintln!("Starting detached local server for TUI at {}", base_url);
-    spawn_detached_tui_server(&cwd, bind_port, &bind_host, mdns, &mdns_domain, &cors)?;
+    let pid = spawn_detached_tui_server(&cwd, bind_port, &bind_host, mdns, &mdns_domain, &cors)?;
     wait_for_server_ready(&base_url, Duration::from_secs(90), None).await?;
     store_local_tui_server_record(
         &record_path,
         &LocalTuiServerRecord {
             base_url: base_url.clone(),
+            port: Some(bind_port),
+            pid: Some(pid),
         },
     )?;
     Ok(base_url)
@@ -935,7 +967,7 @@ fn spawn_detached_tui_server(
     mdns: bool,
     mdns_domain: &str,
     cors: &[String],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u32> {
     let exe = std::env::current_exe()?;
     let mut cmd = ProcessCommand::new(exe);
     cmd.current_dir(cwd)
@@ -955,8 +987,52 @@ fn spawn_detached_tui_server(
         cmd.arg("--cors").arg(entry);
     }
 
-    cmd.spawn()?;
-    Ok(())
+    let child = cmd.spawn()?;
+    Ok(child.id())
+}
+
+/// Best-effort terminate of a locally launched TUI server process.
+#[cfg(unix)]
+fn terminate_local_tui_server(pid: u32) {
+    let _ = ProcessCommand::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+}
+
+/// Best-effort terminate of a locally launched TUI server process.
+#[cfg(windows)]
+fn terminate_local_tui_server(pid: u32) {
+    let _ = ProcessCommand::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .status();
+}
+
+/// Parse the port out of a recorded `http://host:port` base URL.
+fn port_from_base_url(base_url: &str) -> Option<u16> {
+    let host = base_url
+        .strip_prefix("http://")
+        .or_else(|| base_url.strip_prefix("https://"))?;
+    let after_colon = host.rsplit_once(':')?.1;
+    after_colon.parse::<u16>().ok()
+}
+
+/// Choose the next server port for this workspace.
+///
+/// Starts at the requested port (default 3000). When a previous server was
+/// recorded for the workspace, the next instance is the previous port plus one
+/// so every additional `ort` run increments the server instead of silently
+/// reusing (and potentially QA-invalidating) a stale process.
+fn next_local_server_port(base_port: u16, previous: Option<&LocalTuiServerRecord>) -> u16 {
+    match previous {
+        Some(record) => {
+            let last = record
+                .port
+                .or_else(|| port_from_base_url(&record.base_url))
+                .unwrap_or(base_port);
+            last.saturating_add(1).max(base_port)
+        }
+        None => base_port,
+    }
 }
 
 async fn resolve_requested_session(
@@ -5657,4 +5733,40 @@ async fn handle_github_command(action: GithubCommands) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_from_base_url_parses_port() {
+        assert_eq!(port_from_base_url("http://127.0.0.1:3000"), Some(3000));
+        assert_eq!(port_from_base_url("http://127.0.0.1:3001"), Some(3001));
+        assert_eq!(port_from_base_url("http://localhost:4096"), Some(4096));
+        assert_eq!(port_from_base_url("http://127.0.0.1"), None);
+        assert_eq!(port_from_base_url("not a url"), None);
+    }
+
+    #[test]
+    fn next_local_server_port_defaults_to_base_without_record() {
+        assert_eq!(next_local_server_port(3000, None), 3000);
+    }
+
+    #[test]
+    fn next_local_server_port_increments_from_record() {
+        let record = LocalTuiServerRecord {
+            base_url: "http://127.0.0.1:3000".to_string(),
+            port: Some(3000),
+            pid: Some(42),
+        };
+        assert_eq!(next_local_server_port(3000, Some(&record)), 3001);
+
+        let legacy = LocalTuiServerRecord {
+            base_url: "http://127.0.0.1:3001".to_string(),
+            port: None,
+            pid: None,
+        };
+        assert_eq!(next_local_server_port(3000, Some(&legacy)), 3002);
+    }
 }
