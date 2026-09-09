@@ -219,3 +219,10 @@ Note: this is the concrete, provider-agnostic root cause behind the repeated "se
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/24 (branch `bug/BUG-003-buffered-sse-streaming`, base `development`)
+
+### Merge status
+
+- Merged into `development` on 2026-09-09 via PR #24 (merge commit `e254a515141eaef58d5d179642d9372dd666c011`).
+- PR branch `bug/BUG-003-buffered-sse-streaming` deleted remotely and locally.
+- Local `development` is checked out, current with origin, and contains the merged fix.
+- Item remains in `qa` pending post-merge QA on `development` by the user; no QA report recorded yet.
