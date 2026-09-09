@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-09"
 ---
 
@@ -58,6 +58,16 @@ The Responses-API path already had a dedicated converter (`crates/opencode-provi
 
 - `BUG-004` Coding sessions run as bare chat (this is a regression of attaching tools)
 - `FEAT-010` Anthropic provider tool transport parity
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/28 (branch `bug/BUG-005-openai-chat-tool-wire-format`, base `development`)
+
+## Merge status
+
+- Merged into `development` on 2026-09-09 via PR #28 (merge commit `6292b9f`).
+- PR branch `bug/BUG-005-openai-chat-tool-wire-format` deleted.
+- Item relaned to `qa`; awaiting user verification of normal messages and tool-call prompts on `development`.
 
 ## Notes
 
