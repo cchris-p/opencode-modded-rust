@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -193,28 +192,9 @@ impl Provider for GitLabProvider {
             ));
         }
 
-        let stream = response
-            .bytes_stream()
-            .map(move |chunk_result| match chunk_result {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    for line in text.lines() {
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
-                            if data == "[DONE]" {
-                                return Ok(StreamEvent::Done);
-                            }
-                            if let Some(event) = parse_gitlab_sse(data) {
-                                return Ok(event);
-                            }
-                        }
-                    }
-                    Ok(StreamEvent::TextDelta(String::new()))
-                }
-                Err(e) => Err(ProviderError::StreamError(e.to_string())),
-            });
+        let stream = crate::stream::sse_event_stream(response.bytes_stream(), gitlab_line_events);
 
-        Ok(Box::pin(stream))
+        Ok(stream)
     }
 }
 
@@ -320,6 +300,16 @@ fn convert_gitlab_response(response: GitLabResponse) -> ChatResponse {
         }],
         usage,
     }
+}
+
+fn gitlab_line_events(line: &str) -> Vec<StreamEvent> {
+    let Some(payload) = line.strip_prefix("data: ") else {
+        return Vec::new();
+    };
+    if payload == "[DONE]" {
+        return vec![StreamEvent::Done];
+    }
+    parse_gitlab_sse(payload).into_iter().collect()
 }
 
 fn parse_gitlab_sse(data: &str) -> Option<StreamEvent> {

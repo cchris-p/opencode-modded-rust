@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use futures::StreamExt;
 use reqwest::Client;
 
 use crate::{
-    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamEvent, StreamResult,
+    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult,
 };
 
 const CEREBRAS_API_URL: &str = "https://api.cerebras.ai/v1/chat/completions";
@@ -145,34 +144,9 @@ impl Provider for CerebrasProvider {
             return Err(ProviderError::ApiError(error_text));
         }
 
-        let stream = response
-            .bytes_stream()
-            .then(|result| async move {
-                match result {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        let mut events: Vec<Result<StreamEvent, ProviderError>> = Vec::new();
+        let stream =
+            crate::stream::sse_event_stream(response.bytes_stream(), crate::stream::openai_compat_line_events);
 
-                        for line in text.lines() {
-                            if let Some(data) = line.strip_prefix("data: ") {
-                                if data == "[DONE]" {
-                                    events.push(Ok(StreamEvent::Done));
-                                    continue;
-                                }
-
-                                if let Some(event) = crate::stream::parse_openai_sse(data) {
-                                    events.push(Ok(event));
-                                }
-                            }
-                        }
-
-                        events
-                    }
-                    Err(e) => vec![Err(ProviderError::StreamError(e.to_string()))],
-                }
-            })
-            .flat_map(|events| futures::stream::iter(events));
-
-        Ok(Box::pin(stream))
+        Ok(stream)
     }
 }
