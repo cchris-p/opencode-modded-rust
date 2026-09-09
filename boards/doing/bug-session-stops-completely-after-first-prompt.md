@@ -215,3 +215,7 @@ Note: this is the concrete, provider-agnostic root cause behind the repeated "se
 - The streaming text is now reliable, but the multi-turn "second prompt never answers" behavior must be re-verified on the fixed provider path via the full TUI/server loop on the checked-out branch. If it still reproduces after the stream fix, that residual is a separate session-loop defect and should be split into its own card.
 - Bedrock uses a binary Amazon eventstream framing rather than newline-delimited SSE and was intentionally left out of this change; it should be reviewed separately if it shows similar symptoms.
 - After user verification, provider-path checks required by this card (Codex/OpenAI, Ollama, Anthropic, deepseek/OpenRouter) should be run per the "Required verification" section above.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/24 (branch `bug/BUG-003-buffered-sse-streaming`, base `development`)
