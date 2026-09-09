@@ -1698,6 +1698,23 @@ async fn session_prompt(
         };
         set_session_run_status(&task_state, &session_id, SessionRunStatus::Busy).await;
 
+        // Resolve the agentic request context (agent identity, system prompt,
+        // environment block, tool set, LLM params) so coding-session requests
+        // behave like the reference agent instead of bare chat. BUG-004.
+        let supports_tools = provider
+            .get_model(&task_model)
+            .map(|model| model.supports_tools)
+            .unwrap_or(true);
+        let resolved = crate::agentic::resolve_agentic_context(
+            &session.directory,
+            task_agent.clone(),
+            &task_model,
+            &task_provider,
+            supports_tools,
+        )
+        .await;
+        let agent_rules: opencode_permission::PermissionRuleset = resolved.agent.permission.clone();
+
         if let Some(variant) = task_variant.as_deref() {
             session
                 .metadata
@@ -1712,11 +1729,9 @@ async fn session_prompt(
         session
             .metadata
             .insert("model_id".to_string(), serde_json::json!(&task_model));
-        if let Some(agent) = task_agent.as_deref() {
-            session
-                .metadata
-                .insert("agent".to_string(), serde_json::json!(agent));
-        }
+        session
+            .metadata
+            .insert("agent".to_string(), serde_json::json!(&resolved.agent_name));
 
         let (update_tx, mut update_rx) =
             tokio::sync::mpsc::unbounded_channel::<opencode_session::Session>();
@@ -1744,10 +1759,45 @@ async fn session_prompt(
 
         let permission_state = task_state.clone();
         let permission_session_id = session_id.clone();
+        let permission_rules = agent_rules.clone();
         let permission_callback: opencode_tool::AskCallback = Arc::new(move |request| {
             let state = permission_state.clone();
             let session_id = permission_session_id.clone();
+            let rules = permission_rules.clone();
             Box::pin(async move {
+                // Evaluate the request against the resolved agent ruleset plus the
+                // session-level permission overlay so `Allow` tool calls run silently
+                // instead of prompting on every invocation (BUG-004 parity). Only
+                // `Ask` reaches the TUI.
+                use opencode_agent::PermissionDecision as AskDecision;
+                let session_rules = {
+                    let sessions = state.sessions.lock().await;
+                    sessions
+                        .get(&session_id)
+                        .and_then(|session| session.permission.clone())
+                        .map(|p| crate::agentic::ruleset_from_session(&p))
+                        .unwrap_or_default()
+                };
+                let merged = crate::agentic::merged_ruleset(&rules, &session_rules);
+                match crate::agentic::classify_permission(
+                    &merged,
+                    &request.permission,
+                    &request.patterns,
+                ) {
+                    AskDecision::Allow => return Ok(()),
+                    AskDecision::Deny => {
+                        return Err(opencode_tool::ToolError::PermissionDenied(format!(
+                            "Tool '{}' is denied by agent permission rules",
+                            request
+                                .metadata
+                                .get("tool")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or(&request.permission)
+                        )));
+                    }
+                    AskDecision::Ask => {}
+                }
+
                 let request_id = format!("perm_{}", Uuid::new_v4().simple());
                 let tool_name = request
                     .metadata
@@ -1872,7 +1922,7 @@ async fn session_prompt(
                 provider_id: task_provider.clone(),
                 model_id: task_model.clone(),
             }),
-            agent: task_agent.clone(),
+            agent: Some(resolved.agent_name.clone()),
             no_reply: false,
             system: None,
             variant: task_variant.clone(),
@@ -1885,9 +1935,9 @@ async fn session_prompt(
                 input,
                 &mut session,
                 provider,
-                None,
-                Vec::new(),
-                opencode_session::AgentParams::default(),
+                Some(resolved.system_prompt.clone()),
+                resolved.tools.clone(),
+                resolved.params.clone(),
                 Some(update_hook),
             )
             .await

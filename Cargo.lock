@@ -2357,6 +2357,7 @@ dependencies = [
  "opencode-config",
  "opencode-core",
  "opencode-mcp",
+ "opencode-permission",
  "opencode-plugin",
  "opencode-provider",
  "opencode-session",

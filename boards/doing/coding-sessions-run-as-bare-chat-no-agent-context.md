@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "doing"
 created: "2026-09-09"
 ---
 
@@ -90,6 +90,33 @@ Tool **execution already works** on the live loop: `loop_inner` builds a default
 - `cargo test -p opencode-session -p opencode-server -p opencode-permission`
 - Launch via `ort-build`/`ort`, open a session, and prompt with "Look at the files in this workspace and summarize them"; confirm the agent issues tool calls rather than asking for uploads, and that ordinary reads do not prompt for permission.
 - Export a transcript and confirm tool parts appear in it.
+
+## Implementation - 2026-09-09
+
+### What changed
+
+Foundation slice shipped on `bug/BUG-004-agentic-session-foundation`:
+
+- Added `opencode-server::agentic` (`crates/opencode-server/src/agentic.rs`) with:
+  - `resolve_agentic_context` — resolves the agent (requested → `config.default_agent` → `build`), builds the system prompt (agent prompt or `SystemPrompt::for_model` + environment/workspace block), resolves the permission-filtered tool set from the default registry (excluding `invalid` and `Deny` tools), and derives `AgentParams`.
+  - `classify_permission` / `merged_ruleset` / `ruleset_from_session` — permission decision helpers mirroring the reference ruleset evaluation.
+- Wired `session_prompt` (`crates/opencode-server/src/routes.rs`) to resolve the agentic context and pass the resolved system prompt, tool set, and agent params into the prompt loop instead of `None`/`Vec::new()`/defaults. Session metadata now always records the resolved agent.
+- Permission-aware ask callback: tool-execution asks are evaluated against the merged agent + session ruleset; `Allow` runs silently, `Deny` errors, only `Ask` round-trips to the TUI.
+
+### Tests
+
+- `cargo test -p opencode-server --lib agentic` (6 tests): default-agent resolution, system-prompt/env assembly, agent-prompt override, tool filtering, permission allow/deny classification, session-overlay merge.
+- `cargo test -p opencode-server --lib` (11) and `cargo test -p opencode-session --lib` (144) pass.
+- `cargo check -p opencode-cli -p opencode-tui` passes.
+
+### Still open (this card)
+
+- Verify the live TUI path via `ort-build`/`ort` on a real provider: "Look at the files in this workspace" should issue read/glob/grep/bash without prompting for every call.
+- Confirm the ask callback doesn't regress `START-018` approval UX for `Ask`/`Deny` cases.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/26 (branch `bug/BUG-004-agentic-session-foundation`, base `development`)
 
 ## Related Items
 
