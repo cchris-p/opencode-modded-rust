@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-09"
 ---
 
@@ -78,5 +78,5 @@ The current TUI treats plain `Ctrl+C` (with no active text selection) as quit (`
 
 ## PR
 
-- Pending
+- https://github.com/cchris-p/opencode-modded-rust/pull/23
 
