@@ -88,6 +88,10 @@ The stale-server failure was observed directly while QAing `BUG-004`:
 - Live verification with `ort-build`/`ort`: confirm repeated runs increment the port and stop the prior server, and that `opencode attach <url>` is unaffected.
 - Confirm no stale recorded server is ever reused for QA.
 
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/27 (branch `feature/FEAT-014-single-local-tui-server`, base `development`)
+
 ## Notes
 
 - This card supersedes `FEAT-002`'s reuse model; see that card's Archived note for the failure evidence.
