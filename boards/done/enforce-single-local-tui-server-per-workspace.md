@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-09"
 ---
 
@@ -97,6 +97,12 @@ The stale-server failure was observed directly while QAing `BUG-004`:
 - Merged into `development` on 2026-09-09 via PR #27 (merge commit `3b98900`).
 - PR branch `feature/FEAT-014-single-local-tui-server` deleted.
 - Item relaned to `qa`; awaiting user verification of the combined BUG-004 + FEAT-014 behavior on `development`.
+
+## QA Report - 2026-09-09 (user)
+
+- User confirmed on `development` with both PRs merged: "The attaching works great."
+- Repeated `ort` launches stop the prior server and start a fresh instance on the next port (3000 → 3001), and the recorded server carries port + pid.
+- Closing as completed: single-server + port-increment launcher verified by the user.
 
 ## Notes
 
