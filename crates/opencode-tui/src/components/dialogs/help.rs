@@ -65,7 +65,7 @@ impl HelpDialog {
             Line::from("  Ctrl+X  Open command list"),
             Line::from("  Ctrl+P  Open command palette"),
             Line::from("  Ctrl+H  Open help"),
-            Line::from("  Ctrl+C/q Exit TUI"),
+            Line::from("  Ctrl+D/q Exit TUI"),
             Line::from(""),
             Line::from(Span::styled(
                 "Prompt",
@@ -74,7 +74,7 @@ impl HelpDialog {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from("  Enter   Submit prompt"),
-            Line::from("  Ctrl+U  Clear prompt"),
+            Line::from("  Ctrl+C/U  Clear prompt"),
             Line::from("  Ctrl+V  Paste clipboard"),
             Line::from("  Ctrl+Shift+C  Copy prompt"),
             Line::from("  Ctrl+Shift+X  Cut prompt"),

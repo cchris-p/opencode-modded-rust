@@ -430,13 +430,20 @@ impl App {
                     return Ok(());
                 }
 
+                // Ctrl+D quits the TUI (natural exit key); Ctrl+C clears the prompt instead.
+                if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::CONTROL {
+                    self.state = AppState::Exiting;
+                    return Ok(());
+                }
+
                 if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
-                    // If there's an active selection, copy it instead of exiting (TS parity)
+                    // If there's an active selection, copy it (TS parity). Otherwise Ctrl+C
+                    // clears the prompt input field instead of quitting the session.
                     if self.selection.is_active() {
                         self.copy_selection();
                         return Ok(());
                     }
-                    self.state = AppState::Exiting;
+                    self.prompt.clear();
                     return Ok(());
                 }
 

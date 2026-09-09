@@ -154,7 +154,7 @@ impl KeybindRegistry {
     }
 
     fn register_defaults(&mut self) {
-        self.register("app_exit", Keybind::ctrl(KeyCode::Char('c')));
+        self.register("app_exit", Keybind::ctrl(KeyCode::Char('d')));
         self.register("app_exit_alt", Keybind::key(KeyCode::Esc));
 
         self.register("input_submit", Keybind::key(KeyCode::Enter));

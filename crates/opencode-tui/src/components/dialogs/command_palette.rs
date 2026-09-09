@@ -218,7 +218,7 @@ impl CommandPalette {
             Command {
                 action: CommandAction::Exit,
                 title: "Exit".to_string(),
-                keybind: Some("ctrl+c".to_string()),
+                keybind: Some("ctrl+d".to_string()),
                 category: "App".to_string(),
             },
         ];
