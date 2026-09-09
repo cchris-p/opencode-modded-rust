@@ -29,6 +29,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `task-state.md` defines authoritative task-state rules.
 - `runtime-lifecycle.md` defines task lifecycle expectations.
 - `retrieval.md` defines retrieval expectations.
+- `coding-session-behavior.md` defines agentic coding-session request requirements (agent identity, system prompt, environment context, tool attachment).
 - `coding-session-polling.md` defines low-context polling requirements for coding-session waits.
 - `verification.md` defines verification requirements.
 - Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
