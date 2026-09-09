@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-09-01"
 ---
 
@@ -290,3 +290,11 @@ Three turns, three completed assistant replies, run idle after each. `cargo test
 - Deterministic regression verified both directions: the 3-turn test fails under the old ID-comparison guard and passes under the positional guard.
 - Live smoke on real deepseek passes: `stream-smoke: PASSED (3 turns completed on deepseek/deepseek-v4-flash)`.
 - Item relaned to `qa`; awaiting user TUI verification of repeated prompts on a fresh `ort` server (stale reuse record already cleared).
+
+### QA Report - 2026-09-09 (user)
+
+- User confirmed post-fix behavior works on the fresh server: "Great that works!" after multi-turn deepseek reproduction no longer stalls after the first prompt.
+- Environment: fresh detached `opencode serve` from `development` HEAD (commit `bce4900`), stale 01:50 server killed and reuse record removed.
+- Verified: repeated consecutive prompts on one session each return completed assistant replies; session no longer stops after the first prompt.
+- Regression net (QA-001): `cargo test -p opencode-provider` (81+7), `cargo test -p opencode-session` (144+11 incl. 3-turn regression), and `scripts/qa/stream-smoke.sh` (live deepseek, PASSED) all green.
+- Closing as completed: both BUG-003 root causes fixed and user-verified.

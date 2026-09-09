@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "QA"
 spec: "boards/qa/bug-session-stops-completely-after-first-prompt.md"
-status: "qa"
+status: "done"
 created: "2026-09-09"
 ---
 
@@ -74,3 +74,9 @@ Build a repeatable, low-friction verification suite that lets QA and development
 
 - Keep the deterministic tests independent of provider credentials so they run in plain `cargo test`.
 - Guard any live network test behind an env var and skip cleanly when the key is absent.
+
+## QA Report - 2026-09-09 (user)
+
+- User confirmed BUG-003 fix works on the fresh server: "Great that works!" after multi-turn deepseek reproduction no longer stops after the first prompt.
+- Suite is green and used as the regression net for that confirmation: `cargo test -p opencode-provider` (81+7), `cargo test -p opencode-session` (144+11 incl. 3-turn regression), and `scripts/qa/stream-smoke.sh` (live deepseek 3-turn, PASSED).
+- Closing as completed.
