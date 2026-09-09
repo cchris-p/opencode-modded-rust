@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-09-01"
 ---
 
@@ -282,3 +282,11 @@ Three turns, three completed assistant replies, run idle after each. `cargo test
 
 - QA-001 (new card, `doing`): build a repeatable debug/QA verification suite (deterministic SSE integrity tests, deterministic multi-turn session-loop test, env-gated live smoke script) so both BUG-003 failure classes are covered by automated regression checks.
 - Commit of the guard fix is made directly to `development` (no PR) per the current workflow.
+
+### Commit status - 2026-09-09
+
+- Second root cause (loop guard) fixed and committed directly to `development`: commit `bce4900` (positional guard in `loop_inner`), pushed to `origin/development`.
+- QA-001 verification suite delivered in the same commit: adversarial SSE integrity tests (`opencode-provider`), deterministic 3-turn session-loop regression test (`opencode-session`), and `scripts/qa/stream-smoke.sh` live smoke.
+- Deterministic regression verified both directions: the 3-turn test fails under the old ID-comparison guard and passes under the positional guard.
+- Live smoke on real deepseek passes: `stream-smoke: PASSED (3 turns completed on deepseek/deepseek-v4-flash)`.
+- Item relaned to `qa`; awaiting user TUI verification of repeated prompts on a fresh `ort` server (stale reuse record already cleared).

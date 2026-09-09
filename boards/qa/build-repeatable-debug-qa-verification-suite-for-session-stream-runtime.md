@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "QA"
 spec: "boards/qa/bug-session-stops-completely-after-first-prompt.md"
-status: "doing"
+status: "qa"
 created: "2026-09-09"
 ---
 
@@ -44,6 +44,25 @@ Build a repeatable, low-friction verification suite that lets QA and development
 
 - Initial implementation adds regression tests for the two confirmed root causes and a live smoke script, committing directly to `development` per the current workflow (no PR).
 - The deterministic tests must not require network or provider keys.
+
+### Implementation - 2026-09-09
+
+- Delivered and committed directly to `development` as part of commit `bce4900`.
+- SSE integrity tests added in `crates/opencode-provider/src/stream.rs` (test module):
+  - CRLF line endings, keepalive/comment lines, multi-byte UTF-8 split at a chunk boundary, exact long-stream reassembly over tiny 7-byte chunks, `[DONE]` delivered exactly once with trailing partial data, and non-data-line behavior of `anthropic_line_events` / `openai_compat_line_events`.
+  - Result: 12 `stream::tests` pass; full `cargo test -p opencode-provider` (81 lib + 7 integration) passes.
+- Deterministic multi-turn session-loop test added in `crates/opencode-session/src/prompt.rs` (`session_handles_three_consecutive_prompts`) using a `SequencedStreamProvider` that returns one canned reply per `chat_stream` call.
+  - Verified the test fails under the old ID-comparison guard ("after prompt 2 there should be 2 assistant reply(ies)") and passes under the positional guard.
+  - Full `cargo test -p opencode-session` (144 lib + 11) passes.
+- Live smoke script `scripts/qa/stream-smoke.sh` (env-gated on `DEEPSEEK_API_KEY`): launches a fresh detached server, drives a 3-turn deepseek session over the HTTP API, asserts each turn completes with non-empty assistant text. Skip path returns 0 when no key.
+  - Verified live: `stream-smoke: PASSED (3 turns completed on deepseek/deepseek-v4-flash)`.
+
+## Verification
+
+- `cargo test -p opencode-provider`: 81 + 7 pass.
+- `cargo test -p opencode-session`: 144 + 11 pass (includes the 3-turn regression).
+- Live smoke on real deepseek: PASSED (3 turns), no network in deterministic layers.
+- Standard regression check for both BUG-003 failure classes: run the two cargo suites, then `DEEPSEEK_API_KEY=<key> scripts/qa/stream-smoke.sh` when a key is available.
 
 ## Related Items
 
