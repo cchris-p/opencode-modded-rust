@@ -49,6 +49,7 @@ Evidence:
 
 ## Related Items
 
+- `PHASE-001` (phase parent)
 - `BUG-004` Coding sessions run as bare chat
 - `START-012` Refresh provider and model catalog
 - `START-008` Full parity deferred

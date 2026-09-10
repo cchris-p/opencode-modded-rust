@@ -42,3 +42,7 @@ Turn fresh-context review quality into a repeatable judged surface instead of an
 - Blocked until the repo has a larger body of real functionality transcripts and collected OpenCode OG sessions to analyze.
 - When resumed, derive fixtures from actual work traces and real review situations rather than fabricated examples.
 - Use all available generated transcripts to identify which reviewer behaviors are worth scoring.
+
+## Related Items
+
+- `PHASE-004` (phase parent)

@@ -42,3 +42,7 @@ The evaluation strategy only becomes useful if reruns happen often enough to cat
 - This can begin as an operator runbook before it grows into productized tooling.
 - Blocked until the real evaluation task pack, rubric, and recorded result situations are derived from actual product usage.
 - Use all generated transcripts plus the collected OpenCode OG sessions to determine which real functionality flows are worth rerunning.
+
+## Related Items
+
+- `PHASE-004` (phase parent)

@@ -45,6 +45,7 @@ The Rust Anthropic provider cannot carry tools to the model at all. `AnthropicRe
 
 ## Related Items
 
+- `PHASE-002` (phase parent)
 - `BUG-004` Coding sessions run as bare chat (foundation this follows)
 - `BUG-003` Session stops completely after first prompt
 - `START-019` Add native Ollama support for the local-model-first V1 path

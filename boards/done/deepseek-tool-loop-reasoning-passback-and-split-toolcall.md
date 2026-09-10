@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-09"
 ---
 
@@ -95,3 +95,10 @@ The deepseek-family providers parsed OpenAI-compatible SSE with the **stateless*
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/29 (merged into `development` as `103b778`)
+
+## QA Report - 2026-09-10 (user, session `ses_0ffc9b44f96944039f8621c4d980d11b`)
+
+- User confirmed on `development` after PR #29 merged: "A lot better, it is calling tools."
+- Session `summarize-workspace-files.md` shows the full loop on `deepseek/deepseek-v4-flash`: reasoning streamed, well-formed `ls`/`read`/`bash` tool calls issued, results consumed across multiple turns, and a final workspace summary returned.
+- Both BUG-006 symptoms are gone: no `400 reasoning_content` and no stray empty-name `tool-call-0`.
+- Closing as completed. Residual defects observed in the same session (partial `ls` listings, unusable `batch`, instruction re-injection) are tracked by `BUG-007`, `BUG-008`, `BUG-009`.

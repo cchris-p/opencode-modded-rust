@@ -43,3 +43,7 @@ Create the first stable set of bounded V1 evaluation tasks so runtime changes ca
 - Use all generated transcripts as raw evidence when this resumes.
 - Include the collected OpenCode OG session corpus alongside this repo's transcripts so evaluator candidates come from real workflows instead of invented scenarios.
 - Focus the future task pack on real functionality work, not synthetic evaluation-only exercises.
+
+## Related Items
+
+- `PHASE-004` (phase parent)

@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-09"
 ---
 
@@ -132,6 +132,13 @@ Foundation slice shipped on `bug/BUG-004-agentic-session-foundation`:
 - PR branch `bug/BUG-004-agentic-session-foundation` deleted.
 - Item relaned to `qa`; awaiting user verification of the combined BUG-004 + FEAT-014 behavior on `development`.
 - QA note: the first QA attempt was invalid because a stale detached server (old binary, `/proc/<pid>/exe` deleted) was reused by `ort`. Stale servers were killed and the reuse record cleared; FEAT-014 now prevents stale-server reuse going forward.
+
+## QA Report - 2026-09-10 (user, session `ses_0ffc9b44f96944039f8621c4d980d11b`)
+
+- User confirmed agentic coding sessions work on `development`: "A lot better, it is calling tools."
+- Session `summarize-workspace-files.md` shows the `build` agent prompt + environment + tools attached on every request, the model issuing `ls`/`read`/`bash` tool calls, consuming results, and producing a final summary.
+- The original bare-chat symptom is resolved: the agent no longer claims it cannot see the workspace.
+- Closing as completed. Residual quality defects surfaced during this QA are tracked separately: `BUG-007` (`ls` partial listings), `BUG-008` (`batch` unusable on the session path), `BUG-009` (instruction re-injection).
 
 ## Related Items
 

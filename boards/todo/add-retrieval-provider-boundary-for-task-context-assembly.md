@@ -33,6 +33,7 @@ Introduce a narrow runtime retrieval interface so task context assembly can stay
 
 ## Related Items
 
+- `PHASE-003` (phase parent)
 - `START-005` Define V1 runtime loop
 - `START-007` Plan ScopeMux integration
 - `START-016` Define structured task state for V1

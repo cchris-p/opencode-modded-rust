@@ -42,3 +42,7 @@ The evaluation strategy needs more than anecdotal notes if the project is going 
 - Start simple. A durable local artifact is more important than ambitious analytics.
 - Blocked on defining evaluation situations from real transcript evidence first.
 - Do not lock the result schema until all generated transcripts and the collected OpenCode OG sessions have been reviewed for the kinds of functionality outcomes that actually need to be recorded.
+
+## Related Items
+
+- `PHASE-004` (phase parent)

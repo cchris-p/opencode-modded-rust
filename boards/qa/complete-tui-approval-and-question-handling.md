@@ -90,4 +90,5 @@ Finish the TUI approval and question-response flow so the interactive V1 workflo
 
 ## Related Items
 
+- `PHASE-001` (phase parent)
 - `START-004` Assess current Rust state

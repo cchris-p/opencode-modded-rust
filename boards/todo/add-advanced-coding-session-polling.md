@@ -61,6 +61,7 @@ Multi-agent coding work often needs one session to pause until another session f
 
 ## Related Items
 
+- `PHASE-003` (phase parent)
 - `FEAT-002` Keep sessions running after TUI exit
 - `FEAT-003` Add compact fork context for session branching
 - `FEAT-004` Add in-session send-to-fork commands

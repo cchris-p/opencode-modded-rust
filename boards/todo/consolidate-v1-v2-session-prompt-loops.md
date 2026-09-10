@@ -46,6 +46,7 @@ The Rust session layer contains two competing model-loop implementations:
 
 ## Related Items
 
+- `PHASE-002` (phase parent)
 - `BUG-004` Coding sessions run as bare chat (defers this consolidation)
 - `QA-001` Repeatable debug/QA verification suite
 - `BUG-003` Session stops completely after first prompt

@@ -49,6 +49,7 @@ Evidence:
 
 ## Related Items
 
+- `PHASE-002` (phase parent)
 - `BUG-004` Coding sessions run as bare chat
 - `FEAT-011` Consolidate v1/v2 session prompt loops (decision affects CLI routing)
 - `BUG-003` Session stops completely after first prompt (uses `opencode run` in QA)
