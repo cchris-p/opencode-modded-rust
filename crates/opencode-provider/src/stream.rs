@@ -1,6 +1,7 @@
 use crate::provider::ProviderError;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::pin::Pin;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,10 +137,7 @@ pub type StreamResult = Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderEr
 /// `parse_line` receives each complete, CRLF-trimmed line and returns zero or
 /// more events for it. Lines that produce no events (comments, keepalives,
 /// malformed frames, etc.) are simply skipped.
-pub fn sse_event_stream<S, B, F>(
-    chunks: S,
-    parse_line: F,
-) -> StreamResult
+pub fn sse_event_stream<S, B, F>(chunks: S, parse_line: F) -> StreamResult
 where
     S: Stream<Item = Result<B, reqwest::Error>> + Unpin + Send + 'static,
     B: AsRef<[u8]> + Send + 'static,
@@ -184,10 +182,7 @@ where
                         pending.extend(parse_line(tail.trim()));
                     }
                     if let Some(event) = pending.pop_front() {
-                        return Ok(Some((
-                            event,
-                            (chunks, buffer, pending, true, parse_line),
-                        )));
+                        return Ok(Some((event, (chunks, buffer, pending, true, parse_line))));
                     }
                     return Ok(None);
                 }
@@ -224,6 +219,359 @@ pub fn openai_compat_line_events(line: &str) -> Vec<StreamEvent> {
         return vec![StreamEvent::Done];
     }
     parse_openai_sse(payload).into_iter().collect()
+}
+
+/// State retained across SSE lines for OpenAI-compatible chat providers.
+///
+/// OpenAI-compatible streams send a tool call's `id`/`name` in one delta and
+/// the remaining `arguments` fragments in later deltas that only carry an
+/// `index`. Retaining the per-index id and name lets us join fragments into one
+/// tool call (BUG-006 split-tool-call) and lets `reasoning_content` deltas be
+/// surfaced as reasoning events (needed to echo reasoning back on follow-ups).
+#[derive(Debug, Default)]
+pub struct OpenAiCompatParserState {
+    tool_call_ids: HashMap<u32, String>,
+    tool_call_names: HashMap<u32, String>,
+    reasoning_open: bool,
+}
+
+/// Parse one OpenAI-compatible SSE `data:` payload with retained state.
+///
+/// Handles multiple events per payload (usage + content + reasoning + tool
+/// calls + finish), unlike the stateless [`parse_openai_sse`] which returns at
+/// most one event. Modeled on `OpenAIProvider::parse_legacy_sse_data`.
+pub fn parse_openai_sse_stateful(
+    data: &str,
+    state: &mut OpenAiCompatParserState,
+) -> Vec<StreamEvent> {
+    use serde_json::Value;
+    let mut events = Vec::new();
+
+    if data == "[DONE]" {
+        if state.reasoning_open {
+            events.push(StreamEvent::ReasoningEnd {
+                id: "reasoning-0".to_string(),
+            });
+            state.reasoning_open = false;
+        }
+        events.push(StreamEvent::Done);
+        return events;
+    }
+
+    let chunk: Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return events,
+    };
+
+    let usage = chunk.get("usage");
+    let prompt_tokens = usage
+        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let completion_tokens = usage
+        .and_then(|u| u.get("completion_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if usage.is_some() {
+        events.push(StreamEvent::Usage {
+            prompt_tokens,
+            completion_tokens,
+        });
+    }
+
+    if let Some(choices) = chunk.get("choices").and_then(Value::as_array) {
+        for choice in choices {
+            if let Some(delta) = choice.get("delta") {
+                let reasoning = delta
+                    .get("reasoning_content")
+                    .or_else(|| delta.get("reasoning_text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !reasoning.is_empty() {
+                    if !state.reasoning_open {
+                        state.reasoning_open = true;
+                        events.push(StreamEvent::ReasoningStart {
+                            id: "reasoning-0".to_string(),
+                        });
+                    }
+                    events.push(StreamEvent::ReasoningDelta {
+                        id: "reasoning-0".to_string(),
+                        text: reasoning.to_string(),
+                    });
+                }
+
+                if let Some(text) = delta.get("content").and_then(Value::as_str) {
+                    if !text.is_empty() {
+                        if state.reasoning_open {
+                            state.reasoning_open = false;
+                            events.push(StreamEvent::ReasoningEnd {
+                                id: "reasoning-0".to_string(),
+                            });
+                        }
+                        events.push(StreamEvent::TextDelta(text.to_string()));
+                    }
+                }
+
+                if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
+                    if !tool_calls.is_empty() && state.reasoning_open {
+                        state.reasoning_open = false;
+                        events.push(StreamEvent::ReasoningEnd {
+                            id: "reasoning-0".to_string(),
+                        });
+                    }
+                    for tc in tool_calls {
+                        let index = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
+                        let id = if let Some(id) = tc.get("id").and_then(Value::as_str) {
+                            let id = id.to_string();
+                            state.tool_call_ids.insert(index, id.clone());
+                            id
+                        } else {
+                            state
+                                .tool_call_ids
+                                .entry(index)
+                                .or_insert_with(|| format!("tool-call-{}", index))
+                                .clone()
+                        };
+
+                        if let Some(func) = tc.get("function") {
+                            if let Some(name) = func.get("name").and_then(Value::as_str) {
+                                let should_emit_start = state
+                                    .tool_call_names
+                                    .get(&index)
+                                    .map(|existing| existing != name)
+                                    .unwrap_or(true);
+                                state.tool_call_names.insert(index, name.to_string());
+                                if should_emit_start {
+                                    events.push(StreamEvent::ToolCallStart {
+                                        id: id.clone(),
+                                        name: name.to_string(),
+                                    });
+                                }
+                            }
+                            if let Some(arguments) = func.get("arguments").and_then(Value::as_str) {
+                                if !arguments.is_empty() {
+                                    events.push(StreamEvent::ToolCallDelta {
+                                        id,
+                                        input: arguments.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                if state.reasoning_open {
+                    state.reasoning_open = false;
+                    events.push(StreamEvent::ReasoningEnd {
+                        id: "reasoning-0".to_string(),
+                    });
+                }
+                let normalized_reason = if reason == "tool_calls" {
+                    "tool-calls".to_string()
+                } else {
+                    reason.to_string()
+                };
+                events.push(StreamEvent::FinishStep {
+                    finish_reason: Some(normalized_reason),
+                    usage: StreamUsage {
+                        prompt_tokens,
+                        completion_tokens,
+                        ..Default::default()
+                    },
+                    provider_metadata: None,
+                });
+            }
+        }
+    }
+
+    events
+}
+
+/// Build a stateful OpenAI-compatible chat SSE event stream.
+///
+/// Buffers HTTP bytes, splits CRLF/CR lines, and feeds each `data:` payload to
+/// [`parse_openai_sse_stateful`], which retains per-index tool-call state and
+/// surfaces reasoning across the whole stream (BUG-006).
+pub fn openai_compat_sse_stream<S, B>(chunks: S) -> StreamResult
+where
+    S: Stream<Item = Result<B, reqwest::Error>> + Unpin + Send + 'static,
+    B: AsRef<[u8]> + Send + 'static,
+{
+    use futures::StreamExt;
+    use std::collections::VecDeque;
+
+    let stream = futures::stream::try_unfold(
+        (
+            chunks,
+            String::new(),
+            VecDeque::<StreamEvent>::new(),
+            OpenAiCompatParserState::default(),
+            false,
+        ),
+        |(mut chunks, mut buffer, mut pending, mut state, mut exhausted)| async move {
+            loop {
+                if let Some(event) = pending.pop_front() {
+                    return Ok(Some((event, (chunks, buffer, pending, state, exhausted))));
+                }
+
+                if let Some(idx) = buffer.find('\n') {
+                    let mut line = buffer[..idx].to_string();
+                    buffer.drain(..=idx);
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let data = line
+                        .strip_prefix("data:")
+                        .map(str::trim)
+                        .unwrap_or_default();
+                    if !data.is_empty() {
+                        pending.extend(parse_openai_sse_stateful(data, &mut state));
+                    }
+                    continue;
+                }
+
+                if exhausted {
+                    let tail = std::mem::take(&mut buffer);
+                    let data = tail
+                        .strip_prefix("data:")
+                        .map(str::trim)
+                        .unwrap_or_default();
+                    if !data.trim().is_empty() {
+                        pending.extend(parse_openai_sse_stateful(data.trim(), &mut state));
+                    }
+                    if let Some(event) = pending.pop_front() {
+                        return Ok(Some((event, (chunks, buffer, pending, state, true))));
+                    }
+                    return Ok(None);
+                }
+
+                match chunks.next().await {
+                    Some(Ok(bytes)) => {
+                        buffer.push_str(&String::from_utf8_lossy(bytes.as_ref()));
+                    }
+                    Some(Err(e)) => {
+                        return Err(ProviderError::StreamError(e.to_string()));
+                    }
+                    None => exhausted = true,
+                }
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
+#[cfg(test)]
+mod stateful_parser_tests {
+    use super::*;
+    use crate::stream::StreamEvent;
+
+    fn collect_stateful<B>(chunks: Vec<Result<B, reqwest::Error>>) -> Vec<StreamEvent>
+    where
+        B: AsRef<[u8]> + Send + 'static,
+    {
+        use futures::StreamExt;
+        let stream = openai_compat_sse_stream(futures::stream::iter(chunks));
+        futures::executor::block_on(stream.map(Result::unwrap).collect())
+    }
+
+    #[test]
+    fn joins_split_tool_call_fragments_into_one_call() {
+        // Mirrors deepseek wire behavior: id+name in first chunk, then
+        // argument-only fragments carrying only `index`. They must join the
+        // original id rather than creating an empty-name `tool-call-0`.
+        let chunk1 = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_00_ls\",\"type\":\"function\",\"function\":{\"name\":\"ls\",\"arguments\":\"\"}}]}}]}\n\n";
+        let chunk2 = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"/tmp\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}\n\n",
+            "data: {\"choices\":[{\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_stateful(vec![
+            Ok(Vec::from(chunk1.as_bytes())),
+            Ok(Vec::from(chunk2.as_bytes())),
+        ]);
+        let starts: Vec<(String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallStart { id, name } => Some((id.clone(), name.clone())),
+                _ => None,
+            })
+            .collect();
+        let deltas: Vec<(String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallDelta { id, input } => Some((id.clone(), input.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![("call_00_ls".to_string(), "ls".to_string())]);
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].0, "call_00_ls");
+        assert_eq!(deltas[0].1, "{\"path\":\"/tmp\"}");
+    }
+
+    #[test]
+    fn captures_reasoning_and_closes_before_content() {
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"ing\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n",
+            "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_stateful(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let reasoning: String = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ReasoningDelta { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, "thinking");
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ReasoningStart { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ReasoningEnd { .. })));
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["answer".to_string(), "!".to_string()]);
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::FinishStep { .. })));
+    }
+
+    #[test]
+    fn multi_frame_chunks_and_trailing_flush_still_work() {
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" two\"}}]}\n\n",
+            "data: [DONE]",
+        );
+        let events = collect_stateful(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["one".to_string(), " two".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
 }
 
 /// Parse one complete SSE line in the Anthropic `data: <json>` shape.
@@ -493,7 +841,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(texts, vec!["Hello".to_string(), " ".to_string(), "world".to_string()]);
+        assert_eq!(
+            texts,
+            vec!["Hello".to_string(), " ".to_string(), "world".to_string()]
+        );
         assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
     }
 
@@ -621,9 +972,7 @@ mod tests {
     fn sse_event_stream_preserves_long_text_exactly() {
         // A long multi-frame payload must reassemble to byte-identical text with
         // no dropped or reordered deltas (the original garble class).
-        let words = (0..200)
-            .map(|i| format!("tok{}", i))
-            .collect::<Vec<_>>();
+        let words = (0..200).map(|i| format!("tok{}", i)).collect::<Vec<_>>();
         let mut raw = String::new();
         for w in &words {
             raw.push_str(&format!(
@@ -635,10 +984,7 @@ mod tests {
 
         let bytes = raw.as_bytes();
         // Chop the stream into many tiny chunks to force pathological splitting.
-        let chunks: Vec<Result<Vec<u8>, _>> = bytes
-            .chunks(7)
-            .map(|c| Ok(c.to_vec()))
-            .collect();
+        let chunks: Vec<Result<Vec<u8>, _>> = bytes.chunks(7).map(|c| Ok(c.to_vec())).collect();
         let events = collect_events(chunks);
         let texts: Vec<String> = events
             .iter()
@@ -655,9 +1001,13 @@ mod tests {
     fn sse_event_stream_delivers_done_only_once_with_trailing_partial_data() {
         // [DONE] plus trailing bytes that are not a full frame (e.g. a stray
         // keepalive fragment) must still terminate exactly once.
-        let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n: trail";
+        let chunk1 =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n: trail";
         let events = collect_events(vec![Ok(Vec::from(chunk1.as_bytes()))]);
-        let done_count = events.iter().filter(|e| matches!(e, StreamEvent::Done)).count();
+        let done_count = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::Done))
+            .count();
         assert_eq!(done_count, 1);
     }
 

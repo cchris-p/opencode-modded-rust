@@ -120,6 +120,12 @@ impl AnthropicProvider {
                             crate::Content::Parts(parts) => parts
                                 .into_iter()
                                 .filter_map(|p| {
+                                    // Reasoning is carried through Anthropic's
+                                    // `thinking` blocks, never echoed as plain
+                                    // text content (BUG-006 reasoning hygiene).
+                                    if p.content_type == "reasoning" {
+                                        return None;
+                                    }
                                     if let Some(text) = p.text {
                                         Some(AnthropicContent::Text { text })
                                     } else {

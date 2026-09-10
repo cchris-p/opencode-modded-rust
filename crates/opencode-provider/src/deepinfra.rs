@@ -160,10 +160,7 @@ impl Provider for DeepInfraProvider {
             return Err(ProviderError::ApiError(error_text));
         }
 
-        let stream = crate::stream::sse_event_stream(
-            response.bytes_stream(),
-            crate::stream::openai_compat_line_events,
-        );
+        let stream = crate::stream::openai_compat_sse_stream(response.bytes_stream());
 
         Ok(stream)
     }

@@ -131,6 +131,7 @@ pub fn convert_messages(messages: &[Message]) -> Vec<Value> {
 /// `tool_result` parts become trailing `role: "tool"` messages.
 fn convert_assistant_parts(parts: &[crate::ContentPart], out: &mut Vec<Value>) {
     let mut text_parts: Vec<&str> = Vec::new();
+    let mut reasoning_parts: Vec<&str> = Vec::new();
     let mut tool_calls: Vec<Value> = Vec::new();
     let mut results: Vec<(String, String)> = Vec::new();
 
@@ -143,7 +144,18 @@ fn convert_assistant_parts(parts: &[crate::ContentPart], out: &mut Vec<Value>) {
                     }
                 }
             }
-            "reasoning" | "step-start" => {}
+            // DeepSeek thinking (and compatible reasoning endpoints) require the
+            // prior assistant `reasoning_content` to be passed back verbatim on
+            // follow-up requests (BUG-006); surface it as a message field rather
+            // than dropping it.
+            "reasoning" => {
+                if let Some(text) = part.text.as_deref() {
+                    if !text.is_empty() {
+                        reasoning_parts.push(text);
+                    }
+                }
+            }
+            "step-start" => {}
             "tool_use" => {
                 if let Some(tool_use) = &part.tool_use {
                     tool_calls.push(json!({
@@ -175,15 +187,21 @@ fn convert_assistant_parts(parts: &[crate::ContentPart], out: &mut Vec<Value>) {
         Value::String(text_parts.join("\n"))
     };
 
-    // Emit the assistant shell only when it carries text or tool calls. A
-    // message that contains only `tool_result` parts (the v1 loop stores tool
-    // results as a separate assistant message) must not produce an empty
+    // Emit the assistant shell only when it carries text, reasoning, or tool
+    // calls. A message that contains only `tool_result` parts (the v1 loop stores
+    // tool results as a separate assistant message) must not produce an empty
     // assistant message between a `tool_calls` assistant and its `role: tool`
     // replies, which OpenAI rejects.
-    if !tool_calls.is_empty() || !text_parts.is_empty() {
+    if !tool_calls.is_empty() || !text_parts.is_empty() || !reasoning_parts.is_empty() {
         let mut assistant = serde_json::Map::new();
         assistant.insert("role".into(), json!("assistant"));
         assistant.insert("content".into(), content);
+        if !reasoning_parts.is_empty() {
+            assistant.insert(
+                "reasoning_content".into(),
+                json!(reasoning_parts.join("\n")),
+            );
+        }
         if !tool_calls.is_empty() {
             assistant.insert("tool_calls".into(), Value::Array(tool_calls));
         }
@@ -293,6 +311,35 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    fn reasoning_part(text: &str) -> ContentPart {
+        ContentPart {
+            content_type: "reasoning".to_string(),
+            text: Some(text.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn assistant_reasoning_is_echoed_as_reasoning_content() {
+        // DeepSeek thinking requires the prior assistant reasoning_content to be
+        // passed back on the follow-up request (BUG-006).
+        let messages = vec![Message {
+            role: Role::Assistant,
+            content: Content::Parts(vec![
+                reasoning_part("step one"),
+                reasoning_part(" step two"),
+                tool_use_part("call_1", "ls", json!({ "path": "/tmp" })),
+            ]),
+            cache_control: None,
+            provider_options: None,
+        }];
+        let out = convert_messages(&messages);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["role"], "assistant");
+        assert_eq!(out[0]["reasoning_content"], "step one\n step two");
+        assert!(out[0]["tool_calls"][0]["id"] == "call_1");
     }
 
     #[test]

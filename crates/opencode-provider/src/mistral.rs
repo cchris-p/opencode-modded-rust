@@ -139,10 +139,7 @@ impl Provider for MistralProvider {
             return Err(ProviderError::ApiError(format!("{}: {}", status, body)));
         }
 
-        let stream = crate::stream::sse_event_stream(
-            response.bytes_stream(),
-            crate::stream::openai_compat_line_events,
-        );
+        let stream = crate::stream::openai_compat_sse_stream(response.bytes_stream());
 
         Ok(stream)
     }
