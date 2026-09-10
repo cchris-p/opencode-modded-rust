@@ -35,7 +35,8 @@ Reference behavior (`packages/opencode/src/tool/read.ts` + `session/instruction.
 ## Scope
 
 - Deduplicate instruction injection across reads within a session/message: attach each instruction file at most once (or only when its content changed), mirroring the reference `loaded`-tracking approach.
-- Ensure the read tool can see what was already loaded (pass session/message context or existing `loaded` metadata into the tool context).
+- **Decision (2026-09-10): track loaded instruction files in session state, keyed by session.** The session prompt loop already builds the tool `ToolContext`; add a shared loaded-instruction set (e.g. an `Arc<Mutex<HashSet<String>>>` or session metadata) to `ToolContext`, populate it from each read's resolved instruction file paths, and have `read.rs` skip files already in the set. This matches the reference `Instruction.resolve(messages, ...)` semantics while fitting the existing Rust tool-context plumbing. Do not rely on re-parsing the transcript for dedup.
+- The read tool records the instruction file paths it attaches (already surfaced as `loaded` metadata in `read.rs:423-447`) so the session can accumulate them.
 - Preserve the legitimate first-time injection behavior; do not drop instructions entirely.
 
 ## Non-goals

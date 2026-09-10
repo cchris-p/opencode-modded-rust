@@ -48,6 +48,10 @@ The model then abandoned `batch` and read files individually. This wastes turns 
 - Adding new batch/code-mode capabilities.
 - Broad parity with the reference `code-mode` tool.
 
+## Decision
+
+- **Keep `batch` and fix it (2026-09-10).** `batch` stays in the default tool set. Both defects are fixed rather than removing the tool. The reference has no `batch`, but it is useful for parallel independent reads; no new capabilities are added.
+
 ## Done when
 
 - Calling `batch` with the schema-advertised parameter shape executes successfully in a live TUI/server session.
@@ -68,4 +72,4 @@ The model then abandoned `batch` and read files individually. This wastes turns 
 ## Notes
 
 - Surfaced during BUG-006 QA; see `summarize-workspace-files.md`.
-- `batch` is Rust-introduced; the reference has no `batch` tool. Confirm whether `batch` should remain exposed to the model.
+- Decision 2026-09-10: `batch` remains exposed; fix the schema and registry wiring rather than removing the tool.

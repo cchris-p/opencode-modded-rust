@@ -36,7 +36,7 @@ Also note: the reference OpenCode tool set has no `ls`/`list` tool (reference us
 ## Scope
 
 - Make `ls` return a correct listing for the requested directory: never silently omit directories or misrepresent the tree because of a per-file cap.
-- Decide the intended semantics: (a) a bounded top-level listing (children first, truncate within a directory rather than globally), or (b) align the tool with the reference `glob` behavior. Record the decision in the card before implementing.
+- **Decision (2026-09-10): bounded top-level listing.** `ls <path>` lists all immediate children of the requested directory (subdirectories and files). Recursion beyond one level is not the default; a per-level cap may truncate entries but must never hide the directory's own children. `ls` stays in the default tool set (no `glob`-only removal).
 - Report truncation accurately (which directory/level was truncated), not just a boolean.
 - Include directories that contain no files.
 - Keep the tool practical for large repos (avoid dumping a whole monorepo by default).
@@ -65,4 +65,4 @@ Also note: the reference OpenCode tool set has no `ls`/`list` tool (reference us
 ## Notes
 
 - Surfaced during BUG-006 QA; see `summarize-workspace-files.md`.
-- Confirm the intended listing semantics against the product's narrow workflow before changing behavior.
+- Semantics decided 2026-09-10: bounded top-level listing (see Scope).
