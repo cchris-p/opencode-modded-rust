@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-09"
 ---
 
@@ -94,4 +94,4 @@ The deepseek-family providers parsed OpenAI-compatible SSE with the **stateless*
 
 ### PR Link
 
-- https://github.com/cchris-p/opencode-modded-rust/pull/29 (branch `bug/BUG-006-deepseek-tool-loop`, base `development`)
+- https://github.com/cchris-p/opencode-modded-rust/pull/29 (merged into `development` as `103b778`)
