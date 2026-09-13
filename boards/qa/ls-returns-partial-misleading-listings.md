@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-10"
 ---
 
@@ -84,4 +84,4 @@ Also note: the reference OpenCode tool set has no `ls`/`list` tool (reference us
 
 ## PR Link
 
-- Pending (branch `bug/BUG-007-ls-top-level-listing`).
+- https://github.com/cchris-p/opencode-modded-rust/pull/31 (branch `bug/BUG-007-ls-top-level-listing`, base `development`)
