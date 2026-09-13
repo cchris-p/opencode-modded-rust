@@ -1,9 +1,9 @@
 ---
 id: "H-001"
 title: "BUG-007..BUG-009 V1 tool-quality hardening - Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-09-10"
-updated: "2026-09-10"
+updated: "2026-09-13"
 owner: ""
 target: ""
 blocked_reason: ""
@@ -34,6 +34,12 @@ Refinement gate ran over the whole group and passed after these decisions were r
 - `BUG-007` semantics: **bounded top-level listing** (immediate children; per-level truncation only; empty dirs included; `ls` retained).
 - `BUG-008` disposition: **keep `batch` and fix it** (schema/deserializer alignment + wire registry/agent into the session `ToolContext`).
 - `BUG-009` mechanism: **session-tracked loaded-instruction set** on the `ToolContext`, populated from read results' `loaded` metadata.
+
+## Execution Status
+
+- `BUG-007` - **in flight**. Branch `bug/BUG-007-ls-top-level-listing`, PR #31 open against `development`, card in `qa`. Live `ls` verification passed (all top-level directories listed, no `bash` fallback). Awaiting user local QA.
+- `BUG-008` - not started. Blocked on the keep/fix decision being implemented; card still in `todo`.
+- `BUG-009` - not started. Deferred pending local-model context-pressure observation; card still in `todo`.
 
 ## Dependencies and Ordering
 
