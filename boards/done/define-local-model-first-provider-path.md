@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-08-29"
 ---
 
@@ -114,3 +114,7 @@ This means Ollama is not part of the curated four-provider V1 breadth surface, b
 - `START-009` Port provider setup from OpenCode
 - `START-012` Refresh provider and model catalog
 - `START-015` Mirror OpenAI auth configuration in settings
+
+## Closeout
+
+- 2026-09-13: PR #18 merged into `development`. Closed on user direction as part of clearing the `qa` lane.

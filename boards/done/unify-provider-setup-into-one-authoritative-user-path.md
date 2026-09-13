@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-09-01"
 ---
 
@@ -151,3 +151,8 @@ This leaves the product without one authoritative answer to "how do I set up or 
 
 - Fixed and merged into `development` on 2026-09-01.
 - Awaiting post-merge QA on `development`.
+
+## Closeout
+
+- 2026-09-13: PR #21 merged into `development`. Closed on user direction as part of clearing the `qa` lane.
+- Verified by `BUG-010`: the repo default `deepseek/deepseek-v4-flash` takes effect, and a `Settings > Provider` selection written to the project config persists across restarts. The server reports the effective provider/model/source correctly, which is the core acceptance detail for this card.

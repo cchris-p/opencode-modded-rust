@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-08-29"
 ---
 
@@ -88,3 +88,7 @@ Add a dedicated OpenAI settings flow that mirrors the reference product's auth c
 ## Next QA Step
 
 - Check out `feature/START-015-openai-auth-settings` in the main workspace when it is safe to move the shared checkout, then verify the OpenAI settings flow locally from the user-facing TUI.
+
+## Closeout
+
+- 2026-09-13: PR #7 merged into `development`. Closed on user direction as part of clearing the `qa` lane.

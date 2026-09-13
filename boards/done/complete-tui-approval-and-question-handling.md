@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-08-29"
 ---
 
@@ -92,3 +92,7 @@ Finish the TUI approval and question-response flow so the interactive V1 workflo
 
 - `PHASE-001` (phase parent)
 - `START-004` Assess current Rust state
+
+## Closeout
+
+- 2026-09-13: PR #19 merged into `development`; the stale QA branch is gone. Closed on user direction as part of clearing the `qa` lane.

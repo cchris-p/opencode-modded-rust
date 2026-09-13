@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-09"
 ---
 
@@ -63,3 +63,4 @@ The personal daily-driver workflow does not need the sidebar (LSP/MCP/todo/pendi
 
 - Fixed and merged into `development` on 2026-09-09 via PR #25; branch `feature/FEAT-008-disable-tui-sidebar-by-default` deleted remote and local. Awaiting post-merge QA before completion.
 - `tui.sidebar: Option<bool>` already exists in the config schema but is not consumed by the startup default; this card intentionally does not wire it.
+- 2026-09-13: PR #25 merge is verified (`ort` starts with the sidebar hidden); closed on user direction as part of clearing the `qa` lane.
