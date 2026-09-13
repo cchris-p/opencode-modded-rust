@@ -132,28 +132,45 @@ impl ConfigLoader {
     }
 
     /// Loads all config sources synchronously (without remote wellknown).
-    /// Merge order (TS parity):
+    /// Merge order:
     /// 1. Global config (~/.config/opencode/opencode.json{,c})
     /// 2. Custom config (OPENCODE_CONFIG)
-    /// 3. Project config (opencode.json{,c})
-    /// 4. .opencode directories (agents, commands, plugins, modes, config)
-    /// 5. Inline config (OPENCODE_CONFIG_CONTENT)
+    /// 3. Inline config (OPENCODE_CONFIG_CONTENT)
+    /// 4. Project config (opencode.json{,c})
+    /// 5. .opencode directories (agents, commands, plugins, modes, config)
     /// 6. Managed config directory (enterprise, highest priority)
     /// Then: legacy migrations, flag overrides, plugin dedup
+    ///
+    /// Deviation from strict TS parity: `OPENCODE_CONFIG_CONTENT` is applied
+    /// before project config so an explicit workspace config wins over the
+    /// inline env overlay. The Rust product is launched from shells that set
+    /// `OPENCODE_CONFIG_CONTENT` as a vanilla-opencode model default, and that
+    /// auto-default must not silently override the workspace's own default.
     pub fn load_all<P: AsRef<Path>>(&mut self, project_dir: P) -> Result<Config> {
         let project_dir = project_dir.as_ref();
 
         self.load_global()?;
         self.load_from_env()?;
+        self.load_from_env_content()?;
         self.load_project(project_dir)?;
 
         // Scan .opencode directories
         let directories = collect_opencode_directories(project_dir);
+        let global_config_dir = get_global_config_path();
+        let global_config_dir = global_config_dir.parent();
+        let config_dir_override = env::var("OPENCODE_CONFIG_DIR").ok();
         for dir in &directories {
-            // Load config files from .opencode dirs
-            for ext in &["opencode.jsonc", "opencode.json"] {
-                let path = dir.join(ext);
-                self.load_from_file(&path)?;
+            // Only `.opencode` directories (and an explicit OPENCODE_CONFIG_DIR
+            // override) are config-file sources at this stage. The global config
+            // directory is scanned here for commands/agents/plugins, but its
+            // `opencode.json{,c}` was already applied by `load_global()`; loading
+            // it again would let global config override project config.
+            if directory_contributes_config(dir, global_config_dir, config_dir_override.as_deref())
+            {
+                for ext in &["opencode.jsonc", "opencode.json"] {
+                    let path = dir.join(ext);
+                    self.load_from_file(&path)?;
+                }
             }
 
             // Load commands, agents, modes from markdown files
@@ -202,9 +219,6 @@ impl ConfigLoader {
             }
         }
 
-        // Inline config content overrides all non-managed config sources
-        self.load_from_env_content()?;
-
         // Load managed config (enterprise, highest priority)
         self.load_managed_config()?;
 
@@ -219,9 +233,9 @@ impl ConfigLoader {
     /// 1. Remote .well-known/opencode (org defaults) -- lowest priority
     /// 2. Global config (~/.config/opencode/opencode.json{,c})
     /// 3. Custom config (OPENCODE_CONFIG)
-    /// 4. Project config (opencode.json{,c})
-    /// 5. .opencode directories
-    /// 6. Inline config (OPENCODE_CONFIG_CONTENT)
+    /// 4. Inline config (OPENCODE_CONFIG_CONTENT)
+    /// 5. Project config (opencode.json{,c})
+    /// 6. .opencode directories
     /// 7. Managed config directory (enterprise, highest priority)
     pub async fn load_all_with_remote<P: AsRef<Path>>(&mut self, project_dir: P) -> Result<Config> {
         let wellknown_config = crate::wellknown::load_wellknown().await;
@@ -543,6 +557,33 @@ fn get_managed_config_dir() -> PathBuf {
     } else {
         PathBuf::from("/etc/opencode")
     }
+}
+
+/// Whether a directory discovered during the directory scan should contribute
+/// `opencode.json{,c}` config. Mirrors the upstream guard: only real
+/// `.opencode` directories or an explicit `OPENCODE_CONFIG_DIR` override load
+/// config files here. The global config directory is always excluded: its
+/// config was already applied by `load_global()`, and reloading it here would
+/// let global config win over project config (which also happens when
+/// `OPENCODE_CONFIG_DIR` redundantly points at the global config directory).
+fn directory_contributes_config(
+    dir: &Path,
+    global_config_dir: Option<&Path>,
+    config_dir_override: Option<&str>,
+) -> bool {
+    if global_config_dir.is_some_and(|global| global == dir) {
+        return false;
+    }
+
+    let is_opencode_dir = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == ".opencode");
+    let is_config_dir_override = config_dir_override
+        .map(Path::new)
+        .is_some_and(|override_dir| override_dir == dir);
+
+    is_opencode_dir || is_config_dir_override
 }
 
 /// Collect .opencode directories from project hierarchy and global config.
@@ -1606,6 +1647,64 @@ mod tests {
             cfg.instructions,
             vec!["root.md".to_string(), "child.md".to_string()]
         );
+    }
+
+    #[test]
+    fn test_directory_contributes_config_only_for_opencode_dirs() {
+        let global = Path::new("/home/user/.config/opencode");
+        assert!(!directory_contributes_config(global, Some(global), None));
+        assert!(!directory_contributes_config(
+            global,
+            Some(global),
+            Some("/home/user/.config/opencode")
+        ));
+
+        let project = Path::new("/repo/.opencode");
+        assert!(directory_contributes_config(project, Some(global), None));
+
+        let home_opencode = Path::new("/home/user/.opencode");
+        assert!(directory_contributes_config(
+            home_opencode,
+            Some(global),
+            None
+        ));
+
+        let command_dir = Path::new("/repo/.opencode/command");
+        assert!(!directory_contributes_config(
+            command_dir,
+            Some(global),
+            None
+        ));
+
+        let override_dir = Path::new("/repo/custom-config");
+        assert!(!directory_contributes_config(
+            override_dir,
+            Some(global),
+            None
+        ));
+        assert!(directory_contributes_config(
+            override_dir,
+            Some(global),
+            Some("/repo/custom-config")
+        ));
+    }
+
+    #[test]
+    fn project_config_overrides_inline_env_content() {
+        let temp = TestDir::new("opencode_config_env_content");
+        fs::write(
+            temp.path.join("opencode.json"),
+            r#"{ "model": "project-model" }"#,
+        )
+        .unwrap();
+
+        std::env::set_var("OPENCODE_CONFIG_CONTENT", r#"{ "model": "env-model" }"#);
+        let mut loader = ConfigLoader::new();
+        let result = loader.load_all(&temp.path);
+        std::env::remove_var("OPENCODE_CONFIG_CONTENT");
+        result.unwrap();
+
+        assert_eq!(loader.config().model.as_deref(), Some("project-model"));
     }
 
     #[test]
