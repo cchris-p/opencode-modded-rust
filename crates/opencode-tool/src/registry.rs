@@ -6,7 +6,7 @@ use crate::{Tool, ToolContext, ToolError, ToolResult};
 use opencode_plugin::{HookContext, HookEvent};
 
 /// Tools that should not appear in suggestion lists when a tool is not found.
-const FILTERED_FROM_SUGGESTIONS: &[&str] = &["invalid", "patch", "batch"];
+const FILTERED_FROM_SUGGESTIONS: &[&str] = &["invalid", "patch"];
 
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
@@ -245,7 +245,6 @@ pub async fn create_default_registry() -> ToolRegistry {
     registry.register(crate::apply_patch::ApplyPatchTool).await;
     registry.register(crate::skill::SkillTool).await;
     registry.register(crate::lsp_tool::LspTool).await;
-    registry.register(crate::batch::BatchTool).await;
     registry.register(crate::codesearch::CodeSearchTool).await;
     registry.register(crate::plan::PlanEnterTool).await;
     registry.register(crate::plan::PlanExitTool).await;

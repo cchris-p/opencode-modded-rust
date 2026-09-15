@@ -1,6 +1,5 @@
 pub mod apply_patch;
 pub mod bash;
-pub mod batch;
 pub mod codesearch;
 pub mod edit;
 pub mod external_directory;

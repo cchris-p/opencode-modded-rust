@@ -658,8 +658,6 @@ pub struct CompactionConfig {
 pub struct ExperimentalConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_paste_summary: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_tool: Option<bool>,
     #[serde(alias = "openTelemetry", skip_serializing_if = "Option::is_none")]
     pub open_telemetry: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1166,7 +1164,6 @@ impl DeepMerge for CompactionConfig {
 impl DeepMerge for ExperimentalConfig {
     fn deep_merge(&mut self, other: Self) {
         merge_option_replace(&mut self.disable_paste_summary, other.disable_paste_summary);
-        merge_option_replace(&mut self.batch_tool, other.batch_tool);
         merge_option_replace(&mut self.open_telemetry, other.open_telemetry);
         if !other.primary_tools.is_empty() {
             self.primary_tools = other.primary_tools;
