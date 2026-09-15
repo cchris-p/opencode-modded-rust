@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "AGENTS.md"
-status: "todo"
+status: "qa"
 created: "2026-09-15"
 ---
 
@@ -163,3 +163,7 @@ observation untrustworthy.
   and confirm the workspace and model label are correct.
 - The workspace-display half depends on the machine-local launcher change (re-source or
   restart the shell); the product default is the durable half.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/33 (base `development`)

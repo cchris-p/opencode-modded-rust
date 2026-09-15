@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "AGENTS.md"
-status: "todo"
+status: "qa"
 created: "2026-09-15"
 ---
 
@@ -129,3 +129,7 @@ Server reuse has repeatedly produced untrustworthy QA and wrong-product behavior
 
 - User verification on the PR branch: two `ort` launches in the same workspace produce two
   fresh servers, each bound to that workspace.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/33 (base `development`)
