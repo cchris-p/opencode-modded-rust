@@ -64,3 +64,5 @@ Reference behavior (`packages/opencode/src/tool/read.ts` + `session/instruction.
 
 - Surfaced during BUG-006 QA; see `summarize-workspace-files.md`.
 - This is a context-efficiency/token-budget issue, not a functional failure; classify accordingly if scope is questioned.
+- Deferred (2026-09-15): not started. The daily-driver model in use (`deepseek/deepseek-v4-flash`, 1M-token context) does not show measurable context pressure from repeated instruction injection, so there is no forcing evidence to implement this now. Revisit when a small-context local model is in use and the token cost of per-read instruction re-injection becomes observable. Card remains in `todo`.
+- Handoff `H-001` is not archived while this card stays open; `BUG-007`/`BUG-008` (the other `H-001` children) are merged into `development` and in `qa`.
