@@ -65,6 +65,12 @@ Machine-local (NOT in the repo, NOT yet pushed at time of writing):
   `OPENCODE_CONFIG_DIR`. This is required for the workspace fix on any machine. It currently
   exists as an uncommitted edit on `matrillosub1`.
 
+## Merge status
+
+- Merged into `development` on 2026-09-15 via PR #33 (merge commit `9ef8b47`); feature branch
+  `feature/FEAT-016-ort-fresh-server-and-default-model` deleted (remote + local).
+- `BUG-011` and `FEAT-016` remain in `qa` pending post-merge user verification.
+
 ## Verification performed
 
 - `cargo test -p opencode-config` -> 53 passed (new: `product_default_model_applies_without_workspace_config`,

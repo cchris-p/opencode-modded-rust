@@ -167,3 +167,10 @@ observation untrustworthy.
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/33 (base `development`)
+
+## Merge status
+
+- Merged into `development` on 2026-09-15 via PR #33 (merge commit `9ef8b47`); PR branch deleted.
+- Item in `qa`; awaiting post-merge user verification on `development` (activated workspace +
+  `deepseek/deepseek-v4-flash` default). Note the workspace half also requires the
+  machine-local launcher update (`~/standards/opencode-config`).

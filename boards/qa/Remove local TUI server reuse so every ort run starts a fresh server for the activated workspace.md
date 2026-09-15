@@ -133,3 +133,10 @@ Server reuse has repeatedly produced untrustworthy QA and wrong-product behavior
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/33 (base `development`)
+
+## Merge status
+
+- Merged into `development` on 2026-09-15 via PR #33 (merge commit `9ef8b47`); PR branch deleted.
+- Item in `qa`; **open decision** whether to keep or revert the reuse removal now that the
+  triggering observation came from testing on the wrong machine (see handoff `H-002` and
+  `FEAT-014`). Reverting restores `FEAT-014` stop-prior + next-port behavior.
