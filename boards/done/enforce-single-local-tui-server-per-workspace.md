@@ -108,3 +108,11 @@ The stale-server failure was observed directly while QAing `BUG-004`:
 
 - This card supersedes `FEAT-002`'s reuse model; see that card's Archived note for the failure evidence.
 - The launcher logic lives in the CLI TUI boot path (`prepare_local_tui_server` / `spawn_detached_tui_server` and the server record handling); identify the exact functions when starting implementation.
+
+## Follow-up - 2026-09-15
+
+- The recorded/rotated reuse model this card introduced is being removed entirely; see
+  `FEAT-016` (remove local TUI server reuse so every `ort` run starts a fresh server for the
+  activated workspace).
+- `BUG-011` documents the related symptom that led here: `ort` activated in a non-repo
+  directory showed the rust repo as the workspace and the vanilla openrouter default.

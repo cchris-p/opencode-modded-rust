@@ -33,5 +33,7 @@
 
 - `ort-build` builds the Rust TUI/CLI binary from `$HOME/repos/opencode-modded-rust`.
 - `ort` launches the most recently built Rust TUI binary without rebuilding first.
-- `ort` may print `Reusing local TUI server at http://127.0.0.1:<port>` when an existing local detached TUI server for the workspace is already running; in that case it attaches to the running server instead of starting a fresh one.
-- When testing code changes, run `ort-build` before `ort` so the reused TUI process has the latest binary available.
+- `ort` runs the TUI in the directory it was activated from, so that directory is the workspace (config search root and displayed working directory).
+- `ort` always starts a fresh local TUI server for that workspace. It never reuses, rotates, or attaches to a previously recorded server, so a stale or other-workspace server can never serve the TUI. Use `opencode attach <url>` for intentional re-attachment.
+- The Rust product owns its default model (`deepseek/deepseek-v4-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
+- When testing code changes, run `ort-build` before `ort` so the freshly started server runs the latest binary.
