@@ -57,8 +57,8 @@ Root cause candidate:
 
 ## PR Link
 
-- Pending.
+- https://github.com/cchris-p/opencode-modded-rust/pull/34
 
 ## Merge status
 
-- Pending PR creation and direct merge into `development`.
+- PR #34 opened against `development`; direct merge requested by user.
