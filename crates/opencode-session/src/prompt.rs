@@ -1291,7 +1291,7 @@ impl SessionPrompt {
             session.touch();
             Self::emit_session_update(update_hook.as_ref(), session);
 
-            if !post_first_step_ran {
+            if Self::should_run_first_step_postprocessing(post_first_step_ran, has_tool_calls) {
                 Self::ensure_title(session, provider.clone(), &model_id).await;
                 let _ = Self::summarize_session(
                     session,
@@ -1401,6 +1401,13 @@ impl SessionPrompt {
         Self::emit_session_update(update_hook.as_ref(), session);
 
         Ok(())
+    }
+
+    fn should_run_first_step_postprocessing(
+        post_first_step_ran: bool,
+        has_tool_calls: bool,
+    ) -> bool {
+        !post_first_step_ran && !has_tool_calls
     }
 
     fn emit_session_update(update_hook: Option<&SessionUpdateHook>, session: &Session) {
@@ -3608,6 +3615,19 @@ mod tests {
                     .map(Result::<StreamEvent, ProviderError>::Ok),
             )))
         }
+    }
+
+    #[test]
+    fn first_step_postprocessing_waits_for_tool_free_step() {
+        assert!(!SessionPrompt::should_run_first_step_postprocessing(
+            false, true
+        ));
+        assert!(SessionPrompt::should_run_first_step_postprocessing(
+            false, false
+        ));
+        assert!(!SessionPrompt::should_run_first_step_postprocessing(
+            true, false
+        ));
     }
 
     #[test]
