@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-10"
 ---
 
@@ -101,4 +101,4 @@ The model then abandoned `batch` and read files individually. This wastes turns 
 
 ## PR Link
 
-- Pending (branch `bug/BUG-008-remove-batch-tool`).
+- https://github.com/cchris-p/opencode-modded-rust/pull/32 (branch `bug/BUG-008-remove-batch-tool`, base `development`)
