@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-10"
 ---
 
@@ -66,3 +66,22 @@ Also note: the reference OpenCode tool set has no `ls`/`list` tool (reference us
 
 - Surfaced during BUG-006 QA; see `summarize-workspace-files.md`.
 - Semantics decided 2026-09-10: bounded top-level listing (see Scope).
+
+## Dev Notes
+
+- Replaced the recursive `WalkDir` listing in `crates/opencode-tool/src/ls.rs` with a single `tokio::fs::read_dir` of the requested directory.
+- `ls <path>` now lists all immediate children (subdirectories first, then files), each alphabetically sorted. Subdirectories are rendered with a trailing `/`.
+- Directories are always listed even when empty; the file cap (`LIMIT = 100`) now applies per listing to files only and can never hide the directory's own children.
+- Truncation is reported explicitly (`N of M files shown; K more not listed`) and in metadata (`dirs`, `files`, `total_files`, `truncated`); the global recursive cap that previously broke the walk was removed.
+- Updated the tool description to say "immediate files and directories ... (one level, not recursive)".
+- Added `#[cfg(test)] mod tests` covering: >100 files across subdirs (all top-level dirs present), empty dirs + one-level-only, file cap never hiding dirs, and `ignore` of immediate children.
+
+## Verification
+
+- `cargo test -p opencode-tool` (26 passed, incl. 4 new `ls` tests).
+- `cargo check -p opencode-cli` build succeeded; live server on `development` binary.
+- Live `deepseek/deepseek-v4-flash` session: prompt to `ls` the workspace returned every top-level directory (`boards/`, `crates/`, `docs/`, `handoffs/`, `invariants/`, `scripts/`, `wiki/`) plus root files in one level, with no `bash` fallback.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/31 (branch `bug/BUG-007-ls-top-level-listing`, base `development`)
