@@ -16,9 +16,10 @@ use std::path::{Path, PathBuf};
 /// inheriting the shared global config's model, which is typically generated
 /// for vanilla opencode by the user's shell (e.g. `opencode-use-auto` selects
 /// an openrouter model). It is applied in `load_all` immediately after the
-/// global config, so a custom (`OPENCODE_CONFIG`), inline
-/// (`OPENCODE_CONFIG_CONTENT`), project, `.opencode`, or managed config still
-/// overrides it.
+/// global config, so custom config, project config, `.opencode`, richer inline
+/// config, or managed config still overrides it. Model-only inline content from
+/// the shared vanilla global config path is treated as another global default
+/// and ignored.
 pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4-flash";
 
 pub struct ConfigLoader {
@@ -133,9 +134,13 @@ impl ConfigLoader {
     }
 
     /// Load inline config content from OPENCODE_CONFIG_CONTENT env var.
-    /// Per TS parity, this is applied after project config but before managed config.
+    /// Model-only content generated alongside the shared global config is treated
+    /// as a vanilla opencode default and ignored by this product.
     pub fn load_from_env_content(&mut self) -> Result<()> {
         if let Ok(config_content) = env::var("OPENCODE_CONFIG_CONTENT") {
+            if should_ignore_model_only_env_content(&config_content) {
+                return Ok(());
+            }
             self.load_from_str(&config_content)?;
         }
 
@@ -149,7 +154,8 @@ impl ConfigLoader {
     ///      global-derived `model` so an unconfigured workspace does not inherit
     ///      the vanilla opencode model
     /// 2. Custom config (OPENCODE_CONFIG)
-    /// 3. Inline config (OPENCODE_CONFIG_CONTENT)
+    /// 3. Inline config (OPENCODE_CONFIG_CONTENT), except model-only content
+    ///    attached to the shared global config path
     /// 4. Project config (opencode.json{,c})
     /// 5. .opencode directories (agents, commands, plugins, modes, config)
     /// 6. Managed config directory (enterprise, highest priority)
@@ -177,8 +183,7 @@ impl ConfigLoader {
 
         // Scan .opencode directories
         let directories = collect_opencode_directories(project_dir);
-        let global_config_dir = get_global_config_path();
-        let global_config_dir = global_config_dir.parent();
+        let protected_global_config_dirs = protected_global_config_dirs();
         let config_dir_override = env::var("OPENCODE_CONFIG_DIR").ok();
         for dir in &directories {
             // Only `.opencode` directories (and an explicit OPENCODE_CONFIG_DIR
@@ -186,8 +191,11 @@ impl ConfigLoader {
             // directory is scanned here for commands/agents/plugins, but its
             // `opencode.json{,c}` was already applied by `load_global()`; loading
             // it again would let global config override project config.
-            if directory_contributes_config(dir, global_config_dir, config_dir_override.as_deref())
-            {
+            if directory_contributes_config(
+                dir,
+                &protected_global_config_dirs,
+                config_dir_override.as_deref(),
+            ) {
                 for ext in &["opencode.jsonc", "opencode.json"] {
                     let path = dir.join(ext);
                     self.load_from_file(&path)?;
@@ -304,6 +312,60 @@ fn get_global_config_path() -> PathBuf {
     };
 
     config_dir.join("opencode/opencode")
+}
+
+fn protected_global_config_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(dir) = get_global_config_path().parent() {
+        dirs.push(dir.to_path_buf());
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        dirs.push(home.join(".config/opencode"));
+    }
+
+    dirs
+}
+
+fn same_existing_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn env_config_dir_is_protected_global() -> bool {
+    let Ok(config_dir) = env::var("OPENCODE_CONFIG_DIR") else {
+        return false;
+    };
+    let config_dir = PathBuf::from(config_dir);
+    protected_global_config_dirs()
+        .iter()
+        .any(|global| same_existing_path(global, &config_dir))
+}
+
+fn is_model_only_config_content(config_content: &str) -> bool {
+    let Ok(Some(serde_json::Value::Object(map))) =
+        parse_to_serde_value(config_content, &ParseOptions::default())
+    else {
+        return false;
+    };
+
+    if !map.contains_key("model") {
+        return false;
+    }
+
+    map.keys()
+        .all(|key| matches!(key.as_str(), "$schema" | "model" | "small_model"))
+}
+
+fn should_ignore_model_only_env_content(config_content: &str) -> bool {
+    env_config_dir_is_protected_global() && is_model_only_config_content(config_content)
 }
 
 /// Migrate legacy global TOML config (`~/.config/opencode/config`) into
@@ -590,10 +652,13 @@ fn get_managed_config_dir() -> PathBuf {
 /// `OPENCODE_CONFIG_DIR` redundantly points at the global config directory).
 fn directory_contributes_config(
     dir: &Path,
-    global_config_dir: Option<&Path>,
+    protected_global_config_dirs: &[PathBuf],
     config_dir_override: Option<&str>,
 ) -> bool {
-    if global_config_dir.is_some_and(|global| global == dir) {
+    if protected_global_config_dirs
+        .iter()
+        .any(|global| same_existing_path(global, dir))
+    {
         return false;
     }
 
@@ -1458,7 +1523,10 @@ pub fn update_global_config(patch: &Config) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct TestDir {
         path: PathBuf,
@@ -1673,46 +1741,143 @@ mod tests {
 
     #[test]
     fn test_directory_contributes_config_only_for_opencode_dirs() {
-        let global = Path::new("/home/user/.config/opencode");
-        assert!(!directory_contributes_config(global, Some(global), None));
+        let global = PathBuf::from("/home/user/.config/opencode");
+        let protected = vec![global.clone()];
+        assert!(!directory_contributes_config(&global, &protected, None));
         assert!(!directory_contributes_config(
-            global,
-            Some(global),
+            &global,
+            &protected,
             Some("/home/user/.config/opencode")
         ));
 
         let project = Path::new("/repo/.opencode");
-        assert!(directory_contributes_config(project, Some(global), None));
+        assert!(directory_contributes_config(project, &protected, None));
 
         let home_opencode = Path::new("/home/user/.opencode");
         assert!(directory_contributes_config(
             home_opencode,
-            Some(global),
+            &protected,
             None
         ));
 
         let command_dir = Path::new("/repo/.opencode/command");
-        assert!(!directory_contributes_config(
-            command_dir,
-            Some(global),
-            None
-        ));
+        assert!(!directory_contributes_config(command_dir, &protected, None));
 
         let override_dir = Path::new("/repo/custom-config");
         assert!(!directory_contributes_config(
             override_dir,
-            Some(global),
+            &protected,
             None
         ));
         assert!(directory_contributes_config(
             override_dir,
-            Some(global),
+            &protected,
             Some("/repo/custom-config")
         ));
     }
 
     #[test]
+    fn standard_home_config_dir_override_does_not_replace_product_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OPENCODE_CONFIG_CONTENT");
+        let old_config_dir = std::env::var_os("OPENCODE_CONFIG_DIR");
+        let temp = TestDir::new("opencode_config_home_dir_override_default");
+
+        if let Some(home) = dirs::home_dir() {
+            std::env::set_var("OPENCODE_CONFIG_DIR", home.join(".config/opencode"));
+        }
+
+        let result = {
+            let mut loader = ConfigLoader::new();
+            loader
+                .load_all(&temp.path)
+                .map(|_| loader.config().model.clone())
+        };
+
+        if let Some(value) = old_config_dir {
+            std::env::set_var("OPENCODE_CONFIG_DIR", value);
+        } else {
+            std::env::remove_var("OPENCODE_CONFIG_DIR");
+        }
+
+        assert_eq!(result.unwrap().as_deref(), Some(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn model_only_env_content_from_standard_home_config_dir_does_not_replace_product_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_config_dir = std::env::var_os("OPENCODE_CONFIG_DIR");
+        let old_config_content = std::env::var_os("OPENCODE_CONFIG_CONTENT");
+        let temp = TestDir::new("opencode_config_model_only_env_default");
+
+        if let Some(home) = dirs::home_dir() {
+            std::env::set_var("OPENCODE_CONFIG_DIR", home.join(".config/opencode"));
+        }
+        std::env::set_var(
+            "OPENCODE_CONFIG_CONTENT",
+            r#"{"$schema":"https://opencode.ai/config.json","model":"openrouter/deepseek/deepseek-v4-flash:free"}"#,
+        );
+
+        let result = {
+            let mut loader = ConfigLoader::new();
+            loader
+                .load_all(&temp.path)
+                .map(|_| loader.config().model.clone())
+        };
+
+        if let Some(value) = old_config_dir {
+            std::env::set_var("OPENCODE_CONFIG_DIR", value);
+        } else {
+            std::env::remove_var("OPENCODE_CONFIG_DIR");
+        }
+        if let Some(value) = old_config_content {
+            std::env::set_var("OPENCODE_CONFIG_CONTENT", value);
+        } else {
+            std::env::remove_var("OPENCODE_CONFIG_CONTENT");
+        }
+
+        assert_eq!(result.unwrap().as_deref(), Some(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn richer_env_content_from_standard_home_config_dir_still_applies() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_config_dir = std::env::var_os("OPENCODE_CONFIG_DIR");
+        let old_config_content = std::env::var_os("OPENCODE_CONFIG_CONTENT");
+        let temp = TestDir::new("opencode_config_richer_env_content");
+
+        if let Some(home) = dirs::home_dir() {
+            std::env::set_var("OPENCODE_CONFIG_DIR", home.join(".config/opencode"));
+        }
+        std::env::set_var(
+            "OPENCODE_CONFIG_CONTENT",
+            r#"{"$schema":"https://opencode.ai/config.json","model":"custom/env-model","instructions":["env.md"]}"#,
+        );
+
+        let result = {
+            let mut loader = ConfigLoader::new();
+            loader.load_all(&temp.path).map(|_| loader.config().clone())
+        };
+
+        if let Some(value) = old_config_dir {
+            std::env::set_var("OPENCODE_CONFIG_DIR", value);
+        } else {
+            std::env::remove_var("OPENCODE_CONFIG_DIR");
+        }
+        if let Some(value) = old_config_content {
+            std::env::set_var("OPENCODE_CONFIG_CONTENT", value);
+        } else {
+            std::env::remove_var("OPENCODE_CONFIG_CONTENT");
+        }
+
+        let config = result.unwrap();
+        assert_eq!(config.model.as_deref(), Some("custom/env-model"));
+        assert!(config.instructions.iter().any(|item| item == "env.md"));
+    }
+
+    #[test]
     fn project_config_overrides_inline_env_content() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let temp = TestDir::new("opencode_config_env_content");
         fs::write(
             temp.path.join("opencode.json"),
@@ -1731,6 +1896,7 @@ mod tests {
 
     #[test]
     fn product_default_model_applies_without_workspace_config() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("OPENCODE_CONFIG_CONTENT");
         let temp = TestDir::new("opencode_config_product_default");
 
@@ -1742,6 +1908,7 @@ mod tests {
 
     #[test]
     fn workspace_config_overrides_product_default_model() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("OPENCODE_CONFIG_CONTENT");
         let temp = TestDir::new("opencode_config_workspace_default");
         fs::write(

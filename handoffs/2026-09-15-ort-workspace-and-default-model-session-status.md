@@ -65,6 +65,18 @@ Machine-local (NOT in the repo, NOT yet pushed at time of writing):
   `OPENCODE_CONFIG_DIR`. This is required for the workspace fix on any machine. It currently
   exists as an uncommitted edit on `matrillosub1`.
 
+Follow-up on 2026-09-15: the same machine-local launcher fix was applied on this machine.
+The active `_opencode_rust_exec` now runs `env -u OPENCODE_CONFIG_CONTENT -u
+OPENCODE_CONFIG_DIR "$binary" "$@"` without changing directory first.
+
+Second follow-up on 2026-09-15: the prior repo fix still missed one product-side path.
+`OPENCODE_CONFIG_DIR=$HOME/.config/opencode` and model-only `OPENCODE_CONFIG_CONTENT`
+from `opencode-use-auto` could still override the product default when the binary was run
+directly or from a shell path that did not clean those variables. `opencode-config` now
+protects the platform global config dir and `$HOME/.config/opencode` from the late config-dir
+scan, and ignores model-only inline content attached to that shared global config. Richer
+inline config content and workspace config still apply.
+
 ## Merge status
 
 - Merged into `development` on 2026-09-15 via PR #33 (merge commit `9ef8b47`); feature branch
@@ -79,6 +91,10 @@ Machine-local (NOT in the repo, NOT yet pushed at time of writing):
 - `cargo check -p opencode-cli -p opencode-config` clean.
 - Live: fresh server from a non-repo workspace -> `/config/providers` `effective_model:
   deepseek/deepseek-v4-flash`; no new server record written; workspace = launch dir.
+- Follow-up verification: `cargo test -p opencode-config` -> 56 passed; `cargo build -p
+  opencode-cli` passed; direct `target/debug/opencode config` and fresh-shell `opencode-rust
+  config` from a temp non-repo workspace both reported working directory = that workspace and
+  default model = `deepseek/deepseek-v4-flash` under the normal shell environment.
 - `cargo test -p opencode-server`: one pre-existing environment-dependent failure
   (`skill_route`, counts the 34 global skills under `~/.config/opencode/skills`); passes with
   an isolated `HOME`/`XDG_CONFIG_HOME`.
@@ -95,10 +111,9 @@ Machine-local (NOT in the repo, NOT yet pushed at time of writing):
 
 ## What to do next
 
-1. Fix the workspace on the **test machine**: apply the `~/standards/opencode-config`
-   `_opencode_rust_exec` change (remove `cd "$repo"`), then new shell + `ort` in
-   `~/apps/tss-notes` (or equivalent) and confirm the workspace matches.
-2. Build the merged work there: `git fetch origin && git checkout development &&
+1. In any already-open shell, re-source `~/standards/opencode-config` or open a fresh shell,
+   then run `ort` from `~/apps/tss-notes` (or equivalent) and confirm the workspace matches.
+2. Build the merged work there if needed: `git fetch origin && git checkout development &&
    git pull && ort-build`, then confirm the model is `deepseek/deepseek-v4-flash`.
 3. **Open decision - FEAT-016**: re-evaluate whether removing reusable server state is
    worth it now that the wrong-machine misdiagnosis is known.

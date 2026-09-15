@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "AGENTS.md"
-status: "qa"
+status: "done"
 created: "2026-09-15"
 ---
 
@@ -174,3 +174,33 @@ observation untrustworthy.
 - Item in `qa`; awaiting post-merge user verification on `development` (activated workspace +
   `deepseek/deepseek-v4-flash` default). Note the workspace half also requires the
   machine-local launcher update (`~/standards/opencode-config`).
+
+## Follow-up - 2026-09-15
+
+- Applied the machine-local launcher update on this machine: `_opencode_rust_exec` no longer
+  changes into `$OPENCODE_RUST_REPO` before running the built binary.
+- The launcher execution path now unsets `OPENCODE_CONFIG_CONTENT` and `OPENCODE_CONFIG_DIR`,
+  matching the environment needed for the product default to win in unconfigured workspaces.
+- Verified directly from a temp non-repo workspace with the cleaned launcher environment:
+  working directory remained the temp workspace and default model resolved to
+  `deepseek/deepseek-v4-flash`.
+
+## Follow-up - 2026-09-15 (second pass)
+
+- Found a remaining product-side miss: a normal shell still exports
+  `OPENCODE_CONFIG_DIR=$HOME/.config/opencode` and model-only `OPENCODE_CONFIG_CONTENT` from
+  `opencode-use-auto`. Running the binary directly under that environment still selected the
+  vanilla openrouter model.
+- Updated `opencode-config` so the shared global config dirs are protected from the late
+  `OPENCODE_CONFIG_DIR` scan, and model-only inline content associated with that shared config
+  is ignored by this product. Workspace config and richer inline config overlays still apply.
+- Verification: `cargo test -p opencode-config` -> 56 passed; `cargo build -p opencode-cli`
+  passed; direct `target/debug/opencode config` and fresh-shell `opencode-rust config` from a
+  temp non-repo workspace both reported that workspace and `deepseek/deepseek-v4-flash` under
+  the normal shell environment.
+
+## Completion - 2026-09-15
+
+- User verified the live `ort` workflow now uses the activated workspace and the expected
+  `deepseek/deepseek-v4-flash` default.
+- Moved to `done`.
