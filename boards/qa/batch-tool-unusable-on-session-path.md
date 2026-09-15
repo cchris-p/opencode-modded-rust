@@ -102,3 +102,9 @@ The model then abandoned `batch` and read files individually. This wastes turns 
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/32 (branch `bug/BUG-008-remove-batch-tool`, base `development`)
+
+## Merge status
+
+- Merged into `development` on 2026-09-15 via PR #32 (merge commit `c56287f`).
+- PR branch `bug/BUG-008-remove-batch-tool` deleted remotely and locally.
+- Remains in `qa`; no QA report recorded yet, so it is **not** promoted to `done`. Awaiting user verification on `development`.

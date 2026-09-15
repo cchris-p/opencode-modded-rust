@@ -36,11 +36,11 @@ The agentic loop now works (agent prompt + environment + tools attached; tool ca
 
 ## Related Items
 
-- `BUG-007` ls tool returns partial/misleading directory listings
-- `BUG-008` batch tool unusable on the session path
-- `BUG-009` Instruction files re-injected on every read
-- `FEAT-013` Model capability gating and deprecated-default-model surfacing
-- `START-018` Complete TUI approval and question handling
+- `BUG-007` ls tool returns partial/misleading directory listings - **merged** into `development` via PR #31 (`bda8afc`); in `qa`, awaiting user QA.
+- `BUG-008` batch tool unusable on the session path - **merged** into `development` via PR #32 (`c56287f`, tool removed); in `qa`, awaiting user QA.
+- `BUG-009` Instruction files re-injected on every read - **deferred** (2026-09-15); remains in `todo`.
+- `FEAT-013` Model capability gating and deprecated-default-model surfacing - open; the remaining executable child.
+- `START-018` Complete TUI approval and question handling - **done** (prerequisite, not open work).
 - `BUG-004` Coding sessions run as bare chat (completed prerequisite)
 - `BUG-006` DeepSeek tool loop (completed prerequisite)
 
@@ -48,3 +48,4 @@ The agentic loop now works (agent prompt + environment + tools attached; tool ca
 
 - Child cards remain in their own lanes; this card is the grouping/tracking parent.
 - Use `wiki/v1.md` for the workflow definition and `invariants/coding-session-behavior.md` for the binding rules.
+- Reconciled (2026-09-15): the `Scope`/`Done when` text still names `START-018` as open work, but START-018 is already in `done`; treat it as a prerequisite, not a remaining task. `BUG-007`/`BUG-008` are merged into `development` and only await QA. `BUG-009` is deferred until a small-context model shows instruction-injection pressure. The only open executable phase child is `FEAT-013`.

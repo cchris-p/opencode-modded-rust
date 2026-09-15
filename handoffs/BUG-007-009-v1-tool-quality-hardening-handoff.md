@@ -3,7 +3,7 @@ id: "H-001"
 title: "BUG-007..BUG-009 V1 tool-quality hardening - Handoff"
 status: "in_progress"
 created: "2026-09-10"
-updated: "2026-09-13"
+updated: "2026-09-15"
 owner: ""
 target: ""
 blocked_reason: ""
@@ -32,14 +32,21 @@ Excluded: `PHASE-001..004` are grouping epics and get no PRs. The other `PHASE-0
 Refinement gate ran over the whole group and passed after these decisions were recorded on the cards:
 
 - `BUG-007` semantics: **bounded top-level listing** (immediate children; per-level truncation only; empty dirs included; `ls` retained).
-- `BUG-008` disposition: **keep `batch` and fix it** (schema/deserializer alignment + wire registry/agent into the session `ToolContext`).
+- `BUG-008` disposition: **remove `batch`** (superseded 2026-09-13). The original keep-and-fix decision was replaced by removing the non-reference tool; see Execution Status and the BUG-008 card.
 - `BUG-009` mechanism: **session-tracked loaded-instruction set** on the `ToolContext`, populated from read results' `loaded` metadata.
 
 ## Execution Status
 
-- `BUG-007` - **in flight**. Branch `bug/BUG-007-ls-top-level-listing`, PR #31 open against `development`, card in `qa`. Live `ls` verification passed (all top-level directories listed, no `bash` fallback). Awaiting user local QA.
-- `BUG-008` - not started. Blocked on the keep/fix decision being implemented; card still in `todo`.
-- `BUG-009` - not started. Deferred pending local-model context-pressure observation; card still in `todo`.
+- `BUG-007` - **merged** into `development` via PR #31 (commit `bda8afc`); card in `qa`, awaiting user QA.
+- `BUG-008` - **merged** into `development` via PR #32 (commit `c56287f`) as a tool removal; card in `qa`, awaiting user QA.
+- `BUG-009` - **deferred, not started**. Card remains in `todo` pending local-model context-pressure observation.
+
+## Completed with
+
+- PR #31 `fix(tool): make ls return a bounded, accurate top-level listing (BUG-007)` - merged into `development` 2026-09-15 (`bda8afc`).
+- PR #32 `fix(tool): remove the unusable batch tool from the default tool set (BUG-008)` - merged into `development` 2026-09-15 (`c56287f`).
+
+The handoff is **not** archived because `BUG-009` is still open (deferred).
 
 ## Dependencies and Ordering
 

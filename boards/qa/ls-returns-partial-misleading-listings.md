@@ -85,3 +85,9 @@ Also note: the reference OpenCode tool set has no `ls`/`list` tool (reference us
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/31 (branch `bug/BUG-007-ls-top-level-listing`, base `development`)
+
+## Merge status
+
+- Merged into `development` on 2026-09-15 via PR #31 (merge commit `bda8afc`).
+- PR branch `bug/BUG-007-ls-top-level-listing` deleted remotely and locally.
+- Remains in `qa`; no QA report recorded yet, so it is **not** promoted to `done`. Awaiting user verification on `development`.
