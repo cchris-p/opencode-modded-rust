@@ -10,6 +10,17 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Product-owned default model.
+///
+/// The Rust product defaults to the deepseek-direct provider instead of
+/// inheriting the shared global config's model, which is typically generated
+/// for vanilla opencode by the user's shell (e.g. `opencode-use-auto` selects
+/// an openrouter model). It is applied in `load_all` immediately after the
+/// global config, so a custom (`OPENCODE_CONFIG`), inline
+/// (`OPENCODE_CONFIG_CONTENT`), project, `.opencode`, or managed config still
+/// overrides it.
+pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4-flash";
+
 pub struct ConfigLoader {
     config: Config,
     config_paths: Vec<PathBuf>,
@@ -134,6 +145,9 @@ impl ConfigLoader {
     /// Loads all config sources synchronously (without remote wellknown).
     /// Merge order:
     /// 1. Global config (~/.config/opencode/opencode.json{,c})
+    ///    - then the product default model (`DEFAULT_MODEL`) replaces the
+    ///      global-derived `model` so an unconfigured workspace does not inherit
+    ///      the vanilla opencode model
     /// 2. Custom config (OPENCODE_CONFIG)
     /// 3. Inline config (OPENCODE_CONFIG_CONTENT)
     /// 4. Project config (opencode.json{,c})
@@ -150,6 +164,13 @@ impl ConfigLoader {
         let project_dir = project_dir.as_ref();
 
         self.load_global()?;
+
+        // The shared global config may be generated for vanilla opencode. This
+        // product owns its model default: replace the global-derived model so an
+        // unconfigured workspace does not inherit the vanilla model. Later
+        // sources (custom, inline env, project, .opencode, managed) override it.
+        self.config.model = Some(DEFAULT_MODEL.to_string());
+
         self.load_from_env()?;
         self.load_from_env_content()?;
         self.load_project(project_dir)?;
@@ -232,6 +253,7 @@ impl ConfigLoader {
     /// Merge order (low -> high precedence):
     /// 1. Remote .well-known/opencode (org defaults) -- lowest priority
     /// 2. Global config (~/.config/opencode/opencode.json{,c})
+    ///    - then the product default model (`DEFAULT_MODEL`) replaces it
     /// 3. Custom config (OPENCODE_CONFIG)
     /// 4. Inline config (OPENCODE_CONFIG_CONTENT)
     /// 5. Project config (opencode.json{,c})
@@ -1705,6 +1727,36 @@ mod tests {
         result.unwrap();
 
         assert_eq!(loader.config().model.as_deref(), Some("project-model"));
+    }
+
+    #[test]
+    fn product_default_model_applies_without_workspace_config() {
+        std::env::remove_var("OPENCODE_CONFIG_CONTENT");
+        let temp = TestDir::new("opencode_config_product_default");
+
+        let mut loader = ConfigLoader::new();
+        loader.load_all(&temp.path).unwrap();
+
+        assert_eq!(loader.config().model.as_deref(), Some(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn workspace_config_overrides_product_default_model() {
+        std::env::remove_var("OPENCODE_CONFIG_CONTENT");
+        let temp = TestDir::new("opencode_config_workspace_default");
+        fs::write(
+            temp.path.join("opencode.json"),
+            r#"{ "model": "custom/workspace-model" }"#,
+        )
+        .unwrap();
+
+        let mut loader = ConfigLoader::new();
+        loader.load_all(&temp.path).unwrap();
+
+        assert_eq!(
+            loader.config().model.as_deref(),
+            Some("custom/workspace-model")
+        );
     }
 
     #[test]
