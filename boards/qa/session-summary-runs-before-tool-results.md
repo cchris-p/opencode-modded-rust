@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-15"
 ---
 
@@ -61,4 +61,6 @@ Root cause candidate:
 
 ## Merge status
 
-- PR #34 opened against `development`; direct merge requested by user.
+- Merged directly into `development` on 2026-09-15 via PR #34 (merge commit `c3edb24`).
+- Remote PR branch `bug/BUG-012-session-summary-tool-results-clean` deleted by merge workflow.
+- Remains in `qa` pending post-merge verification on `development`.
