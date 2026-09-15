@@ -1081,9 +1081,9 @@ async fn resolve_provider_and_model(
         (first.provider, first.id)
     };
 
-    let provider = providers
-        .get_provider(&provider_id)
-        .map_err(|e| ApiError::ProviderError(e.to_string()))?;
+    let provider = providers.get_provider(&provider_id).map_err(|_| {
+        ApiError::ProviderError(unavailable_provider_message(&provider_id, &model_id))
+    })?;
     if provider.get_model(&model_id).is_none() {
         return Err(ApiError::BadRequest(format!(
             "Model `{}` not found for provider `{}`",
@@ -1092,6 +1092,49 @@ async fn resolve_provider_and_model(
     }
 
     Ok((provider, provider_id, model_id))
+}
+
+fn unavailable_provider_message(provider_id: &str, model_id: &str) -> String {
+    format!(
+        "Provider '{}' is not available for model '{}'. {}",
+        provider_id,
+        model_id,
+        unavailable_provider_hint(provider_id)
+    )
+}
+
+fn unavailable_provider_hint(provider_id: &str) -> String {
+    let env_vars: &[&str] = match provider_id {
+        "anthropic" => &["ANTHROPIC_API_KEY"],
+        "openai" => &["OPENAI_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "ollama" => &["OLLAMA_HOST"],
+        _ => &[],
+    };
+
+    if env_vars.is_empty() {
+        return "Configure credentials for this provider and restart the server.".to_string();
+    }
+
+    format!(
+        "Set {} or configure this provider's API key, then restart the server.",
+        env_vars.join(" or ")
+    )
+}
+
+#[cfg(test)]
+mod provider_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_deepseek_provider_message_includes_auth_hint() {
+        let message = unavailable_provider_message("deepseek", "deepseek-v4-flash");
+
+        assert!(message.contains("Provider 'deepseek' is not available"));
+        assert!(message.contains("model 'deepseek-v4-flash'"));
+        assert!(message.contains("DEEPSEEK_API_KEY"));
+    }
 }
 
 async fn send_message(

@@ -23,6 +23,13 @@ pub enum AgentError {
     #[error("No provider available")]
     NoProvider,
 
+    #[error("Provider '{provider_id}' is not available for model '{model_id}'. {hint}")]
+    ProviderUnavailable {
+        provider_id: String,
+        model_id: String,
+        hint: String,
+    },
+
     #[error("Invalid response")]
     InvalidResponse,
 }
@@ -285,9 +292,13 @@ impl AgentExecutor {
 
     fn get_provider(&self) -> Result<Arc<dyn Provider>, AgentError> {
         if let Some(ref model_ref) = self.agent.model {
-            self.providers
-                .get(&model_ref.provider_id)
-                .ok_or(AgentError::NoProvider)
+            self.providers.get(&model_ref.provider_id).ok_or_else(|| {
+                AgentError::ProviderUnavailable {
+                    provider_id: model_ref.provider_id.clone(),
+                    model_id: model_ref.model_id.clone(),
+                    hint: unavailable_provider_hint(&model_ref.provider_id),
+                }
+            })
         } else {
             let providers = self.providers.list();
             if providers.is_empty() {
@@ -526,6 +537,26 @@ impl AgentExecutor {
     }
 }
 
+fn unavailable_provider_hint(provider_id: &str) -> String {
+    let env_vars: &[&str] = match provider_id {
+        "anthropic" => &["ANTHROPIC_API_KEY"],
+        "openai" => &["OPENAI_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "ollama" => &["OLLAMA_HOST"],
+        _ => &[],
+    };
+
+    if env_vars.is_empty() {
+        return "Configure credentials for this provider and restart the server.".to_string();
+    }
+
+    format!(
+        "Set {} or configure this provider's API key, then restart the server.",
+        env_vars.join(" or ")
+    )
+}
+
 fn parse_model_string(raw: Option<&str>) -> Option<(String, String)> {
     let raw = raw?.trim();
     if raw.is_empty() {
@@ -618,5 +649,21 @@ mod tests {
             matches!(denied, ToolError::PermissionDenied(_)),
             "expected permission denied, got: {denied}"
         );
+    }
+
+    #[test]
+    fn missing_selected_provider_reports_model_and_auth_hint() {
+        let executor =
+            build_executor(AgentInfo::general().with_model("deepseek-v4-flash", "deepseek"));
+
+        let error = match executor.get_provider() {
+            Ok(_) => panic!("empty registry should not provide deepseek"),
+            Err(error) => error,
+        };
+
+        let message = error.to_string();
+        assert!(message.contains("Provider 'deepseek' is not available"));
+        assert!(message.contains("model 'deepseek-v4-flash'"));
+        assert!(message.contains("DEEPSEEK_API_KEY"));
     }
 }
