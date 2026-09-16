@@ -82,3 +82,4 @@ This must not reintroduce unsafe implicit server discovery, stale-server reuse, 
 - Implemented in PR #37: https://github.com/cchris-p/opencode-modded-rust/pull/37
 - Added `opencode task target list|select|show|clear`, workspace-local `.opencode/task-target.json` storage, and live target validation via `/health` plus `/session`.
 - Verified with `cargo fmt`, `cargo check -p opencode-cli`, empty/unavailable target command checks, help output, and a live temporary-server smoke test for list/select/show/clear.
+- Merged into `development` on 2026-09-16 via PR #37 at merge commit `1c1ad44`; remains in `qa` for post-merge verification.

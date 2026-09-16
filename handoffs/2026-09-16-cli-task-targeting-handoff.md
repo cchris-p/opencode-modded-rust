@@ -52,6 +52,7 @@ Implement the CLI task workflow for `ort task ...` without reintroducing unsafe 
 - 2026-09-16: PR 1 / `FEAT-020` opened as https://github.com/cchris-p/opencode-modded-rust/pull/37 on branch `feature/FEAT-020-task-target-selection` targeting `development`.
 - PR 1 implements `opencode task target list|select|show|clear`, workspace-local `.opencode/task-target.json` storage, and live validation of explicit target servers/sessions. It intentionally does not add `task new`, `task send`, `task view`, queueing, status dashboards, or implicit TUI server reuse.
 - PR 1 verification: `cargo fmt`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task target list`; `cargo run -p opencode-cli -- task target show`; `cargo run -p opencode-cli -- task target list --server http://127.0.0.1:9`; `cargo run -p opencode-cli -- task target --help`; live temporary-server smoke for list/select/show/clear.
+- 2026-09-16: PR 1 merged into `development` at merge commit `1c1ad44`; `FEAT-020` remains in `qa` for post-merge verification.
 
 ## Recommended Implementation Sequence
 
