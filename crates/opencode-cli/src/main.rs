@@ -113,6 +113,11 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         thinking: bool,
     },
+    #[command(about = "Manage CLI task workflows")]
+    Task {
+        #[command(subcommand)]
+        action: TaskCommands,
+    },
     #[command(about = "Start HTTP server")]
     Serve {
         #[arg(long, default_value_t = 0)]
@@ -280,6 +285,35 @@ enum DbOutputFormat {
 enum DbCommands {
     #[command(about = "Print the database path")]
     Path,
+}
+
+#[derive(Subcommand)]
+enum TaskCommands {
+    #[command(about = "Manage the default CLI task target")]
+    Target {
+        #[command(subcommand)]
+        action: TaskTargetCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskTargetCommands {
+    #[command(about = "List explicit task target candidates and their sessions")]
+    List {
+        #[arg(long = "server", value_name = "URL")]
+        server: Vec<String>,
+    },
+    #[command(about = "Select the default task target")]
+    Select {
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+    },
+    #[command(about = "Show the selected default task target")]
+    Show,
+    #[command(about = "Clear the selected default task target")]
+    Clear,
 }
 
 #[derive(Subcommand)]
@@ -667,6 +701,9 @@ async fn main() -> anyhow::Result<()> {
                 thinking,
             )
             .await?;
+        }
+        Some(Commands::Task { action }) => {
+            handle_task_command(action).await?;
         }
         Some(Commands::Serve {
             port,
@@ -1178,6 +1215,27 @@ struct RemoteSessionInfo {
     id: String,
     #[serde(default)]
     parent_id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    directory: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TaskTargetSelection {
+    server: String,
+    #[serde(default)]
+    session: Option<String>,
+    workspace: String,
+    selected_at: i64,
+}
+
+#[derive(Debug)]
+struct CheckedTaskTarget {
+    server: String,
+    available: bool,
+    sessions: Vec<RemoteSessionInfo>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2375,6 +2433,301 @@ fn local_database_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("opencode")
         .join("opencode.db")
+}
+
+fn workspace_task_target_path() -> anyhow::Result<PathBuf> {
+    Ok(std::env::current_dir()?
+        .join(".opencode")
+        .join("task-target.json"))
+}
+
+fn normalize_task_server(server: &str) -> anyhow::Result<String> {
+    let trimmed = server.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        anyhow::bail!("Task target server URL cannot be empty");
+    }
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        anyhow::bail!("Task target server URL must start with http:// or https://");
+    }
+    Ok(trimmed.to_string())
+}
+
+fn load_task_target_selection() -> anyhow::Result<Option<TaskTargetSelection>> {
+    let path = workspace_task_target_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+    Ok(Some(serde_json::from_str(&raw)?))
+}
+
+fn save_task_target_selection(selection: &TaskTargetSelection) -> anyhow::Result<()> {
+    let path = workspace_task_target_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_string_pretty(selection)?)?;
+    Ok(())
+}
+
+fn clear_task_target_selection() -> anyhow::Result<bool> {
+    let path = workspace_task_target_path()?;
+    if path.exists() {
+        fs::remove_file(path)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+async fn check_task_target_server(client: &reqwest::Client, server: &str) -> CheckedTaskTarget {
+    let server = match normalize_task_server(server) {
+        Ok(server) => server,
+        Err(error) => {
+            return CheckedTaskTarget {
+                server: server.to_string(),
+                available: false,
+                sessions: Vec::new(),
+                error: Some(error.to_string()),
+            };
+        }
+    };
+
+    let health = server_url(&server, "/health");
+    match client.get(health).send().await {
+        Ok(response) if response.status().is_success() => {}
+        Ok(response) => {
+            return CheckedTaskTarget {
+                server,
+                available: false,
+                sessions: Vec::new(),
+                error: Some(format!("health check returned {}", response.status())),
+            };
+        }
+        Err(error) => {
+            return CheckedTaskTarget {
+                server,
+                available: false,
+                sessions: Vec::new(),
+                error: Some(error.to_string()),
+            };
+        }
+    }
+
+    let list_endpoint = server_url(&server, "/session?roots=true&limit=100");
+    match client.get(list_endpoint).send().await {
+        Ok(response) => match parse_http_json::<Vec<RemoteSessionInfo>>(response).await {
+            Ok(sessions) => CheckedTaskTarget {
+                server,
+                available: true,
+                sessions,
+                error: None,
+            },
+            Err(error) => CheckedTaskTarget {
+                server,
+                available: false,
+                sessions: Vec::new(),
+                error: Some(format!("failed to list sessions: {}", error)),
+            },
+        },
+        Err(error) => CheckedTaskTarget {
+            server,
+            available: false,
+            sessions: Vec::new(),
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn prompt_line(label: &str) -> anyhow::Result<String> {
+    print!("{}", label);
+    io::stdout().flush()?;
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    Ok(value.trim().to_string())
+}
+
+fn print_checked_task_target(checked: &CheckedTaskTarget, selected: Option<&TaskTargetSelection>) {
+    let is_selected_server = selected
+        .map(|target| target.server == checked.server)
+        .unwrap_or(false);
+    let marker = if is_selected_server { "*" } else { " " };
+    if checked.available {
+        println!("{} {} available", marker, checked.server);
+        if checked.sessions.is_empty() {
+            println!("    no root sessions reported");
+        } else {
+            for session in &checked.sessions {
+                let selected_session = selected
+                    .and_then(|target| target.session.as_deref())
+                    .map(|id| id == session.id)
+                    .unwrap_or(false);
+                let session_marker = if selected_session { "*" } else { " " };
+                let title = session.title.as_deref().unwrap_or("untitled");
+                let directory = session.directory.as_deref().unwrap_or("");
+                println!(
+                    "  {} {:<30} {:<30} {}",
+                    session_marker,
+                    session.id,
+                    truncate_text(title, 30),
+                    directory
+                );
+            }
+        }
+    } else {
+        println!(
+            "{} {} unavailable ({})",
+            marker,
+            checked.server,
+            checked.error.as_deref().unwrap_or("unknown error")
+        );
+    }
+}
+
+async fn handle_task_command(action: TaskCommands) -> anyhow::Result<()> {
+    match action {
+        TaskCommands::Target { action } => handle_task_target_command(action).await,
+    }
+}
+
+async fn handle_task_target_command(action: TaskTargetCommands) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    match action {
+        TaskTargetCommands::List { server } => {
+            let selected = load_task_target_selection()?;
+            let mut servers = Vec::new();
+            if let Some(selection) = selected.as_ref() {
+                servers.push(selection.server.clone());
+            }
+            for candidate in server {
+                let normalized = normalize_task_server(&candidate)?;
+                if !servers.iter().any(|existing| existing == &normalized) {
+                    servers.push(normalized);
+                }
+            }
+            if servers.is_empty() {
+                println!("No task target candidates. Provide --server or select a target first.");
+                return Ok(());
+            }
+            println!("Task target candidates (* selected):");
+            for server in servers {
+                let checked = check_task_target_server(&client, &server).await;
+                print_checked_task_target(&checked, selected.as_ref());
+            }
+        }
+        TaskTargetCommands::Select { server, session } => {
+            let server = match server {
+                Some(server) => normalize_task_server(&server)?,
+                None if io::stdin().is_terminal() => {
+                    normalize_task_server(&prompt_line("Server URL: ")?)?
+                }
+                None => anyhow::bail!(
+                    "task target select requires --server when stdin is not interactive"
+                ),
+            };
+            let checked = check_task_target_server(&client, &server).await;
+            if !checked.available {
+                anyhow::bail!(
+                    "Cannot select unavailable task target {}: {}",
+                    checked.server,
+                    checked.error.as_deref().unwrap_or("unknown error")
+                );
+            }
+
+            let session = match session {
+                Some(session_id) => Some(session_id),
+                None if io::stdin().is_terminal() && !checked.sessions.is_empty() => {
+                    println!("Available root sessions:");
+                    for session in &checked.sessions {
+                        println!(
+                            "  {:<30} {}",
+                            session.id,
+                            session.title.as_deref().unwrap_or("untitled")
+                        );
+                    }
+                    let value = prompt_line("Default session ID (optional): ")?;
+                    if value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(value)
+                    }
+                }
+                None => None,
+            };
+
+            if let Some(session_id) = session.as_deref() {
+                if !checked
+                    .sessions
+                    .iter()
+                    .any(|candidate| candidate.id == session_id)
+                {
+                    anyhow::bail!(
+                        "Session {} was not reported by task target {}",
+                        session_id,
+                        checked.server
+                    );
+                }
+            }
+
+            let workspace = std::env::current_dir()?.display().to_string();
+            let selection = TaskTargetSelection {
+                server: checked.server,
+                session,
+                workspace,
+                selected_at: chrono::Utc::now().timestamp_millis(),
+            };
+            save_task_target_selection(&selection)?;
+            println!("Selected task target: {}", selection.server);
+            if let Some(session_id) = selection.session.as_deref() {
+                println!("Default session: {}", session_id);
+            }
+        }
+        TaskTargetCommands::Show => {
+            let Some(selection) = load_task_target_selection()? else {
+                println!("No default task target selected.");
+                return Ok(());
+            };
+            println!("Server: {}", selection.server);
+            println!(
+                "Session: {}",
+                selection.session.as_deref().unwrap_or("(none)")
+            );
+            println!("Workspace: {}", selection.workspace);
+            let checked = check_task_target_server(&client, &selection.server).await;
+            if checked.available {
+                if let Some(session_id) = selection.session.as_deref() {
+                    if checked
+                        .sessions
+                        .iter()
+                        .any(|session| session.id == session_id)
+                    {
+                        println!("Status: available");
+                    } else {
+                        println!("Status: unavailable (selected session not reported)");
+                    }
+                } else {
+                    println!("Status: available");
+                }
+            } else {
+                println!(
+                    "Status: unavailable ({})",
+                    checked.error.as_deref().unwrap_or("unknown error")
+                );
+            }
+        }
+        TaskTargetCommands::Clear => {
+            if clear_task_target_selection()? {
+                println!("Cleared default task target.");
+            } else {
+                println!("No default task target selected.");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn handle_db_command(

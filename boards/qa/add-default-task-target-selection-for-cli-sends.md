@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-16"
 ---
 
@@ -79,3 +79,6 @@ This must not reintroduce unsafe implicit server discovery, stale-server reuse, 
 ## Notes
 
 - Created on 2026-09-16 after clarifying that the desired workflow is explicit selection of a default server/session target for CLI task sends, not automatic TUI server reuse.
+- Implemented in PR #37: https://github.com/cchris-p/opencode-modded-rust/pull/37
+- Added `opencode task target list|select|show|clear`, workspace-local `.opencode/task-target.json` storage, and live target validation via `/health` plus `/session`.
+- Verified with `cargo fmt`, `cargo check -p opencode-cli`, empty/unavailable target command checks, help output, and a live temporary-server smoke test for list/select/show/clear.
