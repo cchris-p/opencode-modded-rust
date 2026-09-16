@@ -1,4 +1,4 @@
-use futures::stream::BoxStream;
+use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::{AgentInfo, Conversation, ToolCall};
 use opencode_plugin::{HookContext, HookEvent};
-use opencode_provider::{ChatRequest, Provider, ProviderRegistry, StreamEvent};
+use opencode_provider::{ChatRequest, Provider, ProviderRegistry, StreamEvent, ToolDefinition};
 use opencode_tool::{ToolContext, ToolError, ToolRegistry};
 
 #[derive(Debug, thiserror::Error)]
@@ -168,7 +168,7 @@ impl AgentExecutor {
             )
             .await;
 
-            let request = ChatRequest::new(model_id, self.conversation.to_provider_messages());
+            let request = self.build_request(&provider, model_id).await;
 
             let stream = provider
                 .chat_stream(request)
@@ -182,7 +182,8 @@ impl AgentExecutor {
                 break;
             }
 
-            self.conversation.add_assistant_message(&response);
+            self.conversation
+                .add_assistant_message_with_tools(&response, tool_calls.clone());
 
             for tool_call in tool_calls {
                 let result = self.execute_tool(&tool_call).await;
@@ -230,7 +231,7 @@ impl AgentExecutor {
 
             let provider = self.get_provider()?;
             let model_id = self.get_model_id(&provider);
-            let request = ChatRequest::new(model_id, self.conversation.to_provider_messages());
+            let request = self.build_request(&provider, model_id).await;
 
             let stream = provider
                 .chat_stream(request)
@@ -244,7 +245,8 @@ impl AgentExecutor {
                 break;
             }
 
-            self.conversation.add_assistant_message(&response);
+            self.conversation
+                .add_assistant_message_with_tools(&response, tool_calls.clone());
 
             for tool_call in tool_calls {
                 let result = self.execute_tool_without_subsessions(&tool_call).await;
@@ -276,18 +278,113 @@ impl AgentExecutor {
     ) -> Result<BoxStream<'static, Result<StreamEvent, AgentError>>, AgentError> {
         self.conversation.add_user_message(user_message);
 
-        let provider = self.get_provider()?;
-        let model_id = self.get_model_id(&provider);
-        let request = ChatRequest::new(model_id, self.conversation.to_provider_messages());
+        let response = self.execute_agentic_loop().await?;
+        let events = if response.is_empty() {
+            vec![Ok(StreamEvent::Done)]
+        } else {
+            vec![Ok(StreamEvent::TextDelta(response)), Ok(StreamEvent::Done)]
+        };
 
-        let stream = provider
-            .chat_stream(request)
+        Ok(stream::iter(events).boxed())
+    }
+
+    async fn execute_agentic_loop(&mut self) -> Result<String, AgentError> {
+        let mut steps = 0;
+        let mut final_response = String::new();
+
+        while steps < self.max_steps {
+            steps += 1;
+
+            let provider = self.get_provider()?;
+            let model_id = self.get_model_id(&provider);
+            let request = self.build_request(&provider, model_id).await;
+
+            let stream = provider
+                .chat_stream(request)
+                .await
+                .map_err(|e| AgentError::ProviderError(e.to_string()))?;
+
+            let (response, tool_calls) = self.process_stream(stream).await?;
+
+            if tool_calls.is_empty() {
+                final_response = response;
+                break;
+            }
+
+            self.conversation
+                .add_assistant_message_with_tools(&response, tool_calls.clone());
+
+            for tool_call in tool_calls {
+                let result = self.execute_tool(&tool_call).await;
+
+                let (content, is_error) = match result {
+                    Ok(output) => (output, false),
+                    Err(e) => (e.to_string(), true),
+                };
+
+                self.conversation.add_tool_result(
+                    &tool_call.id,
+                    &tool_call.name,
+                    content,
+                    is_error,
+                );
+            }
+        }
+
+        if steps >= self.max_steps {
+            return Err(AgentError::MaxStepsExceeded);
+        }
+
+        Ok(final_response)
+    }
+
+    async fn build_request(&self, provider: &Arc<dyn Provider>, model_id: String) -> ChatRequest {
+        let mut request =
+            ChatRequest::new(model_id.clone(), self.conversation.to_provider_messages());
+
+        if let Some(max_tokens) = self.agent.max_tokens {
+            request = request.with_max_tokens(max_tokens);
+        }
+        if let Some(temperature) = self.agent.temperature {
+            request = request.with_temperature(temperature);
+        }
+        if let Some(top_p) = self.agent.top_p {
+            request = request.with_top_p(top_p);
+        }
+
+        let supports_tools = provider
+            .get_model(&model_id)
+            .map(|model| model.supports_tools)
+            .unwrap_or(true);
+        if supports_tools {
+            let tools = self.available_tool_definitions().await;
+            if !tools.is_empty() {
+                request = request.with_tools(tools);
+            }
+        }
+
+        request
+    }
+
+    async fn available_tool_definitions(&self) -> Vec<ToolDefinition> {
+        self.tools
+            .list_schemas()
             .await
-            .map_err(|e| AgentError::ProviderError(e.to_string()))?;
-
-        Ok(stream
-            .map(|r| r.map_err(|e| AgentError::ProviderError(e.to_string())))
-            .boxed())
+            .into_iter()
+            .filter(|schema| {
+                schema.name != "invalid"
+                    && !self.disabled_tools.contains(&schema.name)
+                    && !matches!(
+                        self.agent.tool_permission_decision(&schema.name),
+                        crate::PermissionDecision::Deny
+                    )
+            })
+            .map(|schema| ToolDefinition {
+                name: schema.name,
+                description: Some(schema.description),
+                parameters: schema.parameters,
+            })
+            .collect()
     }
 
     fn get_provider(&self) -> Result<Arc<dyn Provider>, AgentError> {
@@ -323,6 +420,7 @@ impl AgentExecutor {
     ) -> Result<(String, Vec<ToolCall>), AgentError> {
         let mut content = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut tool_args: HashMap<String, String> = HashMap::new();
 
         while let Some(event) = stream.next().await {
             match event {
@@ -337,12 +435,7 @@ impl AgentExecutor {
                     });
                 }
                 Ok(StreamEvent::ToolCallDelta { id, input }) => {
-                    if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == id) {
-                        if tc.arguments.is_null() {
-                            tc.arguments =
-                                serde_json::from_str(&input).unwrap_or(serde_json::Value::Null);
-                        }
-                    }
+                    tool_args.entry(id).or_default().push_str(&input);
                 }
                 Ok(StreamEvent::Done) => break,
                 Ok(StreamEvent::Error(e)) => {
@@ -352,6 +445,13 @@ impl AgentExecutor {
                     return Err(AgentError::ProviderError(e.to_string()));
                 }
                 _ => {}
+            }
+        }
+
+        for tool_call in &mut tool_calls {
+            if let Some(input) = tool_args.get(&tool_call.id) {
+                tool_call.arguments = serde_json::from_str(input)
+                    .unwrap_or_else(|_| serde_json::Value::String(input.clone()));
             }
         }
 
@@ -649,6 +749,27 @@ mod tests {
             matches!(denied, ToolError::PermissionDenied(_)),
             "expected permission denied, got: {denied}"
         );
+    }
+
+    #[tokio::test]
+    async fn executor_exposes_permission_filtered_tools() {
+        let executor = AgentExecutor::new(
+            AgentInfo::explore(),
+            Arc::new(ProviderRegistry::new()),
+            Arc::new(opencode_tool::create_default_registry().await),
+        );
+
+        let names: HashSet<String> = executor
+            .available_tool_definitions()
+            .await
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+
+        assert!(names.contains("read"));
+        assert!(names.contains("grep"));
+        assert!(!names.contains("write"));
+        assert!(!names.contains("invalid"));
     }
 
     #[test]

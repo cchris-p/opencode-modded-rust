@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-09"
 ---
 
@@ -57,3 +57,13 @@ Evidence:
 ## Notes
 
 - Implement after `BUG-004` so the tool-set resolution logic is shared rather than duplicated.
+
+## Dev Notes - 2026-09-16
+
+- Implemented the interim `AgentExecutor` path rather than routing `opencode run` through the session/server runtime. The canonical QA path should remain `opencode serve` plus `/session/{id}/prompt` until `FEAT-011` or a follow-up routes `run` through the same session runtime.
+- `AgentExecutor` now attaches permission-filtered tool definitions to provider requests when the active model supports tools, applies agent model params, and drives a bounded tool loop from `execute_streaming` instead of making a single tool-less model pass.
+- Conversation conversion now preserves assistant `tool_use` parts and `tool_result` messages so executed tool output is fed back to the provider on the next pass.
+- Streamed tool-call argument deltas are accumulated before JSON parsing, avoiding partial-JSON tool arguments.
+- Ask-gated tools still return an explicit permission error on this direct executor path; they are no longer silently absent from the request, but this remains less capable than the TUI/session ask UI.
+- Verification: `cargo test -p opencode-agent`; `cargo check -p opencode-agent -p opencode-cli`; `cargo build -p opencode-cli`.
+- Live smoke attempted with `./target/debug/opencode run "List the files in this workspace and summarize them"` and `./target/debug/opencode run "Say hello in one sentence."`; provider completion is currently blocked by `401 Unauthorized: {"error":{"message":"User not found.","code":401}}` from the configured provider.
