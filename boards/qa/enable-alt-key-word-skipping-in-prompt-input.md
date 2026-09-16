@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-16"
 ---
 
@@ -76,3 +76,7 @@ The prompt input is the product's primary editing surface. Users expect it to be
 - `cargo clippy -p opencode-tui --all-targets` completed with existing workspace warnings and no errors.
 - `cargo test -p opencode-tui -- --test-threads=1`
 - `ort-build` could not be run from this non-interactive shell because the launcher command was not on `PATH`.
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/39
