@@ -162,6 +162,7 @@ impl Prompt {
                 "/connect".to_string(),
                 "/editor".to_string(),
                 "/exit".to_string(),
+                "/detach".to_string(),
                 "/quit".to_string(),
             ],
             known_agents: vec![

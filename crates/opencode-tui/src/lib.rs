@@ -19,6 +19,12 @@ pub use router::{Route, Router};
 pub use terminal::{reset_title, set_session_title, set_title};
 pub use theme::Theme;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TuiExit {
+    Exit,
+    Detach,
+}
+
 fn setup_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
         let _ = crossterm::terminal::disable_raw_mode();
@@ -31,7 +37,7 @@ fn setup_panic_hook() {
     }));
 }
 
-pub fn run_tui() -> anyhow::Result<()> {
+pub fn run_tui() -> anyhow::Result<TuiExit> {
     setup_panic_hook();
 
     let mut app = App::new()?;

@@ -36,6 +36,7 @@ use crate::context::{
 use crate::event::{CustomEvent, Event, StateChange};
 use crate::router::Route;
 use crate::ui::{Clipboard, Selection};
+use crate::TuiExit;
 
 // TS parity: renderer targetFps is 60, ~16ms frame budget.
 const TICK_RATE_MS: u64 = 16;
@@ -260,10 +261,10 @@ impl App {
         Ok(app)
     }
 
-    pub fn run(&mut self) -> anyhow::Result<()> {
+    pub fn run(&mut self) -> anyhow::Result<TuiExit> {
         self.draw()?;
 
-        while self.state != AppState::Exiting {
+        while !matches!(self.state, AppState::Exiting | AppState::Detaching) {
             let mut should_draw = false;
 
             let first_event = match self
@@ -323,8 +324,13 @@ impl App {
             }
         }
 
+        let exit = if self.state == AppState::Detaching {
+            TuiExit::Detach
+        } else {
+            TuiExit::Exit
+        };
         terminal::restore()?;
-        Ok(())
+        Ok(exit)
     }
 
     fn handle_event(&mut self, event: &Event) -> anyhow::Result<()> {
@@ -1826,6 +1832,7 @@ impl App {
                 self.agent_select.open();
             }
             CommandAction::Exit => self.state = AppState::Exiting,
+            CommandAction::Detach => self.state = AppState::Detaching,
         }
 
         Ok(())

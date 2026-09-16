@@ -815,7 +815,7 @@ async fn run_tui(
         anyhow::bail!("--fork requires --continue or --session");
     }
 
-    let local_server = if attach_url.is_none() {
+    let mut local_server = if attach_url.is_none() {
         Some(prepare_local_tui_server(port, hostname, mdns, mdns_domain, cors).await?)
     } else {
         None
@@ -853,7 +853,19 @@ async fn run_tui(
     std::env::remove_var("OPENCODE_TUI_AGENT");
     std::env::remove_var("OPENCODE_TUI_SESSION");
 
-    run_result
+    let tui_exit = run_result?;
+    if tui_exit == opencode_tui::TuiExit::Detach {
+        if let Some(server) = local_server.as_mut() {
+            server.detach();
+        }
+        let workspace = std::env::current_dir()?;
+        eprintln!("Detached from TUI server.");
+        eprintln!("Server: {}", base_url);
+        eprintln!("Workspace: {}", workspace.display());
+        eprintln!("Reattach: opencode attach {}", base_url);
+    }
+
+    Ok(())
 }
 
 /// Prepare a fresh local server for the TUI in the current working directory.
@@ -866,10 +878,20 @@ async fn run_tui(
 struct LocalTuiServer {
     base_url: String,
     child: Child,
+    terminate_on_drop: bool,
+}
+
+impl LocalTuiServer {
+    fn detach(&mut self) {
+        self.terminate_on_drop = false;
+    }
 }
 
 impl Drop for LocalTuiServer {
     fn drop(&mut self) {
+        if !self.terminate_on_drop {
+            return;
+        }
         if matches!(self.child.try_wait(), Ok(Some(_))) {
             return;
         }
@@ -912,6 +934,7 @@ async fn prepare_local_tui_server(
     let server = LocalTuiServer {
         base_url: base_url.clone(),
         child,
+        terminate_on_drop: true,
     };
     wait_for_server_ready(&base_url, Duration::from_secs(90), None).await?;
     Ok(server)
