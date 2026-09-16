@@ -194,7 +194,8 @@ Updated done criteria:
 
 Follow-up created:
 
-- `FEAT-017` Plan explicit detach and same-workspace attach behavior for TUI-launched servers.
+- `FEAT-017` Plan explicit detach command behavior for TUI-launched servers.
+- `FEAT-018` Decide whether same-workspace server attach or reuse should exist.
 
 ## Reimplementation - 2026-09-16
 
@@ -218,5 +219,6 @@ and reuses the lowest free port after TUI exit:
 - `/Users/cchrisleepyles/apps/cnaqma-notes` -> `http://127.0.0.1:3030`
 - `/Users/cchrisleepyles/apps/TSS` -> `http://127.0.0.1:3030`
 
-Closed as complete. Follow-up detach/same-workspace attach behavior remains tracked separately in
-`FEAT-017`.
+Closed as complete. Follow-up detach command behavior is tracked in `FEAT-017`; possible
+same-workspace attach/reuse is tracked separately in `FEAT-018` and requires explicit 110%
+confirmation before implementation.
