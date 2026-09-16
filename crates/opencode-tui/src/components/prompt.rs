@@ -426,6 +426,21 @@ impl Prompt {
 
         match key.code {
             KeyCode::Char(c) => {
+                if key.modifiers.contains(KeyModifiers::ALT) {
+                    match c {
+                        'b' | 'B' => {
+                            self.cursor_position =
+                                prev_word_boundary(&self.input, self.cursor_position);
+                            return false;
+                        }
+                        'f' | 'F' => {
+                            self.cursor_position =
+                                next_word_boundary(&self.input, self.cursor_position);
+                            return false;
+                        }
+                        _ => {}
+                    }
+                }
                 if c == '!'
                     && key.modifiers.is_empty()
                     && matches!(self.mode, PromptMode::Normal)
@@ -460,12 +475,16 @@ impl Prompt {
                 }
             }
             KeyCode::Left => {
-                if let Some(prev) = prev_char_boundary(&self.input, self.cursor_position) {
+                if key.modifiers.contains(KeyModifiers::ALT) {
+                    self.cursor_position = prev_word_boundary(&self.input, self.cursor_position);
+                } else if let Some(prev) = prev_char_boundary(&self.input, self.cursor_position) {
                     self.cursor_position = prev;
                 }
             }
             KeyCode::Right => {
-                if let Some(next) = next_char_boundary(&self.input, self.cursor_position) {
+                if key.modifiers.contains(KeyModifiers::ALT) {
+                    self.cursor_position = next_word_boundary(&self.input, self.cursor_position);
+                } else if let Some(next) = next_char_boundary(&self.input, self.cursor_position) {
                     self.cursor_position = next;
                 }
             }
@@ -1344,6 +1363,59 @@ fn next_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
         .map(|ch| cursor_position + ch.len_utf8())
 }
 
+fn prev_word_boundary(input: &str, cursor_position: usize) -> usize {
+    let mut position = cursor_position.min(input.len());
+    while let Some((prev, ch)) = prev_char(input, position) {
+        if is_word_char(ch) {
+            break;
+        }
+        position = prev;
+    }
+    while let Some((prev, ch)) = prev_char(input, position) {
+        if !is_word_char(ch) {
+            break;
+        }
+        position = prev;
+    }
+    position
+}
+
+fn next_word_boundary(input: &str, cursor_position: usize) -> usize {
+    let mut position = cursor_position.min(input.len());
+    while let Some((next, ch)) = next_char(input, position) {
+        if is_word_char(ch) {
+            break;
+        }
+        position = next;
+    }
+    while let Some((next, ch)) = next_char(input, position) {
+        if !is_word_char(ch) {
+            break;
+        }
+        position = next;
+    }
+    position
+}
+
+fn prev_char(input: &str, cursor_position: usize) -> Option<(usize, char)> {
+    if cursor_position == 0 || cursor_position > input.len() {
+        return None;
+    }
+    input[..cursor_position].char_indices().last()
+}
+
+fn next_char(input: &str, cursor_position: usize) -> Option<(usize, char)> {
+    if cursor_position >= input.len() {
+        return None;
+    }
+    let ch = input[cursor_position..].chars().next()?;
+    Some((cursor_position + ch.len_utf8(), ch))
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1441,6 +1513,44 @@ mod tests {
             prompt.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::empty()));
             prompt.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::empty()));
             assert_eq!(prompt.get_input(), "");
+        });
+    }
+
+    #[test]
+    fn alt_left_and_right_move_by_words() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("hello, world_again 你好".to_string());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, world_again ".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, ".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), 0);
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, world_again".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, world_again 你好".len());
+        });
+    }
+
+    #[test]
+    fn alt_b_and_f_move_by_words() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha beta".to_string());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "alpha ".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "alpha beta".len());
         });
     }
 

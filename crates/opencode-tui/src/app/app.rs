@@ -601,16 +601,12 @@ impl App {
                     Route::Home | Route::Session { .. } => {
                         if key.code == KeyCode::Enter && key.modifiers.is_empty() {
                             self.submit_prompt()?;
-                        } else if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT)
-                        {
+                        } else if prompt_should_handle_key(*key) {
                             self.prompt.handle_key(*key);
                         }
                     }
                     _ => {
-                        if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT)
-                        {
+                        if prompt_should_handle_key(*key) {
                             self.prompt.handle_key(*key);
                         }
                     }
@@ -3848,6 +3844,24 @@ impl App {
         self.screen_lines = captured_lines;
         Ok(())
     }
+}
+
+fn prompt_should_handle_key(key: KeyEvent) -> bool {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return false;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        return matches!(
+            key.code,
+            KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Char('b')
+                | KeyCode::Char('B')
+                | KeyCode::Char('f')
+                | KeyCode::Char('F')
+        );
+    }
+    true
 }
 
 fn skill_names(skills: &[SkillSummary]) -> Vec<String> {
