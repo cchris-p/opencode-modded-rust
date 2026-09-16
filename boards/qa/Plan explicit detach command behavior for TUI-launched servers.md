@@ -4,7 +4,7 @@ title: "Plan explicit detach command behavior for TUI-launched servers"
 priority: "P2"
 type: "feature"
 area: "FEAT"
-status: "doing"
+status: "qa"
 created: "2026-09-16"
 ---
 
@@ -75,3 +75,7 @@ server alive after the TUI exits.
 
 - `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `FEAT-018` Decide whether same-workspace server attach or reuse should exist
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/35
