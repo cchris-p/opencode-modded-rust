@@ -102,6 +102,7 @@ pub enum CommandAction {
     PromptSkillList,
     // System
     Exit,
+    Detach,
 }
 
 pub struct CommandRegistry {
@@ -374,6 +375,17 @@ impl CommandRegistry {
             keybind: Some("ctrl_c".to_string()),
             suggested: true,
             action: CommandAction::Exit,
+        });
+
+        self.register(SlashCommand {
+            name: "/detach".to_string(),
+            aliases: vec![],
+            title: "Detach".to_string(),
+            description: "Exit TUI and leave local server running".to_string(),
+            category: CommandCategory::System,
+            keybind: None,
+            suggested: false,
+            action: CommandAction::Detach,
         });
 
         self.register(SlashCommand {

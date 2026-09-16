@@ -3,6 +3,7 @@ pub enum AppState {
     #[default]
     Running,
     Exiting,
+    Detaching,
     PromptFocused,
     DialogOpen,
     CommandPalette,

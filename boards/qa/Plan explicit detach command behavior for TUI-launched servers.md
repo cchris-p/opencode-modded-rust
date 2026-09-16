@@ -4,7 +4,7 @@ title: "Plan explicit detach command behavior for TUI-launched servers"
 priority: "P2"
 type: "feature"
 area: "FEAT"
-status: "todo"
+status: "qa"
 created: "2026-09-16"
 ---
 
@@ -61,7 +61,21 @@ server alive after the TUI exits.
   can use that URL and the current workspace path.
 - `opencode attach <url>` remains the explicit reattach mechanism for this item.
 
+## Dev Notes
+
+- Added `/detach` to the TUI command registry and prompt slash-command suggestions with no default
+  keybinding.
+- Added a distinct `TuiExit::Detach` path so `/detach` exits the TUI without being treated as a normal
+  cleanup-triggering exit.
+- Updated CLI local-server cleanup so only detach disables the `LocalTuiServer` kill-on-drop guard and
+  prints the server URL, workspace, and `opencode attach <url>` command after returning to the terminal.
+- Verified with `cargo fmt` and `cargo check -p opencode-cli -p opencode-tui`.
+
 ## Related Items
 
 - `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `FEAT-018` Decide whether same-workspace server attach or reuse should exist
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/35
