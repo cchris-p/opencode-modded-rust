@@ -79,3 +79,7 @@ server alive after the TUI exits.
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/35
+
+## QA Status
+
+- Merged into `development` via PR #35 on 2026-09-16; retained in `qa` for post-merge verification.
