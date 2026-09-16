@@ -67,3 +67,9 @@ Evidence:
 - Ask-gated tools still return an explicit permission error on this direct executor path; they are no longer silently absent from the request, but this remains less capable than the TUI/session ask UI.
 - Verification: `cargo test -p opencode-agent`; `cargo check -p opencode-agent -p opencode-cli`; `cargo build -p opencode-cli`.
 - Live smoke attempted with `./target/debug/opencode run "List the files in this workspace and summarize them"` and `./target/debug/opencode run "Say hello in one sentence."`; provider completion is currently blocked by `401 Unauthorized: {"error":{"message":"User not found.","code":401}}` from the configured provider.
+
+## Merge Notes - 2026-09-16
+
+- PR #36 merged into `development`: https://github.com/cchris-p/opencode-modded-rust/pull/36
+- Board item intentionally remains in `qa` for later post-merge verification rather than moving to `done`.
+- Post-merge QA should run from `development` after configuring a valid provider credential, then retry the live `opencode run` smoke that was blocked by provider auth during implementation.
