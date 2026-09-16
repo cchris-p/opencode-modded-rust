@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-16"
 ---
 
@@ -73,3 +73,9 @@ The prompt input is the primary control surface for the product. Its cursor must
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/38
+
+## Completion
+
+- User QA confirmed the cursor visibility fix works.
+- Merged into `development` on 2026-09-16 via PR #38.
+- Branch `bug/BUG-013-input-cursor-visible` deleted locally and remotely.
