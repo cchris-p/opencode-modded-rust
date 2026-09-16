@@ -31,6 +31,8 @@ This is intentionally separate from `FEAT-017`, which only covers an explicit de
   server reuse.
 - If a process/server record is proposed, define exactly what it is allowed to do and what it is
   forbidden to do.
+- Decide whether detach should write any persisted display/discovery record; this was explicitly
+  deferred from `FEAT-017`.
 - Define how this differs from explicit `opencode attach <url>`.
 
 ## Non-goals
@@ -39,6 +41,7 @@ This is intentionally separate from `FEAT-017`, which only covers an explicit de
 - Changing FEAT-016's default behavior: normal `ort` starts fresh and normal TUI exit terminates the
   server it launched.
 - Defining the explicit detach command itself; that is tracked in `FEAT-017`.
+- Adding a persisted detach/server record without the same explicit 110% confirmation gate.
 
 ## Done when
 

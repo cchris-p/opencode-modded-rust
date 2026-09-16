@@ -12,7 +12,9 @@ created: "2026-09-16"
 
 ## Summary
 
-Explore and design an explicit detach command/action for `ort`/TUI-launched local servers.
+Add an explicit `/detach` command/action for `ort`/TUI-launched local servers. Detach exits the
+TUI but intentionally leaves the server launched for that TUI alive so the user can explicitly
+reattach later.
 
 ## Context
 
@@ -23,23 +25,41 @@ server alive after the TUI exits.
 
 ## Scope
 
-- Define what an explicit detach command means in the TUI.
-- Decide whether `Ctrl-D` exits and terminates the launch server, while a separate detach action
-  leaves the server alive.
-- Define how the user discovers and invokes detach.
-- Define what URL/session information is shown after detach so the user can intentionally reattach.
+- Add `/detach` as a slash-command and command-palette action. Do not add a default global
+  keybinding initially.
+- `/detach` exits the TUI immediately and leaves the local server started for that TUI launch alive.
+- `/detach` is allowed while assistant/tool work is running; active work continues on the server.
+- Normal exits remain distinct from detach: `Ctrl-D`, Esc, and `/exit` terminate the launched server
+  by default, preserving `FEAT-016` behavior.
+- After detach returns to the terminal, print the server URL, workspace, and an explicit
+  `opencode attach <url>` command so reattachment remains user-directed.
+- Do not write a persisted record for detach in this item. Any record for later discovery belongs to
+  `FEAT-018` and requires separate confirmation.
 
 ## Non-goals
 
 - Reintroducing automatic reuse before the behavior is explicitly approved.
 - Changing `FEAT-016`'s no-persisted-record cleanup path.
 - Same-workspace auto-attach or automatic server reuse; that is tracked separately in `FEAT-018`.
+- Adding a default detach keybinding.
+- Persisting a server/process record for future launch discovery.
 
 ## Done when
 
-- The desired detach and normal exit semantics are documented clearly enough to implement safely.
-- Any required detach-time output or state is explicitly scoped and constrained.
-- The relationship to `opencode attach <url>` is defined.
+- `/detach` is available from the existing TUI command surfaces.
+- Running `/detach` closes the TUI and leaves the TUI-launched local server alive.
+- Detach is allowed while work is running, and the work continues on the server.
+- Normal `Ctrl-D`, Esc, and `/exit` still terminate the TUI-launched server.
+- The terminal prints the detached server URL, workspace, and `opencode attach <url>` command.
+- No detach-time persisted record is written.
+
+## Implementation Notes
+
+- The TUI likely needs a distinct detach result/signal rather than treating detach as ordinary exit,
+  so the CLI can skip the `LocalTuiServer` cleanup guard only for `/detach`.
+- The current base URL is already passed into the TUI via `OPENCODE_TUI_BASE_URL`; the detach output
+  can use that URL and the current workspace path.
+- `opencode attach <url>` remains the explicit reattach mechanism for this item.
 
 ## Related Items
 
