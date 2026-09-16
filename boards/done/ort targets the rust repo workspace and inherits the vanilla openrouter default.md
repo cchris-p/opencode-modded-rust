@@ -204,3 +204,14 @@ observation untrustworthy.
 - User verified the live `ort` workflow now uses the activated workspace and the expected
   `deepseek/deepseek-v4-flash` default.
 - Moved to `done`.
+
+## Follow-up QA - 2026-09-16
+
+- User re-verified `ort` from `/Users/cchrisleepyles/apps/tss-notes`; the fresh local server
+  started with workspace `/Users/cchrisleepyles/apps/tss-notes`.
+- No edit to the vanilla/global `~/.config/opencode/opencode.json` is required for this product's
+  default model on other machines. The repo code owns the `deepseek/deepseek-v4-flash` product
+  default.
+- Cross-machine launcher requirement remains: the machine's `ort` wrapper must run the Rust binary
+  in the activated directory and must not force the vanilla `OPENCODE_CONFIG_CONTENT` /
+  `OPENCODE_CONFIG_DIR` overlay into this product.

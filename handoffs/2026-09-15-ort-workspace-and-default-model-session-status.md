@@ -1,9 +1,9 @@
 ---
 id: "H-002"
 title: "ort workspace targeting + product default model - Session Status"
-status: "open"
+status: "parked"
 created: "2026-09-15"
-updated: "2026-09-15"
+updated: "2026-09-16"
 owner: ""
 target: ""
 blocked_reason: ""
@@ -124,8 +124,20 @@ inline config content and workspace config still apply.
 4. Post-merge QA for `BUG-011` / `FEAT-016`; move them from `qa` to `done` only after user
    verification on `development`.
 5. Durable follow-up (optional): move `ort`/`ort-build` into the repo as versioned scripts so
-   the workspace behavior travels with the repo instead of living in `~/standards`, which
-   diverges across machines.
+    the workspace behavior travels with the repo instead of living in `~/standards`, which
+    diverges across machines.
+
+## Update - 2026-09-16
+
+- User verified `ort` from `/Users/cchrisleepyles/apps/tss-notes`; the launched server reported
+  workspace `/Users/cchrisleepyles/apps/tss-notes`, confirming the workspace-targeting fix.
+- No vanilla/global config edit is required to make the product default model work on other
+  machines. The remaining cross-machine requirement is launcher behavior: `ort` must execute the
+  Rust binary from the activated directory and avoid forcing vanilla `OPENCODE_CONFIG_CONTENT` /
+  `OPENCODE_CONFIG_DIR` into this product.
+- `BUG-011` remains closed in `done`.
+- `FEAT-016` was moved from `qa` to `hold`: reuse is eliminated, but the port/process lifecycle
+  semantics need refinement before the story should be considered complete.
 
 ## Relationship to other work
 
