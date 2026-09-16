@@ -230,7 +230,16 @@ impl Prompt {
             .saturating_sub(PROMPT_BLOCK_PAD_TOP)
             .saturating_sub(PROMPT_BLOCK_PAD_BOTTOM)
             .max(PROMPT_MIN_INPUT_LINES);
+        let input_width = prompt_input_width(area.width);
+        let cursor_visual_position = input_cursor_visual_position(
+            &self.input,
+            self.cursor_position.min(self.input.len()),
+            input_width,
+        );
         let content_lines = self.input_display_lines(area.width).min(max_content_lines);
+        let input_scroll = cursor_visual_position
+            .row
+            .saturating_sub(usize::from(content_lines.saturating_sub(1)));
         let input_lines = content_lines
             .saturating_add(PROMPT_BLOCK_PAD_TOP)
             .saturating_add(PROMPT_BLOCK_PAD_BOTTOM);
@@ -293,6 +302,7 @@ impl Prompt {
                         ))
                         .style(Style::default().bg(theme.background_element)),
                 )
+                .scroll((u16::try_from(input_scroll).unwrap_or(u16::MAX), 0))
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(if self.focused {
                     theme.text
@@ -302,6 +312,21 @@ impl Prompt {
         };
 
         frame.render_widget(paragraph, chunks[0]);
+        if self.focused {
+            let cursor_col = cursor_visual_position.col;
+            let visible_row = cursor_visual_position.row.saturating_sub(input_scroll);
+            let cursor_row = u16::try_from(visible_row).unwrap_or(u16::MAX);
+            let content_x = chunks[0]
+                .x
+                .saturating_add(1)
+                .saturating_add(PROMPT_BLOCK_PAD_LEFT);
+            let content_y = chunks[0].y.saturating_add(PROMPT_BLOCK_PAD_TOP);
+            let max_col = input_width.saturating_sub(1);
+            frame.set_cursor(
+                content_x.saturating_add(cursor_col.min(max_col)),
+                content_y.saturating_add(cursor_row.min(content_lines.saturating_sub(1))),
+            );
+        }
 
         let mut info_parts = vec![
             Span::styled(
@@ -975,10 +1000,7 @@ impl Prompt {
     }
 
     fn input_display_lines(&self, width: u16) -> u16 {
-        let reserved = 1u16
-            .saturating_add(PROMPT_BLOCK_PAD_LEFT)
-            .saturating_add(PROMPT_BLOCK_PAD_RIGHT);
-        let input_width = usize::from(width.saturating_sub(reserved)).max(1);
+        let input_width = usize::from(prompt_input_width(width));
         let raw_lines = visual_line_count(&self.input, input_width) as u16;
         raw_lines
             .max(PROMPT_MIN_INPUT_LINES)
@@ -1103,6 +1125,61 @@ impl Prompt {
             Style::default().fg(theme.text_muted),
         ));
         Line::from(spans)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CursorVisualPosition {
+    row: usize,
+    col: u16,
+}
+
+fn prompt_input_width(width: u16) -> u16 {
+    let reserved = 1u16
+        .saturating_add(PROMPT_BLOCK_PAD_LEFT)
+        .saturating_add(PROMPT_BLOCK_PAD_RIGHT);
+    width.saturating_sub(reserved).max(1)
+}
+
+fn input_cursor_visual_position(
+    input: &str,
+    cursor_position: usize,
+    width: u16,
+) -> CursorVisualPosition {
+    let width = usize::from(width.max(1));
+    let cursor_position = cursor_position.min(input.len());
+    let prefix = if input.is_char_boundary(cursor_position) {
+        &input[..cursor_position]
+    } else {
+        let boundary = input
+            .char_indices()
+            .map(|(idx, _)| idx)
+            .take_while(|idx| *idx < cursor_position)
+            .last()
+            .unwrap_or(0);
+        &input[..boundary]
+    };
+
+    let mut row = 0usize;
+    let mut col = 0usize;
+    for ch in prefix.chars() {
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+            continue;
+        }
+
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if col > 0 && col + ch_width > width {
+            row += 1;
+            col = 0;
+        }
+        col += ch_width;
+    }
+
+    CursorVisualPosition {
+        row,
+        col: u16::try_from(col).unwrap_or(u16::MAX),
     }
 }
 
@@ -1365,6 +1442,34 @@ mod tests {
             prompt.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::empty()));
             assert_eq!(prompt.get_input(), "");
         });
+    }
+
+    #[test]
+    fn cursor_visual_position_follows_wrapped_input() {
+        assert_eq!(
+            input_cursor_visual_position("abcdef", 5, 3),
+            CursorVisualPosition { row: 1, col: 2 }
+        );
+        assert_eq!(
+            input_cursor_visual_position("abc", 3, 3),
+            CursorVisualPosition { row: 0, col: 3 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_handles_newlines_and_wide_chars() {
+        assert_eq!(
+            input_cursor_visual_position("ab\ncd", 5, 10),
+            CursorVisualPosition { row: 1, col: 2 }
+        );
+        assert_eq!(
+            input_cursor_visual_position("你a好", "你a".len(), 3),
+            CursorVisualPosition { row: 0, col: 3 }
+        );
+        assert_eq!(
+            input_cursor_visual_position("你a好", "你a好".len(), 3),
+            CursorVisualPosition { row: 1, col: 2 }
+        );
     }
 }
 
