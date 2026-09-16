@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-10"
 ---
 
@@ -107,4 +107,7 @@ The model then abandoned `batch` and read files individually. This wastes turns 
 
 - Merged into `development` on 2026-09-15 via PR #32 (merge commit `c56287f`).
 - PR branch `bug/BUG-008-remove-batch-tool` deleted remotely and locally.
-- Remains in `qa`; no QA report recorded yet, so it is **not** promoted to `done`. Awaiting user verification on `development`.
+- Post-merge QA passed on 2026-09-16 using exported transcript
+  `/Users/cchrisleepyles/apps/cnaqma-notes/repo-top-level-structure-summary.md`: the agent used
+  normal tools to inspect the workspace and did not attempt the removed `batch` tool.
+- Moved to `done`.

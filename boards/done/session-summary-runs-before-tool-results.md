@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-15"
 ---
 
@@ -63,4 +63,7 @@ Root cause candidate:
 
 - Merged directly into `development` on 2026-09-15 via PR #34 (merge commit `c3edb24`).
 - Remote PR branch `bug/BUG-012-session-summary-tool-results-clean` deleted by merge workflow.
-- Remains in `qa` pending post-merge verification on `development`.
+- Post-merge QA passed on 2026-09-16 using exported transcript
+  `/Users/cchrisleepyles/apps/cnaqma-notes/repo-top-level-structure-summary.md`: a session
+  performed tool calls and continued without the OpenAI-compatible missing tool-result error.
+- Moved to `done`.

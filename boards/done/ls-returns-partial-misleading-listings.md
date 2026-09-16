@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-10"
 ---
 
@@ -90,4 +90,8 @@ Also note: the reference OpenCode tool set has no `ls`/`list` tool (reference us
 
 - Merged into `development` on 2026-09-15 via PR #31 (merge commit `bda8afc`).
 - PR branch `bug/BUG-007-ls-top-level-listing` deleted remotely and locally.
-- Remains in `qa`; no QA report recorded yet, so it is **not** promoted to `done`. Awaiting user verification on `development`.
+- Post-merge QA passed on 2026-09-16 using exported transcript
+  `/Users/cchrisleepyles/apps/cnaqma-notes/repo-top-level-structure-summary.md`: `ls` returned a
+  complete immediate top-level listing for the tested workspace, with directories and files shown
+  without needing a corrective `bash ls` fallback.
+- Moved to `done`.
