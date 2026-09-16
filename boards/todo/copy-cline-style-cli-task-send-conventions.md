@@ -38,7 +38,7 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - `opencode task chat` is not needed in the first implementation because intentional interactive use can go through `opencode attach <url>`.
 - Follow-up targeting may use a current task/session pointer by default, with an explicit target option available for safety and scripting.
 - FEAT-005 must use the canonical server/session prompt path described in `wiki/agent-debugging-without-tui.md`, not the interim `AgentExecutor` path fixed by `FEAT-012`.
-- FEAT-005 must not discover, start, or reuse servers implicitly. It should talk only to an explicitly configured/provided server/session context or to whatever explicit attach context the implementation defines.
+- FEAT-005 must not discover, start, or reuse servers implicitly. It should talk only to an explicitly configured/provided server/session context or to the explicit default task target selected by `FEAT-020`.
 - File attachment flags are deferred. In the first implementation, the user can include file paths in raw message text and the agent should navigate/read them through normal tools.
 - Commands should return immediately by default after submitting work, with a `--stream` option for live output when supported.
 
@@ -49,6 +49,7 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - Define and implement `opencode task view` for viewing the current or explicitly selected task/session conversation outside the TUI.
 - Route task creation, sending, and viewing through the same server/session runtime used by the TUI, including `/session/{id}/prompt` semantics or an equivalent direct call into that path.
 - Define how the current task/session pointer is established, updated, displayed, and overridden.
+- Integrate with the default task target selected by `FEAT-020`, while preserving explicit send-time server/session overrides.
 - Support prompt text from command arguments and stdin where that fits the subcommand UX.
 - Support raw file path references in prompt text without first-class attachment handling.
 - Define how the command finds its explicit server/session context without reintroducing unsafe implicit server discovery or reuse.
@@ -78,6 +79,7 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - By default, task send/new commands submit work and return a task/session identifier plus status; `--stream` streams live output where supported.
 - The command behavior is documented enough that it is clear how it differs from the TUI and from `opencode attach <url>`.
 - The implementation does not change the approved `ort` default lifecycle: normal TUI exit still follows the current launcher contract, and attach/detach policy remains owned by the related background-session cards.
+- CLI task targeting behavior satisfies `invariants/cli-task-targeting.md`.
 
 ## Recommended verification
 
@@ -103,6 +105,8 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `FEAT-017` Plan explicit detach command behavior for TUI-launched servers
 - `FEAT-018` Decide whether same-workspace server attach or reuse should exist
+- `FEAT-020` Add default task target selection for CLI sends
+- `FEAT-021` Queue CLI task sends while TUI session is open
 - `FEAT-012` CLI/AgentExecutor tool-loop parity
 - `QA-001` Build a repeatable debug/QA verification suite for the session/stream runtime
 - `START-008` Full parity deferred
@@ -113,4 +117,5 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - This card was narrowed from a broad Cline-workflow holding bucket into the concrete CLI send/task convention story on 2026-09-16.
 - Background-session management is already represented by recent and in-flight attach/detach/exit-convention items; do not use this card to reopen those lifecycle decisions.
 - Further refinement on 2026-09-16 selected task subcommands over top-level prompt shorthand, current-pointer targeting, explicit server/session context, raw path text instead of first-class attachments, and return-immediately behavior with optional streaming.
+- Follow-up refinement on 2026-09-16 split the explicit default server/session selector into `FEAT-020`; FEAT-005 should consume that selected target rather than inventing implicit server discovery.
 - `FEAT-012` fixed `opencode run` as an interim `AgentExecutor` path, but this card should not build on that executor if the goal is TUI/session-equivalent QA. Build on the canonical session/server prompt path instead.

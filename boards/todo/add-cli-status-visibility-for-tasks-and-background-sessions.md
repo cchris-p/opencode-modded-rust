@@ -56,6 +56,8 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 - `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `FEAT-017` Plan explicit detach command behavior for TUI-launched servers
 - `FEAT-018` Decide whether same-workspace server attach or reuse should exist
+- `FEAT-020` Add default task target selection for CLI sends
+- `FEAT-021` Queue CLI task sends while TUI session is open
 
 ## Notes
 
