@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "AGENTS.md"
-status: "qa"
+status: "done"
 created: "2026-09-15"
 ---
 
@@ -137,6 +137,86 @@ Server reuse has repeatedly produced untrustworthy QA and wrong-product behavior
 ## Merge status
 
 - Merged into `development` on 2026-09-15 via PR #33 (merge commit `9ef8b47`); PR branch deleted.
-- Item in `qa`; **open decision** whether to keep or revert the reuse removal now that the
+- Item moved from `qa` to `hold`; **open decision** whether to keep or revert the reuse removal now that the
   triggering observation came from testing on the wrong machine (see handoff `H-002` and
   `FEAT-014`). Reverting restores `FEAT-014` stop-prior + next-port behavior.
+
+## Hold - 2026-09-16
+
+User QA showed repeated `ort` launches from the same workspace starting fresh servers on
+successive ports:
+
+- `http://127.0.0.1:3025`
+- `http://127.0.0.1:3026`
+- `http://127.0.0.1:3027`
+
+This confirms reuse is not happening, but the desired port/process semantics need refinement
+before closing the story. The user expected that if the prior server was exited or otherwise no
+longer in use, `ort` should prefer the non-used/free port rather than monotonically advancing.
+
+Questions for refinement:
+
+- Should a fresh `ort` launch choose the lowest currently free port at or above the base port, or
+  should it continue advancing to avoid recently used ports?
+- Should exiting the TUI also terminate the local server by default, or should detached server
+  lifetime remain independent of the TUI?
+- If a prior detached server for the same workspace is still alive, should the next `ort` leave it
+  running and choose another free port, terminate it first, or attach only by explicit
+  `opencode attach <url>`?
+- Should server records remain completely eliminated, or is a minimal active-process record needed
+  only for cleanup/termination without enabling reuse?
+
+Moved to `hold` pending this decision.
+
+## Refinement - 2026-09-16
+
+Resolved decisions:
+
+- Port selection stays lowest-free: every fresh `ort` launch should choose the lowest currently
+  bindable port at or above the base port. Freed ports should be reused by number; ports should
+  only advance while lower ports are currently occupied by live servers.
+- `ort` should terminate the local server it just launched when the TUI exits normally. This keeps
+  `Ctrl-D`/exit from leaving the launch server around to occupy its port.
+- No persisted process/server record should be reintroduced for FEAT-016. Cleanup should use only
+  the in-memory child process handle owned by the launching CLI process.
+- Automatic attach/reuse of an existing same-workspace server is explicitly not part of this card.
+  It may be added later only after separate confirmation because it reverses the current no-reuse
+  invariant.
+
+Updated done criteria:
+
+- Repeated `ort` launches in the same directory choose the lowest currently free port at or above
+  the base port.
+- Exiting the TUI terminates the local server started for that TUI launch.
+- No `tui-servers/*.json` or equivalent persisted record is read or written for launch reuse or
+  cleanup.
+- Explicit `opencode attach <url>` remains the only supported attach path.
+
+Follow-up created:
+
+- `FEAT-017` Plan explicit detach and same-workspace attach behavior for TUI-launched servers.
+
+## Reimplementation - 2026-09-16
+
+`crates/opencode-cli/src/main.rs` now keeps the server process handle for the local server started
+by `ort`. The handle is in-memory only and is never written to a persisted record. When the TUI
+returns, the launcher kills and waits for that exact server process, so a normal TUI exit releases
+the port for the next lowest-free launch.
+
+`opencode attach <url>` remains unchanged and does not create a local server cleanup guard.
+
+Verification:
+
+- `cargo test -p opencode-cli` -> passed, 2 tests.
+
+## QA Closeout - 2026-09-16
+
+User verified after `ort-build` that `ort` starts a fresh local server for the activated workspace
+and reuses the lowest free port after TUI exit:
+
+- `/Users/cchrisleepyles/repos/opencode-modded-rust` -> `http://127.0.0.1:3030`
+- `/Users/cchrisleepyles/apps/cnaqma-notes` -> `http://127.0.0.1:3030`
+- `/Users/cchrisleepyles/apps/TSS` -> `http://127.0.0.1:3030`
+
+Closed as complete. Follow-up detach/same-workspace attach behavior remains tracked separately in
+`FEAT-017`.

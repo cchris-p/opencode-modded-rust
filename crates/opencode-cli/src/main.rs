@@ -815,10 +815,19 @@ async fn run_tui(
         anyhow::bail!("--fork requires --continue or --session");
     }
 
+    let local_server = if attach_url.is_none() {
+        Some(prepare_local_tui_server(port, hostname, mdns, mdns_domain, cors).await?)
+    } else {
+        None
+    };
     let base_url = if let Some(url) = attach_url {
         url
     } else {
-        prepare_local_tui_server(port, hostname, mdns, mdns_domain, cors).await?
+        local_server
+            .as_ref()
+            .expect("local server was prepared")
+            .base_url
+            .clone()
     };
 
     let selected_session = resolve_requested_session(continue_last, session, fork).await?;
@@ -854,13 +863,28 @@ async fn run_tui(
 /// workspace it was activated in, so no stale/other-workspace or pre-fix
 /// process can serve the TUI. `opencode attach <url>` remains the explicit
 /// path for intentional re-attachment.
+struct LocalTuiServer {
+    base_url: String,
+    child: Child,
+}
+
+impl Drop for LocalTuiServer {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 async fn prepare_local_tui_server(
     port: u16,
     hostname: String,
     mdns: bool,
     mdns_domain: String,
     cors: Vec<String>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<LocalTuiServer> {
     let cwd = std::env::current_dir()?;
     let bind_host = if mdns && hostname == "127.0.0.1" {
         "0.0.0.0".to_string()
@@ -884,9 +908,13 @@ async fn prepare_local_tui_server(
         base_url,
         cwd.display()
     );
-    spawn_detached_tui_server(&cwd, bind_port, &bind_host, mdns, &mdns_domain, &cors)?;
+    let child = spawn_detached_tui_server(&cwd, bind_port, &bind_host, mdns, &mdns_domain, &cors)?;
+    let server = LocalTuiServer {
+        base_url: base_url.clone(),
+        child,
+    };
     wait_for_server_ready(&base_url, Duration::from_secs(90), None).await?;
-    Ok(base_url)
+    Ok(server)
 }
 
 /// Return the first TCP port at or above `base_port` that can be bound on
@@ -916,7 +944,7 @@ fn spawn_detached_tui_server(
     mdns: bool,
     mdns_domain: &str,
     cors: &[String],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Child> {
     let exe = std::env::current_exe()?;
     let mut cmd = ProcessCommand::new(exe);
     cmd.current_dir(cwd)
@@ -936,8 +964,7 @@ fn spawn_detached_tui_server(
         cmd.arg("--cors").arg(entry);
     }
 
-    cmd.spawn()?;
-    Ok(())
+    Ok(cmd.spawn()?)
 }
 
 async fn resolve_requested_session(
