@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -129,3 +129,12 @@ Potential regression target:
 - `cargo test -p opencode-permission` passed.
 - `cargo check -p opencode-session -p opencode-agent -p opencode-server -p opencode-tui` passed.
 - `cargo test -p opencode-session` ran with 148 passed and 2 failed in `instruction::tests::{test_find_up_stops_at_stop_dir,test_find_up_walks_parents}`; those failures are pre-existing and unrelated to BUG-016.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/44
+
+## QA / Merge Disposition
+
+- Moved to `qa` on 2026-09-19 for continued observation.
+- Per user request, PR #44 is intended to merge directly into `development` while the card remains in `qa` until the issue is observed again or considered stable.
