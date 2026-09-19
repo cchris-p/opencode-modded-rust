@@ -146,7 +146,7 @@ impl CommandPalette {
             Command {
                 action: CommandAction::RenameSession,
                 title: "Rename current session".to_string(),
-                keybind: None,
+                keybind: Some("ctrl+r".to_string()),
                 category: "Session".to_string(),
             },
             Command {

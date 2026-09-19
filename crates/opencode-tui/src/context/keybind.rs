@@ -247,3 +247,16 @@ impl KeybindRegistry {
         &self.bindings
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_rename_defaults_to_ctrl_r() {
+        let registry = KeybindRegistry::new();
+
+        assert!(registry.match_key("session_rename", KeyCode::Char('r'), KeyModifiers::CONTROL,));
+        assert!(!registry.match_key("session_rename", KeyCode::Char('r'), KeyModifiers::NONE));
+    }
+}
