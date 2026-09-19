@@ -26,13 +26,14 @@ struct SkillInput {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AvailableSkill {
     pub name: String,
-    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 struct SkillInfo {
     name: String,
-    description: String,
+    description: Option<String>,
     content: String,
     location: PathBuf,
 }
@@ -126,9 +127,11 @@ fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
     if let Some(home) = home_dir() {
         roots.push(home.join(".agents/skills"));
         roots.push(home.join(".claude/skills"));
+        roots.push(home.join(".config/opencode/skill"));
+        roots.push(home.join(".config/opencode/skills"));
     }
 
-    // Global config directory (e.g. ~/.config/opencode/skills)
+    // Platform config directory (e.g. ~/Library/Application Support/opencode/skills on macOS)
     if let Some(config_dir) = dirs::config_dir() {
         roots.push(config_dir.join("opencode/skill"));
         roots.push(config_dir.join("opencode/skills"));
@@ -229,7 +232,7 @@ fn parse_skill_file(path: &Path) -> Option<SkillInfo> {
     let frontmatter = frontmatter_lines.join("\n");
     let content = lines.collect::<Vec<_>>().join("\n");
     let name = parse_frontmatter_value(&frontmatter, "name")?;
-    let description = parse_frontmatter_value(&frontmatter, "description")?;
+    let description = parse_frontmatter_value(&frontmatter, "description");
 
     Some(SkillInfo {
         name,
@@ -488,8 +491,30 @@ Do a thorough review.
 
         let parsed = parse_skill_file(&skill_path).unwrap();
         assert_eq!(parsed.name, "reviewer");
-        assert_eq!(parsed.description, "Review code changes");
+        assert_eq!(parsed.description.as_deref(), Some("Review code changes"));
         assert!(parsed.content.contains("Do a thorough review."));
+    }
+
+    #[test]
+    fn parse_skill_file_accepts_missing_description_like_vanilla() {
+        let dir = tempdir().unwrap();
+        let skill_path = dir.path().join("SKILL.md");
+        fs::write(
+            &skill_path,
+            r#"---
+name: reviewer
+---
+
+# Reviewer
+
+Do a thorough review.
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_skill_file(&skill_path).unwrap();
+        assert_eq!(parsed.name, "reviewer");
+        assert_eq!(parsed.description, None);
     }
 
     #[test]
@@ -569,7 +594,7 @@ root content
             .find(|skill| skill.name == "shared-skill")
             .unwrap();
 
-        assert_eq!(skill.description, "root copy");
+        assert_eq!(skill.description.as_deref(), Some("root copy"));
     }
 
     #[test]
@@ -611,7 +636,66 @@ nested
             .find(|skill| skill.name == "reviewer")
             .unwrap();
 
-        assert_eq!(skill.description, "nested reviewer");
+        assert_eq!(skill.description.as_deref(), Some("nested reviewer"));
+    }
+
+    #[test]
+    fn discover_skills_includes_descriptionless_skill_names_like_vanilla() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let skill_path = root.join(".opencode/skill/manual/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            r#"---
+name: manual-skill
+---
+manual content
+"#,
+        )
+        .unwrap();
+
+        let discovered = discover_skills(root);
+        let skill = discovered
+            .into_iter()
+            .find(|skill| skill.name == "manual-skill")
+            .unwrap();
+
+        assert_eq!(skill.description, None);
+    }
+
+    #[test]
+    fn discover_skills_loads_flat_config_paths_like_current_vanilla() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let extra_root = root.join("custom-skills");
+        let extra_skill = extra_root.join("flat/SKILL.md");
+        fs::create_dir_all(extra_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &extra_skill,
+            r#"---
+name: flat-config-skill
+description: flat config
+---
+flat content
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            root.join("opencode.json"),
+            r#"{
+  "skills": ["custom-skills", "https://example.test/skills/"]
+}"#,
+        )
+        .unwrap();
+
+        let discovered = discover_skills(root);
+        let names: Vec<String> = discovered.into_iter().map(|s| s.name).collect();
+
+        assert!(names.contains(&"flat-config-skill".to_string()));
     }
 
     #[test]
