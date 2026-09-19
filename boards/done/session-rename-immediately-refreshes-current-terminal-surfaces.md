@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-18"
 ---
 
@@ -104,3 +104,10 @@ Renaming a session can leave stale titles visible in the current terminal sessio
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/40
+
+## Closeout
+
+- QA passed by user confirmation on 2026-09-18.
+- PR #40 merged into `development` on 2026-09-19 as merge commit `cde77c5bdaf5de51c797181ca60bad7869de7eff`.
+- Remote and local branch `bug/BUG-015-session-rename-refresh` deleted after merge.
+- Moved to `done` after merge closeout.
