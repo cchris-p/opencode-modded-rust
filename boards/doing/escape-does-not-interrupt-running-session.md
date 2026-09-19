@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "doing"
 created: "2026-09-19"
 ---
 
@@ -119,11 +119,22 @@ Likely failure area to confirm:
 
 ## Dev Notes
 
-- (empty)
+- Added a server-side active prompt registry so `/session/{id}/abort` and
+  `/session/{id}/prompt/abort` cancel the in-flight `SessionPrompt` instead of returning a stubbed
+  success.
+- Abort now clears and broadcasts server run status as idle after a real cancellation request.
+- The prompt loop marks interrupted assistant turns with `error = "aborted"` and
+  `finish_reason = "aborted"`, and preserves the existing pending-tool-call abort repair.
+- The TUI no longer sets local session status to idle optimistically after `Esc`; it waits for the
+  server status event.
 
 ## Verification
 
-- (empty)
+- `cargo check -p opencode-session -p opencode-server -p opencode-tui`
+- `cargo test -p opencode-session mark_aborted_records_durable_error_state`
+- `cargo test -p opencode-session abort_pending_tool_calls_marks_unresolved_calls_as_error`
+- Attempted one invalid combined Cargo test filter command first; reran the focused tests
+  separately because Cargo accepts only one test-name filter before harness args.
 
 ## PR
 

@@ -485,8 +485,6 @@ impl App {
                                 let _ = client.abort_session(&session_id);
                             }
                             self.prompt.clear_interrupt_confirmation();
-                            self.set_session_status(&session_id, SessionStatus::Idle);
-                            self.sync_prompt_spinner_state();
                             return Ok(());
                         }
                     }

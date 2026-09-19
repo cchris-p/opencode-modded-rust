@@ -1401,6 +1401,7 @@ impl SessionPrompt {
         // Mirrors TS processor.ts lines 393-409 where incomplete tool parts
         // are set to error status with "Tool execution aborted".
         if token.is_cancelled() {
+            Self::mark_aborted(session);
             Self::abort_pending_tool_calls(session);
         }
 
@@ -1472,6 +1473,37 @@ impl SessionPrompt {
             created_at: chrono::Utc::now(),
             message_id: None,
         });
+    }
+
+    fn mark_aborted(session: &mut Session) {
+        let assistant = session
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|message| matches!(message.role, MessageRole::Assistant));
+        let assistant = match assistant {
+            Some(assistant) => assistant,
+            None => {
+                session
+                    .messages
+                    .push(SessionMessage::assistant(session.id.clone()));
+                session.messages.last_mut().expect("just pushed assistant")
+            }
+        };
+
+        assistant
+            .metadata
+            .insert("error".to_string(), serde_json::json!("aborted"));
+        assistant
+            .metadata
+            .insert("finish_reason".to_string(), serde_json::json!("aborted"));
+        let has_visible_part = assistant.parts.iter().any(|part| match &part.part_type {
+            PartType::Text { text, .. } | PartType::Reasoning { text } => !text.is_empty(),
+            _ => true,
+        });
+        if !has_visible_part {
+            assistant.add_text("Aborted by user.");
+        }
     }
 
     /// Mark any tool calls that lack a corresponding tool result as aborted.
@@ -4508,6 +4540,29 @@ mod tests {
             .collect();
 
         assert_eq!(error_results.len(), 1, "call_2 should have an error result");
+    }
+
+    #[test]
+    fn mark_aborted_records_durable_error_state() {
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "stop this"));
+        session.messages.push(SessionMessage::assistant(sid));
+
+        SessionPrompt::mark_aborted(&mut session);
+
+        let assistant = session.messages.last().expect("assistant message exists");
+        assert_eq!(
+            assistant.metadata.get("error"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(
+            assistant.metadata.get("finish_reason"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(assistant.get_text(), "Aborted by user.");
     }
 
     #[test]
