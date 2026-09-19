@@ -75,6 +75,7 @@ This excludes URL-loaded skills, which are tracked separately by `SKILLS-002`.
 - Aligned Rust local skill discovery with vanilla behavior for `SKILL.md` files that include `name` but omit `description`; these skills now remain discoverable by name.
 - Made server/TUI skill summaries tolerate missing descriptions while still showing and filtering descriptions when present.
 - Added support for vanilla's flat `skills` config source-list shape, splitting local paths from URL entries while leaving URL-backed discovery inactive for `SKILLS-002`.
+- Added vanilla-compatible `~/.config/opencode/{skill,skills}` discovery on macOS in addition to the Rust platform config directory roots.
 - Added `scripts/compare-local-skills-parity.sh` as a local developer parity check for machines with both vanilla OpenCode and OpenCode Rust available.
 - Updated the discovery invariant to require exact local discovered-name parity with vanilla OpenCode.
 
@@ -86,7 +87,7 @@ This excludes URL-loaded skills, which are tracked separately by `SKILLS-002`.
 - `cargo test -p opencode-server --test skill_route skill_route_returns_discovered_names_and_descriptions`
 - `cargo check -p opencode-config -p opencode-tool -p opencode-server -p opencode-tui`
 - `bash -n scripts/compare-local-skills-parity.sh`
-- `scripts/compare-local-skills-parity.sh .` attempted; blocked because `bun` is not on `PATH` in this environment.
+- `PATH="$HOME/.bun/bin:$PATH" scripts/compare-local-skills-parity.sh .`
 
 ## PR
 

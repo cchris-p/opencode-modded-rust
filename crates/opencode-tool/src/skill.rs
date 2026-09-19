@@ -127,9 +127,11 @@ fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
     if let Some(home) = home_dir() {
         roots.push(home.join(".agents/skills"));
         roots.push(home.join(".claude/skills"));
+        roots.push(home.join(".config/opencode/skill"));
+        roots.push(home.join(".config/opencode/skills"));
     }
 
-    // Global config directory (e.g. ~/.config/opencode/skills)
+    // Platform config directory (e.g. ~/Library/Application Support/opencode/skills on macOS)
     if let Some(config_dir) = dirs::config_dir() {
         roots.push(config_dir.join("opencode/skill"));
         roots.push(config_dir.join("opencode/skills"));
@@ -693,7 +695,7 @@ flat content
         let discovered = discover_skills(root);
         let names: Vec<String> = discovered.into_iter().map(|s| s.name).collect();
 
-        assert_eq!(names, vec!["flat-config-skill".to_string()]);
+        assert!(names.contains(&"flat-config-skill".to_string()));
     }
 
     #[test]

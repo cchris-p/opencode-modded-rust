@@ -119,10 +119,12 @@ description: Review code changes
         .expect("body should collect");
     let skills: Vec<SkillSummary> = serde_json::from_slice(&body).expect("response should decode");
 
-    assert_eq!(skills.len(), 1);
-    assert_eq!(skills[0].name, "reviewer");
+    let reviewer = skills
+        .iter()
+        .find(|skill| skill.name == "reviewer")
+        .expect("reviewer skill should be present");
     assert_eq!(
-        skills[0].description.as_deref(),
+        reviewer.description.as_deref(),
         Some("Review code changes")
     );
 

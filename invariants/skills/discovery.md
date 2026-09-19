@@ -6,6 +6,7 @@
 - Skill discovery is filesystem-first; the runtime scans known local roots rather than fetching remote skill definitions.
 - For local filesystem-backed skills, Rust discovery must produce the exact same discovered skill name list as vanilla OpenCode when both run against the same global and project-local environment.
 - Skill roots may come from built-in home/config/project locations and from explicit `skills.paths` entries in config.
+- Global OpenCode config roots include vanilla-compatible `~/.config/opencode/{skill,skills}` even on macOS, plus the platform config directory roots used by Rust.
 - Project-local roots are discovered from the active directory upward to the git worktree root so ancestor `.opencode`, `.claude`, and `.agents` skill directories remain visible from nested working directories.
 - Relative configured skill paths resolve from the active workspace base directory; `~/` paths resolve from the user home directory.
 - Skill identity is keyed by the frontmatter `name`, not by directory name or file path.
