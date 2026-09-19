@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-18"
 ---
 
@@ -100,3 +100,7 @@ Renaming a session can leave stale titles visible in the current terminal sessio
 - `cargo test -p opencode-tui` compiled but hit known/shared-state prompt-test interference under parallel execution; the same suite passed single-threaded.
 - `ort-build` could not be run in this shell because the command was not found.
 - `cargo build --bin opencode` passed.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/40
