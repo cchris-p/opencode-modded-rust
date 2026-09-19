@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "refinement"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -66,6 +66,19 @@ Make the export completion/confirmation UI identify the saved file clearly enoug
 - Run `cargo check -p opencode-tui` or the narrower affected crate check discovered during implementation.
 - Manual smoke with `ort-build` then `ort`: export a transcript and confirm the success UI identifies the saved file.
 - Repeat with a long workspace/path or long session title to confirm the display remains readable.
+
+## Implementation Notes
+
+- The export success alert now displays the saved path on its own line instead of embedding the raw absolute path inline.
+- Paths under the current working directory are displayed relative to that directory, keeping normal workspace exports compact while still identifying the saved file.
+- Exports outside the current working directory keep the full absolute path so the destination remains unambiguous.
+- Added focused tests for relative-path and outside-base display behavior.
+
+## Verification Results
+
+- `cargo check -p opencode-tui` passed.
+- `cargo test -p opencode-tui export_path_display` passed.
+- An initial concurrent test/check run timed out while competing for Cargo locks; the same focused tests passed when rerun sequentially.
 
 ## Related Items
 

@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -1159,9 +1159,10 @@ impl App {
                             let options = self.transcript_options_from_export_dialog();
                             match self.export_session_to_file(session_id, filename, options) {
                                 Ok(path) => {
+                                    let display_path = export_path_display(&path);
                                     self.alert_dialog.set_message(&format!(
-                                        "Session exported to `{}`.",
-                                        path.display()
+                                        "Session exported to:\n{}",
+                                        display_path
                                     ));
                                     self.alert_dialog.open();
                                     self.session_export_dialog.close();
@@ -4585,6 +4586,22 @@ fn default_export_filename(title: &str, session_id: &str) -> String {
     format!("{slug}.md")
 }
 
+fn export_path_display(path: &Path) -> String {
+    match std::env::current_dir() {
+        Ok(current_dir) => export_path_display_from(path, &current_dir),
+        Err(_) => path.display().to_string(),
+    }
+}
+
+fn export_path_display_from(path: &Path, base: &Path) -> String {
+    if let Ok(relative) = path.strip_prefix(base) {
+        if !relative.as_os_str().is_empty() {
+            return relative.display().to_string();
+        }
+    }
+    path.display().to_string()
+}
+
 fn map_api_permission_request(
     request: &ApiPermissionRequestInfo,
 ) -> crate::components::PermissionRequest {
@@ -4734,6 +4751,22 @@ mod tests {
             mapped.permission_type,
             crate::components::PermissionType::ReadFile
         );
+    }
+
+    #[test]
+    fn export_path_display_prefers_relative_path_inside_base() {
+        let base = Path::new("/workspace/project");
+        let path = Path::new("/workspace/project/exports/session.md");
+
+        assert_eq!(export_path_display_from(path, base), "exports/session.md");
+    }
+
+    #[test]
+    fn export_path_display_keeps_absolute_path_outside_base() {
+        let base = Path::new("/workspace/project");
+        let path = Path::new("/tmp/session.md");
+
+        assert_eq!(export_path_display_from(path, base), "/tmp/session.md");
     }
 
     #[test]
