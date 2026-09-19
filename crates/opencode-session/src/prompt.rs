@@ -1373,7 +1373,15 @@ impl SessionPrompt {
                 .await
                 {
                     tracing::error!("Tool execution error for session {}: {}", session_id, e);
+                    Self::append_missing_tool_results(
+                        session,
+                        format!("Tool execution failed before producing a result: {}", e),
+                    );
                 }
+                Self::append_missing_tool_results(
+                    session,
+                    "Tool execution ended before producing a result".to_string(),
+                );
                 session.touch();
                 Self::emit_session_update(update_hook.as_ref(), session);
                 continue;
@@ -1472,8 +1480,7 @@ impl SessionPrompt {
     /// assistant messages may not have received their results yet. This mirrors
     /// the TS abort handling in processor.ts that sets incomplete tool parts to
     /// error status with "Tool execution aborted".
-    fn abort_pending_tool_calls(session: &mut Session) {
-        // Collect all tool call IDs that already have a result
+    fn unresolved_tool_call_ids(session: &Session) -> Vec<String> {
         let mut resolved_call_ids: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         for msg in &session.messages {
@@ -1484,7 +1491,6 @@ impl SessionPrompt {
             }
         }
 
-        // Find unresolved tool calls and add error results
         let mut pending_calls: Vec<String> = Vec::new();
         for msg in &session.messages {
             for part in &msg.parts {
@@ -1496,6 +1502,32 @@ impl SessionPrompt {
             }
         }
 
+        pending_calls
+    }
+
+    fn append_missing_tool_results(session: &mut Session, content: String) -> usize {
+        let pending_calls = Self::unresolved_tool_call_ids(session);
+        if pending_calls.is_empty() {
+            return 0;
+        }
+
+        tracing::warn!(
+            count = pending_calls.len(),
+            "Appending error results for unresolved tool calls"
+        );
+
+        let repaired_count = pending_calls.len();
+        let mut result_message = SessionMessage::assistant(session.id.clone());
+        for call_id in pending_calls {
+            result_message.add_tool_result(call_id, content.clone(), true);
+        }
+        session.messages.push(result_message);
+        repaired_count
+    }
+
+    fn abort_pending_tool_calls(session: &mut Session) {
+        let pending_calls = Self::unresolved_tool_call_ids(session);
+
         if pending_calls.is_empty() {
             return;
         }
@@ -1505,17 +1537,11 @@ impl SessionPrompt {
             "Marking pending tool calls as aborted"
         );
 
-        // Add error results for each pending tool call to the last assistant message
-        if let Some(last_assistant) = session
-            .messages
-            .iter_mut()
-            .rev()
-            .find(|m| matches!(m.role, MessageRole::Assistant))
-        {
-            for call_id in pending_calls {
-                last_assistant.add_tool_result(&call_id, "Tool execution aborted", true);
-            }
+        let mut result_message = SessionMessage::assistant(session.id.clone());
+        for call_id in pending_calls {
+            result_message.add_tool_result(call_id, "Tool execution aborted", true);
         }
+        session.messages.push(result_message);
     }
 
     pub async fn execute_tool_calls(
@@ -4482,6 +4508,49 @@ mod tests {
             .collect();
 
         assert_eq!(error_results.len(), 1, "call_2 should have an error result");
+    }
+
+    #[test]
+    fn append_missing_tool_results_repairs_unresolved_calls() {
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "inspect the repo"));
+
+        let mut assistant = SessionMessage::assistant(sid.clone());
+        assistant.add_tool_call("call_ls", "ls", serde_json::json!({"path": "."}));
+        assistant.add_tool_call(
+            "call_grep",
+            "grep",
+            serde_json::json!({"pattern": "BUG-016"}),
+        );
+        assistant.add_tool_result("call_ls", "files", false);
+        session.messages.push(assistant);
+
+        let repaired = SessionPrompt::append_missing_tool_results(
+            &mut session,
+            "Tool execution ended before producing a result".to_string(),
+        );
+
+        assert_eq!(repaired, 1);
+        let result_count = session
+            .messages
+            .iter()
+            .flat_map(|message| &message.parts)
+            .filter(|part| {
+                matches!(
+                    &part.part_type,
+                    PartType::ToolResult { tool_call_id, is_error, content, .. }
+                        if tool_call_id == "call_grep"
+                            && *is_error
+                            && content == "Tool execution ended before producing a result"
+                )
+            })
+            .count();
+        assert_eq!(result_count, 1);
+        assert!(SessionPrompt::unresolved_tool_call_ids(&session).is_empty());
     }
 
     #[test]
