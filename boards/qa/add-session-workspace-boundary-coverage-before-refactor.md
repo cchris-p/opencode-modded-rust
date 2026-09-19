@@ -5,7 +5,7 @@ priority: "P1"
 type: "refactor"
 area: "REFACTOR"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -62,6 +62,10 @@ This item starts with coverage so the later refactor can safely simplify where w
 - Refactored `ApiClient` to capture the TUI workspace at construction and expose `list_workspace_sessions_filtered`, so `App::refresh_session_list_dialog` no longer manually threads `workspace_identity` into the session-list query.
 - Verification passed: `cargo test -p opencode-session session::tests::test_list_filtered_by_workspace_identity_excludes_other_workspaces_and_legacy`; `cargo test -p opencode-server session_route_filters_by_workspace_identity_before_search_and_limit`; `cargo check -p opencode-session -p opencode-server -p opencode-tui -p opencode-cli`.
 - `ort-build` could not be run in this shell because the command was not found.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/43
 
 ## Related Items
 
