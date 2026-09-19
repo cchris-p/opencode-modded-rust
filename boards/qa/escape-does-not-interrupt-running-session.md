@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -138,7 +138,7 @@ Likely failure area to confirm:
 
 ## PR
 
-- (empty)
+- https://github.com/cchris-p/opencode-modded-rust/pull/48
 
 ## Completion
 
