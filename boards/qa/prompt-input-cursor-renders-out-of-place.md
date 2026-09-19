@@ -84,6 +84,8 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 - `cargo test -p opencode-tui components::prompt::tests::utf8_backspace_delete_and_cursor_are_char_safe -- --exact` passed.
 - `cargo test -p opencode-tui` failed on existing prompt autocomplete isolation: `components::prompt::tests::tab_autocomplete_uses_first_candidate` returns `test` instead of `team`; the following env-lock test then reports a poisoned lock.
 - `cargo fmt --check` failed on pre-existing formatting drift in `crates/opencode-provider/src/anthropic.rs` and `crates/opencode-tui/src/context/keybind.rs`, outside this change.
+- `ort-build` could not be run from this shell because the command was not found.
+- `cargo build` was attempted as a fallback in the original QA checkout and timed out after 120 seconds; rustc processes were terminated by timeout signal, not source diagnostics.
 
 ## PR
 
