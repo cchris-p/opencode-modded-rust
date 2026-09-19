@@ -117,9 +117,10 @@ impl App {
         if let Ok(dir) = std::env::current_dir() {
             *context.directory.write() = dir.display().to_string();
         }
+        let workspace_identity = context.directory.read().clone();
 
         let base_url = resolve_tui_base_url();
-        let api_client = Arc::new(ApiClient::new(base_url.clone()));
+        let api_client = Arc::new(ApiClient::new(base_url.clone(), workspace_identity));
         context.set_api_client(api_client);
         spawn_server_event_listener(event_tx.clone(), base_url);
 
@@ -2891,11 +2892,10 @@ impl App {
         };
 
         let query = self.session_list_dialog.query().trim().to_string();
-        let workspace = self.context.directory.read().clone();
         let sessions_result = if query.is_empty() {
-            client.list_sessions_for_workspace(Some(&workspace))
+            client.list_workspace_sessions_filtered(None, None)
         } else {
-            client.list_sessions_filtered(Some(&query), Some(30), Some(&workspace))
+            client.list_workspace_sessions_filtered(Some(&query), Some(30))
         };
         let Ok(sessions) = sessions_result else {
             return;

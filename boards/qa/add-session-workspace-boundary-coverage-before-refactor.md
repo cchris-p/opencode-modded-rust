@@ -5,7 +5,7 @@ priority: "P1"
 type: "refactor"
 area: "REFACTOR"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -58,6 +58,14 @@ This item starts with coverage so the later refactor can safely simplify where w
 - Seed test sessions through `state.sessions.lock().await` so the route test exercises `crates/opencode-server/src/routes.rs` query parsing and `SessionManager::list_filtered`, not storage.
 - The duplicated TUI seam is currently `ApiClient::list_sessions_filtered(..., workspace_identity)` in `crates/opencode-tui/src/api.rs` and `App::refresh_session_list_dialog` passing `self.context.directory` from `crates/opencode-tui/src/app/app.rs`.
 - Prefer the refactor target `ApiClient::new(base_url, workspace_dir)` or an equivalent workspace-aware constructor/method so presentation code does not rebuild session workspace query parameters.
+- Implemented route coverage in `crates/opencode-server/tests/skill_route.rs` for `/session?workspace_identity=<dir>&search=target&limit=1`, including same-workspace inclusion and other-workspace/legacy exclusion through the HTTP boundary.
+- Refactored `ApiClient` to capture the TUI workspace at construction and expose `list_workspace_sessions_filtered`, so `App::refresh_session_list_dialog` no longer manually threads `workspace_identity` into the session-list query.
+- Verification passed: `cargo test -p opencode-session session::tests::test_list_filtered_by_workspace_identity_excludes_other_workspaces_and_legacy`; `cargo test -p opencode-server session_route_filters_by_workspace_identity_before_search_and_limit`; `cargo check -p opencode-session -p opencode-server -p opencode-tui -p opencode-cli`.
+- `ort-build` could not be run in this shell because the command was not found.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/43
 
 ## Related Items
 
