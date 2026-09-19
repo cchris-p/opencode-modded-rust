@@ -107,6 +107,8 @@ pub struct Session {
     pub slug: String,
     pub project_id: String,
     pub directory: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_identity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
     pub title: String,

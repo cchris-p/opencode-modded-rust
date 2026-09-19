@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use opencode_types::{SessionTask, TaskReviewStatus, TaskStage, TaskVerificationStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -287,6 +288,8 @@ pub struct Session {
     pub slug: String,
     pub project_id: String,
     pub directory: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_identity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
     pub title: String,
@@ -340,16 +343,37 @@ impl Session {
             .to_string()
     }
 
+    pub fn canonical_workspace_identity(directory: &str) -> Option<String> {
+        let trimmed = directory.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let path = Path::new(trimmed);
+        let candidate = if path.is_absolute() {
+            PathBuf::from(path)
+        } else {
+            std::env::current_dir().ok()?.join(path)
+        };
+
+        let resolved = candidate.canonicalize().unwrap_or(candidate);
+        Some(resolved.to_string_lossy().to_string())
+    }
+
     /// Create a new session
     pub fn new(project_id: impl Into<String>, directory: impl Into<String>) -> Self {
         let now = Utc::now();
         let slug = Self::generate_slug();
 
+        let directory = directory.into();
+        let workspace_identity = Self::canonical_workspace_identity(&directory);
+
         Self {
             id: format!("ses_{}", Uuid::new_v4().simple()),
             slug,
             project_id: project_id.into(),
-            directory: directory.into(),
+            directory,
+            workspace_identity,
             parent_id: None,
             title: format!("New session - {}", now.to_rfc3339()),
             version: Self::VERSION.to_string(),
@@ -378,6 +402,7 @@ impl Session {
             slug,
             project_id: parent.project_id.clone(),
             directory: parent.directory.clone(),
+            workspace_identity: parent.workspace_identity.clone(),
             parent_id: Some(parent.id.clone()),
             title: format!("Child session - {}", now.to_rfc3339()),
             version: Self::VERSION.to_string(),
@@ -801,6 +826,7 @@ impl Session {
             slug: self.slug.clone(),
             project_id: self.project_id.clone(),
             directory: self.directory.clone(),
+            workspace_identity: self.workspace_identity.clone(),
             parent_id: self.parent_id.clone(),
             title: self.title.clone(),
             version: self.version.clone(),
@@ -851,6 +877,7 @@ impl Session {
             slug: row.slug,
             project_id: row.project_id,
             directory: row.directory,
+            workspace_identity: row.workspace_identity,
             parent_id: row.parent_id,
             title: row.title,
             version: row.version,
@@ -882,6 +909,7 @@ pub struct SessionRow {
     pub slug: String,
     pub project_id: String,
     pub directory: String,
+    pub workspace_identity: Option<String>,
     pub parent_id: Option<String>,
     pub title: String,
     pub version: String,
@@ -1464,6 +1492,29 @@ mod tests {
         assert!(session.title.starts_with("New session"));
         assert!(session.parent_id.is_none());
         assert_eq!(session.status, SessionStatus::Active);
+        assert!(session.workspace_identity.is_some());
+    }
+
+    #[test]
+    fn test_session_workspace_identity_canonicalizes_relative_path() {
+        let current_dir = std::env::current_dir().expect("current dir should resolve");
+        let session = Session::new("project-1", ".");
+
+        assert_eq!(
+            session.workspace_identity,
+            Some(current_dir.to_string_lossy().to_string())
+        );
+    }
+
+    #[test]
+    fn test_sessions_from_different_directories_have_different_workspace_identities() {
+        let dir_a = tempfile::tempdir().expect("dir a should be created");
+        let dir_b = tempfile::tempdir().expect("dir b should be created");
+
+        let session_a = Session::new("project-1", dir_a.path().to_string_lossy());
+        let session_b = Session::new("project-1", dir_b.path().to_string_lossy());
+
+        assert_ne!(session_a.workspace_identity, session_b.workspace_identity);
     }
 
     #[test]
@@ -1473,7 +1524,35 @@ mod tests {
 
         assert!(child.parent_id.is_some());
         assert_eq!(child.parent_id.unwrap(), parent.id);
+        assert_eq!(child.workspace_identity, parent.workspace_identity);
         assert!(child.title.starts_with("Child session"));
+    }
+
+    #[test]
+    fn test_legacy_session_row_keeps_unknown_workspace_identity() {
+        let now = Utc::now().timestamp_millis();
+        let session = Session::from_row(SessionRow {
+            id: "ses_legacy".to_string(),
+            slug: "legacy".to_string(),
+            project_id: "project-1".to_string(),
+            directory: "/path/to/project".to_string(),
+            workspace_identity: None,
+            parent_id: None,
+            title: "Legacy".to_string(),
+            version: "1.0.0".to_string(),
+            time_created: now,
+            time_updated: now,
+            time_compacting: None,
+            time_archived: None,
+            share_url: None,
+            summary_additions: None,
+            summary_deletions: None,
+            summary_files: None,
+            revert: None,
+            permission: None,
+        });
+
+        assert!(session.workspace_identity.is_none());
     }
 
     #[test]

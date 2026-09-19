@@ -1219,6 +1219,8 @@ struct RemoteSessionInfo {
     title: Option<String>,
     #[serde(default)]
     directory: Option<String>,
+    #[serde(default)]
+    workspace_identity: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2564,7 +2566,11 @@ fn print_checked_task_target(checked: &CheckedTaskTarget, selected: Option<&Task
                     .unwrap_or(false);
                 let session_marker = if selected_session { "*" } else { " " };
                 let title = session.title.as_deref().unwrap_or("untitled");
-                let directory = session.directory.as_deref().unwrap_or("");
+                let directory = session
+                    .workspace_identity
+                    .as_deref()
+                    .or(session.directory.as_deref())
+                    .unwrap_or("");
                 println!(
                     "  {} {:<30} {:<30} {}",
                     session_marker,
@@ -3473,7 +3479,8 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
                                 "updated": s.time.updated,
                                 "created": s.time.created,
                                 "projectId": s.project_id,
-                                "directory": s.directory
+                                "directory": s.directory,
+                                "workspaceIdentity": s.workspace_identity
                             })
                         })
                         .collect();
@@ -3514,6 +3521,13 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
             println!("  Title: {}", session.title);
             println!("  Project: {}", session.project_id);
             println!("  Directory: {}", session.directory);
+            println!(
+                "  Workspace Identity: {}",
+                session
+                    .workspace_identity
+                    .as_deref()
+                    .unwrap_or("legacy/unknown")
+            );
             println!("  Status: {:?}", session.status);
             println!("  Created: {}", session.time.created);
             println!("  Updated: {}", session.time.updated);
