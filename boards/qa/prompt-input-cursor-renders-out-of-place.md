@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -87,7 +87,7 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 
 ## PR
 
-- (empty)
+- https://github.com/cchris-p/opencode-modded-rust/pull/47
 
 ## Completion
 
