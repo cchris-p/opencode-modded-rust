@@ -52,6 +52,13 @@ This item starts with coverage so the later refactor can safely simplify where w
 - `cargo check -p opencode-session -p opencode-server -p opencode-tui -p opencode-cli`
 - Run `ort-build`, then launch `ort` from a dedicated directory with no history and confirm transcripts from other workspaces do not appear.
 
+## Dev Notes
+
+- Existing server integration tests in `crates/opencode-server/tests/skill_route.rs` already use `routes::router().with_state(Arc::new(ServerState::new()))` plus `tower::ServiceExt::oneshot`; use the same pattern for the `/session` route coverage.
+- Seed test sessions through `state.sessions.lock().await` so the route test exercises `crates/opencode-server/src/routes.rs` query parsing and `SessionManager::list_filtered`, not storage.
+- The duplicated TUI seam is currently `ApiClient::list_sessions_filtered(..., workspace_identity)` in `crates/opencode-tui/src/api.rs` and `App::refresh_session_list_dialog` passing `self.context.directory` from `crates/opencode-tui/src/app/app.rs`.
+- Prefer the refactor target `ApiClient::new(base_url, workspace_dir)` or an equivalent workspace-aware constructor/method so presentation code does not rebuild session workspace query parameters.
+
 ## Related Items
 
 - `FEAT-022` Persist session workspace identity
