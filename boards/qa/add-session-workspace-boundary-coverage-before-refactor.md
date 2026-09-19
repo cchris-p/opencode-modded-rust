@@ -67,6 +67,10 @@ This item starts with coverage so the later refactor can safely simplify where w
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/43
 
+## Closeout Notes
+
+- 2026-09-19: PR #43 merged into `development`; remote and local branch `refactor/REFACTOR-001-session-workspace-boundary-coverage` deleted. Item remains in `qa` until post-merge QA is recorded or explicitly completed.
+
 ## Related Items
 
 - `FEAT-022` Persist session workspace identity
