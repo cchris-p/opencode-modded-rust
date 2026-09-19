@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "SKILLS"
 spec: "invariants/skills/discovery.md"
-status: "doing"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -87,3 +87,7 @@ This excludes URL-loaded skills, which are tracked separately by `SKILLS-002`.
 - `cargo check -p opencode-config -p opencode-tool -p opencode-server -p opencode-tui`
 - `bash -n scripts/compare-local-skills-parity.sh`
 - `scripts/compare-local-skills-parity.sh .` attempted; blocked because `bun` is not on `PATH` in this environment.
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/46
