@@ -365,11 +365,12 @@ pub struct RevertResponse {
 pub struct ApiClient {
     client: Client,
     base_url: String,
+    workspace_identity: String,
     pub current_session: Arc<RwLock<Option<SessionInfo>>>,
 }
 
 impl ApiClient {
-    pub fn new(base_url: String) -> Self {
+    pub fn new(base_url: String, workspace_identity: String) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -378,6 +379,7 @@ impl ApiClient {
         Self {
             client,
             base_url,
+            workspace_identity,
             current_session: Arc::new(RwLock::new(None)),
         }
     }
@@ -417,14 +419,15 @@ impl ApiClient {
         self.list_sessions_filtered(None, None, None)
     }
 
-    pub fn list_sessions_for_workspace(
+    pub fn list_workspace_sessions_filtered(
         &self,
-        workspace_identity: Option<&str>,
+        search: Option<&str>,
+        limit: Option<usize>,
     ) -> anyhow::Result<Vec<SessionInfo>> {
-        self.list_sessions_filtered(None, None, workspace_identity)
+        self.list_sessions_filtered(search, limit, Some(&self.workspace_identity))
     }
 
-    pub fn list_sessions_filtered(
+    fn list_sessions_filtered(
         &self,
         search: Option<&str>,
         limit: Option<usize>,

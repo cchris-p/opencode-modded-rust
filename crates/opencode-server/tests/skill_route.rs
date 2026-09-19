@@ -25,6 +25,13 @@ struct SkillSummary {
     description: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct SessionSummary {
+    id: String,
+    title: String,
+    workspace_identity: Option<String>,
+}
+
 struct TestProvider {
     model: ModelInfo,
 }
@@ -123,6 +130,65 @@ fn lock_current_dir() -> MutexGuard<'static, ()> {
     CURRENT_DIR_LOCK
         .lock()
         .expect("current dir lock should work")
+}
+
+#[tokio::test]
+async fn session_route_filters_by_workspace_identity_before_search_and_limit() {
+    let root = std::env::temp_dir().join(format!("opencode-session-route-{}", Uuid::new_v4()));
+    let workspace_a = root.join("workspace-a");
+    let workspace_b = root.join("workspace-b");
+    std::fs::create_dir_all(&workspace_a).expect("workspace a should be created");
+    std::fs::create_dir_all(&workspace_b).expect("workspace b should be created");
+
+    let state = Arc::new(ServerState::new());
+    let (matching_id, matching_workspace) = {
+        let mut sessions = state.sessions.lock().await;
+
+        let mut matching = sessions.create("default", workspace_a.to_string_lossy());
+        matching.set_title("target workspace match");
+        let matching_id = matching.id.clone();
+        let matching_workspace = matching.workspace_identity.clone();
+        sessions.update(matching);
+
+        let mut other_workspace = sessions.create("default", workspace_b.to_string_lossy());
+        other_workspace.set_title("target other workspace");
+        sessions.update(other_workspace);
+
+        let mut legacy = sessions.create("default", "");
+        legacy.workspace_identity = None;
+        legacy.set_title("target legacy workspace");
+        sessions.update(legacy);
+
+        (matching_id, matching_workspace)
+    };
+
+    let app = routes::router().with_state(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/session?workspace_identity={}&search=target&limit=1",
+                    workspace_a.to_string_lossy()
+                ))
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should collect");
+    let sessions: Vec<SessionSummary> =
+        serde_json::from_slice(&body).expect("response should decode");
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, matching_id);
+    assert_eq!(sessions[0].title, "target workspace match");
+    assert_eq!(sessions[0].workspace_identity, matching_workspace);
+
+    std::fs::remove_dir_all(&root).expect("temp root should be cleaned up");
 }
 
 #[tokio::test]
