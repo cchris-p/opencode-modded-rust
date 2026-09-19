@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-16"
 ---
 
@@ -80,3 +80,9 @@ The prompt input is the product's primary editing surface. Users expect it to be
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/39
+
+## Completion
+
+- User QA confirmed Alt word navigation works.
+- Merged into `development` on 2026-09-16 via PR #39.
+- Branch `bug/BUG-014-alt-word-navigation` deleted locally and remotely.
