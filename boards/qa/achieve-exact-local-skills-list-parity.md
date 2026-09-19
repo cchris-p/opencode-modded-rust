@@ -92,3 +92,9 @@ This excludes URL-loaded skills, which are tracked separately by `SKILLS-002`.
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/46
+
+## Merge Closeout
+
+- Merged PR #46 into `development` on 2026-09-19.
+- Remote and local feature branches are cleaned up.
+- Item remains in `qa` pending post-merge QA evidence or explicit completion direction.
