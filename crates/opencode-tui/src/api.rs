@@ -11,6 +11,8 @@ pub struct SessionInfo {
     pub slug: String,
     pub project_id: String,
     pub directory: String,
+    #[serde(default)]
+    pub workspace_identity: Option<String>,
     pub parent_id: Option<String>,
     pub title: String,
     pub version: String,

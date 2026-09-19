@@ -107,6 +107,31 @@ impl Database {
                 .map_err(|e| DatabaseError::MigrationError(e.to_string()))?;
         }
 
+        self.ensure_sessions_workspace_identity_column().await?;
+
+        Ok(())
+    }
+
+    async fn ensure_sessions_workspace_identity_column(&self) -> Result<(), DatabaseError> {
+        let rows = sqlx::query_as::<_, (String,)>("SELECT name FROM pragma_table_info('sessions')")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::MigrationError(e.to_string()))?;
+
+        if !rows.iter().any(|(name,)| name == "workspace_identity") {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN workspace_identity TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DatabaseError::MigrationError(e.to_string()))?;
+        }
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_workspace_identity ON sessions(workspace_identity)",
+        )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::MigrationError(e.to_string()))?;
+
         Ok(())
     }
 

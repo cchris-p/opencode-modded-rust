@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     parent_id TEXT,
     slug TEXT NOT NULL,
     directory TEXT NOT NULL,
+    workspace_identity TEXT,
     title TEXT NOT NULL,
     version TEXT NOT NULL DEFAULT '1.0.0',
     share_url TEXT,

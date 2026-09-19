@@ -19,6 +19,7 @@ struct SessionRow {
     parent_id: Option<String>,
     slug: String,
     directory: String,
+    workspace_identity: Option<String>,
     title: String,
     version: String,
     share_url: Option<String>,
@@ -67,6 +68,7 @@ impl SessionRow {
             slug: self.slug,
             project_id: self.project_id,
             directory: self.directory,
+            workspace_identity: self.workspace_identity,
             parent_id: self.parent_id,
             title: self.title,
             version: self.version,
@@ -175,13 +177,13 @@ impl SessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, project_id, parent_id, slug, directory, title, version, share_url,
+                id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                 summary_additions, summary_deletions, summary_files, summary_diffs,
                 revert, permission,
                 usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
                 usage_cache_write_tokens, usage_cache_read_tokens, usage_total_cost,
                 status, created_at, updated_at, time_compacting, time_archived
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
@@ -189,6 +191,7 @@ impl SessionRepository {
         .bind(&session.parent_id)
         .bind(&session.slug)
         .bind(&session.directory)
+        .bind(&session.workspace_identity)
         .bind(&session.title)
         .bind(&session.version)
         .bind(share_url)
@@ -239,7 +242,7 @@ impl SessionRepository {
     pub async fn get(&self, id: &str) -> Result<Option<Session>, DatabaseError> {
         let row = sqlx::query_as::<_, SessionRow>(
             r#"SELECT 
-                id, project_id, parent_id, slug, directory, title, version, share_url,
+                id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                 summary_additions, summary_deletions, summary_files, summary_diffs,
                 revert, permission,
                 usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
@@ -269,7 +272,7 @@ impl SessionRepository {
         let rows = match project_id {
             Some(pid) => sqlx::query_as::<_, SessionRow>(
                 r#"SELECT 
-                        id, project_id, parent_id, slug, directory, title, version, share_url,
+                        id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                         summary_additions, summary_deletions, summary_files, summary_diffs,
                         revert, permission,
                         usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
@@ -285,7 +288,7 @@ impl SessionRepository {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?,
             None => sqlx::query_as::<_, SessionRow>(
                 r#"SELECT 
-                        id, project_id, parent_id, slug, directory, title, version, share_url,
+                        id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                         summary_additions, summary_deletions, summary_files, summary_diffs,
                         revert, permission,
                         usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
@@ -333,7 +336,7 @@ impl SessionRepository {
         sqlx::query(
             r#"
             UPDATE sessions SET
-                title = ?, version = ?, share_url = ?,
+                workspace_identity = ?, title = ?, version = ?, share_url = ?,
                 summary_additions = ?, summary_deletions = ?, summary_files = ?, summary_diffs = ?,
                 revert = ?, permission = ?,
                 usage_input_tokens = ?, usage_output_tokens = ?, usage_reasoning_tokens = ?,
@@ -342,6 +345,7 @@ impl SessionRepository {
             WHERE id = ?
             "#,
         )
+        .bind(&session.workspace_identity)
         .bind(&session.title)
         .bind(&session.version)
         .bind(share_url)
@@ -402,7 +406,7 @@ impl SessionRepository {
     pub async fn list_children(&self, parent_id: &str) -> Result<Vec<Session>, DatabaseError> {
         let rows = sqlx::query_as::<_, SessionRow>(
             r#"SELECT 
-                id, project_id, parent_id, slug, directory, title, version, share_url,
+                id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                 summary_additions, summary_deletions, summary_files, summary_diffs,
                 revert, permission,
                 usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
