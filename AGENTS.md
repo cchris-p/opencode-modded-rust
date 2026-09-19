@@ -29,6 +29,13 @@
 - Full parity with OpenCode is deferred.
 - Upstream sync is optional and selective, not a standing maintenance obligation.
 
+## Storage Paths
+
+- The Rust product resolves its SQLite database as `dirs::data_local_dir()/opencode/opencode.db` (`crates/opencode-storage/src/database.rs:138`).
+- macOS: `~/Library/Application Support/opencode/opencode.db`.
+- Linux: `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode/opencode.db`).
+- This is the Rust product's database only. Do not confuse it with vanilla OpenCode, whose `xdg-basedir` storage resolves to `~/.local/share/opencode/opencode.db` even on macOS.
+
 ## Local Launchers
 
 - `ort-build` builds the Rust TUI/CLI binary from `$HOME/repos/opencode-modded-rust`.
