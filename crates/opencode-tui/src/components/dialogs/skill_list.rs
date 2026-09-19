@@ -94,7 +94,12 @@ impl SkillListDialog {
             .enumerate()
             .filter(|(_, skill)| {
                 skill.name.to_ascii_lowercase().contains(&query)
-                    || skill.description.to_ascii_lowercase().contains(&query)
+                    || skill
+                        .description
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .contains(&query)
             })
             .map(|(idx, _)| idx)
             .collect();
@@ -158,9 +163,13 @@ impl SkillListDialog {
                         format!("/{}", skill.name),
                         Style::default().fg(theme.text),
                     ))];
-                    if !skill.description.trim().is_empty() {
+                    if let Some(description) = skill
+                        .description
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                    {
                         lines.push(Line::from(Span::styled(
-                            skill.description.clone(),
+                            description.to_string(),
                             Style::default().fg(theme.text_muted),
                         )));
                     }
@@ -203,11 +212,11 @@ mod tests {
         dialog.set_skills(vec![
             SkillSummary {
                 name: "reviewer".to_string(),
-                description: "Review code changes".to_string(),
+                description: Some("Review code changes".to_string()),
             },
             SkillSummary {
                 name: "release".to_string(),
-                description: "Prepare changelog".to_string(),
+                description: Some("Prepare changelog".to_string()),
             },
         ]);
 
@@ -218,6 +227,20 @@ mod tests {
 
         assert_eq!(dialog.filtered.len(), 1);
         assert_eq!(dialog.selected_skill(), Some("reviewer"));
+    }
+
+    #[test]
+    fn accepts_skills_without_descriptions() {
+        let mut dialog = SkillListDialog::new();
+        dialog.set_skills(vec![SkillSummary {
+            name: "manual".to_string(),
+            description: None,
+        }]);
+
+        dialog.open();
+
+        assert_eq!(dialog.filtered.len(), 1);
+        assert_eq!(dialog.selected_skill(), Some("manual"));
     }
 }
 

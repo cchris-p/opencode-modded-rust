@@ -22,7 +22,7 @@ static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 #[derive(Debug, Deserialize)]
 struct SkillSummary {
     name: String,
-    description: String,
+    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,7 +121,10 @@ description: Review code changes
 
     assert_eq!(skills.len(), 1);
     assert_eq!(skills[0].name, "reviewer");
-    assert_eq!(skills[0].description, "Review code changes");
+    assert_eq!(
+        skills[0].description.as_deref(),
+        Some("Review code changes")
+    );
 
     std::fs::remove_dir_all(&root).expect("temp root should be cleaned up");
 }

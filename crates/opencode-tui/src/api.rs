@@ -56,7 +56,7 @@ pub struct SessionStatusInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillSummary {
     pub name: String,
-    pub description: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

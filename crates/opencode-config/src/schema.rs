@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -378,12 +378,49 @@ pub struct CommandConfig {
     pub subtask: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct SkillsConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub urls: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SkillsConfigInput {
+    Legacy {
+        #[serde(default)]
+        paths: Vec<String>,
+        #[serde(default)]
+        urls: Vec<String>,
+    },
+    Current(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for SkillsConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match SkillsConfigInput::deserialize(deserializer)? {
+            SkillsConfigInput::Legacy { paths, urls } => Ok(Self { paths, urls }),
+            SkillsConfigInput::Current(items) => {
+                let mut paths = Vec::new();
+                let mut urls = Vec::new();
+
+                for item in items {
+                    if item.starts_with("http://") || item.starts_with("https://") {
+                        urls.push(item);
+                    } else {
+                        paths.push(item);
+                    }
+                }
+
+                Ok(Self { paths, urls })
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

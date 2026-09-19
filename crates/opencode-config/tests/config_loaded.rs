@@ -1,7 +1,7 @@
 //! Port of upstream packages/opencode/test/config/config.test.ts behaviour.
 //! Tests config loading: JSON/JSONC, merge precedence, env substitution.
 
-use opencode_config::{Config, ConfigLoader};
+use opencode_config::ConfigLoader;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -85,4 +85,20 @@ fn load_from_str_parses_and_merges() {
         config.model.as_deref(),
         Some("anthropic/claude-sonnet-4-20250514")
     );
+}
+
+#[test]
+fn flat_skills_config_splits_local_paths_and_urls_like_vanilla() {
+    let mut loader = ConfigLoader::new();
+    loader
+        .load_from_str(
+            r#"{"skills":["./skills","~/shared-skills","https://example.test/skills/"]}"#,
+        )
+        .unwrap();
+
+    let config = loader.get_config();
+    let skills = config.skills.expect("skills config should parse");
+
+    assert_eq!(skills.paths, vec!["./skills", "~/shared-skills"]);
+    assert_eq!(skills.urls, vec!["https://example.test/skills/"]);
 }
