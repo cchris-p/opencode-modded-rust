@@ -53,3 +53,8 @@ Map `Ctrl+R` in the TUI session view to the existing session rename action.
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/41
+
+## Merge Status
+
+- PR #41 merged into `development` on 2026-09-19.
+- Kept in `qa` per user request for post-merge verification.
