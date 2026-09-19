@@ -576,7 +576,9 @@ impl App {
                     self.prompt.clear();
                     return Ok(());
                 }
-                if self.matches_keybind("input_newline", *key) {
+                if self.matches_keybind("input_newline", *key)
+                    || self.matches_keybind("input_newline_alt", *key)
+                {
                     let route = self.context.current_route();
                     if matches!(route, Route::Home | Route::Session { .. }) {
                         self.prompt.insert_text("\n");

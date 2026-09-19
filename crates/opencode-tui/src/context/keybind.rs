@@ -158,7 +158,8 @@ impl KeybindRegistry {
         self.register("app_exit_alt", Keybind::key(KeyCode::Esc));
 
         self.register("input_submit", Keybind::key(KeyCode::Enter));
-        self.register("input_newline", Keybind::alt(KeyCode::Enter));
+        self.register("input_newline", Keybind::ctrl(KeyCode::Char('j')));
+        self.register("input_newline_alt", Keybind::alt(KeyCode::Enter));
         self.register("input_clear", Keybind::ctrl(KeyCode::Char('u')));
         self.register("input_paste", Keybind::ctrl(KeyCode::Char('v')));
         self.register("input_copy", Keybind::ctrl_shift(KeyCode::Char('c')));
@@ -258,5 +259,23 @@ mod tests {
 
         assert!(registry.match_key("session_rename", KeyCode::Char('r'), KeyModifiers::CONTROL,));
         assert!(!registry.match_key("session_rename", KeyCode::Char('r'), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn input_newline_defaults_to_ctrl_j_and_alt_enter() {
+        let registry = KeybindRegistry::new();
+
+        assert!(registry.match_key("input_newline", KeyCode::Char('j'), KeyModifiers::CONTROL,));
+        assert!(!registry.match_key("input_newline", KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(registry.match_key(
+            "input_newline_alt",
+            KeyCode::Enter,
+            KeyModifiers::ALT,
+        ));
+        assert!(!registry.match_key(
+            "input_newline_alt",
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ));
     }
 }
