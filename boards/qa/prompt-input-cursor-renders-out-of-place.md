@@ -93,4 +93,4 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 
 ## Completion
 
-- (empty)
+- 2026-09-19: PR #47 merged into `development`; branch cleanup completed. Kept in `qa` for observation and revisit if the cursor misalignment is seen again.
