@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-18"
 ---
 
@@ -84,3 +84,19 @@ Renaming a session can leave stale titles visible in the current terminal sessio
 ## Refinement status
 
 - Ready to implement. The symptom, expected behavior, affected entry points, likely code touchpoints, non-goals, and manual verification path are defined.
+
+## Dev Notes
+
+- Added a shared TUI post-rename path that applies the `SessionInfo` returned by `ApiClient::update_session_title` to local session context immediately.
+- Updated both rename entry points, the standalone current-session rename dialog and rename-from-session-list flow, to use the same local state update before any follow-up server sync.
+- Added `SessionListDialog::update_session_title` so an open sessions list can update the visible row without closing and reopening.
+- Active-session renames now also update the terminal session title immediately.
+- Added focused unit coverage for updating an existing session-list row without reopening the dialog.
+
+## Verification
+
+- `cargo test -p opencode-tui session_list::tests::update_session_title_updates_existing_row_without_reopening` passed.
+- `cargo test -p opencode-tui -- --test-threads=1` passed.
+- `cargo test -p opencode-tui` compiled but hit known/shared-state prompt-test interference under parallel execution; the same suite passed single-threaded.
+- `ort-build` could not be run in this shell because the command was not found.
+- `cargo build --bin opencode` passed.

@@ -61,6 +61,19 @@ impl SessionListDialog {
         self.filter();
     }
 
+    pub fn update_session_title(&mut self, session_id: &str, title: String, updated_at: i64) {
+        let selected_id = self.selected_session_id();
+        if let Some(session) = self
+            .sessions
+            .iter_mut()
+            .find(|session| session.id == session_id)
+        {
+            session.title = title;
+            session.updated_at = updated_at;
+            self.filter_preserving_selection(selected_id.as_deref());
+        }
+    }
+
     pub fn open(&mut self, current_session_id: Option<&str>) {
         self.open = true;
         self.query.clear();
@@ -190,6 +203,10 @@ impl SessionListDialog {
     }
 
     fn filter(&mut self) {
+        self.filter_preserving_selection(None);
+    }
+
+    fn filter_preserving_selection(&mut self, selected_id: Option<&str>) {
         let query = self.query.to_lowercase();
         self.filtered = self
             .sessions
@@ -202,11 +219,14 @@ impl SessionListDialog {
             })
             .map(|(idx, _)| idx)
             .collect();
-        self.state.select(if self.filtered.is_empty() {
-            None
-        } else {
-            Some(0)
-        });
+        let selected = selected_id
+            .and_then(|id| {
+                self.filtered
+                    .iter()
+                    .position(|idx| self.sessions.get(*idx).is_some_and(|s| s.id == id))
+            })
+            .or_else(|| (!self.filtered.is_empty()).then_some(0));
+        self.state.select(selected);
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
@@ -346,6 +366,43 @@ impl SessionListDialog {
 impl Default for SessionListDialog {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(id: &str, title: &str, updated_at: i64) -> SessionItem {
+        SessionItem {
+            id: id.to_string(),
+            title: title.to_string(),
+            directory: "/tmp/project".to_string(),
+            parent_id: None,
+            updated_at,
+            is_busy: false,
+        }
+    }
+
+    #[test]
+    fn update_session_title_updates_existing_row_without_reopening() {
+        let mut dialog = SessionListDialog::new();
+        dialog.set_sessions(vec![
+            item("ses_a", "Old title", 1),
+            item("ses_b", "Other", 2),
+        ]);
+        dialog.open(Some("ses_a"));
+
+        dialog.update_session_title("ses_a", "New title".to_string(), 3);
+
+        let session = dialog
+            .sessions
+            .iter()
+            .find(|session| session.id == "ses_a")
+            .expect("updated session should remain in the list");
+        assert_eq!(session.title, "New title");
+        assert_eq!(session.updated_at, 3);
+        assert_eq!(dialog.selected_session_id().as_deref(), Some("ses_a"));
     }
 }
 

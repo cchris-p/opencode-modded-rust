@@ -1110,15 +1110,18 @@ impl App {
                 KeyCode::Enter => {
                     if let Some((session_id, title)) = self.session_rename_dialog.confirm() {
                         if let Some(client) = self.context.get_api_client() {
-                            if let Err(err) = client.update_session_title(&session_id, &title) {
-                                self.alert_dialog.set_message(&format!(
-                                    "Failed to rename session `{}`:\n{}",
-                                    session_id, err
-                                ));
-                                self.alert_dialog.open();
-                            } else {
-                                self.refresh_session_list_dialog();
-                                let _ = self.sync_session_from_server(&session_id);
+                            match client.update_session_title(&session_id, &title) {
+                                Ok(session) => {
+                                    self.apply_updated_session(&session);
+                                    let _ = self.sync_session_from_server(&session_id);
+                                }
+                                Err(err) => {
+                                    self.alert_dialog.set_message(&format!(
+                                        "Failed to rename session `{}`:\n{}",
+                                        session_id, err
+                                    ));
+                                    self.alert_dialog.open();
+                                }
                             }
                         }
                     }
@@ -1364,18 +1367,21 @@ impl App {
                         if let Some((session_id, title)) = self.session_list_dialog.confirm_rename()
                         {
                             if let Some(client) = self.context.get_api_client() {
-                                if let Err(err) = client.update_session_title(&session_id, &title) {
-                                    self.alert_dialog.set_message(&format!(
-                                        "Failed to rename session `{}`:\n{}",
-                                        session_id, err
-                                    ));
-                                    self.alert_dialog.open();
-                                } else {
-                                    self.refresh_session_list_dialog();
-                                    if self.active_session_id.as_deref()
-                                        == Some(session_id.as_str())
-                                    {
-                                        let _ = self.sync_session_from_server(&session_id);
+                                match client.update_session_title(&session_id, &title) {
+                                    Ok(session) => {
+                                        self.apply_updated_session(&session);
+                                        if self.active_session_id.as_deref()
+                                            == Some(session_id.as_str())
+                                        {
+                                            let _ = self.sync_session_from_server(&session_id);
+                                        }
+                                    }
+                                    Err(err) => {
+                                        self.alert_dialog.set_message(&format!(
+                                            "Failed to rename session `{}`:\n{}",
+                                            session_id, err
+                                        ));
+                                        self.alert_dialog.open();
                                     }
                                 }
                             }
@@ -3432,6 +3438,37 @@ impl App {
     fn cache_session_from_api(&self, session: &SessionInfo) {
         let mut session_ctx = self.context.session.write();
         session_ctx.upsert_session(map_api_session(session));
+    }
+
+    fn apply_updated_session(&mut self, session: &SessionInfo) {
+        let mapped = map_api_session(session);
+        let active = self.active_session_id.as_deref() == Some(session.id.as_str())
+            || self.current_session_id().as_deref() == Some(session.id.as_str());
+
+        {
+            let mut session_ctx = self.context.session.write();
+            session_ctx.sessions.insert(session.id.clone(), mapped);
+            session_ctx.messages.entry(session.id.clone()).or_default();
+            session_ctx
+                .session_status
+                .entry(session.id.clone())
+                .or_insert(SessionStatus::Idle);
+            if active {
+                session_ctx.current_session_id = Some(session.id.clone());
+            }
+        }
+
+        if active {
+            let _ = crate::set_session_title(&session.title);
+        }
+
+        if self.session_list_dialog.is_open() {
+            self.session_list_dialog.update_session_title(
+                &session.id,
+                session.title.clone(),
+                session.time.updated,
+            );
+        }
     }
 
     fn create_optimistic_session(&mut self) -> String {
