@@ -400,6 +400,26 @@ mod tests {
     }
 
     #[test]
+    fn plan_rules_disable_edit_tools_but_keep_read_search_tools() {
+        let ruleset = build_agent_ruleset("plan", &[]);
+        let tools = vec![
+            "edit".to_string(),
+            "write".to_string(),
+            "ls".to_string(),
+            "grep".to_string(),
+            "read".to_string(),
+        ];
+
+        let disabled_tools = disabled(&tools, &ruleset);
+
+        assert!(disabled_tools.contains("edit"));
+        assert!(disabled_tools.contains("write"));
+        assert!(!disabled_tools.contains("ls"));
+        assert!(!disabled_tools.contains("grep"));
+        assert!(!disabled_tools.contains("read"));
+    }
+
+    #[test]
     fn external_directory_patterns_normalize_to_directory_boundary() {
         assert_eq!(
             normalize_permission_pattern("external_directory", "/tmp/demo"),
