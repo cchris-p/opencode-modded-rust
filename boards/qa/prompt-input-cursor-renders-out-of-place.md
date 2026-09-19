@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -75,15 +75,21 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 
 ## Dev Notes
 
-- (empty)
+- 2026-09-19: Fixed cursor placement at the prompt content-width boundary. The visual cursor column can legitimately equal `input_width` when the insertion point is immediately after the last visible cell on a full line; rendering now allows that column instead of clamping it back to `input_width - 1`.
+- Added/extended cursor visual-position coverage for the exact full-width boundary case.
 
 ## Verification
 
-- (empty)
+- `cargo test -p opencode-tui cursor_visual_position` passed.
+- `cargo test -p opencode-tui components::prompt::tests::utf8_backspace_delete_and_cursor_are_char_safe -- --exact` passed.
+- `cargo test -p opencode-tui` failed on existing prompt autocomplete isolation: `components::prompt::tests::tab_autocomplete_uses_first_candidate` returns `test` instead of `team`; the following env-lock test then reports a poisoned lock.
+- `cargo fmt --check` failed on pre-existing formatting drift in `crates/opencode-provider/src/anthropic.rs` and `crates/opencode-tui/src/context/keybind.rs`, outside this change.
+- `ort-build` could not be run from this shell because the command was not found.
+- `cargo build` was attempted as a fallback in the original QA checkout and timed out after 120 seconds; rustc processes were terminated by timeout signal, not source diagnostics.
 
 ## PR
 
-- (empty)
+- https://github.com/cchris-p/opencode-modded-rust/pull/47
 
 ## Completion
 

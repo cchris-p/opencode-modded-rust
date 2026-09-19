@@ -321,7 +321,7 @@ impl Prompt {
                 .saturating_add(1)
                 .saturating_add(PROMPT_BLOCK_PAD_LEFT);
             let content_y = chunks[0].y.saturating_add(PROMPT_BLOCK_PAD_TOP);
-            let max_col = input_width.saturating_sub(1);
+            let max_col = input_width;
             frame.set_cursor(
                 content_x.saturating_add(cursor_col.min(max_col)),
                 content_y.saturating_add(cursor_row.min(content_lines.saturating_sub(1))),
@@ -1571,6 +1571,10 @@ mod tests {
         assert_eq!(
             input_cursor_visual_position("ab\ncd", 5, 10),
             CursorVisualPosition { row: 1, col: 2 }
+        );
+        assert_eq!(
+            input_cursor_visual_position("abc", 3, 3),
+            CursorVisualPosition { row: 0, col: 3 }
         );
         assert_eq!(
             input_cursor_visual_position("你a好", "你a".len(), 3),
