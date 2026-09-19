@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-18"
 ---
 
@@ -49,3 +49,7 @@ Map `Ctrl+R` in the TUI session view to the existing session rename action.
 - `cargo test -p opencode-tui context::keybind::tests::session_rename_defaults_to_ctrl_r` passed.
 - `cargo check -p opencode-tui` passed.
 - Initial concurrent Cargo verification attempt timed out while competing for package/build locks; rerun sequentially passed.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/41
