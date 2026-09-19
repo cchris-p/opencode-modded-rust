@@ -78,3 +78,9 @@ This card establishes the durable session metadata needed before UI and command 
 - SQLite storage adds a guarded nullable `workspace_identity` column plus index for existing databases and persists the field on session create/update/read/list paths.
 - Verification run: `cargo test -p opencode-session session::tests::test_session_workspace_identity_canonicalizes_relative_path`, `cargo test -p opencode-session session::tests::test_child_session`, `cargo test -p opencode-session session::tests::test_legacy_session_row_keeps_unknown_workspace_identity`, `cargo test -p opencode-session session::tests::test_sessions_from_different_directories_have_different_workspace_identities`, `cargo check -p opencode-storage -p opencode-server -p opencode-cli -p opencode-tui`, `cargo test -p opencode-storage`.
 - Note: full `cargo test -p opencode-session` exceeded the 120s command timeout and reported failures in existing `instruction::tests::test_find_up_*`; all new workspace identity tests passed.
+
+## Merge Closeout
+
+- PR #42 merged into `development` on 2026-09-19.
+- Remote and local feature branch cleanup completed for `feature/feat-022-session-workspace-identity`; no temporary worktree was used.
+- Card intentionally remains in `qa` for post-merge verification.
