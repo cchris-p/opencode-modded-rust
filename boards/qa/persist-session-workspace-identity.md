@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-18"
 ---
 
