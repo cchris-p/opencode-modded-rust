@@ -414,13 +414,21 @@ impl ApiClient {
     }
 
     pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionInfo>> {
-        self.list_sessions_filtered(None, None)
+        self.list_sessions_filtered(None, None, None)
+    }
+
+    pub fn list_sessions_for_workspace(
+        &self,
+        workspace_identity: Option<&str>,
+    ) -> anyhow::Result<Vec<SessionInfo>> {
+        self.list_sessions_filtered(None, None, workspace_identity)
     }
 
     pub fn list_sessions_filtered(
         &self,
         search: Option<&str>,
         limit: Option<usize>,
+        workspace_identity: Option<&str>,
     ) -> anyhow::Result<Vec<SessionInfo>> {
         let url = format!("{}/session", self.base_url);
         let mut params: Vec<(&str, String)> = Vec::new();
@@ -429,6 +437,12 @@ impl ApiClient {
         }
         if let Some(limit) = limit.filter(|l| *l > 0) {
             params.push(("limit", limit.to_string()));
+        }
+        if let Some(workspace_identity) = workspace_identity
+            .map(str::trim)
+            .filter(|workspace| !workspace.is_empty())
+        {
+            params.push(("workspace_identity", workspace_identity.to_string()));
         }
 
         let request = if params.is_empty() {

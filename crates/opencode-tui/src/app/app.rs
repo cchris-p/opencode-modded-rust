@@ -2891,10 +2891,11 @@ impl App {
         };
 
         let query = self.session_list_dialog.query().trim().to_string();
+        let workspace = self.context.directory.read().clone();
         let sessions_result = if query.is_empty() {
-            client.list_sessions()
+            client.list_sessions_for_workspace(Some(&workspace))
         } else {
-            client.list_sessions_filtered(Some(&query), Some(30))
+            client.list_sessions_filtered(Some(&query), Some(30), Some(&workspace))
         };
         let Ok(sessions) = sessions_result else {
             return;

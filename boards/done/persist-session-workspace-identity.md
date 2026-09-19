@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-18"
 ---
 
@@ -84,3 +84,7 @@ This card establishes the durable session metadata needed before UI and command 
 - PR #42 merged into `development` on 2026-09-19.
 - Remote and local feature branch cleanup completed for `feature/feat-022-session-workspace-identity`; no temporary worktree was used.
 - Card intentionally remains in `qa` for post-merge verification.
+
+## QA Report
+
+- 2026-09-19: User ran `ort-build` and `ort` in a dedicated directory with no session history after the follow-up uncommitted workspace-list filtering fix. The TUI no longer showed transcripts from other workspaces. QA passed.

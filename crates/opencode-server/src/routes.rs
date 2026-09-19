@@ -147,6 +147,7 @@ fn session_routes() -> Router<Arc<ServerState>> {
 #[derive(Debug, Deserialize)]
 pub struct ListSessionsQuery {
     pub directory: Option<String>,
+    pub workspace_identity: Option<String>,
     pub roots: Option<bool>,
     pub start: Option<i64>,
     pub search: Option<String>,
@@ -256,8 +257,13 @@ async fn list_sessions(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionInfo>>> {
+    let workspace_identity = query
+        .workspace_identity
+        .as_deref()
+        .and_then(opencode_session::Session::canonical_workspace_identity);
     let filter = opencode_session::SessionFilter {
         directory: query.directory,
+        workspace_identity,
         roots: query.roots.unwrap_or(false),
         start: query.start,
         search: query.search,

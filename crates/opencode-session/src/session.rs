@@ -1277,6 +1277,11 @@ impl SessionManager {
                         return false;
                     }
                 }
+                if let Some(ref workspace_identity) = filter.workspace_identity {
+                    if s.workspace_identity.as_ref() != Some(workspace_identity) {
+                        return false;
+                    }
+                }
                 if filter.roots && s.parent_id.is_some() {
                     return false;
                 }
@@ -1451,6 +1456,7 @@ impl SessionManager {
 #[derive(Debug, Clone, Default)]
 pub struct SessionFilter {
     pub directory: Option<String>,
+    pub workspace_identity: Option<String>,
     pub roots: bool,
     pub start: Option<i64>,
     pub search: Option<String>,
@@ -1579,6 +1585,34 @@ mod tests {
 
         manager.delete(&session.id);
         assert_eq!(manager.count(), 0);
+    }
+
+    #[test]
+    fn test_list_filtered_by_workspace_identity_excludes_other_workspaces_and_legacy() {
+        let dir_a = tempfile::tempdir().expect("dir a should be created");
+        let dir_b = tempfile::tempdir().expect("dir b should be created");
+        let workspace_a = Session::canonical_workspace_identity(&dir_a.path().to_string_lossy())
+            .expect("workspace a should resolve");
+
+        let mut manager = SessionManager::new();
+        let session_a = manager.create("project-1", dir_a.path().to_string_lossy());
+        manager.create("project-1", dir_b.path().to_string_lossy());
+
+        let mut legacy = Session::new("project-1", dir_a.path().to_string_lossy());
+        legacy.workspace_identity = None;
+        manager.update(legacy);
+
+        let sessions = manager.list_filtered(SessionFilter {
+            directory: None,
+            workspace_identity: Some(workspace_a),
+            roots: false,
+            start: None,
+            search: None,
+            limit: None,
+        });
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, session_a.id);
     }
 
     #[test]
