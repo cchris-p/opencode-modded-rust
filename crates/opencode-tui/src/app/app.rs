@@ -530,6 +530,13 @@ impl App {
                     }
                 }
 
+                if self.matches_keybind("session_rename", *key) {
+                    if matches!(self.context.current_route(), Route::Session { .. }) {
+                        self.open_session_rename_dialog();
+                        return Ok(());
+                    }
+                }
+
                 if self.matches_keybind("command_palette", *key) {
                     self.sync_command_palette_labels();
                     self.command_palette.open();
