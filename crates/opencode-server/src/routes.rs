@@ -296,6 +296,9 @@ impl Default for SessionRunStatus {
 static SESSION_RUN_STATUS: Lazy<RwLock<HashMap<String, SessionRunStatus>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+static ACTIVE_PROMPTS: Lazy<RwLock<HashMap<String, Arc<opencode_session::SessionPrompt>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 async fn set_session_run_status(
     state: &Arc<ServerState>,
     session_id: &str,
@@ -1961,11 +1964,17 @@ async fn session_prompt(
             })
         });
 
-        let prompt_runner = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
-            opencode_session::SessionStateManager::new(),
-        )))
-        .with_ask_callback(permission_callback)
-        .with_ask_question_callback(question_callback);
+        let prompt_runner = Arc::new(
+            opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
+                opencode_session::SessionStateManager::new(),
+            )))
+            .with_ask_callback(permission_callback)
+            .with_ask_question_callback(question_callback),
+        );
+        ACTIVE_PROMPTS
+            .write()
+            .await
+            .insert(session_id.clone(), prompt_runner.clone());
         let input = opencode_session::PromptInput {
             session_id: session_id.clone(),
             message_id: None,
@@ -2021,6 +2030,15 @@ async fn session_prompt(
             }
             assistant.add_text(format!("Provider error: {}", error));
         }
+        {
+            let mut active_prompts = ACTIVE_PROMPTS.write().await;
+            if active_prompts
+                .get(&session_id)
+                .is_some_and(|active| Arc::ptr_eq(active, &prompt_runner))
+            {
+                active_prompts.remove(&session_id);
+            }
+        }
         let _ = update_task.await;
 
         {
@@ -2050,22 +2068,40 @@ async fn abort_prompt(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let sessions = state.sessions.lock().await;
-    if sessions.get(&id).is_none() {
-        return Err(ApiError::SessionNotFound(id));
+    abort_active_session_prompt(state, id).await
+}
+
+async fn abort_active_session_prompt(
+    state: Arc<ServerState>,
+    id: String,
+) -> Result<Json<serde_json::Value>> {
+    {
+        let sessions = state.sessions.lock().await;
+        if sessions.get(&id).is_none() {
+            return Err(ApiError::SessionNotFound(id));
+        }
     }
-    Ok(Json(serde_json::json!({ "aborted": true })))
+
+    let prompt_runner = ACTIVE_PROMPTS.read().await.get(&id).cloned();
+    let aborted = if let Some(prompt_runner) = prompt_runner {
+        prompt_runner.cancel(&id).await;
+        true
+    } else {
+        false
+    };
+
+    if aborted {
+        set_session_run_status(&state, &id, SessionRunStatus::Idle).await;
+    }
+
+    Ok(Json(serde_json::json!({ "aborted": aborted })))
 }
 
 async fn abort_session(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let sessions = state.sessions.lock().await;
-    if sessions.get(&id).is_none() {
-        return Err(ApiError::SessionNotFound(id));
-    }
-    Ok(Json(serde_json::json!({ "aborted": true })))
+    abort_active_session_prompt(state, id).await
 }
 
 #[derive(Debug, Deserialize)]
