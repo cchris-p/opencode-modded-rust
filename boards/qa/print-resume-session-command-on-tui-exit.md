@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "done"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -102,8 +102,15 @@ Why the command is better than a URL here:
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/53
 
-## Closeout
+## Merge Closeout
 
 - Merged into `development` on 2026-09-21 as merge commit `ac569decc7c3118812893fa09920045b672fb006`.
-- Remote branch `feature/FEAT-033-resume-session-command` deleted after merge.
-- Moved to `done` after merge closeout per explicit user request.
+- Remote branch `feature/FEAT-033-resume-session-command` deleted after merge; temporary worktree removed.
+- Remains in `qa` pending a recorded QA report; not promoted to `done`.
+
+## QA Notes
+
+- Test against `development` at or after merge commit `ac569de`.
+- Run `ort-build` then `ort`; send at least one message and exit with `Ctrl+D`.
+- Confirm a resume hint prints on stderr, e.g. `ort --session <id>` (or `opencode --session <id>`), and that running it reopens the same session.
+- Confirm switching sessions mid-run changes the printed id, and that the detach path still prints `opencode attach <url>`.
