@@ -28,11 +28,13 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `context.md` defines context-construction requirements.
 - `task-state.md` defines authoritative task-state rules.
 - `runtime-lifecycle.md` defines task lifecycle expectations.
+- `session-durability.md` defines durable session/message ownership, additive persistence, explicit deletion, and resume integrity.
 - `retrieval.md` defines retrieval expectations.
 - `coding-session-behavior.md` defines agentic coding-session request requirements (agent identity, system prompt, environment context, tool attachment).
 - `cli-task-targeting.md` defines CLI task target selection and queued cross-client send requirements.
 - `coding-session-polling.md` defines low-context polling requirements for coding-session waits.
 - `verification.md` defines verification requirements.
+- `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.
 - Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
 
 ## Cross-repo boundary

@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-19"
 ---
 
@@ -85,3 +85,15 @@ Make the export completion/confirmation UI identify the saved file clearly enoug
 - `FEAT-001` Improve historical chat transcripts workflow
 - `BUG-015` Session rename immediately refreshes current terminal surfaces
 - `FEAT-025` Map Ctrl+R to rename
+
+## Closeout
+
+- User retest confirmed the export dialog accepts a filepath in the filename field (for example a
+  subdirectory or an absolute path) and, after a successful export, the confirmation displays that
+  path. Default exports to the workspace root correctly show the relative filename via
+  `export_path_display` (`crates/opencode-tui/src/app/app.rs:4701-4715`).
+- Export location is the `ort` workspace root by default, resolved through
+  `std::env::current_dir()` in `export_session_to_file`
+  (`crates/opencode-tui/src/app/app.rs:2298-2311`).
+- Closed as done on 2026-09-21. The related dialog text-input defects found during retest are
+  tracked separately as `BUG-029`.

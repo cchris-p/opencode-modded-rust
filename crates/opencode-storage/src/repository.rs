@@ -775,6 +775,61 @@ impl MessageRepository {
 
         Ok(())
     }
+
+    /// Atomically replace a session's stored message history with `messages`.
+    ///
+    /// The delete and the re-insert run in one transaction so an interrupted
+    /// save can never leave a session with partially deleted messages.
+    pub async fn replace_for_session(
+        &self,
+        session_id: &str,
+        messages: &[SessionMessage],
+    ) -> Result<(), DatabaseError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        sqlx::query("DELETE FROM messages WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        for message in messages {
+            let data_json = serde_json::to_string(&message.parts)
+                .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+            let role_str = match message.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::System => "system",
+                MessageRole::Tool => "tool",
+            };
+
+            sqlx::query(
+                r#"
+                INSERT INTO messages (id, session_id, role, created_at, data)
+                VALUES (?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&message.id)
+            .bind(&message.session_id)
+            .bind(role_str)
+            .bind(message.created_at.timestamp_millis())
+            .bind(&data_json)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1145,5 +1200,94 @@ impl PartRepository {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+
+    fn message(session_id: &str, id: &str, text: &str) -> SessionMessage {
+        let mut message = SessionMessage::user(session_id, text);
+        message.id = id.to_string();
+        message
+    }
+
+    fn session(id: &str) -> Session {
+        let now = Utc::now();
+        Session {
+            id: id.to_string(),
+            slug: id.to_string(),
+            project_id: "default".to_string(),
+            directory: ".".to_string(),
+            workspace_identity: None,
+            parent_id: None,
+            title: "test".to_string(),
+            version: "1".to_string(),
+            time: SessionTime {
+                created: now.timestamp_millis(),
+                updated: now.timestamp_millis(),
+                compacting: None,
+                archived: None,
+            },
+            messages: vec![],
+            summary: None,
+            share: None,
+            revert: None,
+            permission: None,
+            usage: None,
+            status: SessionStatus::Active,
+            task: None,
+            metadata: HashMap::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn replace_for_session_replaces_only_target_session() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        session_repo
+            .create(&session("ses_1"))
+            .await
+            .expect("create ses_1");
+        session_repo
+            .create(&session("ses_2"))
+            .await
+            .expect("create ses_2");
+        let repo = MessageRepository::new(pool);
+
+        repo.create(&message("ses_1", "msg_1", "one"))
+            .await
+            .expect("create one");
+        repo.create(&message("ses_1", "msg_2", "two"))
+            .await
+            .expect("create two");
+        repo.create(&message("ses_2", "msg_other", "other"))
+            .await
+            .expect("create other");
+
+        repo.replace_for_session("ses_1", &[message("ses_1", "msg_new", "replaced")])
+            .await
+            .expect("replace should succeed");
+
+        let ses_1 = repo
+            .list_for_session("ses_1")
+            .await
+            .expect("list ses_1 should succeed");
+        assert_eq!(ses_1.len(), 1);
+        assert_eq!(ses_1[0].id, "msg_new");
+
+        let ses_2 = repo
+            .list_for_session("ses_2")
+            .await
+            .expect("list ses_2 should succeed");
+        assert_eq!(ses_2.len(), 1);
+        assert_eq!(ses_2[0].id, "msg_other");
     }
 }

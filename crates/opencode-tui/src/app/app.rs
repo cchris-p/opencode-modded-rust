@@ -255,8 +255,13 @@ impl App {
         let _ = app.refresh_mcp_dialog();
 
         if let Some(session_id) = initial_session_id {
-            let _ = app.sync_session_from_server(&session_id);
-            app.ensure_session_view(&session_id);
+            let sync_result = app.sync_session_from_server(&session_id);
+            if let Err(err) = open_initial_session(sync_result, || {
+                app.ensure_session_view(&session_id);
+            }) {
+                let _ = terminal::restore();
+                return Err(err);
+            }
         }
         app.sync_prompt_spinner_style();
         app.sync_prompt_spinner_state();
@@ -4812,9 +4817,41 @@ fn timeline_entries_from_messages(msgs: &[Message]) -> Vec<TimelineEntry> {
         .collect()
 }
 
+/// Create the initial `--session` view only when the server sync succeeds.
+///
+/// A session id that no longer exists must surface the fetch error instead of
+/// silently opening an empty session, so the view is opened only after a
+/// successful sync.
+fn open_initial_session(
+    sync_result: anyhow::Result<()>,
+    open_view: impl FnOnce(),
+) -> anyhow::Result<()> {
+    sync_result?;
+    open_view();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_session_sync_failure_does_not_open_view() {
+        let mut opened = false;
+        let result =
+            open_initial_session(Err(anyhow::anyhow!("Failed to get session: 404")), || {
+                opened = true;
+            });
+        assert!(result.is_err());
+        assert!(!opened);
+    }
+
+    #[test]
+    fn initial_session_sync_success_opens_view() {
+        let mut opened = false;
+        open_initial_session(Ok(()), || opened = true).expect("sync success should open the view");
+        assert!(opened);
+    }
 
     #[test]
     fn clean_selection_text_removes_reported_leading_chrome() {

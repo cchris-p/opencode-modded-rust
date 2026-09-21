@@ -529,16 +529,38 @@ async fn delete_session(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
+    let deleted_ids = {
+        let mut sessions = state.sessions.lock().await;
+        if sessions.get(&id).is_none() {
+            return Err(ApiError::SessionNotFound(id.clone()));
+        }
+
+        let mut ids = vec![id.clone()];
+        collect_descendant_ids(&sessions, &id, &mut ids);
+        sessions.delete(&id);
+        ids
+    };
+
     state
-        .sessions
-        .lock()
+        .delete_sessions_from_storage(&deleted_ids)
         .await
-        .delete(&id)
-        .ok_or_else(|| ApiError::SessionNotFound(id.clone()))?;
+        .map_err(|err| ApiError::InternalError(err.to_string()))?;
+
     SESSION_RUN_STATUS.write().await.remove(&id);
     SESSION_QUEUES.lock().await.remove(&id);
-    persist_sessions_if_enabled(&state).await;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// Collect the ids of every descendant session of `parent_id`.
+fn collect_descendant_ids(
+    sessions: &opencode_session::SessionManager,
+    parent_id: &str,
+    out: &mut Vec<String>,
+) {
+    for child in sessions.children(parent_id) {
+        out.push(child.id.clone());
+        collect_descendant_ids(sessions, &child.id, out);
+    }
 }
 
 async fn get_session_children(
@@ -6553,4 +6575,73 @@ async fn get_auth_bridge(provider: &str) -> Result<Arc<PluginAuthBridge>> {
         .auth_bridge(provider)
         .await
         .ok_or_else(|| ApiError::NotFound(format!("no auth plugin for provider: {}", provider)))
+}
+
+#[cfg(test)]
+mod delete_session_tests {
+    use super::*;
+    use crate::server::test_state_with_repos;
+    use opencode_storage::{Database, MessageRepository, SessionRepository};
+
+    #[tokio::test]
+    async fn delete_session_removes_root_and_children_from_storage() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let state = Arc::new(test_state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        ));
+
+        let (root_id, child_id) = {
+            let mut manager = state.sessions.lock().await;
+            let root = manager.create("default", ".");
+            let root_id = root.id.clone();
+            manager
+                .get_mut(&root_id)
+                .expect("root should exist")
+                .add_user_message("root");
+            let child = manager.create_child(&root_id).expect("child should exist");
+            let child_id = child.id.clone();
+            manager
+                .get_mut(&child_id)
+                .expect("child should exist")
+                .add_user_message("child");
+            (root_id, child_id)
+        };
+
+        state
+            .sync_sessions_to_storage()
+            .await
+            .expect("seed storage should succeed");
+
+        let result = delete_session(State(state.clone()), Path(root_id.clone()))
+            .await
+            .expect("explicit delete should succeed");
+        assert_eq!(result.0["deleted"], serde_json::json!(true));
+
+        let session_repo = SessionRepository::new(pool.clone());
+        let message_repo = MessageRepository::new(pool.clone());
+        assert!(session_repo
+            .get(&root_id)
+            .await
+            .expect("get root")
+            .is_none());
+        assert!(session_repo
+            .get(&child_id)
+            .await
+            .expect("get child")
+            .is_none());
+        assert!(message_repo
+            .list_for_session(&root_id)
+            .await
+            .expect("list root messages")
+            .is_empty());
+        assert!(message_repo
+            .list_for_session(&child_id)
+            .await
+            .expect("list child messages")
+            .is_empty());
+    }
 }
