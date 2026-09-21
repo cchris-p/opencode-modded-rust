@@ -2168,29 +2168,7 @@ impl App {
         let entries = session_ctx
             .messages
             .get(&session_id)
-            .map(|msgs| {
-                msgs.iter()
-                    .map(|m| {
-                        let role = match m.role {
-                            MessageRole::User => "user",
-                            MessageRole::Assistant => "assistant",
-                            MessageRole::System => "system",
-                        };
-                        let preview = m
-                            .content
-                            .chars()
-                            .take(60)
-                            .collect::<String>()
-                            .replace('\n', " ");
-                        TimelineEntry {
-                            message_id: m.id.clone(),
-                            role: role.to_string(),
-                            preview,
-                            timestamp: m.created_at.format("%H:%M:%S").to_string(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .map(|msgs| timeline_entries_from_messages(msgs))
             .unwrap_or_default();
         drop(session_ctx);
         self.timeline_dialog.open(entries);
@@ -4730,6 +4708,26 @@ fn map_permission_type(permission: &str) -> crate::components::PermissionType {
     }
 }
 
+fn timeline_entries_from_messages(msgs: &[Message]) -> Vec<TimelineEntry> {
+    msgs.iter()
+        .filter(|m| m.role == MessageRole::User)
+        .map(|m| {
+            let preview = m
+                .content
+                .chars()
+                .take(60)
+                .collect::<String>()
+                .replace('\n', " ");
+            TimelineEntry {
+                message_id: m.id.clone(),
+                role: "user".to_string(),
+                preview,
+                timestamp: m.created_at.format("%H:%M:%S").to_string(),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4753,6 +4751,51 @@ mod tests {
             tokens: TokenUsage::default(),
             parts,
         }
+    }
+
+    fn message_with_role(id: &str, role: MessageRole, content: &str) -> Message {
+        Message {
+            id: id.to_string(),
+            role,
+            content: content.to_string(),
+            created_at: Utc
+                .timestamp_millis_opt(1_700_000_000_000)
+                .single()
+                .unwrap(),
+            agent: None,
+            model: None,
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: None,
+            cost: 0.0,
+            tokens: TokenUsage::default(),
+            parts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn timeline_entries_include_only_user_prompts() {
+        let user = message_with_role("msg_user", MessageRole::User, "hello there");
+        let assistant = message_with_role("msg_assistant", MessageRole::Assistant, "hi");
+        let system = message_with_role("msg_system", MessageRole::System, "system note");
+
+        let entries = timeline_entries_from_messages(&[user, assistant, system]);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message_id, "msg_user");
+        assert_eq!(entries[0].role, "user");
+        assert_eq!(entries[0].preview, "hello there");
+        assert!(!entries[0].timestamp.is_empty());
+    }
+
+    #[test]
+    fn timeline_entries_empty_when_no_user_prompts() {
+        let assistant = message_with_role("msg_a", MessageRole::Assistant, "hi");
+        let system = message_with_role("msg_s", MessageRole::System, "note");
+
+        assert!(timeline_entries_from_messages(&[]).is_empty());
+        assert!(timeline_entries_from_messages(&[assistant, system]).is_empty());
     }
 
     #[test]
