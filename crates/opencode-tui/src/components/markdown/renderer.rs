@@ -226,10 +226,10 @@ impl MarkdownRenderer {
                                 state.next += 1;
                                 (out, self.theme.markdown_list_enumeration)
                             } else {
-                                ("• ".to_string(), self.theme.markdown_list_item)
+                                ("- ".to_string(), self.theme.markdown_list_item)
                             }
                         } else {
-                            ("• ".to_string(), self.theme.markdown_list_item)
+                            ("- ".to_string(), self.theme.markdown_list_item)
                         };
                         current.push(Span::styled(prefix, Style::default().fg(color)));
                     }

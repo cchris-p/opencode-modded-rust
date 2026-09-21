@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -194,3 +194,20 @@ first fix unless it is needed to remove leading gutter chrome.
 - Remote PR branch `bug/BUG-024-clean-selection-gutters` was deleted by the GitHub merge flow and the
   stale remote-tracking ref was pruned locally.
 - Card remains in `qa` for post-merge validation; no QA report has been recorded yet.
+
+## QA Report - 2026-09-21
+
+- User live-tested mouse-selection copy after the PR #59 merge and reported the selected text "pastes
+  much [better] now": leading gutter/caret chrome is gone, so the reported `  │▸ text` case copies as
+  clean prose.
+- Follow-up feedback: markdown list bullets still rendered as `• `; user asked for `- ` instead so the
+  copied text matches markdown source.
+- Fix applied directly on `development` (no PR): assistant/user markdown list items now render `- `
+  instead of `• ` (`crates/opencode-tui/src/components/markdown/renderer.rs`). Ordered list prefixes
+  (`N. `) and task-list markers (`- [x] `) are unchanged.
+- `cargo fmt -p opencode-tui` and `cargo check -p opencode-tui` pass.
+
+## Closeout - 2026-09-21
+
+- Marked `done` per user: selection copy is clean and the bullet glyph now matches markdown source.
+- User will reopen a new card if further copy-fidelity work is needed.
