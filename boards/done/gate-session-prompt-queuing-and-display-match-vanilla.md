@@ -262,9 +262,9 @@ implementation. They are binding alongside the observable behavior above.
 
 ## Archived Follow-ups
 
-- `FEAT-021` Queue CLI task sends while TUI session is open - archived 2026-09-21 (not planned).
-- `FEAT-005` Copy Cline-style CLI task send conventions - archived 2026-09-21 (not planned).
-- `FEAT-019` Add CLI status visibility for tasks and background sessions - archived 2026-09-21 (not planned).
+- `CLI-008` Queue CLI task sends while TUI session is open - archived 2026-09-21 (not planned).
+- `CLI-001` Copy Cline-style CLI task send conventions - archived 2026-09-21 (not planned).
+- `CLI-006` Add CLI status visibility for tasks and background sessions - archived 2026-09-21 (not planned).
 
 Session prompt queuing and the queued-message display are owned solely by this card. The three
 follow-up stories were archived by user request on 2026-09-21 and will not be implemented.
@@ -272,10 +272,10 @@ follow-up stories were archived by user request on 2026-09-21 and will not be im
 ## Related Items
 
 - `invariants/message-queuing.md` - current-behavior evidence and target invariants for this gate.
-- `FEAT-021` Queue CLI task sends while TUI session is open - archived 2026-09-21; queue implemented by this card.
-- `FEAT-005` Copy Cline-style CLI task send conventions - archived 2026-09-21; not planned.
-- `FEAT-019` Add CLI status visibility for tasks and background sessions - archived 2026-09-21; not planned.
-- `FEAT-020` Add default task target selection for CLI sends - routing into a target; already merged,
+- `CLI-008` Queue CLI task sends while TUI session is open - archived 2026-09-21; queue implemented by this card.
+- `CLI-001` Copy Cline-style CLI task send conventions - archived 2026-09-21; not planned.
+- `CLI-006` Add CLI status visibility for tasks and background sessions - archived 2026-09-21; not planned.
+- `CLI-007` Add default task target selection for CLI sends - routing into a target; already merged,
   not blocked.
 - `FEAT-007` Add advanced coding-session polling - adjacent waiting-on-state work, not queueing.
 - `FEAT-036` Persist and recall typed input-box messages after send or clear - local draft recall, not a
@@ -332,7 +332,7 @@ Documented partial:
 - The vanilla CLI run-footer "Manage queued prompts" surface (`runtime.queue.ts` / footer) is not in
   scope for this PR: the Rust CLI has no interactive run queue/footer today, so per the gate's
   conditional rule this half is recorded as a partial. Open a follow-up card only when that surface
-  exists. `FEAT-005`/`FEAT-019` remain blocked on this gate for the CLI command surfaces.
+  exists. `CLI-001`/`CLI-006` remain blocked on this gate for the CLI command surfaces.
 
 Verification:
 
@@ -363,7 +363,7 @@ Side-by-side parity evidence:
   `e4e27870d1e4048e34fe8354c16db2c68cab59c9`.
 - Card intentionally kept in `qa` for post-merge local verification; do not move to `done` until the
   user confirms the queue and `QUEUED` badge behavior on `development`.
-- `FEAT-021`, `FEAT-005`, and `FEAT-019` are unblocked by this gate; start `FEAT-021`/`FEAT-005`/`FEAT-019`
+- `CLI-008`, `CLI-001`, and `CLI-006` are unblocked by this gate; start `CLI-008`/`CLI-001`/`CLI-006`
   from `development` once QA passes.
 
 ## QA Closeout (2026-09-21, user)
@@ -373,6 +373,6 @@ card marked `done` and moved from `qa` to `done` on user request. No follow-up i
 
 ## Queue Consolidation (2026-09-21)
 
-- `FEAT-021`, `FEAT-005`, and `FEAT-019` were archived by user request and will not be implemented.
+- `CLI-008`, `CLI-001`, and `CLI-006` were archived by user request and will not be implemented.
   This card is now the primary and sole story for session prompt queuing and the queued-message display.
 - The Merge Closeout instruction to start those three cards from `development` is superseded.

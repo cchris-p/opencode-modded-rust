@@ -1,12 +1,12 @@
 ---
-id: "FEAT-042"
+id: "CLI-009"
 title: "CLI and direct-run question parity"
 priority: "P2"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 spec: ""
 status: "hold"
-predecessors: "FEAT-012"
+predecessors: "CLI-002"
 created: "2026-09-21"
 ---
 
@@ -24,10 +24,10 @@ duplicating divergent behavior.
 
 ## Blocked By
 
-- `FEAT-012` CLI/AgentExecutor tool-loop parity (`boards/hold/cli-agentexecutor-tool-loop-parity.md`)
+- `CLI-002` CLI/AgentExecutor tool-loop parity (`boards/hold/cli-agentexecutor-tool-loop-parity.md`)
   is on hold until `GATE-002` passes. It must first attach tools and run a tool loop, otherwise there
   is no interactive CLI surface to route questions through.
-- This card stays in `hold` until `FEAT-012` (or an equivalent direct-run surface) lands.
+- This card stays in `hold` until `CLI-002` (or an equivalent direct-run surface) lands.
 
 ## Problem
 
@@ -46,7 +46,7 @@ duplicating divergent behavior.
 ## Non-goals
 
 - TUI prompt UX (`FEAT-041`).
-- Building the CLI tool loop itself (that is `FEAT-012`).
+- Building the CLI tool loop itself (that is `CLI-002`).
 
 ## Acceptance criteria
 
@@ -63,5 +63,5 @@ duplicating divergent behavior.
 ## Related Items
 
 - `GATE-002` question-tool full parity - parent gate.
-- `FEAT-012` CLI/AgentExecutor tool-loop parity - predecessor; on hold.
+- `CLI-002` CLI/AgentExecutor tool-loop parity - predecessor; on hold.
 - `FEAT-041` TUI question prompt UX parity - shared prompt logic.

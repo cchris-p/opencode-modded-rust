@@ -60,7 +60,7 @@ navigation with a final confirm tab, digit option shortcuts, custom answers, mul
 
 - Session-scoped API routing (`FEAT-039`).
 - Runtime event names/cleanup (`FEAT-040`).
-- CLI/direct-run question handling (`FEAT-042`).
+- CLI/direct-run question handling (`CLI-009`).
 
 ## Acceptance criteria
 

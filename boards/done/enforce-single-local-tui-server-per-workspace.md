@@ -112,7 +112,7 @@ The stale-server failure was observed directly while QAing `BUG-004`:
 ## Follow-up - 2026-09-15
 
 - The recorded/rotated reuse model this card introduced is being removed entirely; see
-  `FEAT-016` (remove local TUI server reuse so every `ort` run starts a fresh server for the
+  `CLI-003` (remove local TUI server reuse so every `ort` run starts a fresh server for the
   activated workspace).
 - `BUG-011` documents the related symptom that led here: `ort` activated in a non-repo
   directory showed the rust repo as the workspace and the vanilla openrouter default.

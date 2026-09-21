@@ -61,8 +61,8 @@ This card establishes the durable session metadata needed before UI and command 
 
 ## Related Items
 
-- `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
-- `FEAT-020` Add default task target selection for CLI sends
+- `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
+- `CLI-007` Add default task target selection for CLI sends
 - `FEAT-023` Filter session list and load by workspace
 - `BUG-011` ort targets the rust repo workspace and inherits the vanilla openrouter default
 

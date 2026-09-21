@@ -197,7 +197,7 @@ The other candidate exit paths (event-channel disconnect, input reader death, fo
   and clear behavior this bug must not violate.
 - `FEAT-014` Enforce a single local TUI server per workspace and increment the server per additional
   ort run - fresh-session server lifecycle context for reproducing on a new terminal.
-- `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated
+- `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated
   workspace - relevant because the report is specific to new terminal sessions.
 
 ## Notes

@@ -54,7 +54,7 @@ Why the command is better than a URL here:
 
 - Auto-resuming a session without the user asking; this only prints a hint.
 - Changing `Ctrl+D` / `Esc` / `/exit` exit semantics; that is `FEAT-006`.
-- Changing detach behavior or the existing detach/reattach hint; that is `FEAT-017`.
+- Changing detach behavior or the existing detach/reattach hint; that is `CLI-004`.
 - Changing `--continue` / `--session` resolution rules.
 - Printing a live server URL for the normal-exit path.
 
@@ -79,9 +79,9 @@ Why the command is better than a URL here:
 - `FEAT-002` Keep sessions running after TUI exit (archived; superseded by `FEAT-014`)
 - `FEAT-006` Make Ctrl+D exit the TUI and Ctrl+C clear the prompt
 - `FEAT-014` Enforce a single local TUI server per workspace
-- `FEAT-017` Plan explicit detach command behavior for TUI-launched servers
-- `FEAT-018` Decide whether same-workspace server attach or reuse should exist
-- `FEAT-019` Add CLI status visibility for tasks and background sessions
+- `CLI-004` Plan explicit detach command behavior for TUI-launched servers
+- `CLI-005` Decide whether same-workspace server attach or reuse should exist
+- `CLI-006` Add CLI status visibility for tasks and background sessions
 
 ## Notes
 

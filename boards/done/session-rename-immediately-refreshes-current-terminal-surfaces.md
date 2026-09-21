@@ -79,7 +79,7 @@ Renaming a session can leave stale titles visible in the current terminal sessio
 
 - `BUG-002` Remove duplicate session actions and visible hotkey hints from the session UI
 - `FEAT-001` Improve historical chat transcripts workflow
-- `FEAT-019` Add CLI status visibility for tasks and background sessions
+- `CLI-006` Add CLI status visibility for tasks and background sessions
 
 ## Refinement status
 

@@ -44,7 +44,7 @@ state whose next turn continues from where the run left off.
 - Define and record the interrupted-turn state explicitly (for example an `aborted` assistant turn
   with a durable marker) so resume has an unambiguous starting point.
 - Preserve the user's original prompt and any completed tool results across the interrupt.
-- Keep interrupt distinct from session end; exit and detach stay owned by `FEAT-017` and `FEAT-033`.
+- Keep interrupt distinct from session end; exit and detach stay owned by `CLI-004` and `FEAT-033`.
 
 ## Non-goals
 
@@ -87,7 +87,7 @@ state whose next turn continues from where the run left off.
   same provider-error class, different trigger.
 - `FEAT-033` Print a resume command for the last session on TUI exit - resume surface at exit, not at
   interrupt.
-- `FEAT-017` Plan explicit detach command behavior for TUI-launched servers - interrupt is distinct
+- `CLI-004` Plan explicit detach command behavior for TUI-launched servers - interrupt is distinct
   from detach and exit.
 
 ## Notes

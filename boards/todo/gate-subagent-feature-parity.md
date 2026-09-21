@@ -150,7 +150,7 @@ reused are reference-only and must be called out explicitly.
    (`boards/todo/background-subagents-parity.md`).
 5. `FEAT-049` Agent-role and `@agent-name` mention parity
    (`boards/todo/agent-role-and-mention-parity.md`).
-6. `FEAT-050` CLI subagent surface parity
+6. `CLI-010` CLI subagent surface parity
    (`boards/todo/cli-subagent-surface-parity.md`).
 7. `FEAT-051` Subagent parity verification fixtures
    (`boards/todo/subagent-parity-verification-fixtures.md`).
@@ -233,7 +233,7 @@ reused are reference-only and must be called out explicitly.
 - `GATE-002` Question tool full parity - sibling gate; pattern for gate/child structure.
 - `FEAT-031` Investigate the builtin `general` agent and decide whether to remove it - done; decided
   to disable `general` for now and flag subagent parity as a separate item (this gate).
-- `FEAT-012` CLI/`AgentExecutor` tool-loop parity - on hold, blocked by `GATE-002`; its subagent
+- `CLI-002` CLI/`AgentExecutor` tool-loop parity - on hold, blocked by `GATE-002`; its subagent
   dispatch path overlaps `FEAT-046`.
 - `PHASE-002` Transport/runtime parity foundation - phase parent for related parity work.
 - `wiki/agent-modes-and-custom-agents.md` - current agent model and the `general` decision.

@@ -1,9 +1,9 @@
 ---
-id: "FEAT-012"
+id: "CLI-002"
 title: "CLI/AgentExecutor tool-loop parity"
 priority: "P2"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 spec: "invariants/coding-session-behavior.md"
 status: "hold"
 predecessors: "GATE-002"

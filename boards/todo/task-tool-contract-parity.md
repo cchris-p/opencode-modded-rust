@@ -86,4 +86,4 @@ Reference `f54ce313b99a`:
 - `GATE-004` subagent feature parity.
 - `FEAT-045` child session persistence - supplies the real session the tool writes to.
 - `FEAT-048` background subagents - owns `background`/`run_in_background`.
-- `FEAT-012` CLI/`AgentExecutor` tool-loop parity - overlapping dispatch path (blocked by `GATE-002`).
+- `CLI-002` CLI/`AgentExecutor` tool-loop parity - overlapping dispatch path (blocked by `GATE-002`).

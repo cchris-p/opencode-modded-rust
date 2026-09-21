@@ -68,19 +68,19 @@ If the non-TUI path fails, debug the runtime before opening the TUI. If the non-
 
 ## Relationship To `opencode run`
 
-`FEAT-012` improved `opencode run` by fixing the interim `AgentExecutor` path: tools are now attached, a bounded tool loop runs, and tool results are fed back to the provider.
+`CLI-002` improved `opencode run` by fixing the interim `AgentExecutor` path: tools are now attached, a bounded tool loop runs, and tool results are fed back to the provider.
 
 That path is still not the canonical TUI/session runtime path. It does not become equivalent to TUI/session behavior until it is routed through the same `SessionPrompt` and server/session machinery as `/session/{id}/prompt`.
 
 Use `opencode run` as a useful CLI smoke path, not as proof that TUI-backed sessions behave identically.
 
-## Relationship To FEAT-005
+## Relationship To CLI-001
 
-`FEAT-005` should make the canonical non-TUI runtime path ergonomic. Its future `opencode task new`, `opencode task send`, and `opencode task view` commands should submit and inspect work through the server/session prompt path rather than through `AgentExecutor`.
+`CLI-001` should make the canonical non-TUI runtime path ergonomic. Its future `opencode task new`, `opencode task send`, and `opencode task view` commands should submit and inspect work through the server/session prompt path rather than through `AgentExecutor`.
 
-If `FEAT-005` is implemented on top of the same session/server prompt runtime as the TUI, it can replace most manual TUI testing for agent-session work. In that case, a CLI task smoke should exercise the same agent result that the TUI would show.
+If `CLI-001` is implemented on top of the same session/server prompt runtime as the TUI, it can replace most manual TUI testing for agent-session work. In that case, a CLI task smoke should exercise the same agent result that the TUI would show.
 
-The equivalence only holds if FEAT-005 uses the same runtime pieces:
+The equivalence only holds if CLI-001 uses the same runtime pieces:
 
 - session model
 - `/session/{id}/prompt` behavior or equivalent server call
@@ -91,7 +91,7 @@ The equivalence only holds if FEAT-005 uses the same runtime pieces:
 - permission and question handling
 - message storage and status updates
 
-If FEAT-005 uses `AgentExecutor`, it is useful but not TUI/session-equivalent.
+If CLI-001 uses `AgentExecutor`, it is useful but not TUI/session-equivalent.
 
 ## What Non-TUI QA Can Replace
 

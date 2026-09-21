@@ -145,7 +145,7 @@ Likely failure area to confirm:
   resolved tool-call state.
 - `FEAT-006` Make Ctrl+D exit the TUI and Ctrl+C clear the prompt - same prompt-input key handling
   surface; explicitly deferred interrupt-semantics changes.
-- `FEAT-017` Plan explicit detach command behavior for TUI-launched servers - distinguished normal
+- `CLI-004` Plan explicit detach command behavior for TUI-launched servers - distinguished normal
   exit from detach; abort must not be treated as exit.
 - `FEAT-035` Resume an interrupted session from where it left off - desired resume behavior that
   depends on the valid interrupted state this card must produce.

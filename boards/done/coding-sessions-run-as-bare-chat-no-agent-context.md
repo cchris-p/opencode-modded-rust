@@ -149,7 +149,7 @@ Foundation slice shipped on `bug/BUG-004-agentic-session-foundation`:
 - `START-018` Complete TUI approval and question handling (coordinate permission UX)
 - `FEAT-010` Anthropic provider tool transport parity
 - `FEAT-011` Consolidate v1/v2 session prompt loops
-- `FEAT-012` CLI/AgentExecutor tool-loop parity
+- `CLI-002` CLI/AgentExecutor tool-loop parity
 - `FEAT-013` Model capability gating and deprecated-default-model surfacing
 
 ## Notes

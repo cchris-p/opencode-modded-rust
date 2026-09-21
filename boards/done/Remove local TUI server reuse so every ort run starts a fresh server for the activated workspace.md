@@ -1,9 +1,9 @@
 ---
-id: "FEAT-016"
+id: "CLI-003"
 title: "Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace"
 priority: "P1"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 spec: "AGENTS.md"
 status: "done"
 created: "2026-09-15"
@@ -177,7 +177,7 @@ Resolved decisions:
   only advance while lower ports are currently occupied by live servers.
 - `ort` should terminate the local server it just launched when the TUI exits normally. This keeps
   `Ctrl-D`/exit from leaving the launch server around to occupy its port.
-- No persisted process/server record should be reintroduced for FEAT-016. Cleanup should use only
+- No persisted process/server record should be reintroduced for CLI-003. Cleanup should use only
   the in-memory child process handle owned by the launching CLI process.
 - Automatic attach/reuse of an existing same-workspace server is explicitly not part of this card.
   It may be added later only after separate confirmation because it reverses the current no-reuse
@@ -194,8 +194,8 @@ Updated done criteria:
 
 Follow-up created:
 
-- `FEAT-017` Plan explicit detach command behavior for TUI-launched servers.
-- `FEAT-018` Decide whether same-workspace server attach or reuse should exist.
+- `CLI-004` Plan explicit detach command behavior for TUI-launched servers.
+- `CLI-005` Decide whether same-workspace server attach or reuse should exist.
 
 ## Reimplementation - 2026-09-16
 
@@ -219,6 +219,6 @@ and reuses the lowest free port after TUI exit:
 - `/Users/cchrisleepyles/apps/cnaqma-notes` -> `http://127.0.0.1:3030`
 - `/Users/cchrisleepyles/apps/TSS` -> `http://127.0.0.1:3030`
 
-Closed as complete. Follow-up detach command behavior is tracked in `FEAT-017`; possible
-same-workspace attach/reuse is tracked separately in `FEAT-018` and requires explicit 110%
+Closed as complete. Follow-up detach command behavior is tracked in `CLI-004`; possible
+same-workspace attach/reuse is tracked separately in `CLI-005` and requires explicit 110%
 confirmation before implementation.

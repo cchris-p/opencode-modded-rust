@@ -80,7 +80,7 @@ Two secondary defects would block usability even after declaration is fixed:
 
 - `FEAT-010` Anthropic provider tool transport (`AnthropicRequest.tools` field + conversion).
 - `FEAT-011` v1 `loop_inner` / v2 `StreamProcessor` consolidation.
-- `FEAT-012` CLI/`AgentExecutor` tool-loop parity (attach tools + run execution loop + ask path).
+- `CLI-002` CLI/`AgentExecutor` tool-loop parity (attach tools + run execution loop + ask path).
 - `FEAT-013` Model capability gating and deprecated-default-model surfacing.
 
 ## Fix target
