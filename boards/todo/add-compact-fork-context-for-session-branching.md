@@ -61,7 +61,7 @@ Forking a prompt into a new session should not require blindly carrying the whol
 
 - `FEAT-001` Improve historical chat transcripts workflow
 - `FEAT-002` Keep sessions running after TUI exit
-- `SKILL-001` Add session-summary cascade skill by session name
+- `SKILLS-004` Add session-summary cascade skill by session name
 - `START-005` Define V1 runtime loop
 - `START-016` Define structured task state for V1
 - `START-025` Add retrieval-provider boundary for task context assembly

@@ -1585,6 +1585,14 @@ mod tests {
     }
 
     #[test]
+    fn plain_q_types_into_prompt() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "q");
+        });
+    }
+
+    #[test]
     fn tab_autocomplete_uses_first_candidate() {
         with_isolated_prompt(|mut prompt| {
             prompt.set_input("team".to_string());
