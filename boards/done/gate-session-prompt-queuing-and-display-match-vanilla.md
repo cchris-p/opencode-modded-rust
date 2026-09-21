@@ -5,7 +5,7 @@ priority: "P0"
 type: "gate"
 area: "GATE"
 spec: "invariants/message-queuing.md"
-status: "qa"
+status: "done"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -361,3 +361,8 @@ Side-by-side parity evidence:
   user confirms the queue and `QUEUED` badge behavior on `development`.
 - `FEAT-021`, `FEAT-005`, and `FEAT-019` are unblocked by this gate; start `FEAT-021`/`FEAT-005`/`FEAT-019`
   from `development` once QA passes.
+
+## QA Closeout (2026-09-21, user)
+
+User confirmed queuing works very well and is similar to vanilla OpenCode. Further testing deferred;
+card marked `done` and moved from `qa` to `done` on user request. No follow-up items identified.
