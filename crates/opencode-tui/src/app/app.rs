@@ -500,10 +500,43 @@ impl App {
                             if !self.prompt.register_interrupt_keypress() {
                                 return Ok(());
                             }
-                            if let Some(client) = self.context.get_api_client() {
-                                let _ = client.abort_session(&session_id);
+                            let Some(client) = self.context.get_api_client() else {
+                                self.prompt.clear_interrupt_confirmation();
+                                self.toast.show(
+                                    ToastVariant::Error,
+                                    "Cannot interrupt: no server connection",
+                                    3000,
+                                );
+                                return Ok(());
+                            };
+                            match client.abort_session(&session_id) {
+                                Ok(value) => {
+                                    let aborted = value
+                                        .get("aborted")
+                                        .and_then(|item| item.as_bool())
+                                        .unwrap_or(true);
+                                    if aborted {
+                                        // Keep the confirmation latched until the
+                                        // session status changes so the hint does
+                                        // not flip back to "esc interrupt".
+                                        return Ok(());
+                                    }
+                                    self.prompt.clear_interrupt_confirmation();
+                                    self.toast.show(
+                                        ToastVariant::Info,
+                                        "Nothing to interrupt",
+                                        2000,
+                                    );
+                                }
+                                Err(err) => {
+                                    self.prompt.clear_interrupt_confirmation();
+                                    self.toast.show(
+                                        ToastVariant::Error,
+                                        &format!("Failed to interrupt: {}", err),
+                                        3000,
+                                    );
+                                }
                             }
-                            self.prompt.clear_interrupt_confirmation();
                             return Ok(());
                         }
                     }
@@ -772,6 +805,10 @@ impl App {
                     self.sync_prompt_spinner_state();
                 }
                 CustomEvent::StateChanged(StateChange::SessionStatusBusy(session_id)) => {
+                    // A newly busy session means any prior confirmed interrupt has
+                    // been resolved (cancelled turn drained or a queued turn
+                    // started), so the pending latch can be released.
+                    self.prompt.clear_interrupt_confirmation();
                     self.set_session_status(session_id, SessionStatus::Running);
                     self.sync_prompt_spinner_state();
                 }
