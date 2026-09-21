@@ -19,7 +19,7 @@ The model should be able to use non-edit tools in plan mode. Plan mode is intend
 
 ## Reported behavior
 
-Transcript: [`new-session-2026-09-19t0409592215950000.md`](../../new-session-2026-09-19t0409592215950000.md)
+Transcript: [`new-session-2026-09-19t0409592215950000.md`](../../docs/transcripts/new-session-2026-09-19t0409592215950000.md)
 
 Observed transcript state:
 
@@ -48,11 +48,18 @@ Current code evidence:
 - `crates/opencode-session/src/prompt.rs` finalizes streamed assistant messages with `ToolCall` parts and later calls `execute_tool_calls` to append a separate assistant message containing `ToolResult` parts.
 - `crates/opencode-session/src/prompt.rs` has abort handling for cancelled pending tool calls, but a non-cancelled stall or execution-path error can still leave the visible/exported session at a tool-call-only state unless the loop records an explicit error/result before stopping.
 
-Storage caveat:
+Storage caveat (corrected 2026-09-21):
 
-- The exported session ID did not appear in the discovered Rust DB at `/Users/cchrisleepyles/.local/share/opencode/opencode.db` during this investigation.
-- The implementation should not assume that absence means the session did not exist; it may have been exported from another active runtime/storage root, an older binary, or a session state not persisted to that DB.
-- Do not use the vanilla OpenCode DB under `~/Library/Application Support/opencode/opencode.db` as evidence for this bug.
+- An earlier draft of this item had the Rust and vanilla storage paths inverted. The Rust product DB
+  on macOS is `~/Library/Application Support/opencode/opencode.db`
+  (`dirs::data_local_dir()`, `crates/opencode-storage/src/database.rs:138-144`); the vanilla OpenCode
+  DB is `~/.local/share/opencode/opencode.db`.
+- On re-check, the exported session ID `ses_9b85fa20680b4dbfa7d2a2507335a4c1` **is present** in the
+  Rust DB: one `sessions` row created `2026-09-19T04:09:59.221Z` with `updated_at == created_at`, and
+  **zero `messages` rows**. The transcript therefore came from TUI in-memory state that was never
+  persisted, not from a missing storage root.
+- See `BUG-023` for the confidence-ranked root-cause investigation of this stall and the associated
+  persistence gap.
 
 Likely failure area to confirm:
 

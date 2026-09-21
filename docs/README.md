@@ -9,7 +9,8 @@ This documentation set corresponds to the current code state of `scopemux-code` 
  - CLI: `docs/opencode-cli.md`
  - TUI: `docs/opencode-tui.md`
  - Server: `docs/opencode-server.md`
-- Archived session brainstorm artifact: `docs/archive/session.md`
+ - Archived session brainstorm artifact: `docs/archive/session.md`
+ - Session transcript references: `docs/transcripts/`
 - Wiki index: `wiki/README.md`
 - Vision: `wiki/vision.md`
 - Version roadmap: `wiki/v1.md`, `wiki/v2.md`, `wiki/v3.md`
