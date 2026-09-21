@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -106,7 +106,7 @@ Why the command is better than a URL here:
 
 - Merged into `development` on 2026-09-21 as merge commit `ac569decc7c3118812893fa09920045b672fb006`.
 - Remote branch `feature/FEAT-033-resume-session-command` deleted after merge; temporary worktree removed.
-- Remains in `qa` pending a recorded QA report; not promoted to `done`.
+- Remained in `qa` pending a recorded QA report; passed QA and promoted to `done` on 2026-09-21.
 
 ## QA Notes
 
@@ -114,3 +114,8 @@ Why the command is better than a URL here:
 - Run `ort-build` then `ort`; send at least one message and exit with `Ctrl+D`.
 - Confirm a resume hint prints on stderr, e.g. `ort --session <id>` (or `opencode --session <id>`), and that running it reopens the same session.
 - Confirm switching sessions mid-run changes the printed id, and that the detach path still prints `opencode attach <url>`.
+
+## QA Closeout - 2026-09-21 (user)
+
+User gave the feature a pass. Closed as complete and moved from `qa` to `done`. No follow-up items
+identified.
