@@ -86,3 +86,4 @@ server alive after the TUI exits.
 - Merged into `development` via PR #35 on 2026-09-16; retained in `qa` for post-merge verification.
 - 2026-09-21 follow-up: clarified detach terminal output to print `Reattach command: opencode attach <url>`.
 - 2026-09-21 follow-up: added `opencode tui --attach <url>` so the local `ort --attach <url>` launcher shape is supported, and updated detach output to print both `opencode attach <url>` and `ort --attach <url>` reattach commands.
+- 2026-09-21 closeout: follow-up PR #62 merged into `development`; item remains in `qa` pending post-merge detach/reattach verification.
