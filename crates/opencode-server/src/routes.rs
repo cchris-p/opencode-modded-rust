@@ -142,6 +142,7 @@ fn session_routes() -> Router<Arc<ServerState>> {
         .route("/{id}/stream", post(stream_message))
         .route("/{id}/prompt", post(session_prompt))
         .route("/{id}/prompt/abort", post(abort_prompt))
+        .route("/{id}/prompt/cancel", post(cancel_queued_prompt))
         .route("/{id}/prompt_async", post(prompt_async))
         .route("/{id}/diff", get(get_session_diff))
 }
@@ -282,6 +283,10 @@ async fn list_sessions(
 enum SessionRunStatus {
     Idle,
     Busy,
+    Queued {
+        position: usize,
+        depth: usize,
+    },
     Retry {
         attempt: u32,
         message: String,
@@ -300,6 +305,33 @@ static SESSION_RUN_STATUS: Lazy<RwLock<HashMap<String, SessionRunStatus>>> =
 
 static ACTIVE_PROMPTS: Lazy<RwLock<HashMap<String, Arc<opencode_session::SessionPrompt>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Maximum number of accepted-but-not-yet-active prompts per session.
+const SESSION_QUEUE_LIMIT: usize = 32;
+
+/// A prompt that has been durably accepted and materialized into the session,
+/// awaiting its turn in the per-session FIFO queue.
+struct PendingPrompt {
+    message_id: String,
+    prompt_text: String,
+    provider: Arc<dyn opencode_provider::Provider>,
+    provider_id: String,
+    model_id: String,
+    variant: Option<String>,
+    agent: Option<String>,
+}
+
+/// Shared, per-session ordering state. `active` means a runner (or the drain
+/// loop) owns the session; exactly one drain runs per session at a time.
+#[derive(Default)]
+struct SessionQueue {
+    pending: VecDeque<PendingPrompt>,
+    active: bool,
+    next_seq: u64,
+}
+
+static SESSION_QUEUES: Lazy<Mutex<HashMap<String, SessionQueue>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 async fn set_session_run_status(
     state: &Arc<ServerState>,
@@ -344,11 +376,37 @@ async fn session_status(
                 opencode_session::SessionStatus::Compacting => "compacting",
             };
             let run = run_status.get(&s.id).cloned().unwrap_or_default();
-            let (status, idle, busy, attempt, message, next) = match run {
-                SessionRunStatus::Idle => {
-                    (lifecycle_status.to_string(), true, false, None, None, None)
-                }
-                SessionRunStatus::Busy => ("busy".to_string(), false, true, None, None, None),
+            let (status, idle, busy, attempt, message, next, position, depth) = match run {
+                SessionRunStatus::Idle => (
+                    lifecycle_status.to_string(),
+                    true,
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                SessionRunStatus::Busy => (
+                    "busy".to_string(),
+                    false,
+                    true,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                SessionRunStatus::Queued { position, depth } => (
+                    "queued".to_string(),
+                    false,
+                    true,
+                    None,
+                    None,
+                    None,
+                    Some(position),
+                    Some(depth),
+                ),
                 SessionRunStatus::Retry {
                     attempt,
                     message,
@@ -360,6 +418,8 @@ async fn session_status(
                     Some(attempt),
                     Some(message),
                     Some(next),
+                    None,
+                    None,
                 ),
             };
             (
@@ -371,6 +431,8 @@ async fn session_status(
                     attempt,
                     message,
                     next,
+                    position,
+                    depth,
                 },
             )
         })
@@ -389,6 +451,10 @@ pub struct SessionStatusInfo {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -461,6 +527,7 @@ async fn delete_session(
         .delete(&id)
         .ok_or_else(|| ApiError::SessionNotFound(id.clone()))?;
     SESSION_RUN_STATUS.write().await.remove(&id);
+    SESSION_QUEUES.lock().await.remove(&id);
     persist_sessions_if_enabled(&state).await;
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
@@ -1150,6 +1217,479 @@ mod provider_resolution_tests {
     }
 }
 
+#[cfg(test)]
+mod session_queue_tests {
+    use super::*;
+    use opencode_provider::{ChatRequest, ChatResponse, ModelInfo, ProviderError, StreamResult};
+
+    /// Provider that is never expected to stream in these queue tests.
+    struct NullProvider;
+
+    #[async_trait::async_trait]
+    impl opencode_provider::Provider for NullProvider {
+        fn id(&self) -> &str {
+            "test"
+        }
+
+        fn name(&self) -> &str {
+            "Test"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            Vec::new()
+        }
+
+        fn get_model(&self, _id: &str) -> Option<&ModelInfo> {
+            None
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest("unused".to_string()))
+        }
+
+        async fn chat_stream(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<StreamResult, ProviderError> {
+            Err(ProviderError::InvalidRequest("unused".to_string()))
+        }
+    }
+
+    fn null_provider() -> Arc<dyn opencode_provider::Provider> {
+        Arc::new(NullProvider)
+    }
+
+    /// Provider whose stream blocks until the test releases the gate, so the
+    /// first turn stays active and later prompts must queue.
+    struct GatedProvider {
+        model: ModelInfo,
+        gate: Arc<tokio::sync::Semaphore>,
+    }
+
+    impl GatedProvider {
+        fn new(gate: Arc<tokio::sync::Semaphore>) -> Self {
+            Self {
+                model: ModelInfo {
+                    id: "model".to_string(),
+                    name: "Gated Model".to_string(),
+                    provider: "test".to_string(),
+                    context_window: 8192,
+                    max_output_tokens: 1024,
+                    supports_vision: false,
+                    supports_tools: false,
+                    cost_per_million_input: 0.0,
+                    cost_per_million_output: 0.0,
+                },
+                gate,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl opencode_provider::Provider for GatedProvider {
+        fn id(&self) -> &str {
+            "test"
+        }
+
+        fn name(&self) -> &str {
+            "Test"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            vec![self.model.clone()]
+        }
+
+        fn get_model(&self, id: &str) -> Option<&ModelInfo> {
+            (self.model.id == id).then_some(&self.model)
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest("unused".to_string()))
+        }
+
+        async fn chat_stream(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<StreamResult, ProviderError> {
+            let permit = self.gate.acquire().await.expect("gate is never closed");
+            permit.forget();
+            Err(ProviderError::InvalidRequest(
+                "stream disabled in test".to_string(),
+            ))
+        }
+    }
+
+    async fn test_state_with_session() -> (Arc<ServerState>, String) {
+        let state = Arc::new(ServerState::new());
+        let session = state
+            .sessions
+            .lock()
+            .await
+            .create("default", "/tmp/gate001-queue-test");
+        (state, session.id)
+    }
+
+    /// Pretend a run already owns the session so `accept_prompt` never starts a
+    /// drain; this keeps the queue bookkeeping deterministic.
+    async fn pin_active(session_id: &str) {
+        let mut queues = SESSION_QUEUES.lock().await;
+        queues.entry(session_id.to_string()).or_default().active = true;
+    }
+
+    fn user_message_ids(session: &opencode_session::Session) -> Vec<String> {
+        session
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, opencode_session::MessageRole::User))
+            .map(|message| message.id.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn accept_prompt_materializes_exactly_one_message_per_prompt() {
+        let (state, session_id) = test_state_with_session().await;
+        pin_active(&session_id).await;
+
+        let first = accept_prompt(
+            &state,
+            &session_id,
+            "first".to_string(),
+            null_provider(),
+            "test".to_string(),
+            "model".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let second = accept_prompt(
+            &state,
+            &session_id,
+            "second".to_string(),
+            null_provider(),
+            "test".to_string(),
+            "model".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let third = accept_prompt(
+            &state,
+            &session_id,
+            "third".to_string(),
+            null_provider(),
+            "test".to_string(),
+            "model".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(!first.started && !second.started && !third.started);
+        assert_eq!(
+            (first.position, second.position, third.position, third.depth),
+            (1, 2, 3, 3)
+        );
+
+        let ids = {
+            let sessions = state.sessions.lock().await;
+            let session = sessions.get(&session_id).unwrap();
+            let ids = user_message_ids(session);
+            assert_eq!(ids.len(), 3, "one materialized user message per prompt");
+            assert!(session
+                .messages
+                .iter()
+                .filter(|m| { matches!(m.role, opencode_session::MessageRole::User) })
+                .all(|m| {
+                    m.metadata
+                        .get("queued_pending")
+                        .and_then(|value| value.as_bool())
+                        == Some(true)
+                }));
+            ids
+        };
+        assert_eq!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len(),
+            3,
+            "materialized message IDs must be unique"
+        );
+        assert!(ids.contains(&first.message_id));
+        assert!(ids.contains(&second.message_id));
+
+        // Explicit cancel removes exactly the waiting prompt and its message.
+        let cancelled = cancel_queued_prompt(
+            State(state.clone()),
+            Path(session_id.clone()),
+            Json(CancelQueuedPromptRequest {
+                message_id: second.message_id.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cancelled.0["cancelled"], true);
+
+        let sessions = state.sessions.lock().await;
+        let remaining = user_message_ids(sessions.get(&session_id).unwrap());
+        assert_eq!(remaining.len(), 2);
+        assert!(!remaining.contains(&second.message_id));
+        assert!(remaining.contains(&first.message_id));
+        drop(sessions);
+        assert_eq!(
+            SESSION_QUEUES
+                .lock()
+                .await
+                .get(&session_id)
+                .map(|queue| queue.pending.len()),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_accepts_do_not_drop_or_duplicate_prompts() {
+        let (state, session_id) = test_state_with_session().await;
+        pin_active(&session_id).await;
+
+        let count = 8usize;
+        let mut handles = Vec::new();
+        for index in 0..count {
+            let state = state.clone();
+            let session_id = session_id.clone();
+            handles.push(tokio::spawn(async move {
+                accept_prompt(
+                    &state,
+                    &session_id,
+                    format!("prompt {index}"),
+                    null_provider(),
+                    "test".to_string(),
+                    "model".to_string(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+            }));
+        }
+
+        let mut accepted = Vec::new();
+        for handle in handles {
+            accepted.push(handle.await.unwrap());
+        }
+
+        let mut positions: Vec<usize> = accepted.iter().map(|item| item.position).collect();
+        positions.sort_unstable();
+        assert_eq!(
+            positions,
+            (1..=count).collect::<Vec<_>>(),
+            "each accepted prompt gets a distinct FIFO position"
+        );
+
+        let sessions = state.sessions.lock().await;
+        let ids = user_message_ids(sessions.get(&session_id).unwrap());
+        assert_eq!(ids.len(), count, "no accepted prompt may be dropped");
+        assert_eq!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len(),
+            count,
+            "no accepted prompt may be materialized twice"
+        );
+        for item in &accepted {
+            assert!(ids.contains(&item.message_id));
+        }
+    }
+
+    #[tokio::test]
+    async fn abort_cancels_active_run_without_clearing_queued_prompts() {
+        let (state, session_id) = test_state_with_session().await;
+        pin_active(&session_id).await;
+
+        let active = accept_prompt(
+            &state,
+            &session_id,
+            "active".to_string(),
+            null_provider(),
+            "test".to_string(),
+            "model".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let waiting = accept_prompt(
+            &state,
+            &session_id,
+            "waiting".to_string(),
+            null_provider(),
+            "test".to_string(),
+            "model".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        ACTIVE_PROMPTS.write().await.insert(
+            session_id.clone(),
+            Arc::new(opencode_session::SessionPrompt::default()),
+        );
+
+        let aborted = abort_active_session_prompt(state.clone(), session_id.clone())
+            .await
+            .unwrap();
+        assert_eq!(aborted.0["aborted"], true);
+
+        let sessions = state.sessions.lock().await;
+        let ids = user_message_ids(sessions.get(&session_id).unwrap());
+        assert!(ids.contains(&active.message_id));
+        assert!(
+            ids.contains(&waiting.message_id),
+            "abort must leave queued prompts visible"
+        );
+        drop(sessions);
+        assert_eq!(
+            SESSION_QUEUES
+                .lock()
+                .await
+                .get(&session_id)
+                .map(|queue| queue.pending.len()),
+            Some(2),
+            "abort must not clear the queue"
+        );
+    }
+
+    #[test]
+    fn merge_session_snapshot_preserves_queued_user_messages() {
+        let mut shared = opencode_session::Session::new("proj", ".");
+        let queued = shared.add_user_message_with_id("msg_queued", "queued while busy");
+        queued
+            .metadata
+            .insert("queued_pending".to_string(), serde_json::json!(true));
+        shared.add_assistant_message();
+
+        let mut snapshot = opencode_session::Session::new("proj", ".");
+        snapshot.id = shared.id.clone();
+        snapshot.add_assistant_message();
+
+        merge_session_snapshot(&mut shared, snapshot);
+
+        assert_eq!(
+            shared
+                .messages
+                .iter()
+                .filter(|message| message.id == "msg_queued")
+                .count(),
+            1
+        );
+        assert_eq!(
+            shared.messages.last().map(|message| message.id.as_str()),
+            Some("msg_queued"),
+            "queued prompt stays after the in-flight assistant"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_prompt_reports_started_then_queued_and_serializes_turns() {
+        let state = Arc::new(ServerState::new());
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        state
+            .providers
+            .write()
+            .unwrap()
+            .register_arc(Arc::new(GatedProvider::new(gate.clone())));
+        let session_id = state
+            .sessions
+            .lock()
+            .await
+            .create("default", "/tmp/gate001-e2e")
+            .id;
+
+        let request = |message: &str| SessionPromptRequest {
+            message: Some(message.to_string()),
+            model: Some("test/model".to_string()),
+            variant: None,
+            agent: None,
+            command: None,
+            arguments: None,
+        };
+
+        let first = session_prompt(
+            State(state.clone()),
+            Path(session_id.clone()),
+            Json(request("first")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.0["status"], "started");
+        let first_message_id = first.0["message_id"].as_str().unwrap().to_string();
+
+        // Wait until the first turn is genuinely executing.
+        let mut active = false;
+        for _ in 0..500 {
+            if ACTIVE_PROMPTS.read().await.contains_key(&session_id) {
+                active = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(active, "first prompt should begin executing");
+
+        let second = session_prompt(
+            State(state.clone()),
+            Path(session_id.clone()),
+            Json(request("second")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.0["status"], "queued");
+        assert_eq!(second.0["position"], 1);
+        assert_eq!(second.0["depth"], 1);
+        let second_message_id = second.0["message_id"].as_str().unwrap().to_string();
+        assert_ne!(first_message_id, second_message_id);
+
+        {
+            let sessions = state.sessions.lock().await;
+            let ids = user_message_ids(sessions.get(&session_id).unwrap());
+            assert_eq!(
+                ids.len(),
+                2,
+                "both accepted prompts materialize immediately"
+            );
+            assert!(ids.contains(&first_message_id));
+            assert!(ids.contains(&second_message_id));
+        }
+
+        gate.add_permits(8);
+        let mut drained = false;
+        for _ in 0..500 {
+            let status_idle = SESSION_RUN_STATUS.read().await.get(&session_id).is_none();
+            let queue_empty = SESSION_QUEUES
+                .lock()
+                .await
+                .get(&session_id)
+                .map(|queue| queue.pending.is_empty() && !queue.active)
+                .unwrap_or(true);
+            if status_idle && queue_empty {
+                drained = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(drained, "queue should drain to idle");
+
+        let sessions = state.sessions.lock().await;
+        let ids = user_message_ids(sessions.get(&session_id).unwrap());
+        assert_eq!(ids.len(), 2, "no prompt may be duplicated or dropped");
+        assert!(ids.contains(&first_message_id));
+        assert!(ids.contains(&second_message_id));
+    }
+}
+
 async fn send_message(
     State(state): State<Arc<ServerState>>,
     Path(session_id): Path<String>,
@@ -1707,6 +2247,14 @@ pub struct SessionPromptRequest {
     pub arguments: Option<String>,
 }
 
+#[derive(Debug)]
+struct AcceptedPrompt {
+    message_id: String,
+    position: usize,
+    depth: usize,
+    started: bool,
+}
+
 async fn session_prompt(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
@@ -1738,339 +2286,536 @@ async fn session_prompt(
             .await?;
     drop(config);
 
-    let task_state = state.clone();
-    let session_id = id.clone();
-    let task_variant = req.variant.clone();
-    let task_agent = req.agent.clone();
-    let task_model = model_id.clone();
-    let task_provider = provider_id.clone();
-    tokio::spawn(async move {
-        let mut session = {
-            let sessions = task_state.sessions.lock().await;
-            let Some(session) = sessions.get(&session_id).cloned() else {
-                return;
-            };
-            session
-        };
-        set_session_run_status(&task_state, &session_id, SessionRunStatus::Busy).await;
+    let accepted = accept_prompt(
+        &state,
+        &id,
+        prompt_text,
+        provider,
+        provider_id.clone(),
+        model_id.clone(),
+        req.variant.clone(),
+        req.agent.clone(),
+    )
+    .await?;
 
-        // Resolve the agentic request context (agent identity, system prompt,
-        // environment block, tool set, LLM params) so coding-session requests
-        // behave like the reference agent instead of bare chat. BUG-004.
-        let supports_tools = provider
-            .get_model(&task_model)
-            .map(|model| model.supports_tools)
-            .unwrap_or(true);
-        let resolved = crate::agentic::resolve_agentic_context(
-            &session.directory,
-            task_agent.clone(),
-            &task_model,
-            &task_provider,
-            supports_tools,
-        )
-        .await;
-        let agent_rules: opencode_permission::PermissionRuleset = resolved.agent.permission.clone();
+    Ok(Json(acceptance_response(
+        &accepted,
+        &provider_id,
+        &model_id,
+        req.variant.as_deref(),
+    )))
+}
 
-        if let Some(variant) = task_variant.as_deref() {
-            session
-                .metadata
-                .insert("model_variant".to_string(), serde_json::json!(variant));
-        } else {
-            session.metadata.remove("model_variant");
+fn acceptance_response(
+    accepted: &AcceptedPrompt,
+    provider_id: &str,
+    model_id: &str,
+    variant: Option<&str>,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "status": if accepted.started { "started" } else { "queued" },
+        "message_id": accepted.message_id,
+        "model": format!("{}/{}", provider_id, model_id),
+        "variant": variant,
+    });
+    if !accepted.started {
+        value["position"] = serde_json::json!(accepted.position);
+        value["depth"] = serde_json::json!(accepted.depth);
+    }
+    value
+}
+
+/// Accept one prompt: materialize its user message into shared session state
+/// under a stable ID, then append it to the per-session FIFO queue. The first
+/// accepted prompt for an idle session starts the drain loop immediately.
+#[allow(clippy::too_many_arguments)]
+async fn accept_prompt(
+    state: &Arc<ServerState>,
+    session_id: &str,
+    prompt_text: String,
+    provider: Arc<dyn opencode_provider::Provider>,
+    provider_id: String,
+    model_id: String,
+    variant: Option<String>,
+    agent: Option<String>,
+) -> Result<AcceptedPrompt> {
+    let message_id = format!("msg_{}", Uuid::new_v4());
+    let (position, depth, started) = {
+        let mut queues = SESSION_QUEUES.lock().await;
+        let queue = queues.entry(session_id.to_string()).or_default();
+        if queue.pending.len() >= SESSION_QUEUE_LIMIT {
+            return Err(ApiError::BadRequest(format!(
+                "Session prompt queue is full (limit {})",
+                SESSION_QUEUE_LIMIT
+            )));
         }
-        session.metadata.insert(
+
+        queue.next_seq += 1;
+        let seq = queue.next_seq;
+
+        {
+            let mut sessions = state.sessions.lock().await;
+            let Some(session) = sessions.get_mut(session_id) else {
+                return Err(ApiError::SessionNotFound(session_id.to_string()));
+            };
+            let message = session.add_user_message_with_id(message_id.clone(), prompt_text.clone());
+            message
+                .metadata
+                .insert("queued_pending".to_string(), serde_json::json!(true));
+            message
+                .metadata
+                .insert("admitted_seq".to_string(), serde_json::json!(seq));
+        }
+
+        queue.pending.push_back(PendingPrompt {
+            message_id: message_id.clone(),
+            prompt_text,
+            provider,
+            provider_id,
+            model_id,
+            variant,
+            agent,
+        });
+        let depth = queue.pending.len();
+        let started = !queue.active;
+        if started {
+            queue.active = true;
+        }
+        (depth, depth, started)
+    };
+
+    let status = if started {
+        SessionRunStatus::Busy
+    } else {
+        SessionRunStatus::Queued { position, depth }
+    };
+    set_session_run_status(state, session_id, status).await;
+    state.broadcast(
+        &serde_json::json!({
+            "type": "session.updated",
+            "sessionID": session_id,
+            "source": "prompt.queued",
+        })
+        .to_string(),
+    );
+    persist_sessions_if_enabled(state).await;
+
+    if started {
+        let drain_state = state.clone();
+        let drain_session = session_id.to_string();
+        tokio::spawn(async move {
+            drain_session_queue(drain_state, drain_session).await;
+        });
+    }
+
+    Ok(AcceptedPrompt {
+        message_id,
+        position,
+        depth,
+        started,
+    })
+}
+
+/// Serial per-session drain loop: runs exactly one turn at a time in FIFO order
+/// until the queue is empty, then marks the session idle.
+async fn drain_session_queue(state: Arc<ServerState>, session_id: String) {
+    loop {
+        let next = {
+            let mut queues = SESSION_QUEUES.lock().await;
+            match queues.get_mut(&session_id) {
+                Some(queue) => match queue.pending.pop_front() {
+                    Some(pending) => Some(pending),
+                    None => {
+                        queue.active = false;
+                        None
+                    }
+                },
+                None => None,
+            }
+        };
+
+        let Some(pending) = next else {
+            set_session_run_status(&state, &session_id, SessionRunStatus::Idle).await;
+            return;
+        };
+
+        run_prompt_turn(state.clone(), session_id.clone(), pending).await;
+    }
+}
+
+/// Merge a runner snapshot into the shared session without dropping accepted
+/// queued user messages that the active runner has not observed yet.
+fn merge_session_snapshot(
+    existing: &mut opencode_session::Session,
+    snapshot: opencode_session::Session,
+) {
+    let snapshot_ids: Vec<&str> = snapshot.messages.iter().map(|m| m.id.as_str()).collect();
+    let pending: Vec<opencode_session::SessionMessage> = existing
+        .messages
+        .iter()
+        .filter(|message| {
+            message
+                .metadata
+                .get("queued_pending")
+                .and_then(|value| value.as_bool())
+                == Some(true)
+        })
+        .filter(|message| !snapshot_ids.contains(&message.id.as_str()))
+        .cloned()
+        .collect();
+    *existing = snapshot;
+    existing.messages.extend(pending);
+}
+
+async fn apply_session_snapshot(
+    state: &Arc<ServerState>,
+    session_id: &str,
+    snapshot: opencode_session::Session,
+) {
+    let mut sessions = state.sessions.lock().await;
+    if let Some(existing) = sessions.get_mut(session_id) {
+        merge_session_snapshot(existing, snapshot);
+    } else {
+        sessions.update(snapshot);
+    }
+}
+
+async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: PendingPrompt) {
+    set_session_run_status(&state, &session_id, SessionRunStatus::Busy).await;
+
+    let task_state = state.clone();
+    let mut session = {
+        let sessions = task_state.sessions.lock().await;
+        let Some(session) = sessions.get(&session_id).cloned() else {
+            return;
+        };
+        session
+    };
+
+    let provider = pending.provider.clone();
+    let task_variant = pending.variant.clone();
+    let task_agent = pending.agent.clone();
+    let task_model = pending.model_id.clone();
+    let task_provider = pending.provider_id.clone();
+    let prompt_text = pending.prompt_text.clone();
+    let pending_message_id = pending.message_id.clone();
+
+    // Queued-but-not-yet-active prompts are visible in shared session state so
+    // every client can render them, but they must not reach the model as
+    // unanswered history for this turn. Keep only the materialized message this
+    // turn consumes; the shared-state merge re-appends the still-queued ones.
+    session.messages.retain(|message| {
+        message.id == pending_message_id
+            || message
+                .metadata
+                .get("queued_pending")
+                .and_then(|value| value.as_bool())
+                != Some(true)
+    });
+
+    // Resolve the agentic request context (agent identity, system prompt,
+    // environment block, tool set, LLM params) so coding-session requests
+    // behave like the reference agent instead of bare chat. BUG-004.
+    let supports_tools = provider
+        .get_model(&task_model)
+        .map(|model| model.supports_tools)
+        .unwrap_or(true);
+    let resolved = crate::agentic::resolve_agentic_context(
+        &session.directory,
+        task_agent.clone(),
+        &task_model,
+        &task_provider,
+        supports_tools,
+    )
+    .await;
+    let agent_rules: opencode_permission::PermissionRuleset = resolved.agent.permission.clone();
+
+    if let Some(variant) = task_variant.as_deref() {
+        session
+            .metadata
+            .insert("model_variant".to_string(), serde_json::json!(variant));
+    } else {
+        session.metadata.remove("model_variant");
+    }
+    session.metadata.insert(
+        "model_provider".to_string(),
+        serde_json::json!(&task_provider),
+    );
+    session
+        .metadata
+        .insert("model_id".to_string(), serde_json::json!(&task_model));
+    session
+        .metadata
+        .insert("agent".to_string(), serde_json::json!(&resolved.agent_name));
+
+    let (update_tx, mut update_rx) =
+        tokio::sync::mpsc::unbounded_channel::<opencode_session::Session>();
+    let update_state = task_state.clone();
+    let update_task = tokio::spawn(async move {
+        while let Some(snapshot) = update_rx.recv().await {
+            let snapshot_id = snapshot.id.clone();
+            apply_session_snapshot(&update_state, &snapshot_id, snapshot).await;
+            update_state.broadcast(
+                &serde_json::json!({
+                    "type": "session.updated",
+                    "sessionID": snapshot_id,
+                    "source": "prompt.stream",
+                })
+                .to_string(),
+            );
+        }
+    });
+    let update_hook: opencode_session::SessionUpdateHook = Arc::new(move |snapshot| {
+        let _ = update_tx.send(snapshot.clone());
+    });
+
+    let permission_state = task_state.clone();
+    let permission_session_id = session_id.clone();
+    let permission_rules = agent_rules.clone();
+    let permission_callback: opencode_tool::AskCallback = Arc::new(move |request| {
+        let state = permission_state.clone();
+        let session_id = permission_session_id.clone();
+        let rules = permission_rules.clone();
+        Box::pin(async move {
+            // Evaluate the request against the resolved agent ruleset plus the
+            // session-level permission overlay so `Allow` tool calls run silently
+            // instead of prompting on every invocation (BUG-004 parity). Only
+            // `Ask` reaches the TUI.
+            use opencode_agent::PermissionDecision as AskDecision;
+            let session_rules = {
+                let sessions = state.sessions.lock().await;
+                sessions
+                    .get(&session_id)
+                    .and_then(|session| session.permission.clone())
+                    .map(|p| crate::agentic::ruleset_from_session(&p))
+                    .unwrap_or_default()
+            };
+            let permanent_rules = {
+                let permanent = PERMANENT_RULES.read().await;
+                permanent.get(&session_id).cloned().unwrap_or_default()
+            };
+            let merged = crate::agentic::merged_ruleset(
+                &crate::agentic::merged_ruleset(&rules, &session_rules),
+                &permanent_rules,
+            );
+            match crate::agentic::classify_permission(
+                &merged,
+                &request.permission,
+                &request.patterns,
+            ) {
+                AskDecision::Allow => return Ok(()),
+                AskDecision::Deny => {
+                    return Err(opencode_tool::ToolError::PermissionDenied(format!(
+                        "Tool '{}' is denied by agent permission rules",
+                        request
+                            .metadata
+                            .get("tool")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or(&request.permission)
+                    )));
+                }
+                AskDecision::Ask => {}
+            }
+
+            let request_id = format!("perm_{}", Uuid::new_v4().simple());
+            let tool_name = request
+                .metadata
+                .get("tool")
+                .and_then(|value| value.as_str())
+                .unwrap_or(&request.permission)
+                .to_string();
+            let message = if request.patterns.is_empty() {
+                request.permission.clone()
+            } else {
+                format!("{}: {}", request.permission, request.patterns.join(", "))
+            };
+            let info = PermissionRequestInfo {
+                id: request_id.clone(),
+                session_id: session_id.clone(),
+                permission: request.permission.clone(),
+                patterns: request.patterns.clone(),
+                tool: tool_name,
+                input: serde_json::json!(request.metadata),
+                message,
+            };
+            let (tx, rx) = oneshot::channel();
+            PERMISSION_REQUESTS
+                .write()
+                .await
+                .insert(request_id.clone(), info);
+            PERMISSION_WAITERS
+                .write()
+                .await
+                .insert(request_id.clone(), tx);
+            state.broadcast(
+                &serde_json::json!({
+                    "type": "session.updated",
+                    "sessionID": session_id,
+                    "source": "permission.request",
+                })
+                .to_string(),
+            );
+
+            match rx.await {
+                Ok(reply) if reply.reply == "reject" => {
+                    Err(opencode_tool::ToolError::PermissionDenied(
+                        reply
+                            .message
+                            .unwrap_or_else(|| "Permission request rejected".to_string()),
+                    ))
+                }
+                Ok(_) => Ok(()),
+                Err(_) => Err(opencode_tool::ToolError::ExecutionError(
+                    "Permission request dropped before reply".to_string(),
+                )),
+            }
+        })
+    });
+
+    let question_state = task_state.clone();
+    let question_session_id = session_id.clone();
+    let question_callback: opencode_tool::QuestionCallback = Arc::new(move |questions| {
+        let state = question_state.clone();
+        let session_id = question_session_id.clone();
+        Box::pin(async move {
+            let request_id = format!("question_{}", Uuid::new_v4().simple());
+            let info = QuestionInfo {
+                id: request_id.clone(),
+                session_id: session_id.clone(),
+                questions: questions
+                    .into_iter()
+                    .map(|question| QuestionPromptInfo {
+                        question: question.question,
+                        header: question.header,
+                        options: question
+                            .options
+                            .into_iter()
+                            .map(|option| QuestionOptionInfo {
+                                label: option.label,
+                                description: option.description,
+                            })
+                            .collect(),
+                        multiple: question.multiple,
+                    })
+                    .collect(),
+            };
+            let (tx, rx) = oneshot::channel();
+            QUESTION_REQUESTS
+                .write()
+                .await
+                .insert(request_id.clone(), info);
+            QUESTION_WAITERS
+                .write()
+                .await
+                .insert(request_id.clone(), tx);
+            state.broadcast(
+                &serde_json::json!({
+                    "type": "session.updated",
+                    "sessionID": session_id,
+                    "source": "question.request",
+                })
+                .to_string(),
+            );
+
+            match rx.await {
+                Ok(QuestionResolution::Answered(answers)) => Ok(answers),
+                Ok(QuestionResolution::Rejected) => Err(opencode_tool::ToolError::ExecutionError(
+                    "question rejected".to_string(),
+                )),
+                Err(_) => Err(opencode_tool::ToolError::ExecutionError(
+                    "Question request dropped before reply".to_string(),
+                )),
+            }
+        })
+    });
+
+    let prompt_runner = Arc::new(
+        opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
+            opencode_session::SessionStateManager::new(),
+        )))
+        .with_ask_callback(permission_callback)
+        .with_ask_question_callback(question_callback),
+    );
+    ACTIVE_PROMPTS
+        .write()
+        .await
+        .insert(session_id.clone(), prompt_runner.clone());
+    let input = opencode_session::PromptInput {
+        session_id: session_id.clone(),
+        message_id: Some(pending_message_id.clone()),
+        model: Some(opencode_session::prompt::ModelRef {
+            provider_id: task_provider.clone(),
+            model_id: task_model.clone(),
+        }),
+        agent: Some(resolved.agent_name.clone()),
+        no_reply: false,
+        system: None,
+        variant: task_variant.clone(),
+        parts: vec![opencode_session::PartInput::Text { text: prompt_text }],
+        tools: None,
+    };
+
+    if let Err(error) = prompt_runner
+        .prompt_with_update_hook(
+            input,
+            &mut session,
+            provider,
+            Some(resolved.system_prompt.clone()),
+            resolved.tools.clone(),
+            resolved.params.clone(),
+            Some(update_hook),
+        )
+        .await
+    {
+        tracing::error!(
+            session_id = %session_id,
+            provider_id = %task_provider,
+            model_id = %task_model,
+            %error,
+            "session prompt failed"
+        );
+        let assistant = session.add_assistant_message();
+        assistant
+            .metadata
+            .insert("error".to_string(), serde_json::json!(error.to_string()));
+        assistant
+            .metadata
+            .insert("finish_reason".to_string(), serde_json::json!("error"));
+        assistant.metadata.insert(
             "model_provider".to_string(),
             serde_json::json!(&task_provider),
         );
-        session
+        assistant
             .metadata
             .insert("model_id".to_string(), serde_json::json!(&task_model));
-        session
-            .metadata
-            .insert("agent".to_string(), serde_json::json!(&resolved.agent_name));
-
-        let (update_tx, mut update_rx) =
-            tokio::sync::mpsc::unbounded_channel::<opencode_session::Session>();
-        let update_state = task_state.clone();
-        let update_task = tokio::spawn(async move {
-            while let Some(snapshot) = update_rx.recv().await {
-                let snapshot_id = snapshot.id.clone();
-                {
-                    let mut sessions = update_state.sessions.lock().await;
-                    sessions.update(snapshot);
-                }
-                update_state.broadcast(
-                    &serde_json::json!({
-                        "type": "session.updated",
-                        "sessionID": snapshot_id,
-                        "source": "prompt.stream",
-                    })
-                    .to_string(),
-                );
-            }
-        });
-        let update_hook: opencode_session::SessionUpdateHook = Arc::new(move |snapshot| {
-            let _ = update_tx.send(snapshot.clone());
-        });
-
-        let permission_state = task_state.clone();
-        let permission_session_id = session_id.clone();
-        let permission_rules = agent_rules.clone();
-        let permission_callback: opencode_tool::AskCallback = Arc::new(move |request| {
-            let state = permission_state.clone();
-            let session_id = permission_session_id.clone();
-            let rules = permission_rules.clone();
-            Box::pin(async move {
-                // Evaluate the request against the resolved agent ruleset plus the
-                // session-level permission overlay so `Allow` tool calls run silently
-                // instead of prompting on every invocation (BUG-004 parity). Only
-                // `Ask` reaches the TUI.
-                use opencode_agent::PermissionDecision as AskDecision;
-                let session_rules = {
-                    let sessions = state.sessions.lock().await;
-                    sessions
-                        .get(&session_id)
-                        .and_then(|session| session.permission.clone())
-                        .map(|p| crate::agentic::ruleset_from_session(&p))
-                        .unwrap_or_default()
-                };
-                let permanent_rules = {
-                    let permanent = PERMANENT_RULES.read().await;
-                    permanent.get(&session_id).cloned().unwrap_or_default()
-                };
-                let merged = crate::agentic::merged_ruleset(
-                    &crate::agentic::merged_ruleset(&rules, &session_rules),
-                    &permanent_rules,
-                );
-                match crate::agentic::classify_permission(
-                    &merged,
-                    &request.permission,
-                    &request.patterns,
-                ) {
-                    AskDecision::Allow => return Ok(()),
-                    AskDecision::Deny => {
-                        return Err(opencode_tool::ToolError::PermissionDenied(format!(
-                            "Tool '{}' is denied by agent permission rules",
-                            request
-                                .metadata
-                                .get("tool")
-                                .and_then(|value| value.as_str())
-                                .unwrap_or(&request.permission)
-                        )));
-                    }
-                    AskDecision::Ask => {}
-                }
-
-                let request_id = format!("perm_{}", Uuid::new_v4().simple());
-                let tool_name = request
-                    .metadata
-                    .get("tool")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or(&request.permission)
-                    .to_string();
-                let message = if request.patterns.is_empty() {
-                    request.permission.clone()
-                } else {
-                    format!("{}: {}", request.permission, request.patterns.join(", "))
-                };
-                let info = PermissionRequestInfo {
-                    id: request_id.clone(),
-                    session_id: session_id.clone(),
-                    permission: request.permission.clone(),
-                    patterns: request.patterns.clone(),
-                    tool: tool_name,
-                    input: serde_json::json!(request.metadata),
-                    message,
-                };
-                let (tx, rx) = oneshot::channel();
-                PERMISSION_REQUESTS
-                    .write()
-                    .await
-                    .insert(request_id.clone(), info);
-                PERMISSION_WAITERS
-                    .write()
-                    .await
-                    .insert(request_id.clone(), tx);
-                state.broadcast(
-                    &serde_json::json!({
-                        "type": "session.updated",
-                        "sessionID": session_id,
-                        "source": "permission.request",
-                    })
-                    .to_string(),
-                );
-
-                match rx.await {
-                    Ok(reply) if reply.reply == "reject" => {
-                        Err(opencode_tool::ToolError::PermissionDenied(
-                            reply
-                                .message
-                                .unwrap_or_else(|| "Permission request rejected".to_string()),
-                        ))
-                    }
-                    Ok(_) => Ok(()),
-                    Err(_) => Err(opencode_tool::ToolError::ExecutionError(
-                        "Permission request dropped before reply".to_string(),
-                    )),
-                }
-            })
-        });
-
-        let question_state = task_state.clone();
-        let question_session_id = session_id.clone();
-        let question_callback: opencode_tool::QuestionCallback = Arc::new(move |questions| {
-            let state = question_state.clone();
-            let session_id = question_session_id.clone();
-            Box::pin(async move {
-                let request_id = format!("question_{}", Uuid::new_v4().simple());
-                let info = QuestionInfo {
-                    id: request_id.clone(),
-                    session_id: session_id.clone(),
-                    questions: questions
-                        .into_iter()
-                        .map(|question| QuestionPromptInfo {
-                            question: question.question,
-                            header: question.header,
-                            options: question
-                                .options
-                                .into_iter()
-                                .map(|option| QuestionOptionInfo {
-                                    label: option.label,
-                                    description: option.description,
-                                })
-                                .collect(),
-                            multiple: question.multiple,
-                        })
-                        .collect(),
-                };
-                let (tx, rx) = oneshot::channel();
-                QUESTION_REQUESTS
-                    .write()
-                    .await
-                    .insert(request_id.clone(), info);
-                QUESTION_WAITERS
-                    .write()
-                    .await
-                    .insert(request_id.clone(), tx);
-                state.broadcast(
-                    &serde_json::json!({
-                        "type": "session.updated",
-                        "sessionID": session_id,
-                        "source": "question.request",
-                    })
-                    .to_string(),
-                );
-
-                match rx.await {
-                    Ok(QuestionResolution::Answered(answers)) => Ok(answers),
-                    Ok(QuestionResolution::Rejected) => Err(
-                        opencode_tool::ToolError::ExecutionError("question rejected".to_string()),
-                    ),
-                    Err(_) => Err(opencode_tool::ToolError::ExecutionError(
-                        "Question request dropped before reply".to_string(),
-                    )),
-                }
-            })
-        });
-
-        let prompt_runner = Arc::new(
-            opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
-                opencode_session::SessionStateManager::new(),
-            )))
-            .with_ask_callback(permission_callback)
-            .with_ask_question_callback(question_callback),
-        );
-        ACTIVE_PROMPTS
-            .write()
-            .await
-            .insert(session_id.clone(), prompt_runner.clone());
-        let input = opencode_session::PromptInput {
-            session_id: session_id.clone(),
-            message_id: None,
-            model: Some(opencode_session::prompt::ModelRef {
-                provider_id: task_provider.clone(),
-                model_id: task_model.clone(),
-            }),
-            agent: Some(resolved.agent_name.clone()),
-            no_reply: false,
-            system: None,
-            variant: task_variant.clone(),
-            parts: vec![opencode_session::PartInput::Text { text: prompt_text }],
-            tools: None,
-        };
-
-        if let Err(error) = prompt_runner
-            .prompt_with_update_hook(
-                input,
-                &mut session,
-                provider,
-                Some(resolved.system_prompt.clone()),
-                resolved.tools.clone(),
-                resolved.params.clone(),
-                Some(update_hook),
-            )
-            .await
-        {
-            tracing::error!(
-                session_id = %session_id,
-                provider_id = %task_provider,
-                model_id = %task_model,
-                %error,
-                "session prompt failed"
-            );
-            let assistant = session.add_assistant_message();
+        if let Some(agent) = task_agent.as_deref() {
             assistant
                 .metadata
-                .insert("error".to_string(), serde_json::json!(error.to_string()));
-            assistant
-                .metadata
-                .insert("finish_reason".to_string(), serde_json::json!("error"));
-            assistant.metadata.insert(
-                "model_provider".to_string(),
-                serde_json::json!(&task_provider),
-            );
-            assistant
-                .metadata
-                .insert("model_id".to_string(), serde_json::json!(&task_model));
-            if let Some(agent) = task_agent.as_deref() {
-                assistant
-                    .metadata
-                    .insert("agent".to_string(), serde_json::json!(agent));
-            }
-            assistant.add_text(format!("Provider error: {}", error));
+                .insert("agent".to_string(), serde_json::json!(agent));
         }
+        assistant.add_text(format!("Provider error: {}", error));
+    }
+    {
+        let mut active_prompts = ACTIVE_PROMPTS.write().await;
+        if active_prompts
+            .get(&session_id)
+            .is_some_and(|active| Arc::ptr_eq(active, &prompt_runner))
         {
-            let mut active_prompts = ACTIVE_PROMPTS.write().await;
-            if active_prompts
-                .get(&session_id)
-                .is_some_and(|active| Arc::ptr_eq(active, &prompt_runner))
-            {
-                active_prompts.remove(&session_id);
-            }
+            active_prompts.remove(&session_id);
         }
-        let _ = update_task.await;
+    }
+    let _ = update_task.await;
 
-        {
-            let mut sessions = task_state.sessions.lock().await;
-            sessions.update(session);
-        }
-        task_state.broadcast(
-            &serde_json::json!({
-                "type": "session.updated",
-                "sessionID": session_id,
-                "source": "prompt.final",
-            })
-            .to_string(),
-        );
-        set_session_run_status(&task_state, &session_id, SessionRunStatus::Idle).await;
-        persist_sessions_if_enabled(&task_state).await;
-    });
-
-    Ok(Json(serde_json::json!({
-        "status": "started",
-        "model": format!("{}/{}", provider_id, model_id),
-        "variant": req.variant,
-    })))
+    apply_session_snapshot(&task_state, &session_id, session).await;
+    task_state.broadcast(
+        &serde_json::json!({
+            "type": "session.updated",
+            "sessionID": session_id,
+            "source": "prompt.final",
+        })
+        .to_string(),
+    );
+    persist_sessions_if_enabled(&task_state).await;
 }
 
 async fn abort_prompt(
@@ -2099,11 +2844,68 @@ async fn abort_active_session_prompt(
         false
     };
 
-    if aborted {
-        set_session_run_status(&state, &id, SessionRunStatus::Idle).await;
+    // Abort cancels the active run only. Waiting queued prompts are preserved
+    // (vanilla's interrupt does not clear admitted inputs); the drain loop owns
+    // the next status transition and will continue with the queue.
+    Ok(Json(serde_json::json!({ "aborted": aborted })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelQueuedPromptRequest {
+    pub message_id: String,
+}
+
+/// Explicitly cancel one waiting (accepted-but-not-active) prompt. Removes the
+/// prompt from the queue and deletes its materialized user message.
+async fn cancel_queued_prompt(
+    State(state): State<Arc<ServerState>>,
+    Path(id): Path<String>,
+    Json(req): Json<CancelQueuedPromptRequest>,
+) -> Result<Json<serde_json::Value>> {
+    {
+        let sessions = state.sessions.lock().await;
+        if sessions.get(&id).is_none() {
+            return Err(ApiError::SessionNotFound(id));
+        }
     }
 
-    Ok(Json(serde_json::json!({ "aborted": aborted })))
+    let removed = {
+        let mut queues = SESSION_QUEUES.lock().await;
+        match queues.get_mut(&id) {
+            Some(queue) => match queue
+                .pending
+                .iter()
+                .position(|pending| pending.message_id == req.message_id)
+            {
+                Some(position) => {
+                    queue.pending.remove(position);
+                    true
+                }
+                None => false,
+            },
+            None => false,
+        }
+    };
+
+    if removed {
+        {
+            let mut sessions = state.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&id) {
+                session.remove_message(&req.message_id);
+            }
+        }
+        state.broadcast(
+            &serde_json::json!({
+                "type": "session.updated",
+                "sessionID": id,
+                "source": "prompt.cancelled",
+            })
+            .to_string(),
+        );
+        persist_sessions_if_enabled(&state).await;
+    }
+
+    Ok(Json(serde_json::json!({ "cancelled": removed })))
 }
 
 async fn abort_session(
@@ -2282,38 +3084,54 @@ async fn prompt_async(
     Path(id): Path<String>,
     Json(req): Json<PromptAsyncRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    let mut sessions = state.sessions.lock().await;
-    let session = sessions
-        .get_mut(&id)
-        .ok_or_else(|| ApiError::SessionNotFound(id.clone()))?;
-    let message_text: String = req
+    let prompt_text = req
         .message
         .clone()
         .or_else(|| {
             req.parts
                 .as_ref()
-                .map(|p| {
-                    let s = text_from_parts(p);
-                    if s.is_empty() {
-                        None
-                    } else {
-                        Some(s)
-                    }
-                })
-                .flatten()
+                .map(|p| text_from_parts(p))
+                .filter(|text| !text.is_empty())
         })
         .unwrap_or_default();
-    session.add_user_message(&message_text);
-    let assistant = session.add_assistant_message();
-    let assistant_id = assistant.id.clone();
-    drop(sessions);
-    persist_sessions_if_enabled(&state).await;
 
-    Ok(Json(serde_json::json!({
-        "status": "queued",
-        "message_id": assistant_id,
-        "model": req.model,
-    })))
+    if prompt_text.trim().is_empty() {
+        return Err(ApiError::BadRequest("Prompt text is required".to_string()));
+    }
+
+    {
+        let sessions = state.sessions.lock().await;
+        if sessions.get(&id).is_none() {
+            return Err(ApiError::SessionNotFound(id));
+        }
+    }
+
+    // `prompt_async` is an alias of the canonical queued path: it enqueues real
+    // execution and never reports `queued` without running. The old
+    // message-append stub is gone.
+    let config = CONFIG_STATE.read().await;
+    let (provider, provider_id, model_id) =
+        resolve_provider_and_model(&state, None, config.model.as_deref(), None).await?;
+    drop(config);
+
+    let accepted = accept_prompt(
+        &state,
+        &id,
+        prompt_text,
+        provider,
+        provider_id.clone(),
+        model_id.clone(),
+        None,
+        None,
+    )
+    .await?;
+
+    Ok(Json(acceptance_response(
+        &accepted,
+        &provider_id,
+        &model_id,
+        None,
+    )))
 }
 
 #[derive(Debug, Deserialize)]

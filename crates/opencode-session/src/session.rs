@@ -476,6 +476,22 @@ impl Session {
         self.messages.last_mut().unwrap()
     }
 
+    /// Add a user message with a caller-provided stable ID.
+    ///
+    /// Used for accept-time materialization so the server can return the exact
+    /// message ID that the runner later consumes.
+    pub fn add_user_message_with_id(
+        &mut self,
+        id: impl Into<String>,
+        text: impl Into<String>,
+    ) -> &mut SessionMessage {
+        let mut msg = SessionMessage::user(&self.id, text);
+        msg.id = id.into();
+        self.messages.push(msg);
+        self.touch();
+        self.messages.last_mut().unwrap()
+    }
+
     /// Add an assistant message
     pub fn add_assistant_message(&mut self) -> &mut SessionMessage {
         let msg = SessionMessage::assistant(&self.id);

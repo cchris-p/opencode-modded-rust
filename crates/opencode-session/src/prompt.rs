@@ -210,12 +210,37 @@ impl SessionPrompt {
 
         let project_root = session.directory.clone();
 
+        // Accept-time materialization: when the server has already persisted the
+        // user message for this prompt, consume that exact message instead of
+        // creating a second one. `message_id` ownership is enforced here.
+        let existing_id = input
+            .message_id
+            .as_deref()
+            .filter(|id| {
+                session
+                    .get_message(id)
+                    .is_some_and(|message| matches!(message.role, MessageRole::User))
+            })
+            .map(str::to_string);
+
         // Create the user message with text (or empty if only non-text parts)
-        let msg = if text.is_empty() {
-            session.add_user_message(" ")
-        } else {
-            session.add_user_message(&text)
+        let msg = match existing_id {
+            Some(id) => session
+                .get_message_mut(&id)
+                .expect("existing_id is checked to exist above"),
+            None => {
+                let created = if text.is_empty() {
+                    session.add_user_message(" ")
+                } else {
+                    session.add_user_message(&text)
+                };
+                if let Some(id) = input.message_id.as_deref() {
+                    created.id = id.to_string();
+                }
+                created
+            }
         };
+        msg.metadata.remove("queued_pending");
 
         // Add non-text parts to the message
         for part in &input.parts {
@@ -3851,6 +3876,84 @@ mod tests {
             .map(SessionMessage::get_text)
             .unwrap_or_default();
         assert_eq!(final_text, "Hello");
+    }
+
+    #[tokio::test]
+    async fn create_user_message_reuses_materialized_message_exactly_once() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+        let materialized = session.add_user_message_with_id("msg_materialized", "queued text");
+        materialized
+            .metadata
+            .insert("queued_pending".to_string(), serde_json::json!(true));
+
+        let input = PromptInput {
+            session_id: session.id.clone(),
+            message_id: Some("msg_materialized".to_string()),
+            model: None,
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            tools: None,
+            parts: vec![PartInput::Text {
+                text: "queued text".to_string(),
+            }],
+        };
+
+        prompt
+            .create_user_message(&input, &mut session)
+            .await
+            .expect("materialized message should be consumed");
+
+        let user_messages: Vec<&SessionMessage> = session
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::User))
+            .collect();
+        assert_eq!(
+            user_messages.len(),
+            1,
+            "accept-time materialization must not create a second user message"
+        );
+        assert_eq!(user_messages[0].id, "msg_materialized");
+        assert!(
+            user_messages[0].metadata.get("queued_pending").is_none(),
+            "the queued marker clears once the runner consumes the message"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_user_message_creates_one_message_for_requested_id() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+
+        let input = PromptInput {
+            session_id: session.id.clone(),
+            message_id: Some("msg_requested".to_string()),
+            model: None,
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            tools: None,
+            parts: vec![PartInput::Text {
+                text: "fresh prompt".to_string(),
+            }],
+        };
+
+        prompt
+            .create_user_message(&input, &mut session)
+            .await
+            .expect("prompt should be materialized");
+
+        let user_messages: Vec<&SessionMessage> = session
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::User))
+            .collect();
+        assert_eq!(user_messages.len(), 1);
+        assert_eq!(user_messages[0].id, "msg_requested");
     }
 
     #[tokio::test]

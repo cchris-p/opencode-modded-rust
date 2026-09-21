@@ -28,6 +28,16 @@ Terminology:
 
 ## Current Implementation Snapshot (non-binding)
 
+> **Implementation status (2026-09-21, `GATE-001` / PR `feature/GATE-001-session-prompt-queue`):**
+> The target invariants below are now implemented on the server and in the TUI: a shared per-session
+> FIFO queue with a single drain loop, accept-time materialization with single ownership, a `Queued`
+> run status, abort-active plus explicit queued cancel, `prompt_async` aliased to the queued path, and
+> the vanilla `QUEUED` TUI badge. The baseline below is retained as the pre-implementation snapshot
+> that motivated the change. The one deliberate partial is the CLI run-footer "Manage queued prompts"
+> surface, which is conditional on a CLI interactive run surface existing.
+
+### Pre-implementation baseline
+
 ### Endpoints
 
 Registered in `crates/opencode-server/src/routes.rs:143-145`:

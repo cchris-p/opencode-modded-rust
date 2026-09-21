@@ -5,7 +5,7 @@ priority: "P0"
 type: "gate"
 area: "GATE"
 spec: "invariants/message-queuing.md"
-status: "todo"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -286,3 +286,70 @@ implementation. They are binding alongside the observable behavior above.
   `## Blocked By` section plus a `predecessors` frontmatter field.
 - Vanilla line references in this card are pinned to `e62912b5d18b73316c7bfd6e894b040698f6c880`; if a
   later board item changes the frozen reference line, re-evaluate this gate.
+## Dev Notes (2026-09-21, PR feature/GATE-001-session-prompt-queue)
+
+Implemented the server-side per-session prompt queue and the TUI `QUEUED` badge. This satisfies the
+gate's server, status, materialization, abort/cancel, restart, and TUI-display requirements.
+
+Server (`crates/opencode-server/src/routes.rs`):
+
+- Added shared per-session queue state (`SESSION_QUEUES: HashMap<String, SessionQueue>` with a FIFO
+  `pending` deque, an `active` drain guard, and a monotonic `next_seq`). One drain loop runs per
+  session and executes one turn at a time in admission order.
+- `POST /session/{id}/prompt` now materializes the user message into shared session state under a
+  stable ID (`queued_pending` + `admitted_seq` metadata), enqueues it, and returns `started`
+  immediately or `queued` with `message_id`, `position`, and `depth`. `prompt_async` is now an alias of
+  the same queued path (the message-append stub is gone) and never reports `queued` without
+  enqueueing execution.
+- `SessionRunStatus` gained `Queued { position, depth }`; `GET /session/status` exposes `status`
+  (`idle|busy|queued|...`) plus `position`/`depth`, and transitions broadcast as `session.status`.
+- Accept-time materialization is single-ownership: the runner consumes the already-persisted message
+  (`PromptInput.message_id`) and `create_user_message` no longer creates a second user message. Queued
+  but not-yet-active prompts are visible in shared state for every client but are excluded from the
+  model history until their turn starts; a snapshot merge (`merge_session_snapshot`) preserves them
+  while a runner streams full snapshots.
+- Abort (`POST /session/{id}/prompt/abort`) cancels only the active run and leaves queued prompts
+  visible (drains the next one). Added `POST /session/{id}/prompt/cancel` to remove one waiting prompt
+  and its materialized user message (vanilla `onQueuedRemove`). Per-session queue bound is 32 with an
+  explicit `queue is full` rejection.
+- Restart safety: the queue is in-memory, so accepted-but-unstarted messages persist in the transcript
+  and are never auto-executed or silently deleted.
+
+TUI (`crates/opencode-tui`):
+
+- `session.rs` computes the vanilla queued boundary (`completed` = last assistant with `completed_at`,
+  `pending` = last in-flight assistant after it; user messages after `pending` are queued).
+- `render_user_message` renders the exact ` QUEUED ` badge (one leading and one trailing space),
+  agent-color background, contrast-selected foreground (`Theme::selected_foreground`), bold, replacing
+  the timestamp row and shown even when timestamps are hidden.
+
+Documented partial:
+
+- The vanilla CLI run-footer "Manage queued prompts" surface (`runtime.queue.ts` / footer) is not in
+  scope for this PR: the Rust CLI has no interactive run queue/footer today, so per the gate's
+  conditional rule this half is recorded as a partial. Open a follow-up card only when that surface
+  exists. `FEAT-005`/`FEAT-019` remain blocked on this gate for the CLI command surfaces.
+
+Verification:
+
+- `cargo test -p opencode-server` -> 19 lib tests + 3 integration tests pass, including new
+  `session_queue_tests`: `accept_prompt_materializes_exactly_one_message_per_prompt`,
+  `concurrent_accepts_do_not_drop_or_duplicate_prompts`,
+  `abort_cancels_active_run_without_clearing_queued_prompts`,
+  `merge_session_snapshot_preserves_queued_user_messages`, and
+  `session_prompt_reports_started_then_queued_and_serializes_turns` (end-to-end `started`/`queued`
+  with a gated provider proving serial FIFO drain and exactly-once materialization).
+- `cargo test -p opencode-session` new tests
+  `create_user_message_reuses_materialized_message_exactly_once` and
+  `create_user_message_creates_one_message_for_requested_id` pass. (Two pre-existing
+  `instruction::tests` failures are environmental `/private/var` path issues unrelated to this change.)
+- `cargo test -p opencode-tui --lib -- --test-threads=1` -> 51 pass, including the three badge tests.
+  (Two `components::prompt` tests are flaky under parallel env-var mutation; they pass single-threaded.)
+- `cargo check --workspace` clean; `cargo fmt --all` applied.
+
+Side-by-side parity evidence:
+
+- Badge text/spacing/color/bold/replacement verified by unit test against the GATE-001 section 2 spec
+  (frozen `packages/tui/src/routes/session/index.tsx:1388-1453`). Boundary algorithm matches
+  `index.tsx:244-250` (`completed`/`pending`). Live side-by-side TUI comparison against the pinned
+  commit remains for human QA.
