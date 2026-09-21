@@ -196,15 +196,18 @@ impl ServerState {
             manager.list().into_iter().cloned().collect()
         };
 
-        let snapshot_ids: HashSet<String> = snapshot.iter().map(|s| s.id.clone()).collect();
-        let persisted = session_repo.list(None, 100_000).await?;
-
-        for stale in persisted {
-            if !snapshot_ids.contains(&stale.id) {
-                message_repo.delete_for_session(&stale.id).await?;
-                session_repo.delete(&stale.id).await?;
-            }
-        }
+        // A running server only knows the sessions it loaded at startup plus the
+        // ones it created, so its snapshot may be stale relative to another live
+        // server. Saving is additive: never remove stored state that is absent
+        // from this view. Freshness comes from comparing stored `updated_at`
+        // against the in-memory `time.updated`, so a stale writer never
+        // overwrites newer durable state.
+        let stored_updated_at: HashMap<String, i64> = session_repo
+            .list(None, 100_000)
+            .await?
+            .into_iter()
+            .map(|stored| (stored.id, stored.time.updated))
+            .collect();
 
         for session in snapshot {
             let mut stored_session: opencode_types::Session =
@@ -213,20 +216,53 @@ impl ServerState {
                 stored_session.messages.clone();
             stored_session.messages.clear();
 
-            if session_repo.get(&stored_session.id).await?.is_some() {
-                session_repo.update(&stored_session).await?;
-            } else {
-                session_repo.create(&stored_session).await?;
+            let stored_updated = stored_updated_at.get(&stored_session.id).copied();
+            if stored_updated.is_some_and(|updated| updated > stored_session.time.updated) {
+                continue;
             }
 
-            message_repo.delete_for_session(&stored_session.id).await?;
-            for message in stored_messages {
-                message_repo.create(&message).await?;
+            match stored_updated {
+                Some(_) => session_repo.update(&stored_session).await?,
+                None => session_repo.create(&stored_session).await?,
             }
+
+            message_repo
+                .replace_for_session(&stored_session.id, &stored_messages)
+                .await?;
         }
 
         Ok(())
     }
+
+    /// Explicitly remove sessions and their messages from durable storage.
+    ///
+    /// Deletion is user-initiated and must not rely on a later snapshot diff,
+    /// so the delete path drives this directly for the root session and every
+    /// descendant id.
+    pub(crate) async fn delete_sessions_from_storage(&self, ids: &[String]) -> anyhow::Result<()> {
+        let (Some(session_repo), Some(message_repo)) = (&self.session_repo, &self.message_repo)
+        else {
+            return Ok(());
+        };
+
+        for id in ids {
+            message_repo.delete_for_session(id).await?;
+            session_repo.delete(id).await?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_state_with_repos(
+    session_repo: SessionRepository,
+    message_repo: MessageRepository,
+) -> ServerState {
+    let mut state = ServerState::new();
+    state.session_repo = Some(session_repo);
+    state.message_repo = Some(message_repo);
+    state
 }
 
 fn load_provider_bootstrap_config() -> opencode_provider::BootstrapConfig {
@@ -534,10 +570,7 @@ mod tests {
         session_repo: SessionRepository,
         message_repo: MessageRepository,
     ) -> ServerState {
-        let mut state = ServerState::new();
-        state.session_repo = Some(session_repo);
-        state.message_repo = Some(message_repo);
-        state
+        test_state_with_repos(session_repo, message_repo)
     }
 
     #[tokio::test]
@@ -640,7 +673,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_removes_deleted_sessions_from_storage() {
+    async fn sync_does_not_remove_sessions_absent_from_snapshot() {
         let db = Database::in_memory()
             .await
             .expect("in-memory db should initialize");
@@ -674,14 +707,161 @@ mod tests {
             manager.delete(&session_id);
         }
 
+        // Saving is additive: a sync never removes a stored session that is
+        // absent from the caller's in-memory view. Explicit deletion owns removal.
         state
             .sync_sessions_to_storage()
             .await
-            .expect("delete sync should succeed");
+            .expect("additive sync should succeed");
         assert!(session_repo
             .get(&session_id)
             .await
             .expect("get should succeed")
-            .is_none());
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrent_states_keep_each_others_sessions_and_messages() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+
+        let state_a = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+        let state_b = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+
+        let id_a = {
+            let mut manager = state_a.sessions.lock().await;
+            let created = manager.create("default", ".");
+            let id = created.id.clone();
+            manager
+                .get_mut(&id)
+                .expect("session should exist")
+                .add_user_message("from a");
+            id
+        };
+        let id_b = {
+            let mut manager = state_b.sessions.lock().await;
+            let created = manager.create("default", ".");
+            let id = created.id.clone();
+            manager
+                .get_mut(&id)
+                .expect("session should exist")
+                .add_user_message("from b");
+            id
+        };
+
+        // A writes, then a stale B writes, then A writes again. Neither view
+        // knows about the other's session.
+        state_a
+            .sync_sessions_to_storage()
+            .await
+            .expect("state a should sync");
+        state_b
+            .sync_sessions_to_storage()
+            .await
+            .expect("state b should sync");
+        state_a
+            .sync_sessions_to_storage()
+            .await
+            .expect("state a should sync again");
+
+        let session_repo = SessionRepository::new(pool.clone());
+        let message_repo = MessageRepository::new(pool.clone());
+        assert!(session_repo.get(&id_a).await.expect("get a").is_some());
+        assert!(session_repo.get(&id_b).await.expect("get b").is_some());
+        assert_eq!(
+            message_repo
+                .list_for_session(&id_a)
+                .await
+                .expect("messages a")
+                .len(),
+            1
+        );
+        assert_eq!(
+            message_repo
+                .list_for_session(&id_b)
+                .await
+                .expect("messages b")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_state_does_not_overwrite_newer_stored_session() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        let message_repo = MessageRepository::new(pool.clone());
+
+        let state_stale = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+        let session_id = {
+            let mut manager = state_stale.sessions.lock().await;
+            let created = manager.create("default", ".");
+            let id = created.id.clone();
+            let session = manager.get_mut(&id).expect("session should exist");
+            session.add_user_message("original");
+            session.time.updated = 1_000;
+            id
+        };
+        state_stale
+            .sync_sessions_to_storage()
+            .await
+            .expect("stale state should sync first");
+
+        // A second server loads the stored session and writes newer state.
+        let state_new = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+        state_new
+            .load_sessions_from_storage()
+            .await
+            .expect("new state should load stored sessions");
+        {
+            let mut manager = state_new.sessions.lock().await;
+            let session = manager.get_mut(&session_id).expect("session should exist");
+            session.title = "newer title".to_string();
+            session.add_user_message("newer");
+            session.time.updated = 2_000;
+        }
+        state_new
+            .sync_sessions_to_storage()
+            .await
+            .expect("new state should sync");
+
+        // The stale server syncs again with an older `updated_at`.
+        state_stale
+            .sync_sessions_to_storage()
+            .await
+            .expect("stale state should sync again");
+
+        let stored = session_repo
+            .get(&session_id)
+            .await
+            .expect("get should succeed")
+            .expect("session should remain stored");
+        assert_eq!(stored.time.updated, 2_000);
+        assert_eq!(stored.title, "newer title");
+        assert_eq!(
+            message_repo
+                .list_for_session(&session_id)
+                .await
+                .expect("messages should load")
+                .len(),
+            2
+        );
     }
 }

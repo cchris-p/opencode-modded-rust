@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/session-durability.md"
-status: "todo"
+status: "doing"
 created: "2026-09-21"
 ---
 
@@ -264,3 +264,39 @@ modified (dirty tracking) to also cut the all-sessions rewrite on every API call
   save with a required freshness guard, transactional message replace, explicit delete with child
   cascade, and an in-scope TUI missing-session error. Owner/lease and per-workspace DB files are
   explicit non-goals; simultaneous same-session edits remain last-writer-wins.
+
+## Dev Notes (2026-09-21)
+
+Implemented the locked "Proposed Fix" decisions.
+
+- `crates/opencode-server/src/server.rs`
+  - `sync_sessions_to_storage` no longer deletes sessions that are absent from the caller's
+    snapshot. The stale-deletion loop is removed; saving is additive.
+  - Added a required freshness guard: one `session_repo.list(None, 100_000)` read builds an
+    `id -> updated_at` map, and any session whose stored `updated_at` is strictly newer than the
+    in-memory `time.updated` is skipped entirely (row and messages).
+  - Message history is now written via the transactional `MessageRepository::replace_for_session`
+    instead of an un-transacted delete + insert loop.
+  - Added `delete_sessions_from_storage(&[String])` for the explicit delete path.
+- `crates/opencode-storage/src/repository.rs`
+  - Added `MessageRepository::replace_for_session`, which deletes and re-inserts a session's
+    messages inside one transaction.
+- `crates/opencode-server/src/routes.rs`
+  - `delete_session` now collects the root plus all descendant ids from the manager, deletes them
+    in memory, then deletes each id's rows and messages directly from storage. It no longer relies
+    on a snapshot sync to propagate the deletion.
+- `crates/opencode-tui/src/app/app.rs`
+  - Initial `--session` handling no longer swallows a failed `get_session`. On failure it restores
+    the terminal and returns the error instead of opening an empty session view.
+
+Verification run:
+
+- `cargo test -p opencode-storage` (new `replace_for_session` test) - pass.
+- `cargo test -p opencode-server` (new additive, two-writer, freshness-guard, and delete-cascade
+  tests; dropped the obsolete `sync_removes_deleted_sessions_from_storage` expectation) - 27 + 3
+  tests pass.
+- `cargo test -p opencode-tui` (new initial-session failure/success tests) - 68 tests pass.
+- `cargo check -p opencode-server -p opencode-storage -p opencode-tui` and `cargo fmt --all` - clean.
+
+Residual: two servers actively editing the same session remain last-writer-wins; the freshness
+guard prevents loss but not a concurrent same-session edit race (documented non-goal).
