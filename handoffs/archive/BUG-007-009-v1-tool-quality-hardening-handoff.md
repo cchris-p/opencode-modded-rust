@@ -1,9 +1,9 @@
 ---
 id: "H-001"
 title: "BUG-007..BUG-009 V1 tool-quality hardening - Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-09-10"
-updated: "2026-09-15"
+updated: "2026-09-21"
 owner: ""
 target: ""
 blocked_reason: ""
@@ -39,14 +39,15 @@ Refinement gate ran over the whole group and passed after these decisions were r
 
 - `BUG-007` - **merged** into `development` via PR #31 (commit `bda8afc`); card in `qa`, awaiting user QA.
 - `BUG-008` - **merged** into `development` via PR #32 (commit `c56287f`) as a tool removal; card in `qa`, awaiting user QA.
-- `BUG-009` - **deferred, not started**. Card remains in `todo` pending local-model context-pressure observation.
+- `BUG-009` - **merged** into `development` via PR #56 (merge commit `28ee4b6`); branch deleted remotely and locally, temporary worktree removed. Card moved to `done` on explicit user direction.
 
 ## Completed with
 
 - PR #31 `fix(tool): make ls return a bounded, accurate top-level listing (BUG-007)` - merged into `development` 2026-09-15 (`bda8afc`).
 - PR #32 `fix(tool): remove the unusable batch tool from the default tool set (BUG-008)` - merged into `development` 2026-09-15 (`c56287f`).
+- PR #56 `fix(read): dedupe instruction file injection per prompt run (BUG-009)` - merged into `development` 2026-09-21 (`28ee4b6`).
 
-The handoff is **not** archived because `BUG-009` is still open (deferred).
+All three covered PRs are merged, so this handoff is complete and archived.
 
 ## Dependencies and Ordering
 

@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-10"
 ---
 
@@ -75,4 +75,5 @@ Reference behavior (`packages/opencode/src/tool/read.ts` + `session/instruction.
 - This is a context-efficiency/token-budget issue, not a functional failure; classify accordingly if scope is questioned.
 - Deferred (2026-09-15): not started. The daily-driver model in use (`deepseek/deepseek-v4-flash`, 1M-token context) does not show measurable context pressure from repeated instruction injection, so there is no forcing evidence to implement this now. Revisit when a small-context local model is in use and the token cost of per-read instruction re-injection becomes observable. Card remains in `todo`.
   - Overridden (2026-09-21): implemented on explicit request. The deferral was a soft prior decision, not a hold marker, and repeated identical instruction blocks also waste attention budget (lost-in-the-middle), not only tokens.
-- Handoff `H-001` is not archived while this card stays open; `BUG-007`/`BUG-008` (the other `H-001` children) are merged into `development` and in `qa`.
+- Completed (2026-09-21): merged via PR #56 into `development` (merge commit `28ee4b6`). Branch `bug/BUG-009-instruction-dedup` deleted remotely and locally; temporary worktree removed. Moved to `done` on explicit user direction.
+- Handoff `H-001` children are all merged: `BUG-007`/`BUG-008` earlier, `BUG-009` via PR #56.
