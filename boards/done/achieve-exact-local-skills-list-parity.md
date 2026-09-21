@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "SKILLS"
 spec: "invariants/skills/discovery.md"
-status: "qa"
+status: "done"
 created: "2026-09-19"
 ---
 
@@ -127,3 +127,8 @@ Options to close before moving to `done`:
 2. Make the parity script normalize/isolate `XDG_CONFIG_HOME` (or explicitly document it as a precondition) and update the invariant accordingly.
 
 Standard-environment behavior (XDG unset) is exact parity and passes; the gap is specific to a non-default `XDG_CONFIG_HOME`.
+
+## Completion - 2026-09-21 16:25 EDT
+
+- Closed by explicit user direction: the current local skills capability is sufficient for operating needs.
+- The non-default `XDG_CONFIG_HOME` parity caveat above is preserved as historical context rather than blocking this item.
