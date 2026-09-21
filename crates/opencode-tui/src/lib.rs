@@ -10,6 +10,7 @@ pub mod hooks;
 pub mod router;
 pub mod terminal;
 pub mod theme;
+pub mod trace;
 pub mod ui;
 
 pub use api::ApiClient;
@@ -39,6 +40,7 @@ fn setup_panic_hook() {
 
 pub fn run_tui() -> anyhow::Result<TuiExit> {
     setup_panic_hook();
+    trace::init();
 
     let mut app = App::new()?;
     app.run()

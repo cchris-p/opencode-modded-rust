@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -13,27 +13,39 @@ created: "2026-09-21"
 
 ## Summary
 
-While a model is producing reasoning (thinking), the TUI session briefly stutters/freezes and then
-recovers. It reproduces on every thinking turn with `/thinking` on, on the default
-`deepseek/deepseek-v4-flash` model. The likely cause is the reasoning-streaming update path, not the
-model itself: every `session.updated` event triggers a synchronous, full-session HTTP refetch inside
-the TUI event loop, and reasoning deltas drive those events at the maximum throttle rate (every
-~50ms) for the whole thinking phase.
+While a model is producing reasoning (thinking), the TUI session **freezes for the duration of the
+thinking phase**: input is not accepted and no progress is visible, and the UI only catches up and
+finishes the task once reasoning completes. It reproduces on every thinking turn with `/thinking` on,
+on the default `deepseek/deepseek-v4-flash` model. The likely cause is the reasoning-streaming update
+path, not the model itself: every `session.updated` event triggers a synchronous, full-session HTTP
+refetch inside the TUI event loop, and reasoning deltas drive those events at the maximum throttle
+rate (every ~50ms) for the whole thinking phase, saturating the loop until the stream ends.
 
 This card tracks investigation and fix. A few verification details (server-side responsiveness,
 transcript capture, `/thinking`-off comparison) remain open.
 
+**Symptom correction (2026-09-21).** The original report described a brief stutter that recovered
+mid-turn. The user corrected this: the session freezes for the whole reasoning phase and the UI is
+unresponsive (no input, no visible progress), then catches up and the task completes normally. This
+is a sustained event-loop starvation, not a discrete repeatable stall, which shifts weight toward the
+blocking refetch path (H1/H2) and away from render cost (H4) as the primary cause.
+
 ## Reported behavior
 
-- The session stutters/freezes while the model is in thinking mode, then recovers: a brief
-  unresponsive pause that returns to normal rather than a permanent hang requiring restart.
+- The session **freezes while the model is in thinking mode**: the UI is unresponsive (input is not
+  accepted, progress is not visible) for the duration of the thinking phase, then catches up and the
+  task completes normally. It is not a permanent hang requiring restart, but it is also not a brief
+  stutter that recovers mid-turn.
+- The freeze ends when reasoning finishes (the task still completes), so it is bounded by the length
+  of the reasoning phase rather than by a crash or deadlock.
 - It happens on **every** thinking turn, not only long/deep reasoning, so it is systematic rather
-  than a one-off provider hiccup.
+  than a one-off provider hiccup; longer reasoning makes the freeze longer.
 - Reproduced with `/thinking` **on** (reasoning rendered while streaming) on
   `deepseek/deepseek-v4-flash` (the product default).
 - The freeze aligns with reasoning output rather than tool execution or normal assistant text.
 
-User-supplied on 2026-09-21: brief stutter that recovers / every thinking turn / `/thinking` on /
+User-supplied on 2026-09-21 (corrected): freezes for the whole thinking phase, UI unresponsive with
+no visible progress, task completes once reasoning ends / every thinking turn / `/thinking` on /
 `deepseek/deepseek-v4-flash`.
 
 ## Why this exists
@@ -85,28 +97,35 @@ redraw are starved → the session appears frozen.
 
 ## Hypotheses (confidence-ranked)
 
-- **H1 (90%) - Full-session synchronous refetch on every update blocks the TUI event loop.** Evidence:
+- **H1 (93%) - Full-session synchronous refetch on every update blocks the TUI event loop.** Evidence:
   `app.rs:746-758`, `app.rs:3633-3664`, blocking client `api.rs:384-385`. The loop cannot process
-  input or draw while the two GETs are in flight. A brief stutter that recovers every turn fits a
-  repeated short block rather than a permanent hang.
-- **H2 (70%) - Cost grows with reasoning length, so longer thinking degrades further.** Each
+  input or draw while the two GETs are in flight. Because reasoning emits continuously at the 50ms
+  throttle and each refetch slows as the transcript grows, the loop stays saturated for the whole
+  thinking phase rather than recovering between updates, which matches the reported sustained freeze
+  (raised from 90% after the 2026-09-21 symptom correction).
+- **H2 (80%) - Cost grows with reasoning length, so longer thinking degrades further.** Each
   snapshot/response carries the whole growing reasoning text; up to ~20 refetches/second make total
-  transfer O(n²) over the turn.
+  transfer O(n²) over the turn. Raised from 70%: it explains both the systematic occurrence and the
+  fact that the freeze duration tracks the reasoning length.
 - **H3 (55%) - Redundant server work per emit.** Full-session clone plus unbounded channel push per
   50ms emit (`routes.rs:1812-1814`), even though only a small event is broadcast to the TUI.
-- **H4 (60%) - Rendering amplifies it.** Re-laying-out the expanded/streaming reasoning block every
-  draw (`session.rs:687-733`) adds cost on top of the network path. Raised because the report is with
-  `/thinking` on, so a large reasoning block is being drawn while it streams.
+- **H4 (40%) - Rendering amplifies it.** Re-laying-out the expanded/streaming reasoning block every
+  draw (`session.rs:687-733`) adds cost on top of the network path. Lowered from 60% after the
+  correction: render cost alone would still let input be read and the spinner animate, so it is a
+  compounding term, not the cause of a total input/progress freeze.
 - **H5 (15%) - Reasoning arrives in large bursts** from the provider, producing a long single
   application+emit and a correspondingly long blocking refetch.
-- **H6 (15%) - Lock contention** on `context.session` (TUI) or the server `sessions` mutex while the
-  update task holds it during streaming.
+- **H6 (30%) - Lock contention** on `context.session` (TUI) or the server `sessions` mutex while the
+  update task holds it during streaming. Raised from 15%: sustained (not discrete) stalling is also
+  consistent with server-side serialization of `GET /session/{id}/message` behind the streaming
+  update task's lock (`routes.rs:1794-1804`).
 
 ## Open questions
 
 Answered by user on 2026-09-21:
 
-1. ~~Brief stutter vs. full hang?~~ **Brief stutter that recovers.**
+1. ~~Brief stutter vs. full hang?~~ **Sustained freeze for the whole thinking phase; task still
+   completes once reasoning ends.**
 2. ~~Every thinking turn or only long reasoning?~~ **Every thinking turn.**
 3. ~~Is `/thinking` shown?~~ **On.**
 4. ~~Which model/provider?~~ **`deepseek/deepseek-v4-flash`.**
@@ -123,17 +142,18 @@ Added 2026-09-21. These are **pre-measurement** estimates from code reading only
 instrumented or reproduced under measurement yet. They are deliberately separated into "is this the
 cause" vs. "will the first fix remove the symptom."
 
-- **~80-85%** that the synchronous full-session refetch is *a* real contributor. The path is
+- **~90%** that the synchronous full-session refetch is *a* real contributor. The path is
   unambiguous: every `session.updated` (up to ~20/s during reasoning) triggers two blocking HTTP GETs
-  inside the event loop (`app.rs:746-758`, `app.rs:3633-3664`), which is sufficient to cause discrete
-  stalls.
-- **~60%** that it is the *dominant* cause of the brief stutter every thinking turn. The competing
-  explanation is render cost: with `/thinking` on, the expanded reasoning block keeps growing and is
-  re-laid-out on redraws (`session.rs:687-733`). A discrete stutter fits blocking I/O better than
-  rendering, but the two have not been separated.
-- **~55%** that stopping the per-event full refetch *alone* removes the stutter. If rendering is also
+  inside the event loop (`app.rs:746-758`, `app.rs:3633-3664`), which is sufficient to starve the loop
+  for the whole reasoning phase.
+- **~75%** that it is the *dominant* cause of the freeze every thinking turn (raised from ~60% after
+  the 2026-09-21 symptom correction). With `/thinking` on the expanded reasoning block keeps growing
+  and is re-laid-out on redraws (`session.rs:687-733`), but render cost alone would still let input be
+  read and the spinner animate; a total input/progress freeze fits the blocking I/O path better. The
+  two have not been fully separated.
+- **~65%** that stopping the per-event full refetch *alone* removes the freeze. If rendering is also
   a major factor, the render/coalescing work is required too; combined, that lifts confidence to
-  **~75-80%**.
+  **~80-85%**.
 - **~90%** that the *investigation direction* is correct — i.e. measuring this path will identify the
   real cause. Confidence in a correct diagnosis is much higher than confidence in the first fix being
   complete.
@@ -192,6 +212,28 @@ them, the fix confidence jumps and the incremental-update approach is the right 
   no longer scale with reasoning length.
 - `cargo test -p opencode-tui`; `cargo check -p opencode-tui -p opencode-server -p opencode-session`.
 
+## Dev Notes
+
+- 2026-09-21: Corrected the recorded symptom from "brief stutter that recovers" to a sustained
+  freeze for the whole thinking phase (no input, no visible progress; task completes when reasoning
+  ends), and re-weighted the hypotheses (H1 93%, H2 80%, H6 30%, H4 40%).
+- 2026-09-21: Added env-gated tracing to measure the sync-refetch duty cycle:
+  - New `crates/opencode-tui/src/trace.rs`: a background sampler thread writes one line per second
+    with counters for loop iterations, `session.updated` deliveries, syncs and cumulative sync time,
+    draws and cumulative draw time, key events, and starvation gaps. Running on its own thread keeps
+    sampling while the main event loop is blocked.
+  - `crates/opencode-tui/src/lib.rs`: declares `trace` and calls `trace::init()` in `run_tui`.
+  - `crates/opencode-tui/src/app/app.rs`: instruments the run-loop iteration/gap, `draw`, key events,
+    `SessionUpdated`, and splits `get_session` vs `get_messages` timing in `sync_session_from_server`.
+  - Enabled only when `OPENCODE_TUI_TRACE=<path>` is set; behavior is unchanged otherwise.
+- Verification: `cargo check -p opencode-tui -p opencode-cli` and `cargo build -p opencode-cli`
+  passed; `cargo fmt -p opencode-tui -- --check` clean; `cargo clippy -p opencode-tui --all-targets`
+  reports no new warnings at the changed code (pre-existing workspace warnings remain).
+- Status: **root cause not yet confirmed; no fix implemented.** This change delivers the measurement
+  tooling and the corrected symptom only. Next step is the run protocol: capture
+  `OPENCODE_TUI_TRACE` logs with `/thinking` on and off, then read the per-second `SAMPLE` duty cycle
+  (`draws`/`keys` vs `sync_ms`) to decide H1/H2 versus H4.
+
 ## Related Items
 
 - `BUG-022` `/thinking` toggle shows a line count instead of actual reasoning - same streaming/render
@@ -218,6 +260,13 @@ them, the fix confidence jumps and the incremental-update approach is the right 
   and instead apply incremental part updates from the event (or debounce/coalesce refetches), then
   render from the already-synced state. Confirm with measurement before committing to a design; the
   confidence estimates and measurement plan are in **Fix confidence and measurement plan** above.
-- Report characteristics (2026-09-21): brief stutter that recovers, every thinking turn, `/thinking`
-  on, `deepseek/deepseek-v4-flash`. Because it reproduces every turn with rendering on, measuring
-  the sync-refetch cost while toggling `/thinking` off is the fastest way to separate H1 from H4.
+- Report characteristics (2026-09-21, corrected): the session freezes for the whole thinking phase
+  (no input, no visible progress) and the task completes once reasoning ends; every thinking turn;
+  `/thinking` on; `deepseek/deepseek-v4-flash`. Because the freeze blocks input and redraw rather
+  than merely lowering frame rate, the blocking refetch path (H1/H2) is the prime suspect and
+  rendering (H4) is treated as a compounding term; measuring the sync-refetch duty cycle is the
+  fastest confirmation.
+- Instrumentation added 2026-09-21 behind `OPENCODE_TUI_TRACE=<path>`: a background sampler logs
+  per-second counters (event-loop iterations, `session.updated` events, syncs, sync time, draws,
+  draw time, keys) so the duty cycle is captured even while the main loop is frozen. Per-sync lines
+  split `get_session` vs `get_messages` duration and record message count.

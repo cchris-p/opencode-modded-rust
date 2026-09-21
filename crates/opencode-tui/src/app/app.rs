@@ -35,6 +35,7 @@ use crate::context::{
 };
 use crate::event::{CustomEvent, Event, StateChange};
 use crate::router::Route;
+use crate::trace;
 use crate::ui::{Clipboard, Selection};
 use crate::TuiExit;
 
@@ -264,8 +265,16 @@ impl App {
 
     pub fn run(&mut self) -> anyhow::Result<TuiExit> {
         self.draw()?;
+        let mut last_iteration = Instant::now();
 
         while !matches!(self.state, AppState::Exiting | AppState::Detaching) {
+            trace::record_iteration();
+            let loop_gap = last_iteration.elapsed();
+            last_iteration = Instant::now();
+            if loop_gap >= Duration::from_millis(50) {
+                trace::record_starvation(loop_gap);
+            }
+
             let mut should_draw = false;
 
             let first_event = match self
@@ -321,7 +330,9 @@ impl App {
             }
 
             if should_draw {
+                let draw_started = Instant::now();
                 self.draw()?;
+                trace::record_draw(draw_started.elapsed());
             }
         }
 
@@ -340,6 +351,9 @@ impl App {
 
     fn handle_event(&mut self, event: &Event) -> anyhow::Result<()> {
         self.event_caused_change = true;
+        if matches!(event, Event::Key(_)) {
+            trace::record_key();
+        }
 
         match event {
             Event::Key(key) => {
@@ -744,6 +758,7 @@ impl App {
             }
             Event::Custom(event) => match event {
                 CustomEvent::StateChanged(StateChange::SessionUpdated(session_id)) => {
+                    trace::record_session_updated();
                     if let Route::Session { session_id: active } = self.context.current_route() {
                         if active == *session_id {
                             if self.last_session_sync.elapsed() >= Duration::from_millis(50) {
@@ -3615,8 +3630,13 @@ impl App {
             return Ok(());
         };
 
+        let get_session_started = Instant::now();
         let session = client.get_session(session_id)?;
+        let get_session_elapsed = get_session_started.elapsed();
+        let get_messages_started = Instant::now();
         let messages = client.get_messages(session_id)?;
+        let get_messages_elapsed = get_messages_started.elapsed();
+        trace::record_sync(get_session_elapsed, get_messages_elapsed, messages.len());
         let revert = session.revert.as_ref().map(map_api_revert);
 
         let mut session_ctx = self.context.session.write();
