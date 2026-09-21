@@ -50,11 +50,10 @@ impl BuiltinAgent {
         }
     }
 
-    pub const fn all() -> [BuiltinAgent; 6] {
+    pub const fn all() -> [BuiltinAgent; 5] {
         [
             BuiltinAgent::Build,
             BuiltinAgent::Plan,
-            BuiltinAgent::General,
             BuiltinAgent::Explore,
             BuiltinAgent::Compaction,
             BuiltinAgent::Title,
@@ -186,7 +185,7 @@ impl AgentInfo {
     }
 
     pub fn default_agent() -> Self {
-        Self::general()
+        Self::build()
     }
 
     pub fn build() -> Self {
@@ -666,8 +665,8 @@ impl AgentRegistry {
     }
 
     pub fn default_agent(&self) -> &AgentInfo {
-        if let Some(general) = self.get(BuiltinAgent::General.as_str()) {
-            return general;
+        if let Some(build) = self.get(BuiltinAgent::Build.as_str()) {
+            return build;
         }
 
         if let Some(primary) = self
@@ -861,14 +860,14 @@ mod tests {
             Some(AgentMode::Primary)
         ));
         assert!(matches!(
-            registry.get("general").map(|a| a.mode),
-            Some(AgentMode::Primary)
-        ));
-        assert!(matches!(
             registry.get("explore").map(|a| a.mode),
             Some(AgentMode::Subagent)
         ));
-        assert_eq!(registry.default_agent().name, "general");
+        assert!(
+            registry.get("general").is_none(),
+            "general is disabled and must not be registered by default"
+        );
+        assert_eq!(registry.default_agent().name, "build");
     }
 
     #[test]
@@ -906,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn config_can_override_builtin_agent_model() {
+    fn config_can_reintroduce_general_agent_with_model() {
         let mut config = LoadedConfig::default();
         config.agent = Some(LoadedAgentConfigs {
             entries: HashMap::from([(
