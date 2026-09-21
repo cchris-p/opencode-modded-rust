@@ -83,3 +83,4 @@ server alive after the TUI exits.
 ## QA Status
 
 - Merged into `development` via PR #35 on 2026-09-16; retained in `qa` for post-merge verification.
+- 2026-09-21 follow-up: clarified detach terminal output to print `Reattach command: opencode attach <url>` and note that attach is a top-level command, not `tui --attach`/`ort --attach`.

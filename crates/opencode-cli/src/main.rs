@@ -900,7 +900,8 @@ async fn run_tui(
             eprintln!("Detached from TUI server.");
             eprintln!("Server: {}", base_url);
             eprintln!("Workspace: {}", workspace.display());
-            eprintln!("Reattach: opencode attach {}", base_url);
+            eprintln!("Reattach command: opencode attach {}", base_url);
+            eprintln!("Attach is a top-level command, not a tui/ort --attach option.");
         }
         opencode_tui::TuiExit::Exit { session_id } => {
             print_resume_hint(session_id.as_deref());
