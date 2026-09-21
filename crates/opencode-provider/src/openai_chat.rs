@@ -187,12 +187,16 @@ fn convert_assistant_parts(parts: &[crate::ContentPart], out: &mut Vec<Value>) {
         Value::String(text_parts.join("\n"))
     };
 
-    // Emit the assistant shell only when it carries text, reasoning, or tool
-    // calls. A message that contains only `tool_result` parts (the v1 loop stores
-    // tool results as a separate assistant message) must not produce an empty
-    // assistant message between a `tool_calls` assistant and its `role: tool`
-    // replies, which OpenAI rejects.
-    if !tool_calls.is_empty() || !text_parts.is_empty() || !reasoning_parts.is_empty() {
+    // Emit the assistant shell only when it carries text or tool calls. A
+    // reasoning-only message (a run interrupted during its thinking phase) has
+    // no serializable assistant content, and OpenAI-compatible APIs reject an
+    // assistant message where both `content` and `tool_calls` are unset with
+    // "Invalid assistant message: content or tool_calls must be set". A message
+    // that contains only `tool_result` parts (the v1 loop stores tool results as
+    // a separate assistant message) is likewise skipped so it does not produce
+    // an empty assistant message between a `tool_calls` assistant and its
+    // `role: tool` replies.
+    if !tool_calls.is_empty() || !text_parts.is_empty() {
         let mut assistant = serde_json::Map::new();
         assistant.insert("role".into(), json!("assistant"));
         assistant.insert("content".into(), content);
@@ -340,6 +344,26 @@ mod tests {
         assert_eq!(out[0]["role"], "assistant");
         assert_eq!(out[0]["reasoning_content"], "step one\n step two");
         assert!(out[0]["tool_calls"][0]["id"] == "call_1");
+    }
+
+    #[test]
+    fn reasoning_only_assistant_message_is_skipped() {
+        // BUG-019: a run interrupted during its thinking phase can leave an
+        // assistant message with only reasoning. Emitting it would produce an
+        // assistant message with neither content nor tool_calls, which
+        // OpenAI-compatible providers reject with "Invalid assistant message:
+        // content or tool_calls must be set".
+        let messages = vec![Message {
+            role: Role::Assistant,
+            content: Content::Parts(vec![reasoning_part("thinking...")]),
+            cache_control: None,
+            provider_options: None,
+        }];
+        let out = convert_messages(&messages);
+        assert!(
+            out.is_empty(),
+            "reasoning-only assistant message must be skipped"
+        );
     }
 
     #[test]
