@@ -204,3 +204,4 @@ Before starting code, refresh `GATE-002`'s vanilla reference evidence to the cur
 - Updated `opencode-tui` API usage to call `/session/{id}/question` endpoints and carry the session ID through reply/reject.
 - Refreshed `GATE-002`'s frozen reference commit from the superseded `e62912b...` pin to `f54ce313b99a6661d7758ad042f7a6e05c8e0972`.
 - Verification passed: `cargo fmt --all`; `cargo check -p opencode-server -p opencode-tui`; `cargo test -p opencode-server question`.
+- Completed with PR #67 merged into `development` at `cf47328d6e384a4f079d1225f79d7d2011bb20c5`; PR branch cleanup complete. `FEAT-039` remains in `qa` for post-merge verification.

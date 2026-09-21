@@ -90,3 +90,9 @@ validate request ownership before accepting a reply or reject, matching vanilla'
 - Verification: `cargo fmt --all`; `cargo check -p opencode-server -p opencode-tui`; `cargo test -p opencode-server question`.
 - PR: https://github.com/cchris-p/opencode-modded-rust/pull/67.
 - Status: moved to `qa` for PR/local verification.
+
+## Merge Notes - 2026-09-21
+
+- PR #67 merged into `development` at merge commit `cf47328d6e384a4f079d1225f79d7d2011bb20c5`.
+- Remote and local PR branches are cleaned up.
+- Item remains in `qa` until post-merge QA is recorded or completion is explicitly directed.
