@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "todo"
+status: "doing"
 created: "2026-09-21"
 ---
 
@@ -172,3 +172,17 @@ first fix unless it is needed to remove leading gutter chrome.
   left unchanged and can be used as a reference for clean prose output.
 - Confirm which session render path is actually used (session vs. session_message vs. message) before
   wiring the chosen approach, since decoration is added in more than one place.
+
+## Dev Notes
+
+- Branch: `bug/BUG-024-clean-selection-gutters`
+- Change: assistant text rendering now uses two-column padding instead of the visible `▸ ` marker;
+  user message rendering now uses two-column padding instead of the visible `┃ ` gutter.
+- Change: mouse-selection copy runs selected screen text through a small normalizer that removes known
+  leading layout chrome/padding, including the reported `  │▸ text` shape, while preserving non-layout
+  indentation such as four-space code indentation.
+- Decision: kept `/copy` and transcript export unchanged; this fix is limited to mouse-selection copy
+  and visible selectable prefixes.
+- Verification: `cargo fmt -p opencode-tui -- --check`; `cargo check -p opencode-tui`; `cargo test -p
+  opencode-tui -- --test-threads=1` (49 passed). Added unit coverage for render prefixes and copy
+  normalization.
