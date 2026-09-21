@@ -48,7 +48,7 @@ and explicitly resolved in this card.
 
 ## Vanilla Reference Evidence
 
-Frozen TypeScript reference line: `$HOME/repos/opencode-modded` at commit `e62912b5d18b73316c7bfd6e894b040698f6c880`.
+Frozen TypeScript reference line: `$HOME/repos/opencode-modded` `dev` at commit `f54ce313b99a6661d7758ad042f7a6e05c8e0972`.
 
 - `packages/schema/src/question.ts` defines `QuestionV2` IDs, options, prompt/info schema, request/reply shapes, and `question.v2.asked|replied|rejected` events.
 - `packages/core/src/question.ts` owns pending question requests per Location, stores deferred waiters, publishes ask/reply/reject events, lists pending requests, and rejects outstanding questions on shutdown/finalizer.

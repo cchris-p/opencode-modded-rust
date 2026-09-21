@@ -837,8 +837,8 @@ impl ApiClient {
         Ok(response.json::<PermissionReplyResult>()?)
     }
 
-    pub fn list_questions(&self) -> anyhow::Result<Vec<QuestionInfo>> {
-        let url = format!("{}/question", self.base_url);
+    pub fn list_questions(&self, session_id: &str) -> anyhow::Result<Vec<QuestionInfo>> {
+        let url = format!("{}/session/{}/question", self.base_url, session_id);
         let response = self.client.get(&url).send()?;
 
         if !response.status().is_success() {
@@ -852,10 +852,14 @@ impl ApiClient {
 
     pub fn reply_question(
         &self,
+        session_id: &str,
         request_id: &str,
         answers: Vec<Vec<String>>,
     ) -> anyhow::Result<bool> {
-        let url = format!("{}/question/{}/reply", self.base_url, request_id);
+        let url = format!(
+            "{}/session/{}/question/{}/reply",
+            self.base_url, session_id, request_id
+        );
         let response = self
             .client
             .post(&url)
@@ -876,8 +880,11 @@ impl ApiClient {
         Ok(response.json::<bool>()?)
     }
 
-    pub fn reject_question(&self, request_id: &str) -> anyhow::Result<bool> {
-        let url = format!("{}/question/{}/reject", self.base_url, request_id);
+    pub fn reject_question(&self, session_id: &str, request_id: &str) -> anyhow::Result<bool> {
+        let url = format!(
+            "{}/session/{}/question/{}/reject",
+            self.base_url, session_id, request_id
+        );
         let response = self.client.post(&url).send()?;
 
         if !response.status().is_success() {

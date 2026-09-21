@@ -144,6 +144,15 @@ fn session_routes() -> Router<Arc<ServerState>> {
         .route("/{id}/prompt/abort", post(abort_prompt))
         .route("/{id}/prompt/cancel", post(cancel_queued_prompt))
         .route("/{id}/prompt_async", post(prompt_async))
+        .route("/{id}/question", get(list_session_questions))
+        .route(
+            "/{id}/question/{request_id}/reply",
+            post(reply_session_question),
+        )
+        .route(
+            "/{id}/question/{request_id}/reject",
+            post(reject_session_question),
+        )
         .route("/{id}/diff", get(get_session_diff))
 }
 
@@ -4969,6 +4978,21 @@ async fn list_questions() -> Json<Vec<QuestionInfo>> {
     Json(result)
 }
 
+async fn list_session_questions(Path(session_id): Path<String>) -> Json<Vec<QuestionInfo>> {
+    Json(pending_questions_for_session(&session_id).await)
+}
+
+async fn pending_questions_for_session(session_id: &str) -> Vec<QuestionInfo> {
+    let pending = QUESTION_REQUESTS.read().await;
+    let mut result: Vec<_> = pending
+        .values()
+        .filter(|question| question.session_id == session_id)
+        .cloned()
+        .collect();
+    result.sort_by(|a, b| a.id.cmp(&b.id));
+    result
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ReplyQuestionRequest {
     pub answers: Vec<Vec<String>>,
@@ -4979,22 +5003,37 @@ async fn reply_question(
     Path(id): Path<String>,
     Json(req): Json<ReplyQuestionRequest>,
 ) -> Result<Json<bool>> {
-    let mut pending = QUESTION_REQUESTS.write().await;
-    let question = pending
-        .remove(&id)
-        .ok_or_else(|| ApiError::NotFound(format!("Question request not found: {}", id)))?;
-    drop(pending);
+    let question = take_question(&id).await?;
 
-    if let Some(waiter) = QUESTION_WAITERS.write().await.remove(&id) {
-        let _ = waiter.send(QuestionResolution::Answered(req.answers.clone()));
+    complete_question_reply(state, id, question, req.answers).await
+}
+
+async fn reply_session_question(
+    State(state): State<Arc<ServerState>>,
+    Path((session_id, request_id)): Path<(String, String)>,
+    Json(req): Json<ReplyQuestionRequest>,
+) -> Result<Json<bool>> {
+    let question = take_owned_question(&session_id, &request_id).await?;
+
+    complete_question_reply(state, request_id, question, req.answers).await
+}
+
+async fn complete_question_reply(
+    state: Arc<ServerState>,
+    request_id: String,
+    question: QuestionInfo,
+    answers: Vec<Vec<String>>,
+) -> Result<Json<bool>> {
+    if let Some(waiter) = QUESTION_WAITERS.write().await.remove(&request_id) {
+        let _ = waiter.send(QuestionResolution::Answered(answers.clone()));
     }
 
     state.broadcast(
         &serde_json::json!({
             "type": "question.replied",
-            "requestID": id,
+            "requestID": request_id,
             "sessionID": question.session_id,
-            "answers": req.answers,
+            "answers": answers,
         })
         .to_string(),
     );
@@ -5013,20 +5052,33 @@ async fn reject_question(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
 ) -> Result<Json<bool>> {
-    let mut pending = QUESTION_REQUESTS.write().await;
-    let question = pending
-        .remove(&id)
-        .ok_or_else(|| ApiError::NotFound(format!("Question request not found: {}", id)))?;
-    drop(pending);
+    let question = take_question(&id).await?;
 
-    if let Some(waiter) = QUESTION_WAITERS.write().await.remove(&id) {
+    complete_question_reject(state, id, question).await
+}
+
+async fn reject_session_question(
+    State(state): State<Arc<ServerState>>,
+    Path((session_id, request_id)): Path<(String, String)>,
+) -> Result<Json<bool>> {
+    let question = take_owned_question(&session_id, &request_id).await?;
+
+    complete_question_reject(state, request_id, question).await
+}
+
+async fn complete_question_reject(
+    state: Arc<ServerState>,
+    request_id: String,
+    question: QuestionInfo,
+) -> Result<Json<bool>> {
+    if let Some(waiter) = QUESTION_WAITERS.write().await.remove(&request_id) {
         let _ = waiter.send(QuestionResolution::Rejected);
     }
 
     state.broadcast(
         &serde_json::json!({
             "type": "question.rejected",
-            "requestID": id,
+            "requestID": request_id,
             "sessionID": question.session_id,
         })
         .to_string(),
@@ -5040,6 +5092,155 @@ async fn reject_question(
         .to_string(),
     );
     Ok(Json(true))
+}
+
+async fn take_question(request_id: &str) -> Result<QuestionInfo> {
+    QUESTION_REQUESTS
+        .write()
+        .await
+        .remove(request_id)
+        .ok_or_else(|| ApiError::NotFound(format!("Question request not found: {}", request_id)))
+}
+
+async fn take_owned_question(session_id: &str, request_id: &str) -> Result<QuestionInfo> {
+    let mut pending = QUESTION_REQUESTS.write().await;
+    match pending.get(request_id) {
+        Some(question) if question.session_id == session_id => Ok(pending
+            .remove(request_id)
+            .expect("question existed while holding write lock")),
+        _ => Err(ApiError::NotFound(format!(
+            "Question request not found: {}",
+            request_id
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod question_tests {
+    use super::*;
+
+    fn test_question(request_id: &str, session_id: &str) -> QuestionInfo {
+        QuestionInfo {
+            id: request_id.to_string(),
+            session_id: session_id.to_string(),
+            questions: vec![QuestionPromptInfo {
+                question: "Proceed?".to_string(),
+                header: "Confirm".to_string(),
+                options: vec![QuestionOptionInfo {
+                    label: "Yes".to_string(),
+                    description: "Continue".to_string(),
+                }],
+                multiple: false,
+                custom: true,
+            }],
+        }
+    }
+
+    async fn insert_pending_question(
+        request_id: &str,
+        session_id: &str,
+    ) -> oneshot::Receiver<QuestionResolution> {
+        let (tx, rx) = oneshot::channel();
+        QUESTION_REQUESTS.write().await.insert(
+            request_id.to_string(),
+            test_question(request_id, session_id),
+        );
+        QUESTION_WAITERS
+            .write()
+            .await
+            .insert(request_id.to_string(), tx);
+        rx
+    }
+
+    async fn remove_pending_question(request_id: &str) {
+        QUESTION_REQUESTS.write().await.remove(request_id);
+        QUESTION_WAITERS.write().await.remove(request_id);
+    }
+
+    #[tokio::test]
+    async fn session_question_list_filters_by_session() {
+        let session_id = "test-session-list-a";
+        let other_session_id = "test-session-list-b";
+        let request_id = "test-question-list-a";
+        let other_request_id = "test-question-list-b";
+        let _rx = insert_pending_question(request_id, session_id).await;
+        let _other_rx = insert_pending_question(other_request_id, other_session_id).await;
+
+        let questions = pending_questions_for_session(session_id).await;
+
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].id, request_id);
+
+        remove_pending_question(request_id).await;
+        remove_pending_question(other_request_id).await;
+    }
+
+    #[tokio::test]
+    async fn session_question_reply_requires_matching_session() {
+        let request_id = "test-question-wrong-session-reply";
+        let mut rx = insert_pending_question(request_id, "owner-session").await;
+
+        let result = reply_session_question(
+            State(Arc::new(ServerState::new())),
+            Path(("wrong-session".to_string(), request_id.to_string())),
+            Json(ReplyQuestionRequest {
+                answers: vec![vec!["Yes".to_string()]],
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(QUESTION_REQUESTS.read().await.contains_key(request_id));
+        assert!(QUESTION_WAITERS.read().await.contains_key(request_id));
+        assert!(rx.try_recv().is_err());
+
+        remove_pending_question(request_id).await;
+    }
+
+    #[tokio::test]
+    async fn session_question_reply_resolves_matching_session() {
+        let request_id = "test-question-matching-session-reply";
+        let rx = insert_pending_question(request_id, "owner-session").await;
+
+        let result = reply_session_question(
+            State(Arc::new(ServerState::new())),
+            Path(("owner-session".to_string(), request_id.to_string())),
+            Json(ReplyQuestionRequest {
+                answers: vec![vec!["Yes".to_string()]],
+            }),
+        )
+        .await
+        .expect("matching session reply should succeed");
+
+        assert!(result.0);
+        assert!(!QUESTION_REQUESTS.read().await.contains_key(request_id));
+        assert!(!QUESTION_WAITERS.read().await.contains_key(request_id));
+        match rx.await.expect("waiter should receive answer") {
+            QuestionResolution::Answered(answers) => {
+                assert_eq!(answers, vec![vec!["Yes".to_string()]]);
+            }
+            QuestionResolution::Rejected => panic!("expected answer"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_question_reject_requires_matching_session() {
+        let request_id = "test-question-wrong-session-reject";
+        let mut rx = insert_pending_question(request_id, "owner-session").await;
+
+        let result = reject_session_question(
+            State(Arc::new(ServerState::new())),
+            Path(("wrong-session".to_string(), request_id.to_string())),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(QUESTION_REQUESTS.read().await.contains_key(request_id));
+        assert!(QUESTION_WAITERS.read().await.contains_key(request_id));
+        assert!(rx.try_recv().is_err());
+
+        remove_pending_question(request_id).await;
+    }
 }
 
 /// TUI communication routes.
