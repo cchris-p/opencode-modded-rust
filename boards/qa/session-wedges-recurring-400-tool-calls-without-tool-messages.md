@@ -252,3 +252,13 @@ every failure.
 - Non-OpenAI-compatible providers (`anthropic`, `google`, `bedrock`) use their own converters and were
   intentionally not changed in this card; if the same wedge appears there it should be tracked
   separately.
+
+## Completion
+
+- 2026-09-21: PR #64 merged into `development` (merge commit `5445b4514ec1f8856c1586425a4488473dd0be9a`);
+  branch `bug/BUG-028-tool-call-reply-validity` deleted remotely and locally; local checkout is back on
+  `development` and current.
+- **Remains in `qa`.** The merge delivered the request-boundary normalizer and its tests, but no QA
+  report is recorded and the live TUI acceptance check (invalid-argument tool call -> abort ->
+  follow-up prompt completes without the recurring `400`) has not been run. Promote to `done` only
+  after that QA report is recorded or the user explicitly completes the card.
