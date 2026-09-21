@@ -235,6 +235,11 @@ them, the fix confidence jumps and the incremental-update approach is the right 
   tooling and the corrected symptom only. Next step is the run protocol: capture
   `OPENCODE_TUI_TRACE` logs with `/thinking` on and off, then read the per-second `SAMPLE` duty cycle
   (`draws`/`keys` vs `sync_ms`) to decide H1/H2 versus H4.
+- 2026-09-21: PR #60 merged into `development` (merge commit `217fd3f`); branch
+  `bug-027-thinking-freeze-tracing` deleted remotely and locally. Card intentionally **remains in
+  `qa`** pending a QA report: the merge delivered the tracing tooling only, so the bug is not fixed
+  and the card must not move to `done`. Promote to `done` only after the trace run confirms the cause
+  and the responsiveness fix lands with before/after evidence.
 
 ## Related Items
 
