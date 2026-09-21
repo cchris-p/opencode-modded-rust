@@ -213,7 +213,15 @@ All changes are local to the prompt component; no keybind, storage, or app chang
 
 ## Merge Closeout
 
-- 2026-09-21: PR #69 merged into `development` at `4ca0cbe1bc92e8ed7c312757818d50508c29eff3`.
+- 2026-09-21: PR #69 merged into `development` at `4ca0cbe1bc92e8ed7c312757818d50508c29eff3`
+  (fix commit `ac394d8` `fix(tui): keep newest prompt history entry visible`).
 - Remote branch `bug/BUG-030-history-down-newest-no-clear` was deleted by the merge closeout path;
   local branch cleanup was already complete after merge.
+- 2026-09-21: Duplicate PR #68 `bug/BUG-030-prompt-history-down-clears` closed as superseded by #69
+  and its branch deleted (remote; no local branch existed). Its only commit `1ff8129` implemented the
+  same `history_next` guard but was based before FEAT-037's cursor gating and would have reverted it.
+  No code was lost.
+- Verification carried from PR #68: `tab_autocomplete_uses_first_candidate` was observed failing
+  roughly 4/5 runs on the pre-BUG-030 base (environment-dependent flake, unrelated to this card); a
+  current `cargo test -p opencode-tui --lib` run was 68 passed / 0 failed, so it is intermittent.
 - Card remains in `qa` until a QA report is recorded or a human explicitly marks it complete.
