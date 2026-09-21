@@ -53,6 +53,40 @@ Candidate `ScopeMux` responsibilities:
 - review authority
 - session continuity
 
+## How ScopeMux Can Help This Project
+
+`ScopeMux` is not only a future idea: the concrete engine is `scopemux-core` (`$HOME/apps/scopemux-core`), a native Tree-sitter parsing and context-compression library. Its current API already covers most of the retrieval-quality responsibilities listed above, which is why preserving the boundary now is worthwhile.
+
+The mapping below grounds each ability in a real `scopemux-core` surface and the runtime need it can improve.
+
+| `scopemux-core` capability | What it can improve here | Where it plugs in |
+| --- | --- | --- |
+| `ParserContext` (Tree-sitter parse, AST/CST) | structured reads of files instead of raw text | retrieval provider request/response; tool-input enrichment |
+| `ProjectContext` multi-file parse and project-wide symbol table | repository-wide symbol awareness beyond single-file grep | retrieval provider for a task and stage |
+| Cross-file reference resolution (`reference_resolver.h`) | following calls, types, and imports/includes across files | relationship expansion from a seed file or symbol |
+| Project IR: symbols, resolved references, call graph, dependencies | discovering the task-relevant subsystem; sharper review context | ranked candidates plus provenance |
+| Canonical `InfoBlock` registry (tiers 0-4) | selecting cheap-to-expensive context instead of uniform file dumps | stage-specific context budgets |
+| Tiered context selection (focus, exclude, summary-only, tier range) | fitting context to a token budget without losing structure | prompt context assembly |
+| Search index over query text, anchor symbol, and relationships | ranked retrieval for a task objective or review | retrieval response ordering |
+| Prompt assembly API | a deterministic, token-aware context package | the boundary output consumed by prompt construction |
+| `ContextEngine` relevance metrics, compression levels, token budgets | trimming and compressing context under real limits | token-budget enforcement during assembly |
+
+Concretely, this can give the product:
+
+- better retrieval quality on multi-file and unfamiliar codebases
+- structure-aware review context rather than recency-only file selection
+- deterministic token budgeting on the same boundary the generic provider uses
+- an upgrade path where the runtime keeps lifecycle and verification authority while `ScopeMux` only improves inputs
+
+Honest limits to design around:
+
+- `scopemux-core` does not parse Rust today (`scopemux-core/README.md` lists C, C++, Python, JavaScript, and TypeScript), so it cannot help with this product's own repository or Rust workspaces; those must fall back to the generic provider.
+- the shipped Python extension exposes only `ParserContext` and `ContextEngine` (`scopemux-core/core/src/bindings/module.c`); `ProjectContext`, tiered context, search, and prompt assembly are C-only, so integration needs FFI or a compiled helper.
+- `scopemux-core` is development-oriented and not packaged for standard distribution, so it must be pinned and built reproducibly rather than assumed present.
+- its structural relationships are heuristic, so the confidence rules below still apply.
+
+This is the work tracked by `SCOPE-001` ("Integrate scopemux-core behind the retrieval-provider boundary"). It stays non-blocking for V1: the generic provider remains the default, and the `ScopeMux` provider is added as one peer behind the boundary.
+
 ## Required Abstraction Boundary
 
 The runtime should preserve one explicit retrieval boundary between:
@@ -121,11 +155,10 @@ This keeps retrieval mistakes from silently reshaping the task.
 
 ## Follow-Up Work
 
-This plan requires one explicit follow-up item:
+This plan requires two explicit follow-up items:
 
-- `START-025` Add retrieval-provider boundary for task context assembly
-
-That item should introduce the narrow abstraction that lets V1 keep generic retrieval while leaving a clean insertion point for future `ScopeMux` support.
+- `START-025` Add retrieval-provider boundary for task context assembly — introduce the narrow abstraction that lets V1 keep generic retrieval while leaving a clean insertion point for future `ScopeMux` support.
+- `SCOPE-001` Integrate scopemux-core behind the retrieval-provider boundary — connect the concrete `scopemux-core` engine as one provider behind that boundary once it exists.
 
 ## Non-Goals
 

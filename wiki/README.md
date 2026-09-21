@@ -15,6 +15,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `product-boundary.md` defines what this product is and is not.
 - `reference-strategy.md` explains how the TypeScript repo is used as a reference line.
 - `agent-evaluation-strategy.md` defines how the Rust runtime is judged across V1 through V3.
+- `scopemux-integration-plan.md` defines the deferred retrieval boundary, how `scopemux-core` can help this project, and the guardrails for integrating it.
 - `agent-debugging-without-tui.md` defines the preferred non-TUI QA/debug path for agent-session runtime work.
 - `advanced-coding-session-polling.md` defines the high-level direction for low-context waits on coding-session state.
 - `coding-session-parity-audit.md` audits the Rust coding-session agentic path against the reference behavior (`BUG-004` evidence).
