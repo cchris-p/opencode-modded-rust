@@ -53,6 +53,7 @@ struct TranscriptOptions {
 #[derive(Clone, Debug)]
 struct PendingQuestionFlow {
     id: String,
+    session_id: String,
     steps: Vec<ApiQuestionPromptInfo>,
     answers: Vec<Vec<String>>,
     current_index: usize,
@@ -3017,10 +3018,7 @@ impl App {
         self.context.set_pending_permissions(permissions.len());
         self.permission_prompt.set_requests(permissions);
 
-        let question = client
-            .list_questions()?
-            .into_iter()
-            .find(|request| request.session_id == session_id);
+        let question = client.list_questions(session_id)?.into_iter().next();
         self.sync_question_prompt(question);
         Ok(())
     }
@@ -3049,6 +3047,7 @@ impl App {
 
         let mut flow = PendingQuestionFlow {
             id: question.id,
+            session_id: question.session_id,
             answers: Vec::new(),
             current_index: 0,
             steps: question.questions,
@@ -3109,7 +3108,7 @@ impl App {
             return;
         }
 
-        match client.reply_question(&flow.id, flow.answers.clone()) {
+        match client.reply_question(&flow.session_id, &flow.id, flow.answers.clone()) {
             Ok(_) => {
                 self.question_prompt.close();
                 self.toast
@@ -3168,7 +3167,7 @@ impl App {
             return;
         };
 
-        match client.reject_question(&flow.id) {
+        match client.reject_question(&flow.session_id, &flow.id) {
             Ok(_) => {
                 self.question_prompt.close();
                 self.toast

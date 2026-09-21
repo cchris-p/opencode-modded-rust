@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "doing"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -61,12 +61,12 @@ validate request ownership before accepting a reply or reject, matching vanilla'
 
 ## Acceptance criteria
 
-- [ ] Pending questions for a session are listed only through the session-scoped route.
-- [ ] Reply/reject to a request owned by a different session is rejected (not-found) and does not
+- [x] Pending questions for a session are listed only through the session-scoped route.
+- [x] Reply/reject to a request owned by a different session is rejected (not-found) and does not
       resolve the original waiter.
-- [ ] Reply/reject to a missing request returns not-found without panicking.
-- [ ] The TUI uses session-scoped APIs and no longer needs client-side session filtering for replies.
-- [ ] Focused tests cover correct-session success and wrong-session rejection.
+- [x] Reply/reject to a missing request returns not-found without panicking.
+- [x] The TUI uses session-scoped APIs and no longer needs client-side session filtering for replies.
+- [x] Focused tests cover correct-session success and wrong-session rejection.
 
 ## Verification
 
@@ -80,3 +80,11 @@ validate request ownership before accepting a reply or reject, matching vanilla'
 - `FEAT-038` question schema and tool contract parity.
 - `FEAT-040` question runtime event and lifecycle parity.
 - `FEAT-041` TUI question prompt UX parity.
+
+## Dev Notes - 2026-09-21
+
+- Implemented session-scoped question routes: `GET /session/{id}/question`, `POST /session/{id}/question/{requestID}/reply`, and `POST /session/{id}/question/{requestID}/reject`.
+- Added ownership checks so wrong-session reply/reject returns not found and leaves the original pending request and waiter intact.
+- Updated the TUI client and prompt flow to list, reply, and reject through session-scoped endpoints instead of listing globally and filtering client-side.
+- Kept legacy global question endpoints in place for compatibility, but the TUI no longer depends on them.
+- Verification: `cargo fmt --all`; `cargo check -p opencode-server -p opencode-tui`; `cargo test -p opencode-server question`.

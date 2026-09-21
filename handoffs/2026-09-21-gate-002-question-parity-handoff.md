@@ -1,7 +1,7 @@
 ---
 id: "H-005"
 title: "GATE-002 question tool full parity - Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-09-21"
 updated: "2026-09-21"
 owner: ""
@@ -36,7 +36,7 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
 - `GATE-002` remains in `todo` and is open by design.
 - `FEAT-038` is merged into `development` at merge commit `405a6e1ad6651e77897b08da02d3ed886a8be77f`, then
   kept in `qa` for local verification.
-- `FEAT-039`, `FEAT-040`, `FEAT-041`, `FEAT-043`, and `FEAT-044` remain in `todo`.
+- `FEAT-039` is in `doing` for PR 1; `FEAT-040`, `FEAT-041`, `FEAT-043`, and `FEAT-044` remain in `todo`.
 - `CLI-009` remains in `hold`, blocked behind `CLI-002`.
 
 ## Included Board Items
@@ -193,3 +193,13 @@ The remaining question-parity work is implementation-ready as separate PRs. The 
 `FEAT-039`, because session-scoped ownership is foundational and reduces risk for the lifecycle and TUI work.
 Before starting code, refresh `GATE-002`'s vanilla reference evidence to the current pinned reference commit in
 `AGENTS.md` so future comparisons do not rely on the superseded `e62912b...` pin.
+
+## Execution Notes
+
+### 2026-09-21 - PR 1 / `FEAT-039`
+
+- Branch: `feature/FEAT-039-session-scoped-question-api`.
+- Implemented session-scoped question list/reply/reject routes and wrong-session ownership checks.
+- Updated `opencode-tui` API usage to call `/session/{id}/question` endpoints and carry the session ID through reply/reject.
+- Refreshed `GATE-002`'s frozen reference commit from the superseded `e62912b...` pin to `f54ce313b99a6661d7758ad042f7a6e05c8e0972`.
+- Verification passed: `cargo fmt --all`; `cargo check -p opencode-server -p opencode-tui`; `cargo test -p opencode-server question`.
