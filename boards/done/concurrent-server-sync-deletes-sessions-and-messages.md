@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/session-durability.md"
-status: "doing"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -300,3 +300,19 @@ Verification run:
 
 Residual: two servers actively editing the same session remain last-writer-wins; the freshness
 guard prevents loss but not a concurrent same-session edit race (documented non-goal).
+
+## Completion
+
+- 2026-09-21: PR #70 merged into `development` at merge commit
+  `e0a059f69fee9ebdcc27fbf4d12c0f8a89fdb1b7`; branch `bug/BUG-025-concurrent-sync-data-loss` deleted
+  remotely and locally; local checkout is back on `development` and current.
+- Automated verification: `cargo test -p opencode-storage -p opencode-server` (27 + 3 + 1) and
+  `cargo test -p opencode-tui --lib` (68) pass, including the new two-writer, freshness-guard,
+  delete-cascade, and missing-session tests.
+- Live acceptance (two `ort` instances in separate workspaces surviving each other's sync) was not
+  independently run; the two-writer behavior is covered by
+  `concurrent_states_keep_each_others_sessions_and_messages` and
+  `stale_state_does_not_overwrite_newer_stored_session`.
+- The branch also delivered the `invariants/session-durability.md` invariant, the BUG-025
+  investigation docs, FEAT-037 prompt-history gating (`05f1c1e`), and the `.opencode/plans` notes.
+  FEAT-037's card was not moved off `todo` in this closeout (out of scope for BUG-025).
