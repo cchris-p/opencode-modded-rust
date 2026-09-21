@@ -178,6 +178,8 @@ implemented or explicitly resolved as a documented deviation in this card.
 - `START-008` Full parity deferred - product stance; this gate is the deliberate exception for the
   question feature.
 - `PHASE-002` Transport/runtime parity foundation - phase parent for related parity work.
+- `H-005` GATE-002 question tool full parity handoff - follow-up implementation sequence
+  (`handoffs/2026-09-21-gate-002-question-parity-handoff.md`).
 
 ## Refinement Questions (resolved 2026-09-21)
 
