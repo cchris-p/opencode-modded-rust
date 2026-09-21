@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -145,3 +145,21 @@ plus a "send the cursor to the boundary first" step.
   in the frozen TS reference line.
 - Keep the first implementation small: gate the bare arrows, preserve `Alt+*` recall, and add the
   minimum vertical movement needed so non-boundary arrows are not dead keys.
+
+## Completion
+
+- 2026-09-21: Implementation shipped in commit `05f1c1e` and merged into `development` via PR #70
+  (merge commit `e0a059f69fee9ebdcc27fbf4d12c0f8a89fdb1b7`). The card had remained in `todo` after the
+  merge; this closeout moves it to `done`.
+- Delivered: bare `Up`/`Down` are gated on cursor boundaries, `move_cursor_vertical` navigates
+  multi-line drafts, `Alt+Up`/`Alt+Down` remain the ungated recall path, and unit tests cover the gate
+  and the snap-then-recall sequence.
+- Verification: `cargo test -p opencode-tui --lib` (68 pass), including
+  `bare_up_recalls_history_only_at_cursor_start`,
+  `bare_down_recalls_history_only_at_cursor_end`,
+  `bare_arrows_navigate_multiline_draft_without_recall`, and
+  `explicit_history_navigation_is_ungated`. The `Alt+Up`/`Alt+Down` path is unchanged.
+- The BUG-030 history-next fix (`ac394d8`) coexists in `prompt.rs` after the merge; verified both
+  behaviors are present. Live TUI acceptance was not independently run; behavior is covered by the
+  unit tests above.
+
