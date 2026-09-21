@@ -106,3 +106,4 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 
 - 2026-09-19: PR #47 merged into `development`; branch cleanup completed. Kept in `qa` for observation and revisit if the cursor misalignment is seen again.
 - 2026-09-21: Reopened and reworked on branch `bug/BUG-018-prompt-cursor-position`. Moved back to `qa` awaiting interactive/real-terminal verification; branch left checked out.
+- 2026-09-21: Branch merged into `development` (merge `fc86b5b`) and deleted. Still in `qa` pending interactive/real-terminal verification on `development`; the automated verification in Dev Notes already passes.
