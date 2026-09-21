@@ -150,6 +150,28 @@ Deferred acceptance criteria (review later, not yet verified):
 - Repeat `p` on the same request keeps a single rule (idempotency proven by unit test only, not live).
 - Toast names the exact config file path in the live TUI.
 
+QA concern from live use: directory permanent-allow still feels too granular.
+
+- The TUI later asked for permission around an individual skill directory/path after the user believes
+  they had already used `p` / `Permanently allow` on a directory permission prompt.
+- Treat this as an `external_directory` durable-allow concern, not a skill-specific product decision:
+  if a user permanently allows a directory, covered child files, child directories, and sibling skill
+  directories should not prompt again.
+- Code-backed expectation: `external_directory` patterns normalize to directory-glob form in
+  `crates/opencode-permission/src/ruleset.rs`, and the wildcard matcher treats a trailing `*` as a
+  prefix match. A saved parent rule such as `/Users/cchrisleepyles/.config/opencode/*` should cover
+  `/Users/cchrisleepyles/.config/opencode/skills/<skill-name>/*`.
+- Current local evidence: project-local `opencode.json` contains a broad durable grant for
+  `/Users/cchrisleepyles/.config/opencode/*`, but also contains multiple narrower per-skill grants
+  under `/Users/cchrisleepyles/.config/opencode/skills/.../*`. That accumulation suggests the live
+  behavior may be saving or re-prompting at too narrow a boundary, or a broader saved grant was not
+  loaded/applied when later prompts occurred.
+- Follow-up verification: restart `ort`/server so project config is freshly loaded, trigger access to
+  a different path under `/Users/cchrisleepyles/.config/opencode/skills/...`, and confirm no new
+  `external_directory` prompt appears while `/Users/cchrisleepyles/.config/opencode/*` remains in
+  project config. If it still prompts, investigate config load order, session rule merging, and
+  request-pattern normalization for `external_directory`.
+
 Status: remains in `qa`. The feature is committed and merged (see Merge Closeout), but the deferred
 acceptance criteria above are not yet verified, so the item cannot move to `done`.
 
@@ -159,4 +181,3 @@ acceptance criteria above are not yet verified, so the item cannot move to `done
 - Merged via PR #50 into `development` (merge commit `f0dfb34`) on 2026-09-21.
 - Local and remote feature branches deleted; `development` fast-forwarded to `f0dfb34`.
 - Item remains in `qa` pending the deferred acceptance-criteria review.
-
