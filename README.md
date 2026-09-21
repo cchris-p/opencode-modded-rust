@@ -173,6 +173,36 @@ commit with `OPENCODE_SKIP_FMT_HOOK=1`. Disable it entirely with
 `git config --unset core.hooksPath`. Files with unstaged edits are intentionally
 not re-staged; the hook warns instead so unstaged work is never captured.
 
+### TUI stall tracing
+
+The TUI can log runtime timings to a file for diagnosing stalls and freezes
+(for example the thinking-mode freeze tracked as `BUG-027`). Set
+`OPENCODE_TUI_TRACE` to a file path before launching:
+
+```bash
+ort-build
+OPENCODE_TUI_TRACE=/tmp/ort-thinking-on.log ort
+```
+
+While that is set, a background thread writes one `SAMPLE` line per second with
+loop iterations, `session.updated` deliveries, syncs and cumulative sync time,
+draws and cumulative draw time, key events, and starvation gaps. Each
+full-session refetch also logs a `SYNC` line that splits `get_session` vs
+`get_messages` duration, and any loop gap of 50ms or more logs `STARVATION`.
+The sampler runs on its own thread, so it keeps recording while the main event
+loop is blocked. Tracing is disabled unless `OPENCODE_TUI_TRACE` is set.
+
+To separate rendering cost from the network refetch path, capture a second run
+with `/thinking` off and compare:
+
+```bash
+OPENCODE_TUI_TRACE=/tmp/ort-thinking-off.log ort
+```
+
+During a stall, `draws=0` and `keys=0` with `sync_ms` close to the sample
+`dt` point at the blocking refetch path; a large `draw_ms` with small `sync_ms`
+points at rendering.
+
 ## Documentation
 
 - User guide: `USER_GUIDE.md`
