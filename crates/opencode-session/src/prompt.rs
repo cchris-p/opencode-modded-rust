@@ -1159,11 +1159,17 @@ impl SessionPrompt {
             let mut completion_tokens: u64 = 0;
             let mut last_emit = Instant::now() - Duration::from_millis(50);
 
-            while let Some(event_result) = stream.next().await {
-                if token.is_cancelled() {
-                    tracing::info!("Stream cancelled for session {}", session_id);
-                    break;
-                }
+            loop {
+                let event_result = tokio::select! {
+                    _ = token.cancelled() => {
+                        tracing::info!("Stream cancelled for session {}", session_id);
+                        break;
+                    }
+                    next = stream.next() => match next {
+                        Some(event) => event,
+                        None => break,
+                    },
+                };
                 match event_result {
                     Ok(StreamEvent::TextDelta(text)) => {
                         if let Some(assistant) = session.messages.get_mut(assistant_index) {
