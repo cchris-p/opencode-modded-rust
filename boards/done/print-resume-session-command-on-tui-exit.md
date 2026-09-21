@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -97,3 +97,13 @@ Why the command is better than a URL here:
 - `--session <id>` is preferred over a server URL because a normal exit tears down the local server; `--continue` is the fallback when no session id is known.
 - Added unit tests for launcher selection and hint line generation.
 - Verification: `cargo check -p opencode-cli -p opencode-tui` passed; `cargo test -p opencode-cli` passed (5 tests). `cargo test -p opencode-tui --lib` has two pre-existing, environment-dependent failures in the `components::prompt` autocomplete tests, reproduced on the base checkout and unrelated to this change.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/53
+
+## Closeout
+
+- Merged into `development` on 2026-09-21 as merge commit `ac569decc7c3118812893fa09920045b672fb006`.
+- Remote branch `feature/FEAT-033-resume-session-command` deleted after merge.
+- Moved to `done` after merge closeout per explicit user request.
