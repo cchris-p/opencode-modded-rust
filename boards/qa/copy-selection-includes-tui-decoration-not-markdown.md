@@ -187,3 +187,10 @@ first fix unless it is needed to remove leading gutter chrome.
 - Verification: `cargo fmt -p opencode-tui -- --check`; `cargo check -p opencode-tui`; `cargo test -p
   opencode-tui -- --test-threads=1` (49 passed). Added unit coverage for render prefixes and copy
   normalization.
+
+## Merge Closeout - 2026-09-21
+
+- Merged PR #59 into `development` as merge commit `ff7b5d5`.
+- Remote PR branch `bug/BUG-024-clean-selection-gutters` was deleted by the GitHub merge flow and the
+  stale remote-tracking ref was pruned locally.
+- Card remains in `qa` for post-merge validation; no QA report has been recorded yet.
