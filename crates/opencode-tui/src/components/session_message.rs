@@ -19,7 +19,7 @@ pub fn render_user_message(
     agent: Option<&str>,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let border_char = "┃ ";
+    let border_char = "  ";
     let border_style = Style::default().fg(user_border_color_for_agent(agent, theme));
 
     if msg.parts.is_empty() {
@@ -75,6 +75,44 @@ pub fn render_user_message(
     }
 
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::render_user_message;
+    use crate::context::{Message, MessageRole, TokenUsage};
+    use crate::theme::Theme;
+
+    #[test]
+    fn user_message_uses_padding_without_selectable_gutter() {
+        let theme = Theme::default();
+        let message = Message {
+            id: "msg-1".to_string(),
+            role: MessageRole::User,
+            content: "I have enough".to_string(),
+            created_at: Utc::now(),
+            agent: None,
+            model: None,
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: None,
+            cost: 0.0,
+            tokens: TokenUsage::default(),
+            parts: Vec::new(),
+        };
+
+        let lines = render_user_message(&message, &theme, false, None);
+
+        let first_span = lines
+            .first()
+            .and_then(|line| line.spans.first())
+            .expect("rendered message should have a leading padding span");
+        assert_eq!(first_span.content.as_ref(), "  ");
+        assert!(!first_span.content.contains('┃'));
+    }
 }
 
 fn mime_badge(mime: &str) -> String {

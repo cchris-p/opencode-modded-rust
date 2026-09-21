@@ -6,10 +6,16 @@ type: "feature"
 area: "FEAT"
 spec: ""
 status: "todo"
+predecessors: "GATE-001"
 created: "2026-09-08"
 ---
 
 # Copy Cline-style CLI task send conventions
+
+## Blocked By
+
+- `GATE-001` Gate: prompt queuing and queue display must match vanilla OpenCode exactly.
+  Do not complete this story until GATE-001 is satisfied.
 
 ## Summary
 

@@ -10,9 +10,8 @@ use crate::theme::Theme;
 pub fn render_text_part(text: &str, theme: &Theme, marker_color: Color) -> Vec<Line<'static>> {
     let renderer = MarkdownRenderer::new(theme.clone());
     let mut with_marker = Vec::new();
-    for (idx, line) in renderer.to_lines(text).into_iter().enumerate() {
-        let marker = if idx == 0 { "▸ " } else { "  " };
-        let mut spans = vec![Span::styled(marker, Style::default().fg(marker_color))];
+    for line in renderer.to_lines(text) {
+        let mut spans = vec![Span::styled("  ", Style::default().fg(marker_color))];
         spans.extend(line.spans);
         with_marker.push(Line::from(spans));
     }
@@ -23,6 +22,26 @@ pub fn render_text_part(text: &str, theme: &Theme, marker_color: Color) -> Vec<L
 pub struct ReasoningRender {
     pub lines: Vec<Line<'static>>,
     pub collapsible: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_text_part;
+    use crate::theme::Theme;
+
+    #[test]
+    fn text_part_uses_padding_without_selectable_marker() {
+        let theme = Theme::default();
+
+        let lines = render_text_part("I have enough", &theme, theme.primary);
+
+        let first_span = lines
+            .first()
+            .and_then(|line| line.spans.first())
+            .expect("rendered text should have a leading padding span");
+        assert_eq!(first_span.content.as_ref(), "  ");
+        assert!(!first_span.content.contains('▸'));
+    }
 }
 
 pub fn render_reasoning_part(
