@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-19"
 ---
 
@@ -35,6 +35,28 @@ running and streaming after the user interrupts.
 - The prompt spinner/status can flip to idle in the TUI, but the response keeps streaming and tool
   calls keep executing until the run finishes on its own.
 - There is no durable "aborted" marker in the session; the transcript looks like a normal completion.
+
+## Recurrence - 2026-09-21 (issue reappeared)
+
+The interrupt path still does not leave the session in a usable state after interruption. Interrupting
+a running session causes the next request to fail with an invalid assistant-message shape:
+
+- Error: `Provider error: API error: 400 Bad Request: {"error":{"message":"Invalid assistant message: content or tool_calls must be set",...}}`
+- Evidence: [`docs/transcripts/tool-call-issue.md`](../../docs/transcripts/tool-call-issue.md)
+  (`ses_33afb883…`, 2026-09-21).
+
+Root cause (confirmed 2026-09-21):
+
+- The aborted turn in `ses_33afb883…` persisted as a single assistant message holding only a
+  `reasoning` part (message `msg_f3d8cd34cffek00hrEcxXQ4IPV`, no text and no tool call).
+- `SessionPrompt::mark_aborted` treated a `Reasoning` part as a visible part, so it did not inject the
+  `"Aborted by user."` text for a run interrupted during its thinking phase.
+- `convert_assistant_parts` then emitted an assistant message with `content: null`, no `tool_calls`,
+  and only `reasoning_content`. DeepSeek (OpenAI-compatible) rejects that shape, so the follow-up
+  prompt 400s.
+- The separate desired behavior, "interrupt should let the next turn pick up from where the run left
+  off", is tracked by `FEAT-035`. This card owns the interrupt defect: abort must leave a valid,
+  resumable session state.
 
 ## Why this exists
 
@@ -81,6 +103,8 @@ Likely failure area to confirm:
 - Ensure an aborted run leaves a durable, visible aborted/error state on the session rather than a
   normal completion.
 - Cancel pending tool calls safely so no unresolved tool-call part is left behind (see `BUG-016`).
+- Leave the aborted assistant turn in a provider-valid shape so a follow-up prompt does not fail with
+  `400 Invalid assistant message: content or tool_calls must be set`.
 
 ## Non-goals
 
@@ -96,7 +120,11 @@ Likely failure area to confirm:
   reason rather than by local assumption.
 - The transcript records an aborted/error state for the interrupted assistant turn.
 - No tool call is left unresolved after an abort.
+- The interrupted session is left in a provider-valid state, so the next prompt does not fail with
+  `400 Invalid assistant message: content or tool_calls must be set`.
 - Interrupting a run does not exit the TUI or corrupt the session for the next prompt.
+- Resume-after-interrupt behavior itself is owned by `FEAT-035`; this card only guarantees the state
+  it depends on.
 
 ## Recommended verification
 
@@ -127,20 +155,36 @@ Likely failure area to confirm:
   `finish_reason = "aborted"`, and preserves the existing pending-tool-call abort repair.
 - The TUI no longer sets local session status to idle optimistically after `Esc`; it waits for the
   server status event.
+- Follow-up fix (2026-09-21): `SessionPrompt::mark_aborted` no longer counts a `Reasoning` part as
+  visible content. A run interrupted during its thinking phase now receives the `"Aborted by user."`
+  text part, keeping the aborted assistant turn provider-valid.
+- Follow-up fix (2026-09-21): `convert_assistant_parts` in `opencode-provider` skips an assistant
+  message that carries neither text nor tool calls (reasoning-only aborted turns) so it can never
+  emit an assistant message with `content: null` and no `tool_calls`.
 
 ## Verification
 
 - `cargo check -p opencode-session -p opencode-server -p opencode-tui`
-- `cargo test -p opencode-session mark_aborted_records_durable_error_state`
-- `cargo test -p opencode-session abort_pending_tool_calls_marks_unresolved_calls_as_error`
+- `cargo check -p opencode-session -p opencode-provider`
+- `cargo test -p opencode-session mark_aborted` (includes new
+  `mark_aborted_adds_text_when_only_reasoning_present`)
+- `cargo test -p opencode-provider reasoning` (includes new
+  `reasoning_only_assistant_message_is_skipped`)
+- `cargo test -p opencode-provider` -> 7 passed
+- `cargo test -p opencode-session` -> 2 pre-existing environment-dependent failures in
+  `instruction::tests::test_find_up_*` (macOS tempdir symlink canonicalization), present on
+  `origin/development` before this change and unrelated to it.
 - Attempted one invalid combined Cargo test filter command first; reran the focused tests
   separately because Cargo accepts only one test-name filter before harness args.
 
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/48
+- Follow-up fix PR: https://github.com/cchris-p/opencode-modded-rust/pull/54
 
 ## Completion
 
 - 2026-09-19: PR #48 merged into `development`; BUG-019 feature branch and temporary worktree
   cleaned up. Keeping this item in `qa` for observation and revisit if the issue appears again.
+- 2026-09-21: Recurrence observed and root-caused (reasoning-only aborted turn). Follow-up fix merged
+  via PR #54; item moves to `done`.
