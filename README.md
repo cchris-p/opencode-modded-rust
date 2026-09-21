@@ -157,6 +157,22 @@ cargo check -p opencode-cli
 cargo check -p opencode-tui
 ```
 
+### Git hooks
+
+This repo ships a version-controlled `pre-commit` hook that runs `cargo fmt --all`
+when a commit stages Rust files, then re-stages the formatted result. It no-ops
+when `cargo` is unavailable or when no Rust files are staged. Install it once
+per clone:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+Bypass a single commit with `git commit --no-verify`, or skip the hook for one
+commit with `OPENCODE_SKIP_FMT_HOOK=1`. Disable it entirely with
+`git config --unset core.hooksPath`. Files with unstaged edits are intentionally
+not re-staged; the hook warns instead so unstaged work is never captured.
+
 ## Documentation
 
 - User guide: `USER_GUIDE.md`

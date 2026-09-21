@@ -44,3 +44,10 @@
 - `ort` always starts a fresh local TUI server for that workspace. It never reuses, rotates, or attaches to a previously recorded server, so a stale or other-workspace server can never serve the TUI. Use `opencode attach <url>` for intentional re-attachment.
 - The Rust product owns its default model (`deepseek/deepseek-v4-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
 - When testing code changes, run `ort-build` before `ort` so the freshly started server runs the latest binary.
+
+## Git Hooks
+
+- The repo ships `.githooks/pre-commit`: when a commit stages Rust files it runs `cargo fmt --all` and re-stages the formatted result. It no-ops when `cargo` is unavailable or no Rust files are staged.
+- Install per clone with `./scripts/install-git-hooks.sh` (sets `core.hooksPath=.githooks`). Worktrees of the clone share the setting.
+- Bypass a commit with `git commit --no-verify`, or skip one hook run with `OPENCODE_SKIP_FMT_HOOK=1`.
+- Staged files that also have unstaged edits are intentionally not re-staged; the hook warns instead so unstaged work is never captured.
