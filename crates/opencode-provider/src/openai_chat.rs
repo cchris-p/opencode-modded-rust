@@ -77,6 +77,12 @@ pub fn openai_chat_tools(tools: &[ToolDefinition]) -> Value {
 ///   message) are emitted as separate `{ role: "tool", tool_call_id, content }`
 ///   messages immediately after their owning assistant message.
 /// - reasoning parts are dropped (not part of the OpenAI chat content schema).
+///
+/// After conversion, `normalize_tool_call_replies` enforces the provider
+/// requirement that every assistant `tool_calls` message is immediately
+/// followed by a matching `role: "tool"` message for each call id, so a history
+/// left with unresolved tool calls cannot wedge the session with a recurring
+/// `400 ... tool_calls must be followed by tool messages ...`.
 pub fn convert_messages(messages: &[Message]) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     for message in messages {
@@ -124,7 +130,106 @@ pub fn convert_messages(messages: &[Message]) -> Vec<Value> {
             }
         }
     }
+    normalize_tool_call_replies(out)
+}
+
+/// Enforce the OpenAI tool-call adjacency invariant on a converted message list.
+///
+/// OpenAI-compatible providers reject a request where an assistant message with
+/// `tool_calls` is not immediately followed by a `role: "tool"` message for each
+/// `tool_call_id`. A run that is aborted, stalls, or resumes from a persisted
+/// history can leave tool calls without results, and that bad shape then repeats
+/// on every subsequent prompt.
+///
+/// This pass canonicalizes the sequence so the invariant always holds:
+///
+/// - Every assistant `tool_calls` message is immediately followed by one tool
+///   message per call id, in call order.
+/// - A tool reply already present anywhere in the list is reused (and moved next
+///   to its owning assistant message); duplicates are dropped.
+/// - A call id with no reply gets a synthetic error tool message so the turn is
+///   still provider-valid instead of failing the whole session.
+/// - Tool messages that cannot be tied to a preceding call (empty or unknown
+///   `tool_call_id`) are preserved as-is so no content is silently lost.
+fn normalize_tool_call_replies(messages: Vec<Value>) -> Vec<Value> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut replies: HashMap<String, Value> = HashMap::new();
+    for message in &messages {
+        if message.get("role").and_then(Value::as_str) != Some("tool") {
+            continue;
+        }
+        if let Some(id) = message.get("tool_call_id").and_then(Value::as_str) {
+            if !id.is_empty() {
+                replies
+                    .entry(id.to_string())
+                    .or_insert_with(|| message.clone());
+            }
+        }
+    }
+
+    let mut out: Vec<Value> = Vec::with_capacity(messages.len());
+    let mut consumed: HashSet<String> = HashSet::new();
+
+    for message in messages {
+        let role = message.get("role").and_then(Value::as_str).unwrap_or("");
+
+        if role == "assistant" {
+            let call_ids: Vec<String> = message
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .map(|calls| {
+                    calls
+                        .iter()
+                        .filter_map(|call| {
+                            call.get("id").and_then(Value::as_str).map(str::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            out.push(message);
+
+            for id in call_ids {
+                if consumed.contains(&id) {
+                    continue;
+                }
+                match replies.get(&id) {
+                    Some(reply) => out.push(reply.clone()),
+                    None => {
+                        tracing::warn!(
+                            tool_call_id = %id,
+                            "Synthesizing error tool result for unresolved assistant tool call"
+                        );
+                        out.push(synthetic_tool_reply(&id));
+                    }
+                }
+                consumed.insert(id);
+            }
+            continue;
+        }
+
+        if role == "tool" {
+            if let Some(id) = message.get("tool_call_id").and_then(Value::as_str) {
+                if !id.is_empty() && consumed.contains(id) {
+                    // Already emitted next to its owning assistant message.
+                    continue;
+                }
+            }
+        }
+
+        out.push(message);
+    }
+
     out
+}
+
+fn synthetic_tool_reply(call_id: &str) -> Value {
+    json!({
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": "Tool result unavailable: the previous turn ended before this tool call produced a result.",
+    })
 }
 
 /// Convert an assistant message's parts. `tool_use` parts become `tool_calls`;
@@ -340,10 +445,14 @@ mod tests {
             provider_options: None,
         }];
         let out = convert_messages(&messages);
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.len(), 2);
         assert_eq!(out[0]["role"], "assistant");
         assert_eq!(out[0]["reasoning_content"], "step one\n step two");
         assert!(out[0]["tool_calls"][0]["id"] == "call_1");
+        // The unresolved tool call still gets a synthetic reply so the request
+        // is provider-valid (see normalize_tool_call_replies).
+        assert_eq!(out[1]["role"], "tool");
+        assert_eq!(out[1]["tool_call_id"], "call_1");
     }
 
     #[test]
@@ -463,5 +572,91 @@ mod tests {
         assert_eq!(v["function"]["name"], "read");
         assert_eq!(v["function"]["description"], "read a file");
         assert_eq!(v["function"]["parameters"]["type"], "object");
+    }
+
+    fn assistant_tool_call_message(ids: &[&str]) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: Content::Parts(
+                ids.iter()
+                    .map(|id| tool_use_part(id, "bash", json!({ "cmd": "ls" })))
+                    .collect(),
+            ),
+            cache_control: None,
+            provider_options: None,
+        }
+    }
+
+    #[test]
+    fn unresolved_tool_call_gets_synthetic_reply_before_user_message() {
+        // BUG-028: an assistant turn that ends with tool calls but no results
+        // (aborted/stalled/resumed) must not produce an assistant `tool_calls`
+        // message that is followed by a user message. The reply is synthesized
+        // immediately after the owning assistant message.
+        let messages = vec![
+            assistant_tool_call_message(&["call_a", "call_b"]),
+            Message::user("continue"),
+        ];
+
+        let out = convert_messages(&messages);
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[0]["role"], "assistant");
+        assert_eq!(out[0]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(out[1]["role"], "tool");
+        assert_eq!(out[1]["tool_call_id"], "call_a");
+        assert_eq!(out[2]["role"], "tool");
+        assert_eq!(out[2]["tool_call_id"], "call_b");
+        assert_eq!(out[3]["role"], "user");
+        assert_eq!(out[3]["content"], "continue");
+    }
+
+    #[test]
+    fn existing_tool_reply_is_moved_adjacent_to_owning_assistant_message() {
+        // A tool result that ended up after an intervening user message is moved
+        // next to the assistant message that owns the call, and the stray copy
+        // is not emitted twice.
+        let messages = vec![
+            assistant_tool_call_message(&["call_1"]),
+            Message::user("continue"),
+            Message {
+                role: Role::Assistant,
+                content: Content::Parts(vec![tool_result_part("call_1", "files")]),
+                cache_control: None,
+                provider_options: None,
+            },
+        ];
+
+        let out = convert_messages(&messages);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0]["role"], "assistant");
+        assert_eq!(out[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(out[1]["role"], "tool");
+        assert_eq!(out[1]["tool_call_id"], "call_1");
+        assert_eq!(out[1]["content"], "files");
+        assert_eq!(out[2]["role"], "user");
+    }
+
+    #[test]
+    fn resolved_tool_calls_keep_their_reply_content() {
+        let messages = vec![
+            assistant_tool_call_message(&["call_1", "call_2"]),
+            Message {
+                role: Role::Assistant,
+                content: Content::Parts(vec![
+                    tool_result_part("call_1", "one"),
+                    tool_result_part("call_2", "two"),
+                ]),
+                cache_control: None,
+                provider_options: None,
+            },
+        ];
+
+        let out = convert_messages(&messages);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0]["role"], "assistant");
+        assert_eq!(out[1]["tool_call_id"], "call_1");
+        assert_eq!(out[1]["content"], "one");
+        assert_eq!(out[2]["tool_call_id"], "call_2");
+        assert_eq!(out[2]["content"], "two");
     }
 }
