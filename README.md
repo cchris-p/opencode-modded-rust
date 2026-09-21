@@ -222,4 +222,4 @@ points at rendering.
 - The executable name `opencode` remains for backward compatibility.
 - `opencode-*` crate names and `opencode-modded-rust` are retained as implementation and repository identifiers, not the product name.
 - `opencode-modded` remains the long-term reference and planning repo.
-- The frozen TypeScript reference line for planning and later sync review is `$HOME/repos/opencode-modded` at commit `e62912b5d18b73316c7bfd6e894b040698f6c880` until a later board item changes it.
+- The TypeScript reference line for planning and later sync review is `$HOME/repos/opencode-modded`, referenced from its `dev` branch; fetch the latest `dev` before comparing vanilla behavior. The recorded pin is `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (re-pinned by `GATE-004`; the prior `e62912b5` pin is unreachable).

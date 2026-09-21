@@ -201,7 +201,7 @@ Practical consequence: if you define a custom agent and want it to ask questions
 
 ## Reference comparison
 
-Frozen line `$HOME/repos/opencode-modded` at `e62912b5d18b73316c7bfd6e894b040698f6c880`:
+Reference line `$HOME/repos/opencode-modded` (`dev`, pinned at `f54ce313b99a6661d7758ad042f7a6e05c8e0972`, re-pinned by `GATE-004`; line references re-verified at this pin):
 
 - `build` is the default primary agent; `plan` is the other primary; `general` and `explore` are subagents (`packages/core/src/plugin/agent.ts:120-178`).
 - There is no primary `general` mode in the reference.

@@ -29,7 +29,8 @@
 
 ## Frozen reference line
 
-- The working TypeScript reference line is the local `opencode-modded` commit `e62912b5d18b73316c7bfd6e894b040698f6c880`.
+- The working TypeScript reference line is the `opencode-modded` `dev` branch, pinned at commit `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (re-pinned by `GATE-004`; the prior `e62912b5` pin is unreachable).
+- Fetch the latest `dev` before comparing vanilla behavior; do not rely on a stale local checkout.
 - This freeze is for planning clarity, not as a permanent refusal to learn from later upstream work.
 - Any later feature adoption should start with a new board item rather than silently moving the reference line.
 

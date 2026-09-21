@@ -13,6 +13,13 @@
 - If a rule, invariant, or plan must constrain this product, it must be restated in this repo.
 - Cross-repo references are for context and traceability, not shared ownership.
 
+## Reference Repo Convention
+
+- The vanilla/reference codebase is `$HOME/repos/opencode-modded`, a mirror of `anomalyco/opencode` (`https://github.com/cchris-p/opencode-modded`).
+- Reference vanilla behavior from the `dev` branch, and fetch the latest `dev` before comparing (`git -C "$HOME/repos/opencode-modded" fetch origin dev`). Do not compare against a stale local checkout or an old pinned commit.
+- The recorded reference commit is pinned for reproducibility: `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (branch `dev`, package `1.18.31`, 2026-09-21), re-pinned by `GATE-004`.
+- The previous pin `e62912b5d18b73316c7bfd6e894b040698f6c880` is unreachable on the remote (force-pushed) and is superseded; do not cite it as current.
+
 ## Planning Direction
 
 - `wiki/` contains architecture and version-direction documents.
@@ -20,7 +27,7 @@
 - `boards/` tracks execution work, deferred work, and future feature triage.
 - Keep board lane directories flat: do not create subdirectories under `boards/<lane>/`; place board item markdown files directly in the lane directory.
 - `docs/archive/session.md` is archived brainstorming source material, not the authoritative plan.
-- The frozen TypeScript reference line is `$HOME/repos/opencode-modded` at commit `e62912b5d18b73316c7bfd6e894b040698f6c880` until a later board item explicitly changes it.
+- The TypeScript reference line and the `dev`-branch convention are defined under "Reference Repo Convention" above.
 
 ## Current Product Stance
 
