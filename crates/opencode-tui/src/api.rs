@@ -300,6 +300,10 @@ pub struct QuestionOptionInfo {
     pub description: Option<String>,
 }
 
+fn default_question_custom() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionPromptInfo {
     pub question: String,
@@ -309,6 +313,8 @@ pub struct QuestionPromptInfo {
     pub options: Vec<QuestionOptionInfo>,
     #[serde(default)]
     pub multiple: bool,
+    #[serde(default = "default_question_custom")]
+    pub custom: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

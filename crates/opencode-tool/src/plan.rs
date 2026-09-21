@@ -89,20 +89,19 @@ impl Tool for PlanEnterTool {
                 "Would you like to switch to the plan agent and create a plan saved to {}?",
                 plan_display
             ),
-            header: Some("Plan Mode".to_string()),
+            header: "Plan Mode".to_string(),
             options: vec![
                 QuestionOption {
                     label: "Yes".to_string(),
-                    description: Some("Switch to plan agent for research and planning".to_string()),
+                    description: "Switch to plan agent for research and planning".to_string(),
                 },
                 QuestionOption {
                     label: "No".to_string(),
-                    description: Some(
-                        "Stay with build agent to continue making changes".to_string(),
-                    ),
+                    description: "Stay with build agent to continue making changes".to_string(),
                 },
             ],
             multiple: false,
+            custom: false,
         }];
 
         let answers = ctx.question(questions).await?;
@@ -175,18 +174,19 @@ impl Tool for PlanExitTool {
 
         let questions = vec![QuestionDef {
             question: format!("Plan at {} is complete. Would you like to switch to the build agent and start implementing?", plan_display),
-            header: Some("Build Agent".to_string()),
+            header: "Build Agent".to_string(),
             options: vec![
                 QuestionOption {
                     label: "Yes".to_string(),
-                    description: Some("Switch to build agent and start implementing the plan".to_string()),
+                    description: "Switch to build agent and start implementing the plan".to_string(),
                 },
                 QuestionOption {
                     label: "No".to_string(),
-                    description: Some("Stay with plan agent to continue refining the plan".to_string()),
+                    description: "Stay with plan agent to continue refining the plan".to_string(),
                 },
             ],
             multiple: false,
+            custom: false,
         }];
 
         let answers = ctx.question(questions).await?;

@@ -28,7 +28,8 @@
 ## Reference line freeze
 
 - The initial TypeScript reference line is the current `opencode-modded` state at planning adoption time.
-- The current recorded reference commit is `e62912b5d18b73316c7bfd6e894b040698f6c880` in `$HOME/repos/opencode-modded`.
+- The reference is read from the `dev` branch; fetch the latest `dev` before comparing vanilla behavior.
+- The recorded reference commit is `f54ce313b99a6661d7758ad042f7a6e05c8e0972` in `$HOME/repos/opencode-modded` (branch `dev`, package `1.18.31`, 2026-09-21), re-pinned by `GATE-004`. The prior pin `e62912b5d18b73316c7bfd6e894b040698f6c880` is unreachable and superseded.
 - Future upstream feature review is separate work and should be introduced only through explicit board items.
 
 ## Explicit exclusions

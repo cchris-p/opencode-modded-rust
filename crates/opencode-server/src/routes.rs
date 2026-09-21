@@ -2696,6 +2696,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
                             })
                             .collect(),
                         multiple: question.multiple,
+                        custom: question.custom,
                     })
                     .collect(),
             };
@@ -4939,15 +4940,16 @@ pub struct QuestionInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct QuestionPromptInfo {
     pub question: String,
-    pub header: Option<String>,
+    pub header: String,
     pub options: Vec<QuestionOptionInfo>,
     pub multiple: bool,
+    pub custom: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct QuestionOptionInfo {
     pub label: String,
-    pub description: Option<String>,
+    pub description: String,
 }
 
 static QUESTION_REQUESTS: Lazy<RwLock<HashMap<String, QuestionInfo>>> =

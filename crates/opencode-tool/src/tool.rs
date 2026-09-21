@@ -43,19 +43,23 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionDef {
     pub question: String,
-    #[serde(default)]
-    pub header: Option<String>,
+    pub header: String,
     #[serde(default)]
     pub options: Vec<QuestionOption>,
     #[serde(default)]
     pub multiple: bool,
+    #[serde(default = "default_custom")]
+    pub custom: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionOption {
     pub label: String,
-    #[serde(default)]
-    pub description: Option<String>,
+    pub description: String,
+}
+
+fn default_custom() -> bool {
+    true
 }
 
 pub type AskCallback = Arc<
