@@ -144,6 +144,49 @@ All line references below were verified at that commit.
 6. Never report `queued` without executing; `prompt_async` must execute or be removed/aliased.
 7. Abort/cancel reaches both the active turn and the waiting prompts.
 
+## Implementation constraints (must be satisfied)
+
+These are implementation-critical and are the difference between a passing and a subtly wrong
+implementation. They are binding alongside the observable behavior above.
+
+1. **Accept-time materialization with single ownership.** On accepting a prompt, the server appends the
+   user message to the session with a stable ID and returns that ID; the runner consumes that exact
+   message when the turn starts and must **not** create a second user message. A queued prompt must be
+   present in shared session state as soon as it is accepted, so every client can render it. Reject the
+   implementation if a queued prompt produces two user messages or zero.
+2. **The queue is shared per-session server state, not per-request state.** Exactly one runner executes
+   per session at a time. `ACTIVE_PROMPTS` becomes the active-run registry only; queued prompts are
+   never inserted there and must not overwrite an active entry.
+3. **Ordering is by acceptance sequence.** Acceptance assigns a monotonically increasing per-session
+   sequence; the runner drains strictly FIFO by that sequence.
+4. **Run status shape.** `SessionRunStatus` gains a `Queued { position, depth }` variant (or an
+   equivalent serializable shape) exposed by `GET /session/status` and broadcast as `session.status`. A
+   session is `busy` while a run is active or the queue is draining, and `idle` only when there is no
+   active run and the queue is empty.
+5. **Acceptance response.** `/session/{id}/prompt` returns `started` when the run begins immediately,
+   otherwise `queued` with the materialized message ID and queue `position`/`depth`. `prompt_async`
+   becomes an alias of the same queued path (fire-and-forget): it enqueues real execution and returns
+   the same status shape. Its message-append stub is removed. No endpoint may report `queued` without
+   enqueueing execution.
+6. **Abort vs explicit cancel.** `POST /session/{id}/prompt/abort` cancels the active run only. Waiting
+   queued prompts are **not** auto-discarded (vanilla's `execution.interrupt` interrupts the active
+   fiber and does not clear admitted inputs); their materialized messages remain in the transcript.
+   Removing a specific waiting prompt is a separate explicit cancel action that also removes its
+   materialized user message (vanilla `onQueuedRemove`).
+7. **Restart behavior.** Queued-but-unstarted materialized user messages survive restart in the
+   transcript and are not auto-executed on startup; they remain visible unanswered user turns and can
+   be resent. Never silently delete them.
+8. **Optimistic-client reconciliation.** Clients that optimistically render (the Rust TUI does)
+   reconcile by message ID; the server is the single source of truth and must include the accepted
+   message in the session so optimistic entries are removed rather than left dangling.
+9. **Queued boundary computation.** Derive the queued set from assistant completion
+   (`finish.is_none()` / `completed_at.is_none()`), matching vanilla's `time.completed`. A user message
+   is queued only when there is an in-flight assistant message before it; with no in-flight assistant,
+   nothing is queued.
+10. **Testability.** The concurrent-send regression test must pass, plus targeted tests for (a)
+    accept-time materialization produces exactly one user message per accepted prompt, and (b) abort
+    cancels the active run while leaving queued prompts visible and explicitly removable.
+
 ## Parity decisions (resolved)
 
 - **Delivery modes are reference-only; FIFO after the current turn is the required observable.** The
@@ -195,7 +238,13 @@ All line references below were verified at that commit.
 - [ ] Where the CLI run surface exists, its footer shows the queue count/list and a manage-queued-prompts
       surface matching vanilla (shown only when queued prompts exist, supports removal).
 - [ ] Side-by-side parity evidence against the pinned reference commit is recorded.
-- [ ] The concurrent-send regression test described in `invariants/message-queuing.md` passes.
+- [ ] Each accepted prompt materializes exactly one user message (no duplicate, no missing).
+- [ ] Abort cancels the active run while leaving queued prompts visible; explicit cancel removes a
+      waiting prompt and its materialized message.
+- [ ] `prompt_async` enqueues real execution (or is removed/aliased) and never reports `queued` without
+      executing.
+- [ ] The concurrent-send regression test described in `invariants/message-queuing.md` passes, plus the
+      materialization and abort tests in the implementation constraints.
 
 ## Recommended verification
 

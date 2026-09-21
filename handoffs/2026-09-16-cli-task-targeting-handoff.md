@@ -1,9 +1,9 @@
 ---
 id: "H-003"
 title: "CLI task targeting and queued sends - Handoff"
-status: "ready"
+status: "superseded"
 created: "2026-09-16"
-updated: "2026-09-16"
+updated: "2026-09-21"
 owner: ""
 target: "development"
 blocked_reason: ""
@@ -49,6 +49,10 @@ Implement the CLI task workflow for `ort task ...` without reintroducing unsafe 
 
 ## Execution Notes
 
+- 2026-09-21: Superseded by `H-004` (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`) for the
+  remaining `FEAT-021`/`FEAT-005`/`FEAT-019` scope. `FEAT-020` merged as PR #37; the queue semantics
+  that this handoff left open are now pinned by `GATE-001` and `invariants/message-queuing.md`. Use
+  `H-004` for implementation.
 - 2026-09-16: PR 1 / `FEAT-020` opened as https://github.com/cchris-p/opencode-modded-rust/pull/37 on branch `feature/FEAT-020-task-target-selection` targeting `development`.
 - PR 1 implements `opencode task target list|select|show|clear`, workspace-local `.opencode/task-target.json` storage, and live validation of explicit target servers/sessions. It intentionally does not add `task new`, `task send`, `task view`, queueing, status dashboards, or implicit TUI server reuse.
 - PR 1 verification: `cargo fmt`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task target list`; `cargo run -p opencode-cli -- task target show`; `cargo run -p opencode-cli -- task target list --server http://127.0.0.1:9`; `cargo run -p opencode-cli -- task target --help`; live temporary-server smoke for list/select/show/clear.

@@ -25,12 +25,22 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 
 `FEAT-005` focuses on Cline-style task send conventions: starting work, sending follow-up messages, and attaching files from the shell. Status visibility is related but separable. It should not bloat the send-task implementation, and it should respect the attach/detach lifecycle decisions tracked elsewhere.
 
+## Product Decisions
+
+- Visible states: `idle`, `busy`, `queued` (with depth/position), `retry`, and `error`; completed is
+  derived from assistant message completion. `queued` must come from the `GATE-001` run status, not be
+  synthesized client-side.
+- Output formats: human-readable plain text by default, plus `--json` for scripts. Rich/TUI styling is
+  out of scope.
+- Status is read from the existing session/status model (`GET /session/status` and session list data);
+  no separate status database.
+
 ## Scope
 
 - Define which task/session states are visible from the CLI, such as running, idle, awaiting approval, complete, failed, or detached where supported.
 - Add a command or subcommand that lists recent or active tasks/sessions with compact status information.
 - Add a command or subcommand that views one task/session status in more detail.
-- Decide whether status output supports rich, plain, and JSON formats in the first implementation.
+- Expose plain-text output by default and `--json` for scripts; do not add rich/TUI formatting.
 - Reuse the existing session/task state model rather than inventing a separate status database.
 - Make status useful for sessions that are not currently visible in the TUI when the runtime can observe them.
 

@@ -25,6 +25,16 @@ When a CLI task prompt is sent to a session that is currently open in the TUI, e
 
 The desired CLI task workflow allows the user to keep a TUI session open while sending follow-up prompts from the shell. Those sends must target the same canonical session runtime and should appear in the TUI as normal session progress. If the session is busy or visible in the TUI, the CLI send should become ordered session work rather than racing the active prompt loop.
 
+## Product Decisions
+
+- Queue semantics and the queued-message display are owned by `GATE-001`; this card implements them and
+  is not done until `GATE-001`'s Done-when and implementation constraints are satisfied.
+- `--stream` on a send that is queued returns queued status immediately (target session, message ID,
+  queue position) and follows/streams once the request becomes active. If the send starts immediately,
+  it streams normally.
+- Accept-time materialization: the server appends the accepted user message with a stable ID and returns
+  it; the runner consumes that message rather than creating a second one.
+
 ## Scope
 
 - Define the per-session prompt queue semantics used when CLI task sends target an open or busy TUI session.
@@ -32,7 +42,8 @@ The desired CLI task workflow allows the user to keep a TUI session open while s
 - Ensure queued sends use the same server/session prompt runtime as normal TUI prompts.
 - Ensure the TUI observes queued CLI prompts and their results through normal session updates.
 - Return enough CLI output after enqueueing to show the target session and queued/submitted status.
-- Decide whether `--stream` follows the queued request when it begins or reports that streaming is unavailable while queued.
+- `--stream` follows a queued request once it becomes active; while queued it reports queued status
+  immediately rather than pretending to stream.
 - Add tests or smoke coverage that sends to a session while it is open or busy and verifies ordered execution.
 
 ## Non-goals

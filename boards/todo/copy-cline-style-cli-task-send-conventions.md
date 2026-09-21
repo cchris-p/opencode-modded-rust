@@ -46,7 +46,9 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - FEAT-005 must use the canonical server/session prompt path described in `wiki/agent-debugging-without-tui.md`, not the interim `AgentExecutor` path fixed by `FEAT-012`.
 - FEAT-005 must not discover, start, or reuse servers implicitly. It should talk only to an explicitly configured/provided server/session context or to the explicit default task target selected by `FEAT-020`.
 - File attachment flags are deferred. In the first implementation, the user can include file paths in raw message text and the agent should navigate/read them through normal tools.
-- Commands should return immediately by default after submitting work, with a `--stream` option for live output when supported.
+- Commands return immediately by default after submitting work. `--stream` follows the request once it
+  becomes active; if the request is queued behind an active turn, it reports queued status first and
+  begins streaming when the turn starts (matching `GATE-001`).
 
 ## Scope
 
