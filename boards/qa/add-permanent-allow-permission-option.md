@@ -150,6 +150,13 @@ Deferred acceptance criteria (review later, not yet verified):
 - Repeat `p` on the same request keeps a single rule (idempotency proven by unit test only, not live).
 - Toast names the exact config file path in the live TUI.
 
-Status: remains in `qa`. The feature is still uncommitted, so it cannot move to `done` until it is
-committed/PR'd and the deferred acceptance criteria are reviewed.
+Status: remains in `qa`. The feature is committed and merged (see Merge Closeout), but the deferred
+acceptance criteria above are not yet verified, so the item cannot move to `done`.
+
+## Merge Closeout
+
+- Committed as `f7eaba6` on `feature/FEAT-027-permanent-allow-permission`.
+- Merged via PR #50 into `development` (merge commit `f0dfb34`) on 2026-09-21.
+- Local and remote feature branches deleted; `development` fast-forwarded to `f0dfb34`.
+- Item remains in `qa` pending the deferred acceptance-criteria review.
 
