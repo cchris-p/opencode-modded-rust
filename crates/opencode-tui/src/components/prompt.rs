@@ -337,7 +337,7 @@ impl Prompt {
                 .saturating_add(PROMPT_BLOCK_PAD_LEFT);
             let content_y = chunks[0].y.saturating_add(PROMPT_BLOCK_PAD_TOP);
             frame.set_cursor(
-                content_x.saturating_add(cursor_col.min(input_width)),
+                content_x.saturating_add(cursor_col),
                 content_y.saturating_add(cursor_row.min(content_lines.saturating_sub(1))),
             );
         }
@@ -1788,40 +1788,132 @@ mod tests {
     }
 
     #[test]
-    fn rendered_lines_match_wrapped_input_and_cursor_cell() {
+    fn cursor_visual_position_never_reaches_full_width() {
+        // The render path no longer clamps the cursor column to `input_width`
+        // because `cursor_visual_position` can never return a column at or past
+        // the content width; a column that would reach the edge is reported on
+        // the next (phantom) row instead. This guards that invariant.
+        let inputs = [
+            "",
+            " ",
+            "abc",
+            "ab cdefgh",
+            "hello world",
+            "你a好",
+            "e\u{301}x",
+            "ab\ncd",
+            "abcdefghij",
+        ];
+        for width in 1..=6u16 {
+            for input in inputs {
+                let wrapped = wrap_prompt_input(input, width);
+                for cursor in 0..=input.len() {
+                    let pos = wrapped.cursor_visual_position(input.len(), cursor, width);
+                    assert!(
+                        pos.col < width,
+                        "col {} >= width {} for {input:?} at byte {cursor}",
+                        pos.col,
+                        width
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_cursor_matches_insertion_point() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
 
-        let input = "ab cdefgh";
-        let width = 6u16;
-        let wrapped = wrap_prompt_input(input, width);
-        let backend = TestBackend::new(width, 3);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        let lines: Vec<Line> = wrapped
-            .lines
-            .iter()
-            .map(|line| Line::from(line.clone()))
-            .collect();
-        terminal
-            .draw(|frame| {
-                frame.render_widget(Paragraph::new(lines.clone()), frame.size());
-            })
-            .expect("draw");
+        // (input, cursor byte offset, terminal width)
+        let cases: &[(&str, usize, u16)] = &[
+            ("ab cdefgh", 7, 9),
+            ("abc", 2, 6),
+            ("abc", 3, 6),
+            ("hello world", 6, 9),
+            ("你a好", 3, 6),
+            ("你a好", 7, 6),
+            ("ab\ncd", 3, 8),
+            ("e\u{301}x", 3, 6),
+        ];
 
-        let buffer = terminal.backend().buffer();
-        let row_content = |y: u16| -> String {
-            (0..width)
-                .map(|x| buffer.get(x, y).symbol().to_string())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        };
-        assert_eq!(row_content(0), "ab");
-        assert_eq!(row_content(1), "cdefgh");
+        with_isolated_prompt(|mut prompt| {
+            for &(input, cursor, width) in cases {
+                let input_width = prompt_input_width(width);
+                let wrapped = wrap_prompt_input(input, input_width);
+                let pos = wrapped.cursor_visual_position(input.len(), cursor, input_width);
 
-        let cursor = wrapped.cursor_visual_position(input.len(), 7, width);
-        assert_eq!(cursor, CursorVisualPosition { row: 1, col: 4 });
-        assert_eq!(buffer.get(cursor.col, cursor.row as u16).symbol(), "g");
+                // Render layout offsets: content_x = left border (1) + pad_left (1);
+                // content_y = pad_top (1). These short inputs never scroll.
+                let expected = (2 + pos.col, 1 + u16::try_from(pos.row).unwrap());
+
+                prompt.set_input(input.to_string());
+                prompt.cursor_position = cursor;
+
+                let mut terminal = Terminal::new(TestBackend::new(width, 12)).expect("terminal");
+                terminal
+                    .draw(|frame| prompt.render(frame, frame.size()))
+                    .expect("draw");
+
+                assert_eq!(
+                    terminal.get_cursor().expect("cursor"),
+                    expected,
+                    "cursor cell for {input:?} at byte {cursor} width {width}"
+                );
+
+                // Non-tautological check: when the cursor sits before a real
+                // grapheme, the cell under the cursor must be that grapheme.
+                if cursor < input.len() {
+                    let grapheme = input[cursor..].graphemes(true).next().unwrap();
+                    let cell = terminal.backend().buffer().get(expected.0, expected.1);
+                    assert_eq!(
+                        cell.symbol(),
+                        grapheme,
+                        "cursor cell content for {input:?} at byte {cursor} width {width}"
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn rendered_cursor_tracks_scroll_for_long_drafts() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let input = "one two three four five six seven eight nine ten";
+        let width = 9u16;
+        let height = 8u16;
+        let cursor = input.len();
+
+        let input_width = prompt_input_width(width);
+        let wrapped = wrap_prompt_input(input, input_width);
+        let pos = wrapped.cursor_visual_position(input.len(), cursor, input_width);
+        // Render content height for this area: height - 3 chrome rows - 2 padding.
+        let content_lines = height - 3 - PROMPT_BLOCK_PAD_TOP - PROMPT_BLOCK_PAD_BOTTOM;
+        let scroll = pos.row.saturating_sub(usize::from(content_lines - 1));
+        let visible_row = pos.row - scroll;
+        let expected = (2 + pos.col, 1 + u16::try_from(visible_row).unwrap());
+
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input(input.to_string());
+            prompt.cursor_position = cursor;
+
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+            terminal
+                .draw(|frame| prompt.render(frame, frame.size()))
+                .expect("draw");
+
+            assert!(
+                pos.row >= usize::from(content_lines),
+                "draft must overflow the visible content height to exercise scroll"
+            );
+            assert_eq!(terminal.get_cursor().expect("cursor"), expected);
+            assert!(
+                expected.1 < height,
+                "cursor must stay inside the prompt area"
+            );
+        });
     }
 }
 

@@ -81,6 +81,9 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 - 2026-09-21: Replaced the parallel wrap math with a single `wrap_prompt_input` (grapheme-aware, word-boundary, `trim=false`-style) that produces the visual lines and records the (line, column) of every grapheme. `Prompt::render` now feeds those pre-wrapped `Line`s to `Paragraph` (no `Wrap`) and derives cursor row/column, box height, and scroll from the same structure, so cursor and text can no longer disagree. A cursor at an exact full-line boundary lands on the next (phantom) row at column 0. Removed the `max_col` band-aid plus the old `input_cursor_visual_position`/`visual_line_count`.
 - 2026-09-21: Added `unicode-segmentation = "1"` to `crates/opencode-tui/Cargo.toml` for grapheme iteration (already present transitively via ratatui 0.27).
 - 2026-09-21: `desired_height`/`prompt_content_lines` now include the cursor's phantom row so the layout reserves that row before the next character wraps.
+- 2026-09-21: Final cleanup. Removed the vestigial `cursor_col.min(input_width)` clamp in `Prompt::render` that survived Fix B. It could never trigger: `WrappedPromptInput::cursor_visual_position` only returns a column strictly less than the content width (a column that would reach the edge is reported as `row + 1, col 0`), and `prompt_input_width` is always `>= 1`. The clamp was leftover from the PR #47 band-aid, not a live guard, so removing it is behavior-preserving.
+- 2026-09-21: Replaced the tautological render test (which re-rendered `wrap_prompt_input`'s own lines through a bare `Paragraph` and therefore could not catch a padding/offset/scroll error in the real widget) with tests that drive the actual `Prompt::render` path through a `TestBackend` and assert the set-cursor cell: `rendered_cursor_matches_insertion_point` (ASCII, space-wrap, CJK, combining cluster, newline, exact-full-line; also asserts the cell under the cursor is the next grapheme), `rendered_cursor_tracks_scroll_for_long_drafts` (scrolled overflow draft), and `cursor_visual_position_never_reaches_full_width` (guards the invariant that made the clamp removable).
+- 2026-09-21: Known residual, intentionally out of scope: tabs and other control characters pasted into the prompt compute as display width 0 (`prompt_grapheme_width` via `unicode-width`), so a real terminal that expands a tab to the next tab stop can still show a mismatch. This is a pre-existing ratatui/terminal surface issue, not the wrap-vs-cursor split this item fixed; noted here for a follow-up if tabbed paste is ever reported.
 
 ## Verification
 
@@ -97,6 +100,24 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 - 2026-09-21: `rustfmt --edition 2021 --check crates/opencode-tui/src/components/prompt.rs` passed. Whole-workspace `cargo fmt` still flags only pre-existing drift in `anthropic.rs` and `keybind.rs`; an incidental reformat of `keybind.rs` was reverted.
 - 2026-09-21: Added a ratatui `TestBackend` test that renders the pre-wrapped lines and asserts the cursor cell points at the next grapheme, plus word-boundary, wide-char, newline, full-line-boundary, and grapheme-cluster cursor tests.
 - 2026-09-21: `ort-build`/`ort` are not on `PATH` in this shell, so real-terminal QA could not be run here. Needs interactive verification: type spaced/CJK/emoji prompts that wrap, paste multi-line text, move with Home/End/word keys, delete at start/middle/end, resize, and type again after streaming output.
+- 2026-09-21: `rustfmt --edition 2021 --check crates/opencode-tui/src/components/prompt.rs` passed.
+- 2026-09-21: `cargo test -p opencode-tui --lib cursor -- --test-threads=1` passed (9 tests, including the three new render/invariant tests).
+- 2026-09-21: `cargo test -p opencode-tui -- --test-threads=1 --skip tab_autocomplete_uses_first_candidate` passed (37 tests).
+- 2026-09-21: `cargo clippy -p opencode-tui --all-targets` produced no new warnings in `prompt.rs`; pre-existing crate/workspace warnings remain.
+- 2026-09-21: `ort-build`/`ort` still unavailable in this shell, so real-terminal QA remains outstanding before this item can leave `qa`.
+
+## Fix reconciliation (2026-09-21)
+
+Two earlier fixes landed on this item before the final cleanup. They are sequential, not conflicting; the second supersedes the first.
+
+- Fix A (PR #47 / `36ee852` "fix(tui): align prompt cursor at line edge"): narrow band-aid that let the visual cursor column equal `input_width` at an exact full-line boundary instead of clamping it back to `input_width - 1`.
+- Fix B (`1207cd3` "fix(tui): align prompt cursor with wrapped layout", merged to `development` as `fc86b5b`): replaced the parallel wrap math (removed `input_cursor_visual_position` / `visual_line_count`) with a single `wrap_prompt_input` shared by rendering, cursor placement, box height, and scroll.
+
+Relationship:
+
+- Not conflicting. Fix B was built on top of Fix A (`36ee852` is an ancestor of `fc86b5b`), so there was no revert and no competing edit to merge.
+- Fix B supersedes Fix A's treatment of the full-line boundary. Fix A drew the cursor on the pad cell at `col == input_width`; Fix B places it on the next (phantom) `row + 1` at `col == 0`. Only one can apply, and the live code is Fix B's.
+- Residual redundancy: Fix A's named `max_col` variable was deleted, but the clamp survived inline as `cursor_col.min(input_width)` in `Prompt::render`. That clamp was a no-op, and this final change removes it.
 
 ## PR
 
@@ -107,3 +128,4 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 - 2026-09-19: PR #47 merged into `development`; branch cleanup completed. Kept in `qa` for observation and revisit if the cursor misalignment is seen again.
 - 2026-09-21: Reopened and reworked on branch `bug/BUG-018-prompt-cursor-position`. Moved back to `qa` awaiting interactive/real-terminal verification; branch left checked out.
 - 2026-09-21: Branch merged into `development` (merge `fc86b5b`) and deleted. Still in `qa` pending interactive/real-terminal verification on `development`; the automated verification in Dev Notes already passes.
+- 2026-09-21: Final follow-up on branch `bug/BUG-018-cursor-core-fix` (based on `development` @ `a9e5d9f`): removed the surviving clamp and replaced the tautological render test with real-render cursor tests. Still in `qa` pending interactive/real-terminal verification.
