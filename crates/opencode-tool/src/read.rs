@@ -4,7 +4,8 @@ use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::{
-    external_directory_permission_request, Metadata, Tool, ToolContext, ToolError, ToolResult,
+    external_directory_permission_request, LoadedInstructions, Metadata, Tool, ToolContext,
+    ToolError, ToolResult,
 };
 
 const DEFAULT_READ_LIMIT: usize = 2000;
@@ -188,6 +189,7 @@ impl Tool for ReadTool {
             limit,
             title,
             &ctx.project_root,
+            &ctx.loaded_instructions,
         )
         .await
     }
@@ -351,6 +353,7 @@ async fn read_file_content(
     limit: usize,
     title: String,
     project_root: &str,
+    loaded_instructions: &LoadedInstructions,
 ) -> Result<ToolResult, ToolError> {
     let text = String::from_utf8_lossy(content);
     let lines: Vec<&str> = text.lines().collect();
@@ -422,15 +425,16 @@ async fn read_file_content(
 
     let mut loaded_files = vec![path_str.to_string()];
 
-    if !instructions.is_empty() {
-        let instruction_content: Vec<String> = instructions
-            .iter()
-            .map(|i| {
-                loaded_files.push(i.filepath.clone());
-                i.content.clone()
-            })
-            .collect();
+    let instruction_content: Vec<String> = instructions
+        .iter()
+        .filter(|i| loaded_instructions.mark_for_injection(&i.filepath, &i.content))
+        .map(|i| {
+            loaded_files.push(i.filepath.clone());
+            i.content.clone()
+        })
+        .collect();
 
+    if !instruction_content.is_empty() {
         output.push_str("\n\n<system-reminder>\n");
         output.push_str(&instruction_content.join("\n\n"));
         output.push_str("\n</system-reminder>");
@@ -536,4 +540,112 @@ async fn find_instruction_file(dir: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx_for(dir: &Path) -> ToolContext {
+        ToolContext::new(
+            "session-test".into(),
+            "message-test".into(),
+            dir.to_string_lossy().to_string(),
+        )
+    }
+
+    async fn run_read(tool: &ReadTool, ctx: ToolContext, file: &Path) -> ToolResult {
+        tool.execute(
+            serde_json::json!({ "file_path": file.to_string_lossy() }),
+            ctx,
+        )
+        .await
+        .expect("read should succeed")
+    }
+
+    #[tokio::test]
+    async fn attaches_instruction_file_once_across_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("AGENTS.md"), "# Repo rules\nbe nice").unwrap();
+        std::fs::write(root.join("first.md"), "first body").unwrap();
+        std::fs::write(root.join("second.md"), "second body").unwrap();
+
+        let tool = ReadTool::with_directory(root);
+        let ctx = ctx_for(root);
+
+        let first = run_read(&tool, ctx.clone(), &root.join("first.md")).await;
+        let second = run_read(&tool, ctx.clone(), &root.join("second.md")).await;
+
+        assert!(first.output.contains("<system-reminder>"));
+        assert!(first.output.contains("be nice"));
+        assert!(
+            !second.output.contains("<system-reminder>"),
+            "second read must not re-inject the same instruction file:\n{}",
+            second.output
+        );
+
+        let injections = format!("{}{}", first.output, second.output)
+            .matches("Instructions from:")
+            .count();
+        assert_eq!(
+            injections, 1,
+            "instruction file must be injected exactly once"
+        );
+
+        let loaded = second
+            .metadata
+            .get("loaded")
+            .and_then(|v| v.as_array())
+            .expect("loaded metadata");
+        assert!(
+            loaded
+                .iter()
+                .all(|v| !v.as_str().unwrap_or("").ends_with("AGENTS.md")),
+            "unchanged instruction file must not be re-listed as loaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn reinjects_instruction_file_when_content_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("AGENTS.md"), "version one").unwrap();
+        std::fs::write(root.join("first.md"), "first body").unwrap();
+        std::fs::write(root.join("second.md"), "second body").unwrap();
+
+        let tool = ReadTool::with_directory(root);
+        let ctx = ctx_for(root);
+
+        let first = run_read(&tool, ctx.clone(), &root.join("first.md")).await;
+        assert!(first.output.contains("version one"));
+
+        std::fs::write(root.join("AGENTS.md"), "version two").unwrap();
+        let second = run_read(&tool, ctx.clone(), &root.join("second.md")).await;
+
+        assert!(
+            second.output.contains("<system-reminder>") && second.output.contains("version two"),
+            "changed instruction content must be surfaced again:\n{}",
+            second.output
+        );
+    }
+
+    #[tokio::test]
+    async fn fresh_context_injects_instruction_file_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("AGENTS.md"), "# Repo rules").unwrap();
+        std::fs::write(root.join("first.md"), "first body").unwrap();
+
+        let tool = ReadTool::with_directory(root);
+
+        let first = run_read(&tool, ctx_for(root), &root.join("first.md")).await;
+        let second = run_read(&tool, ctx_for(root), &root.join("first.md")).await;
+
+        assert!(first.output.contains("<system-reminder>"));
+        assert!(
+            second.output.contains("<system-reminder>"),
+            "a fresh session context must still inject instructions"
+        );
+    }
 }

@@ -970,6 +970,7 @@ impl SessionPrompt {
         let mut step = 0u32;
         let provider_type = ProviderType::from_provider_id(&provider_id);
         let mut post_first_step_ran = false;
+        let loaded_instructions = opencode_tool::LoadedInstructions::new();
 
         loop {
             if token.is_cancelled() {
@@ -1345,7 +1346,8 @@ impl SessionPrompt {
                     session.directory.clone(),
                 )
                 .with_agent(String::new())
-                .with_abort(token.clone());
+                .with_abort(token.clone())
+                .with_loaded_instructions(loaded_instructions.clone());
 
                 if let Some(ask_callback) = ask_callback.clone() {
                     tool_context = tool_context.with_ask(move |request| {

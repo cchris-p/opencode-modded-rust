@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-10"
 ---
 
@@ -55,6 +55,15 @@ Reference behavior (`packages/opencode/src/tool/read.ts` + `session/instruction.
 - `cargo test -p opencode-tool read`
 - Live: fresh server, read several files under this repo and confirm `AGENTS.md` appears once, not per read.
 
+## Dev Notes
+
+- Implemented the session-keyed `loaded`-tracking decision from the Scope section.
+- Added `LoadedInstructions` (`crates/opencode-tool/src/tool.rs`): a cloneable `Arc<Mutex<HashMap<path, last-injected-content>>>` tracker plus `mark_for_injection(path, content)`, which returns `true` only on first sight or when content changed.
+- `ToolContext` now carries `loaded_instructions` (default fresh tracker) with a `with_loaded_instructions` builder so the same set is shared across tool calls.
+- `read.rs` (`read_file_content`) asks the tracker before appending each resolved instruction file; unchanged files are skipped and omitted from the `loaded` metadata, while changed content is re-injected.
+- The session prompt loop (`crates/opencode-session/src/prompt.rs`, `loop_inner`) creates one tracker per prompt run and attaches it to the per-turn `ToolContext`, so all reads in the turn share dedup state. Dedup scope is per prompt run; a later user turn starts a fresh set.
+- Verification: `cargo test -p opencode-tool` (32 passed), `cargo check -p opencode-session` clean. New regression tests: `attaches_instruction_file_once_across_reads`, `reinjects_instruction_file_when_content_changes`, `fresh_context_injects_instruction_file_again`.
+
 ## Related Items
 
 - `BUG-004` Coding sessions run as bare chat
@@ -65,4 +74,5 @@ Reference behavior (`packages/opencode/src/tool/read.ts` + `session/instruction.
 - Surfaced during BUG-006 QA; see `summarize-workspace-files.md`.
 - This is a context-efficiency/token-budget issue, not a functional failure; classify accordingly if scope is questioned.
 - Deferred (2026-09-15): not started. The daily-driver model in use (`deepseek/deepseek-v4-flash`, 1M-token context) does not show measurable context pressure from repeated instruction injection, so there is no forcing evidence to implement this now. Revisit when a small-context local model is in use and the token cost of per-read instruction re-injection becomes observable. Card remains in `todo`.
+  - Overridden (2026-09-21): implemented on explicit request. The deferral was a soft prior decision, not a hold marker, and repeated identical instruction blocks also waste attention budget (lost-in-the-middle), not only tokens.
 - Handoff `H-001` is not archived while this card stays open; `BUG-007`/`BUG-008` (the other `H-001` children) are merged into `development` and in `qa`.
