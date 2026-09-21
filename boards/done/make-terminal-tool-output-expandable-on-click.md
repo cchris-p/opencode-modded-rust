@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -104,3 +104,9 @@ This is distinct from `FEAT-028` (hide tool calls / collapse to a count). FEAT-0
 ## QA Notes
 
 - Pending local verification on the PR branch: collapsed preview plus affordance, expand/collapse toggling and indicator flip, independent expansion of multiple calls in one turn, error expansion, and `show_tool_details` off/on behavior.
+
+## Completion
+
+- PR #63 merged into `development` (`fbbbc82`); feature branch `feature/FEAT-030-terminal-tool-output-expandable` deleted remotely and locally.
+- QA evidence: `cargo fmt --check -p opencode-tui` clean; `cargo check -p opencode-tui` clean; `cargo test -p opencode-tui` 55 passed / 0 failed, including 4 new `session_tool` tests (long-output collapse + expand, short-output non-collapsible, hidden-details early return, error expansion).
+- Manual TUI verification (`ort-build` / `ort`) was not run; the card was completed on automated QA plus explicit user direction to close out.
