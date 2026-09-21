@@ -65,3 +65,4 @@ The `/timeline` dialog currently lists every message in the session, including a
 - Merged as PR #58 (merge commit `b116502`) into `development`.
 - Branch `bug/BUG-020-timeline-user-prompts` deleted remotely and locally after merge.
 - Promoted from `qa` to `done` on explicit user direction. No separate QA report was recorded: automated verification passed (44 `opencode-tui` tests, `cargo fmt --check`, `cargo check`, `cargo clippy --all-targets` with no new warnings), and real-terminal `/timeline` QA remains available on `development`.
+- User confirmed the timeline behavior works on 2026-09-21; card remains closed in `done`.
