@@ -19,6 +19,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `advanced-coding-session-polling.md` defines the high-level direction for low-context waits on coding-session state.
 - `coding-session-parity-audit.md` audits the Rust coding-session agentic path against the reference behavior (`BUG-004` evidence).
 - `agent-modes-and-custom-agents.md` defines the agent/mode model, builtin agents, default resolution, custom-agent config, permission rulesets, and the disabled `general` builtin.
+- `provider-side-visibility.md` inventories what a coding-session provider receives, classifies it by sensitivity, and documents exposure-limiting controls and per-provider payload differences.
 - `v1.md` defines the first serious personal daily-driver target.
 - `v1-runtime-loop.md` defines the concrete bounded-task execution model for V1.
 - `v2.md` defines the next reliability and retrieval step.
