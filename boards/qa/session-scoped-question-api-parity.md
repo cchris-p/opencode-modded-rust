@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -88,3 +88,5 @@ validate request ownership before accepting a reply or reject, matching vanilla'
 - Updated the TUI client and prompt flow to list, reply, and reject through session-scoped endpoints instead of listing globally and filtering client-side.
 - Kept legacy global question endpoints in place for compatibility, but the TUI no longer depends on them.
 - Verification: `cargo fmt --all`; `cargo check -p opencode-server -p opencode-tui`; `cargo test -p opencode-server question`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/67.
+- Status: moved to `qa` for PR/local verification.
