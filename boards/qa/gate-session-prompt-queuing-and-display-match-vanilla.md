@@ -353,3 +353,11 @@ Side-by-side parity evidence:
   (frozen `packages/tui/src/routes/session/index.tsx:1388-1453`). Boundary algorithm matches
   `index.tsx:244-250` (`completed`/`pending`). Live side-by-side TUI comparison against the pinned
   commit remains for human QA.
+## Merge Closeout (2026-09-21)
+
+- PR #61 (`feature/GATE-001-session-prompt-queue`) merged into `development` at merge commit
+  `e4e27870d1e4048e34fe8354c16db2c68cab59c9`.
+- Card intentionally kept in `qa` for post-merge local verification; do not move to `done` until the
+  user confirms the queue and `QUEUED` badge behavior on `development`.
+- `FEAT-021`, `FEAT-005`, and `FEAT-019` are unblocked by this gate; start `FEAT-021`/`FEAT-005`/`FEAT-019`
+  from `development` once QA passes.
