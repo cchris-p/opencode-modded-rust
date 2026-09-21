@@ -137,3 +137,12 @@ to true so behavior matches vanilla when omitted.
   matches vanilla when omitted.
 - `options` remains optional-with-default in Rust (lenient superset) to preserve the existing free-text
   question path; vanilla marks the key required.
+
+## Merge Closeout (2026-09-21)
+
+- PR #65 (`feature/FEAT-038-question-schema-tool-contract`) merged into `development` at merge commit
+  `405a6e1ad6651e77897b08da02d3ed886a8be77f`; remote and local feature branch deleted.
+- Card intentionally kept in `qa` for post-merge local verification; not moved to `done` because no QA
+  report is recorded and the user's closeout request covered the merge, not final completion.
+- `GATE-002` remains open until `FEAT-039`..`FEAT-044` are delivered or resolved; `FEAT-042` stays in
+  `hold` behind `FEAT-012`.
