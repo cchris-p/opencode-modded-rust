@@ -37,8 +37,9 @@ Related but separate symptom (do not conflate):
 
 - `docs/transcripts/tool-call-issue.md` (`ses_33afb883…`, 2026-09-21) fails differently: the provider
   rejects a follow-up with `400 Invalid assistant message: content or tool_calls must be set`. That
-  is a persisted-message-shape problem, not the silent stall. It may share a root cause around how
-  tool-call turns are reconstructed for the next provider request.
+  is a persisted-message-shape problem, not the silent stall. The user-reported trigger is
+  interrupting a running session. It is now owned by `BUG-019` (interrupt defect) with the resume
+  behavior tracked by `FEAT-035`; it is not diagnosed here.
 
 ## What BUG-016 already fixed
 
@@ -84,7 +85,8 @@ That guard explains why the *export* should now be self-consistent. It does not 
 - Re-litigating or reverting the `BUG-016` repair guard; it stays.
 - Changing plan mode into build mode or permitting edit tools in plan mode.
 - Broad provider transport rewrites beyond the confirmed root cause.
-- Root-causing the separate `tool-call-issue.md` `400` symptom unless evidence shows a shared cause.
+- Root-causing the separate `tool-call-issue.md` `400` symptom unless evidence shows a shared cause;
+  that symptom is owned by `BUG-019` / `FEAT-035`.
 
 ## Done when
 
@@ -211,7 +213,9 @@ Concurrent-writer data loss (likely a separate defect):
 - `BUG-016` Plan-mode session stalls after tool calls without tool results - symptom fix and prior
   investigation; this item supplies the missing root cause.
 - `BUG-019` Escape does not interrupt the running session - abort/cancel path intersects with how the
-  loop exits and leaves resolved tool-call state.
+  loop exits and leaves resolved tool-call state; now also owns the interrupt `400` symptom.
+- `FEAT-035` Resume an interrupted session from where it left off - resume behavior for the interrupt
+  `400` symptom promoted off this card.
 - `BUG-012` Session summary runs before tool results - another ordering defect in the same loop.
 - `BUG-006` DeepSeek tool loop reasoning passback and split toolcall - provider-specific tool-call
   handling.
@@ -222,8 +226,9 @@ Concurrent-writer data loss (likely a separate defect):
 
 - Transcript references live under `docs/transcripts/`; keep new exports there and link them by
   relative path from board items.
-- `tool-call-issue.md` under `docs/transcripts/` is the second reference failure and should be
-  promoted to its own card if the `400 Invalid assistant message` symptom recurs.
+- `tool-call-issue.md` under `docs/transcripts/` is the second reference failure. The `400 Invalid
+  assistant message` symptom has now recurred with a known trigger (interrupting a running session),
+  so on 2026-09-21 it was promoted to `BUG-019` (interrupt defect) and `FEAT-035` (resume behavior).
 - The concurrent-writer deletion of sessions/messages (`sync_sessions_to_storage` full snapshot plus
   stale deletion, `server.rs:188-229`) is a separate, evidence-backed defect and should get its own
   card rather than being folded into this root-cause item.

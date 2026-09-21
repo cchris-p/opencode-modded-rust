@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "todo"
 created: "2026-09-19"
 ---
 
@@ -35,6 +35,23 @@ running and streaming after the user interrupts.
 - The prompt spinner/status can flip to idle in the TUI, but the response keeps streaming and tool
   calls keep executing until the run finishes on its own.
 - There is no durable "aborted" marker in the session; the transcript looks like a normal completion.
+
+## Recurrence - 2026-09-21 (issue reappeared)
+
+The interrupt path still does not leave the session in a usable state after interruption. The
+user reports that interrupting a running session causes the next request to fail with an invalid
+assistant-message shape:
+
+- Error: `Provider error: API error: 400 Bad Request: {"error":{"message":"Invalid assistant message: content or tool_calls must be set",...}}`
+- Evidence: [`docs/transcripts/tool-call-issue.md`](../../docs/transcripts/tool-call-issue.md)
+  (`ses_33afb883…`, 2026-09-21).
+- Trigger (user-reported): interrupting (`Esc`) an active run, then continuing the session.
+- This symptom was previously parked in `BUG-023` as "related but separate" and was to be promoted
+  to its own card if it recurred; it has recurred, so it is now owned here.
+
+The separate **desired behavior** — interrupt should let the next turn pick up from where the run
+left off — is tracked by `FEAT-035`. This card owns the interrupt defect: abort must leave a valid,
+resumable session state.
 
 ## Why this exists
 
@@ -96,7 +113,11 @@ Likely failure area to confirm:
   reason rather than by local assumption.
 - The transcript records an aborted/error state for the interrupted assistant turn.
 - No tool call is left unresolved after an abort.
+- The interrupted session is left in a provider-valid state, so the next prompt does not fail with
+  `400 Invalid assistant message: content or tool_calls must be set`.
 - Interrupting a run does not exit the TUI or corrupt the session for the next prompt.
+- Resume-after-interrupt behavior itself is owned by `FEAT-035`; this card only guarantees the state
+  it depends on.
 
 ## Recommended verification
 
@@ -116,6 +137,12 @@ Likely failure area to confirm:
   surface; explicitly deferred interrupt-semantics changes.
 - `FEAT-017` Plan explicit detach command behavior for TUI-launched servers - distinguished normal
   exit from detach; abort must not be treated as exit.
+- `FEAT-035` Resume an interrupted session from where it left off - desired resume behavior that
+  depends on the valid interrupted state this card must produce.
+- `BUG-023` Root-cause why the plan-mode session stalled after tool calls without results - previously
+  parked the interrupt `400` symptom; now links here.
+- `BUG-012` Session summary runs before tool results and breaks OpenAI-compatible continuation - same
+  provider-error class as the interrupt `400`, different trigger.
 
 ## Dev Notes
 
@@ -144,3 +171,6 @@ Likely failure area to confirm:
 
 - 2026-09-19: PR #48 merged into `development`; BUG-019 feature branch and temporary worktree
   cleaned up. Keeping this item in `qa` for observation and revisit if the issue appears again.
+- 2026-09-21: Recurrence observed (see Recurrence section). The "revisit if the issue appears again"
+  condition has triggered, so this card was moved from `qa` back to `todo` and is no longer treated
+  as fixed.
