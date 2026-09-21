@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -258,3 +258,14 @@ impossible to mistake for a complete one.
 - The concurrent-writer deletion of sessions/messages (`sync_sessions_to_storage` full snapshot plus
   stale deletion, `server.rs:188-229`) is a separate, evidence-backed defect and should get its own
   card rather than being folded into this root-cause item.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/55
+
+## QA / Merge Disposition
+
+- Moved to `qa` on 2026-09-21 for local verification on `bug/BUG-023-export-honesty`.
+- User will run the original `Give me all the skills board items` plan-mode prompt in `ort` and confirm
+  the transcript no longer reads as a silent incomplete export.
+- PR stays open until the user verifies locally and explicitly requests merge closeout.
