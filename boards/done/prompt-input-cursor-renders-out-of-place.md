@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-19"
 ---
 
@@ -135,3 +135,8 @@ Relationship:
 - 2026-09-21: Branch merged into `development` (merge `fc86b5b`) and deleted. Still in `qa` pending interactive/real-terminal verification on `development`; the automated verification in Dev Notes already passes.
 - 2026-09-21: Final follow-up on branch `bug/BUG-018-cursor-core-fix` (based on `development` @ `a9e5d9f`): removed the surviving clamp and replaced the tautological render test with real-render cursor tests. Opened as PR #52; still in `qa` pending interactive/real-terminal verification.
 - 2026-09-21: Branch cleanup: deleted the merged remote branch `bug/BUG-018-cursor-core-fix` (PR #52, already merged into `development`). Card remains in `qa` pending the outstanding interactive/real-terminal verification only.
+
+## Closeout - 2026-09-21
+
+- Closed as `done`. The fix works and the cursor misalignment issue has not appeared again in normal use.
+- Cursor renders at the true insertion point during typing and editing; no ahead/behind offset observed.

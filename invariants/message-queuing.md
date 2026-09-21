@@ -101,7 +101,7 @@ because they are not represented anywhere.
   (`crates/opencode-tui/src/api.rs:533`).
 - TUI `submit_prompt` (`crates/opencode-tui/src/app/app.rs:2297`) has **no busy guard**; a
   user can press Enter while a prompt is running and fire a second `/prompt`.
-- The `opencode task` CLI surface is not implemented yet; `FEAT-020` only added target
+- The `opencode task` CLI surface is not implemented yet; `CLI-007` only added target
   selection. The generated route docs list `sessionPromptAsync` (`crates/opencode-cli/src/main.rs:3322`),
   but no client uses it as a queue.
 - The TUI prompt stash (`crates/opencode-tui/src/components/prompt.rs:659`) and the server's
@@ -237,13 +237,13 @@ This shape satisfies the invariants above; exact types are implementation detail
 ## Relationship To Other Artifacts
 
 - **Board items (queuing-related):**
-  - `FEAT-021` Queue CLI task sends while TUI session is open (primary owner)
-  - `FEAT-005` Copy Cline-style CLI task send conventions (producer of queued sends)
-  - `FEAT-020` Add default task target selection for CLI sends (routing into the queue; in `qa`)
-  - `FEAT-019` Add CLI status visibility for tasks and background sessions (surfaces queued state)
+  - `CLI-008` Queue CLI task sends while TUI session is open (primary owner)
+  - `CLI-001` Copy Cline-style CLI task send conventions (producer of queued sends)
+  - `CLI-007` Add default task target selection for CLI sends (routing into the queue; in `qa`)
+  - `CLI-006` Add CLI status visibility for tasks and background sessions (surfaces queued state)
   - `FEAT-007` Add advanced coding-session polling (waiting on session state; related but distinct)
   - `FEAT-036` Persist and recall typed input-box messages (hold; local drafts, not a queue)
-- **Handoff:** `handoffs/2026-09-16-cli-task-targeting-handoff.md` (PR 2 is `FEAT-021`).
+- **Handoff:** `handoffs/2026-09-16-cli-task-targeting-handoff.md` (PR 2 is `CLI-008`).
 - **Existing invariants:** `invariants/cli-task-targeting.md` (targeting rules; its enqueue
   rule references this doc), `invariants/coding-session-behavior.md` (canonical session path),
   `invariants/runtime-lifecycle.md` (no lifecycle changes).

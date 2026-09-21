@@ -1,9 +1,9 @@
 ---
-id: "FEAT-019"
+id: "CLI-006"
 title: "Add CLI status visibility for tasks and background sessions"
 priority: "P3"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 spec: ""
 status: "archived"
 created: "2026-09-16"
@@ -22,7 +22,7 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 
 ## Why this exists
 
-`FEAT-005` focuses on Cline-style task send conventions: starting work, sending follow-up messages, and attaching files from the shell. Status visibility is related but separable. It should not bloat the send-task implementation, and it should respect the attach/detach lifecycle decisions tracked elsewhere.
+`CLI-001` focuses on Cline-style task send conventions: starting work, sending follow-up messages, and attaching files from the shell. Status visibility is related but separable. It should not bloat the send-task implementation, and it should respect the attach/detach lifecycle decisions tracked elsewhere.
 
 ## Product Decisions
 
@@ -45,9 +45,9 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 
 ## Non-goals
 
-- Sending prompts or follow-up chat messages; that is `FEAT-005`.
-- Defining detach behavior for TUI-launched servers; that is `FEAT-017`.
-- Deciding same-workspace automatic attach/reuse; that is `FEAT-018`.
+- Sending prompts or follow-up chat messages; that is `CLI-001`.
+- Defining detach behavior for TUI-launched servers; that is `CLI-004`.
+- Deciding same-workspace automatic attach/reuse; that is `CLI-005`.
 - Building a full process supervisor or background job manager.
 - Cross-machine orchestration.
 
@@ -66,14 +66,14 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 
 ## Related Items
 
-- `FEAT-005` Copy Cline-style CLI task send conventions
+- `CLI-001` Copy Cline-style CLI task send conventions
 - `FEAT-007` Add advanced coding-session polling
-- `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
-- `FEAT-017` Plan explicit detach command behavior for TUI-launched servers
-- `FEAT-018` Decide whether same-workspace server attach or reuse should exist
-- `FEAT-020` Add default task target selection for CLI sends
-- `FEAT-021` Queue CLI task sends while TUI session is open
+- `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
+- `CLI-004` Plan explicit detach command behavior for TUI-launched servers
+- `CLI-005` Decide whether same-workspace server attach or reuse should exist
+- `CLI-007` Add default task target selection for CLI sends
+- `CLI-008` Queue CLI task sends while TUI session is open
 
 ## Notes
 
-- Split out from the original broad `FEAT-005` Cline-workflow placeholder on 2026-09-16.
+- Split out from the original broad `CLI-001` Cline-workflow placeholder on 2026-09-16.

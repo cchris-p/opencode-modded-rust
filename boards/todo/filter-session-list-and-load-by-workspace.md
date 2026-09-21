@@ -57,9 +57,9 @@ Without this boundary, unrelated work from other directories leaks into the curr
 ## Related Items
 
 - `FEAT-022` Persist session workspace identity
-- `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
-- `FEAT-020` Add default task target selection for CLI sends
-- `FEAT-019` Add CLI status visibility for tasks and background sessions
+- `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
+- `CLI-007` Add default task target selection for CLI sends
+- `CLI-006` Add CLI status visibility for tasks and background sessions
 - `BUG-011` ort targets the rust repo workspace and inherits the vanilla openrouter default
 
 ## Notes

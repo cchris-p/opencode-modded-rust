@@ -53,6 +53,7 @@ struct TranscriptOptions {
 #[derive(Clone, Debug)]
 struct PendingQuestionFlow {
     id: String,
+    session_id: String,
     steps: Vec<ApiQuestionPromptInfo>,
     answers: Vec<Vec<String>>,
     current_index: usize,
@@ -500,10 +501,43 @@ impl App {
                             if !self.prompt.register_interrupt_keypress() {
                                 return Ok(());
                             }
-                            if let Some(client) = self.context.get_api_client() {
-                                let _ = client.abort_session(&session_id);
+                            let Some(client) = self.context.get_api_client() else {
+                                self.prompt.clear_interrupt_confirmation();
+                                self.toast.show(
+                                    ToastVariant::Error,
+                                    "Cannot interrupt: no server connection",
+                                    3000,
+                                );
+                                return Ok(());
+                            };
+                            match client.abort_session(&session_id) {
+                                Ok(value) => {
+                                    let aborted = value
+                                        .get("aborted")
+                                        .and_then(|item| item.as_bool())
+                                        .unwrap_or(true);
+                                    if aborted {
+                                        // Keep the confirmation latched until the
+                                        // session status changes so the hint does
+                                        // not flip back to "esc interrupt".
+                                        return Ok(());
+                                    }
+                                    self.prompt.clear_interrupt_confirmation();
+                                    self.toast.show(
+                                        ToastVariant::Info,
+                                        "Nothing to interrupt",
+                                        2000,
+                                    );
+                                }
+                                Err(err) => {
+                                    self.prompt.clear_interrupt_confirmation();
+                                    self.toast.show(
+                                        ToastVariant::Error,
+                                        &format!("Failed to interrupt: {}", err),
+                                        3000,
+                                    );
+                                }
                             }
-                            self.prompt.clear_interrupt_confirmation();
                             return Ok(());
                         }
                     }
@@ -772,6 +806,10 @@ impl App {
                     self.sync_prompt_spinner_state();
                 }
                 CustomEvent::StateChanged(StateChange::SessionStatusBusy(session_id)) => {
+                    // A newly busy session means any prior confirmed interrupt has
+                    // been resolved (cancelled turn drained or a queued turn
+                    // started), so the pending latch can be released.
+                    self.prompt.clear_interrupt_confirmation();
                     self.set_session_status(session_id, SessionStatus::Running);
                     self.sync_prompt_spinner_state();
                 }
@@ -2980,10 +3018,7 @@ impl App {
         self.context.set_pending_permissions(permissions.len());
         self.permission_prompt.set_requests(permissions);
 
-        let question = client
-            .list_questions()?
-            .into_iter()
-            .find(|request| request.session_id == session_id);
+        let question = client.list_questions(session_id)?.into_iter().next();
         self.sync_question_prompt(question);
         Ok(())
     }
@@ -3012,6 +3047,7 @@ impl App {
 
         let mut flow = PendingQuestionFlow {
             id: question.id,
+            session_id: question.session_id,
             answers: Vec::new(),
             current_index: 0,
             steps: question.questions,
@@ -3072,7 +3108,7 @@ impl App {
             return;
         }
 
-        match client.reply_question(&flow.id, flow.answers.clone()) {
+        match client.reply_question(&flow.session_id, &flow.id, flow.answers.clone()) {
             Ok(_) => {
                 self.question_prompt.close();
                 self.toast
@@ -3131,7 +3167,7 @@ impl App {
             return;
         };
 
-        match client.reject_question(&flow.id) {
+        match client.reject_question(&flow.session_id, &flow.id) {
             Ok(_) => {
                 self.question_prompt.close();
                 self.toast

@@ -113,7 +113,7 @@ observation untrustworthy.
 
 - `BUG-010` Repo default model and provider ignored due to config precedence (precedence fix this must not regress)
 - `FEAT-014` Enforce a single local TUI server per workspace (server/workspace selection)
-- `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
+- `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `FEAT-015` Preserve manually selected model and provider across sessions
 - `START-027` Unify provider setup into one authoritative user path
 - `PHASE-001` V1 daily-driver hardening

@@ -42,13 +42,13 @@ and explicitly resolved in this card.
 
 ## Blocked Items
 
-- `FEAT-012` CLI/AgentExecutor tool-loop parity (`boards/hold/cli-agentexecutor-tool-loop-parity.md`) -
+- `CLI-002` CLI/AgentExecutor tool-loop parity (`boards/hold/cli-agentexecutor-tool-loop-parity.md`) -
   on hold until this gate passes; its CLI ask/approval path must use the parity question UX.
 
 
 ## Vanilla Reference Evidence
 
-Frozen TypeScript reference line: `$HOME/repos/opencode-modded` at commit `e62912b5d18b73316c7bfd6e894b040698f6c880`.
+Frozen TypeScript reference line: `$HOME/repos/opencode-modded` `dev` at commit `f54ce313b99a6661d7758ad042f7a6e05c8e0972`.
 
 - `packages/schema/src/question.ts` defines `QuestionV2` IDs, options, prompt/info schema, request/reply shapes, and `question.v2.asked|replied|rejected` events.
 - `packages/core/src/question.ts` owns pending question requests per Location, stores deferred waiters, publishes ask/reply/reject events, lists pending requests, and rejects outstanding questions on shutdown/finalizer.
@@ -98,7 +98,7 @@ implemented or explicitly resolved as a documented deviation in this card.
 - `FEAT-039` Session-scoped question API parity - `boards/todo/session-scoped-question-api-parity.md`
 - `FEAT-040` Question runtime event and lifecycle parity - `boards/todo/question-runtime-event-and-lifecycle-parity.md`
 - `FEAT-041` TUI question prompt UX parity - `boards/todo/tui-question-prompt-ux-parity.md`
-- `FEAT-042` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; preceded by `FEAT-012`)
+- `CLI-009` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; preceded by `CLI-002`)
 - `FEAT-043` Question permission integration parity - `boards/todo/question-permission-integration-parity.md`
 - `FEAT-044` Question parity verification fixtures - `boards/todo/question-parity-verification-fixtures.md`
 
@@ -120,7 +120,7 @@ implemented or explicitly resolved as a documented deviation in this card.
 
    Support option descriptions, digit shortcuts, single-question fast reply, multi-question navigation/review, multi-select, custom answers, reject, and submitting-state/error recovery. Decide whether Rust keeps the current sequential flow, adopts vanilla's tabbed confirm flow, or implements a better hybrid.
 
-5. CLI/direct-run parity -> `FEAT-042` (hold; preceded by `FEAT-012`)
+5. CLI/direct-run parity -> `CLI-009` (hold; preceded by `CLI-002`)
 
    When the Rust direct-run/CLI task surface is ready, handle pending questions without requiring the full TUI. Reuse as much prompt-state logic as practical rather than duplicating divergent behavior.
 
@@ -172,12 +172,14 @@ implemented or explicitly resolved as a documented deviation in this card.
 
 ## Related Items
 
-- `FEAT-012` CLI AgentExecutor tool loop parity - blocked by this gate; moved to `hold`
+- `CLI-002` CLI AgentExecutor tool loop parity - blocked by this gate; moved to `hold`
   (`boards/hold/cli-agentexecutor-tool-loop-parity.md`).
 - `START-018` Complete TUI approval and question handling - completed first live integration path.
 - `START-008` Full parity deferred - product stance; this gate is the deliberate exception for the
   question feature.
 - `PHASE-002` Transport/runtime parity foundation - phase parent for related parity work.
+- `H-005` GATE-002 question tool full parity handoff - follow-up implementation sequence
+  (`handoffs/2026-09-21-gate-002-question-parity-handoff.md`).
 
 ## Refinement Questions (resolved 2026-09-21)
 
@@ -189,7 +191,7 @@ implemented or explicitly resolved as a documented deviation in this card.
   execution-time assert (`FEAT-043`).
 - Persistence: pending questions are not persisted across server restart. They live only within a
   live server for the session; detach/reattach to the same live server preserves them.
-- CLI/direct-run: deferred to `FEAT-042` once the CLI tool-loop surface (`FEAT-012`) exists.
+- CLI/direct-run: deferred to `CLI-009` once the CLI tool-loop surface (`CLI-002`) exists.
 
 ## Done When
 
@@ -200,4 +202,4 @@ implemented or explicitly resolved as a documented deviation in this card.
 - Every parity gap listed under "Parity Gaps To Split Into Child Items" is either implemented or
   explicitly resolved as a documented deviation in this card.
 - Any preferred UX deviations are documented as deliberate product choices, not accidental parity gaps.
-- `FEAT-012` and any other blocked question-tool story is unblocked and may proceed from `development`.
+- `CLI-002` and any other blocked question-tool story is unblocked and may proceed from `development`.

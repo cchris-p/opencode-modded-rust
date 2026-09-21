@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -197,7 +197,7 @@ The other candidate exit paths (event-channel disconnect, input reader death, fo
   and clear behavior this bug must not violate.
 - `FEAT-014` Enforce a single local TUI server per workspace and increment the server per additional
   ort run - fresh-session server lifecycle context for reproducing on a new terminal.
-- `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated
+- `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated
   workspace - relevant because the report is specific to new terminal sessions.
 
 ## Notes
@@ -216,3 +216,9 @@ The other candidate exit paths (event-channel disconnect, input reader death, fo
   present).
 - No QA report recorded yet; item remains in `qa` until the user records verification or explicitly
   completes it.
+
+## Closeout - 2026-09-21
+
+- Closed as `done`. The fix works and the issue has not appeared again in normal use.
+- No spontaneous exit observed while typing a first prompt, including prompts containing `q`.
+- Intentional exits (`Ctrl+D`, `Ctrl+X` then `q`, `/exit`) continue to work as expected.

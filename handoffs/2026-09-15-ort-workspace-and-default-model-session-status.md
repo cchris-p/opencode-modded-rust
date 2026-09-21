@@ -8,7 +8,7 @@ owner: ""
 target: ""
 blocked_reason: ""
 needs_human: ""
-items: ["BUG-011", "FEAT-016"]
+items: ["BUG-011", "CLI-003"]
 ---
 
 # ort workspace targeting + product default model - Session Status
@@ -50,12 +50,12 @@ Repo (this PR / `development`):
   `load_global()`. The product now owns its default; global config no longer dictates it,
   while `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, project config, `.opencode`, and
   managed config still override it (BUG-010 precedence preserved).
-- **FEAT-016** `crates/opencode-cli/src/main.rs`: removed the recorded-server reuse path
+- **CLI-003** `crates/opencode-cli/src/main.rs`: removed the recorded-server reuse path
   (record load/store, rotation, terminate, `server_is_ready`) and now always starts a fresh
   detached server in the activated cwd, choosing the first free port via a new
   `find_available_port`. Legacy `tui-servers/*.json` records are inert.
 - `AGENTS.md`: launcher section updated.
-- Boards: `BUG-011` and `FEAT-016` created and moved to `qa`; follow-up note added to
+- Boards: `BUG-011` and `CLI-003` created and moved to `qa`; follow-up note added to
   `FEAT-014`.
 
 Machine-local (NOT in the repo, NOT yet pushed at time of writing):
@@ -80,8 +80,8 @@ inline config content and workspace config still apply.
 ## Merge status
 
 - Merged into `development` on 2026-09-15 via PR #33 (merge commit `9ef8b47`); feature branch
-  `feature/FEAT-016-ort-fresh-server-and-default-model` deleted (remote + local).
-- `BUG-011` and `FEAT-016` remain in `qa` pending post-merge user verification.
+  `feature/CLI-003-ort-fresh-server-and-default-model` deleted (remote + local).
+- `BUG-011` and `CLI-003` remain in `qa` pending post-merge user verification.
 
 ## Verification performed
 
@@ -102,11 +102,11 @@ inline config content and workspace config still apply.
 ## Current board state (2026-09-15)
 
 - `todo` (16): `PHASE-001..004`, `FEAT-013`, `FEAT-015`, tool/provider parity items, etc.
-- `hold` (6): the evaluation-harness set (`START-020..024`) plus `FEAT-005`.
+- `hold` (6): the evaluation-harness set (`START-020..024`) plus `CLI-001`.
 - `refinement` (0).
 - `doing` (3): `SKILLS-004`, `SKILLS-001`, `SKILLS-002`.
 - `qa` (4): `BUG-007` batch tool, `BUG-007` `ls` listing, plus this session's `BUG-011` and
-  `FEAT-016`.
+  `CLI-003`.
 - `done`: `BUG-010` (config precedence), `FEAT-014` (single local TUI server), and 26 others.
 
 ## What to do next
@@ -115,13 +115,13 @@ inline config content and workspace config still apply.
    then run `ort` from `~/apps/tss-notes` (or equivalent) and confirm the workspace matches.
 2. Build the merged work there if needed: `git fetch origin && git checkout development &&
    git pull && ort-build`, then confirm the model is `deepseek/deepseek-v4-flash`.
-3. **Open decision - FEAT-016**: re-evaluate whether removing reusable server state is
+3. **Open decision - CLI-003**: re-evaluate whether removing reusable server state is
    worth it now that the wrong-machine misdiagnosis is known.
    - Keep: zero reuse state, but never stops prior servers (they accumulate).
    - Discard: revert the `opencode-cli` change and keep FEAT-014's stop-prior + next-port
      behavior.
    - Middle: fresh server + terminate it on TUI exit (no accumulation, no reuse state).
-4. Post-merge QA for `BUG-011` / `FEAT-016`; move them from `qa` to `done` only after user
+4. Post-merge QA for `BUG-011` / `CLI-003`; move them from `qa` to `done` only after user
    verification on `development`.
 5. Durable follow-up (optional): move `ort`/`ort-build` into the repo as versioned scripts so
     the workspace behavior travels with the repo instead of living in `~/standards`, which
@@ -136,13 +136,13 @@ inline config content and workspace config still apply.
   Rust binary from the activated directory and avoid forcing vanilla `OPENCODE_CONFIG_CONTENT` /
   `OPENCODE_CONFIG_DIR` into this product.
 - `BUG-011` remains closed in `done`.
-- `FEAT-016` was moved from `qa` to `hold`: reuse is eliminated, but the port/process lifecycle
+- `CLI-003` was moved from `qa` to `hold`: reuse is eliminated, but the port/process lifecycle
   semantics need refinement before the story should be considered complete.
 
 ## Relationship to other work
 
-- `FEAT-014`: kept the single-server/rotation model; `FEAT-016` supersedes its recorded-state
-  part. Reverting `FEAT-016` restores `FEAT-014` semantics.
+- `FEAT-014`: kept the single-server/rotation model; `CLI-003` supersedes its recorded-state
+  part. Reverting `CLI-003` restores `FEAT-014` semantics.
 - `BUG-010`: config precedence fix this session must not regress (it does not).
 - `FEAT-015`: "preserve manually selected model/provider across sessions" is the eventual
   place for user model selection; the product default here only changes the *unconfigured*

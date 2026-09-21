@@ -1,9 +1,9 @@
 ---
-id: "FEAT-050"
+id: "CLI-010"
 title: "CLI subagent surface parity"
 priority: "P2"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 spec: ""
 status: "todo"
 predecessors: ""
@@ -67,5 +67,5 @@ Reference `f54ce313b99a`:
 ## Related Items
 
 - `GATE-004` subagent feature parity.
-- `FEAT-012` CLI/`AgentExecutor` tool-loop parity - overlapping CLI dispatch (blocked by `GATE-002`).
+- `CLI-002` CLI/`AgentExecutor` tool-loop parity - overlapping CLI dispatch (blocked by `GATE-002`).
 - `GATE-001` session prompt queue - precedent for recording a CLI-footer scope as a documented partial.

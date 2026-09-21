@@ -1,9 +1,9 @@
 ---
-id: "FEAT-020"
+id: "CLI-007"
 title: "Add default task target selection for CLI sends"
 priority: "P2"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 spec: ""
 status: "qa"
 created: "2026-09-16"
@@ -17,7 +17,7 @@ Add an explicit way to select and change the default server/session target used 
 
 ## Why this exists
 
-`FEAT-005` adds CLI task commands for starting and continuing work outside the TUI, but those commands need a safe default target. The user wants active servers/sessions listed interactively so they can choose which server/session receives future task commands, and change that choice at any time.
+`CLI-001` adds CLI task commands for starting and continuing work outside the TUI, but those commands need a safe default target. The user wants active servers/sessions listed interactively so they can choose which server/session receives future task commands, and change that choice at any time.
 
 This must not reintroduce unsafe implicit server discovery, stale-server reuse, or automatic TUI attach. Selecting a default send target is a user-directed action that records an explicit preference for later CLI task commands.
 
@@ -44,9 +44,9 @@ This must not reintroduce unsafe implicit server discovery, stale-server reuse, 
 
 - Automatically attaching normal `ort` TUI launches to the selected server.
 - Automatically reusing stale or last-known servers without a live check.
-- Defining detach behavior for TUI-launched servers; that is `FEAT-017`.
-- Deciding same-workspace automatic attach/reuse for normal TUI launch; that is `FEAT-018`.
-- Building the full task/session status dashboard; broader status visibility is `FEAT-019`.
+- Defining detach behavior for TUI-launched servers; that is `CLI-004`.
+- Deciding same-workspace automatic attach/reuse for normal TUI launch; that is `CLI-005`.
+- Building the full task/session status dashboard; broader status visibility is `CLI-006`.
 
 ## Done when
 
@@ -70,11 +70,11 @@ This must not reintroduce unsafe implicit server discovery, stale-server reuse, 
 
 ## Related Items
 
-- `FEAT-005` Copy Cline-style CLI task send conventions
-- `FEAT-017` Plan explicit detach command behavior for TUI-launched servers
-- `FEAT-018` Decide whether same-workspace server attach or reuse should exist
-- `FEAT-019` Add CLI status visibility for tasks and background sessions
-- `FEAT-021` Queue CLI task sends while TUI session is open
+- `CLI-001` Copy Cline-style CLI task send conventions
+- `CLI-004` Plan explicit detach command behavior for TUI-launched servers
+- `CLI-005` Decide whether same-workspace server attach or reuse should exist
+- `CLI-006` Add CLI status visibility for tasks and background sessions
+- `CLI-008` Queue CLI task sends while TUI session is open
 
 ## Notes
 

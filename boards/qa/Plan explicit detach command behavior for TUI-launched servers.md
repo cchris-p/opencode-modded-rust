@@ -1,9 +1,9 @@
 ---
-id: "FEAT-017"
+id: "CLI-004"
 title: "Plan explicit detach command behavior for TUI-launched servers"
 priority: "P2"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 status: "qa"
 created: "2026-09-16"
 ---
@@ -18,7 +18,7 @@ reattach later.
 
 ## Context
 
-`FEAT-016` keeps the immediate launcher contract strict: every normal `ort` launch starts a fresh
+`CLI-003` keeps the immediate launcher contract strict: every normal `ort` launch starts a fresh
 server, no persisted server record is read or written, and exiting the TUI terminates the server
 started for that TUI launch. A separate detach command would intentionally leave the launched
 server alive after the TUI exits.
@@ -30,17 +30,17 @@ server alive after the TUI exits.
 - `/detach` exits the TUI immediately and leaves the local server started for that TUI launch alive.
 - `/detach` is allowed while assistant/tool work is running; active work continues on the server.
 - Normal exits remain distinct from detach: `Ctrl-D`, Esc, and `/exit` terminate the launched server
-  by default, preserving `FEAT-016` behavior.
+  by default, preserving `CLI-003` behavior.
 - After detach returns to the terminal, print the server URL, workspace, and an explicit
   `opencode attach <url>` command so reattachment remains user-directed.
 - Do not write a persisted record for detach in this item. Any record for later discovery belongs to
-  `FEAT-018` and requires separate confirmation.
+  `CLI-005` and requires separate confirmation.
 
 ## Non-goals
 
 - Reintroducing automatic reuse before the behavior is explicitly approved.
-- Changing `FEAT-016`'s no-persisted-record cleanup path.
-- Same-workspace auto-attach or automatic server reuse; that is tracked separately in `FEAT-018`.
+- Changing `CLI-003`'s no-persisted-record cleanup path.
+- Same-workspace auto-attach or automatic server reuse; that is tracked separately in `CLI-005`.
 - Adding a default detach keybinding.
 - Persisting a server/process record for future launch discovery.
 
@@ -73,8 +73,8 @@ server alive after the TUI exits.
 
 ## Related Items
 
-- `FEAT-016` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
-- `FEAT-018` Decide whether same-workspace server attach or reuse should exist
+- `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
+- `CLI-005` Decide whether same-workspace server attach or reuse should exist
 
 ## PR
 

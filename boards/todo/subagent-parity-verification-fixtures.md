@@ -15,7 +15,7 @@ created: "2026-09-21"
 ## Summary
 
 Child of `GATE-004` (parity gap 7). Add focused fixtures that pin the subagent behaviors the gate
-depends on, so the parity work in `FEAT-045` through `FEAT-050` is verifiable and regressions are
+depends on, so the parity work in `FEAT-045` through `CLI-010` is verifiable and regressions are
 caught.
 
 ## Parent
@@ -69,4 +69,4 @@ Reference `f54ce313b99a` test coverage to mirror conceptually:
 ## Related Items
 
 - `GATE-004` subagent feature parity.
-- `FEAT-045` through `FEAT-050` - the work these fixtures verify.
+- `FEAT-045` through `CLI-010` - the work these fixtures verify.

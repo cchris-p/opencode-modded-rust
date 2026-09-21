@@ -69,6 +69,86 @@ struct StashStore {
     entries: Vec<PromptStashEntry>,
 }
 
+/// Interrupt confirmation state machine.
+///
+/// `Esc` must be pressed twice within [`INTERRUPT_CONFIRM_WINDOW_SECS`] to
+/// interrupt a running turn. Once a press is confirmed the machine latches into
+/// [`InterruptState::Pending`] and stays there until the session leaves its
+/// running status (see `Prompt::set_spinner_active`) or a new run starts, so the
+/// status hint never flips back to "esc interrupt" while an abort is still in
+/// flight. Keeping the timing logic in a small, clock-injected struct makes the
+/// transitions unit-testable without an [`AppContext`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum InterruptState {
+    #[default]
+    Idle,
+    Armed {
+        since: Instant,
+    },
+    Pending,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct InterruptConfirmation {
+    state: InterruptState,
+}
+
+impl InterruptConfirmation {
+    fn is_armed_at(&self, now: Instant) -> bool {
+        matches!(
+            self.state,
+            InterruptState::Armed { since }
+                if now.saturating_duration_since(since)
+                    < Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS)
+        )
+    }
+
+    fn is_pending(&self) -> bool {
+        matches!(self.state, InterruptState::Pending)
+    }
+
+    /// Register one `Esc` press. Returns `true` only when this press completes a
+    /// confirmation and the interrupt should be issued. A press while pending is
+    /// ignored so a held key does not spam the abort endpoint.
+    fn press_at(&mut self, now: Instant) -> bool {
+        match self.state {
+            InterruptState::Pending => false,
+            InterruptState::Armed { since }
+                if now.saturating_duration_since(since)
+                    < Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS) =>
+            {
+                self.state = InterruptState::Pending;
+                true
+            }
+            _ => {
+                self.state = InterruptState::Armed { since: now };
+                false
+            }
+        }
+    }
+
+    /// Expire an armed, unconfirmed press once the window has elapsed. A pending
+    /// confirmation does not expire on its own; it is cleared by a status change.
+    fn maybe_expire_at(&mut self, now: Instant) -> bool {
+        if matches!(
+            self.state,
+            InterruptState::Armed { since }
+                if now.saturating_duration_since(since)
+                    >= Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS)
+        ) {
+            self.state = InterruptState::Idle;
+            return true;
+        }
+        false
+    }
+
+    fn reset(&mut self) -> bool {
+        let changed = !matches!(self.state, InterruptState::Idle);
+        self.state = InterruptState::Idle;
+        changed
+    }
+}
+
 pub struct Prompt {
     context: Arc<AppContext>,
     input: String,
@@ -91,8 +171,7 @@ pub struct Prompt {
     file_index: FileIndex,
     spinner: KnightRiderSpinner,
     mode: PromptMode,
-    interrupt_press_count: u8,
-    last_interrupt_time: Option<Instant>,
+    interrupt: InterruptConfirmation,
 }
 
 impl Prompt {
@@ -180,8 +259,7 @@ impl Prompt {
             file_index: FileIndex::default(),
             spinner,
             mode: PromptMode::Normal,
-            interrupt_press_count: 0,
-            last_interrupt_time: None,
+            interrupt: InterruptConfirmation::default(),
         };
         prompt.recompute_suggestions();
         prompt
@@ -637,17 +715,17 @@ impl Prompt {
     }
 
     pub fn register_interrupt_keypress(&mut self) -> bool {
-        if self.interrupt_confirmation_active() {
-            self.reset_interrupt_confirmation();
-            return true;
-        }
-        self.interrupt_press_count = 1;
-        self.last_interrupt_time = Some(Instant::now());
-        false
+        self.interrupt.press_at(Instant::now())
     }
 
     pub fn clear_interrupt_confirmation(&mut self) {
         self.reset_interrupt_confirmation();
+    }
+
+    /// True when an interrupt has been confirmed and its abort is still awaiting
+    /// a session status change.
+    pub fn interrupt_pending(&self) -> bool {
+        self.interrupt.is_pending()
     }
 
     pub fn insert_text(&mut self, text: &str) {
@@ -1129,7 +1207,12 @@ impl Prompt {
                     Span::styled("thinking", Style::default().fg(theme.text_muted)),
                     Span::raw("  "),
                 ];
-                if self.interrupt_confirmation_active() {
+                if self.interrupt_pending() {
+                    spans.push(Span::styled(
+                        "interrupting",
+                        Style::default().fg(theme.warning),
+                    ));
+                } else if self.interrupt_confirmation_active() {
                     spans.push(Span::styled(interrupt, Style::default().fg(theme.warning)));
                     spans.push(Span::styled(
                         " again to interrupt",
@@ -1149,25 +1232,15 @@ impl Prompt {
     }
 
     fn interrupt_confirmation_active(&self) -> bool {
-        if self.interrupt_press_count == 0 {
-            return false;
-        }
-        self.last_interrupt_time
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS))
+        self.interrupt.is_armed_at(Instant::now())
     }
 
     fn maybe_reset_interrupt_confirmation(&mut self) -> bool {
-        if !self.interrupt_confirmation_active() {
-            return self.reset_interrupt_confirmation();
-        }
-        false
+        self.interrupt.maybe_expire_at(Instant::now())
     }
 
     fn reset_interrupt_confirmation(&mut self) -> bool {
-        let changed = self.interrupt_press_count != 0 || self.last_interrupt_time.is_some();
-        self.interrupt_press_count = 0;
-        self.last_interrupt_time = None;
-        changed
+        self.interrupt.reset()
     }
 
     fn hint_line(&self, theme: &Theme) -> Line<'static> {
@@ -1632,6 +1705,54 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(state_dir);
         result
+    }
+
+    #[test]
+    fn interrupt_second_press_within_window_confirms() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        assert!(confirmation.is_armed_at(first + Duration::from_secs(1)));
+        assert!(confirmation.press_at(first + Duration::from_secs(1)));
+        assert!(confirmation.is_pending());
+    }
+
+    #[test]
+    fn interrupt_second_press_after_window_rearms_without_confirming() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        let late = first + Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS + 1);
+        assert!(!confirmation.press_at(late));
+        assert!(confirmation.is_armed_at(late));
+        assert!(!confirmation.is_pending());
+    }
+
+    #[test]
+    fn interrupt_pending_latches_until_reset() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        assert!(confirmation.press_at(first + Duration::from_secs(1)));
+        assert!(confirmation.is_pending());
+        assert!(!confirmation.maybe_expire_at(first + Duration::from_secs(30)));
+        assert!(!confirmation.press_at(first + Duration::from_secs(30)));
+        assert!(confirmation.is_pending());
+        assert!(confirmation.reset());
+        assert!(!confirmation.is_pending());
+    }
+
+    #[test]
+    fn interrupt_armed_press_expires_after_window() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        assert!(!confirmation.maybe_expire_at(first + Duration::from_secs(1)));
+        assert!(confirmation
+            .maybe_expire_at(first + Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS + 1)));
+        assert!(!confirmation
+            .is_armed_at(first + Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS + 1)));
+        assert!(!confirmation.maybe_expire_at(first + Duration::from_secs(60)));
     }
 
     #[test]

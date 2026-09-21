@@ -8,7 +8,7 @@ owner: ""
 target: "development"
 blocked_reason: ""
 needs_human: ""
-items: ["FEAT-020", "FEAT-021", "FEAT-005", "FEAT-019"]
+items: ["CLI-007", "CLI-008", "CLI-001", "CLI-006"]
 ---
 
 # CLI Task Targeting and Queued Sends - Handoff
@@ -25,15 +25,15 @@ Implement the CLI task workflow for `ort task ...` without reintroducing unsafe 
 
 ## Included Board Items
 
-- `FEAT-020` Add default task target selection for CLI sends.
-- `FEAT-021` Queue CLI task sends while TUI session is open.
-- `FEAT-005` Copy Cline-style CLI task send conventions.
-- `FEAT-019` Add CLI status visibility for tasks and background sessions.
+- `CLI-007` Add default task target selection for CLI sends.
+- `CLI-008` Queue CLI task sends while TUI session is open.
+- `CLI-001` Copy Cline-style CLI task send conventions.
+- `CLI-006` Add CLI status visibility for tasks and background sessions.
 
 ## Excluded Work
 
-- `FEAT-017` detach behavior is separate and already tracked.
-- `FEAT-018` same-workspace normal TUI attach/reuse remains separate; do not implement automatic TUI server reuse here.
+- `CLI-004` detach behavior is separate and already tracked.
+- `CLI-005` same-workspace normal TUI attach/reuse remains separate; do not implement automatic TUI server reuse here.
 - First-class file/image attachments are out of scope for the first `task` implementation.
 - Interactive `task chat` is out of scope; use `opencode attach <url>` for interactive TUI use.
 
@@ -50,19 +50,19 @@ Implement the CLI task workflow for `ort task ...` without reintroducing unsafe 
 ## Execution Notes
 
 - 2026-09-21: Superseded by `H-004` (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`) for the
-  remaining `FEAT-021`/`FEAT-005`/`FEAT-019` scope. `FEAT-020` merged as PR #37; the queue semantics
+  remaining `CLI-008`/`CLI-001`/`CLI-006` scope. `CLI-007` merged as PR #37; the queue semantics
   that this handoff left open are now pinned by `GATE-001` and `invariants/message-queuing.md`. Use
   `H-004` for implementation.
-- 2026-09-16: PR 1 / `FEAT-020` opened as https://github.com/cchris-p/opencode-modded-rust/pull/37 on branch `feature/FEAT-020-task-target-selection` targeting `development`.
+- 2026-09-16: PR 1 / `CLI-007` opened as https://github.com/cchris-p/opencode-modded-rust/pull/37 on branch `feature/CLI-007-task-target-selection` targeting `development`.
 - PR 1 implements `opencode task target list|select|show|clear`, workspace-local `.opencode/task-target.json` storage, and live validation of explicit target servers/sessions. It intentionally does not add `task new`, `task send`, `task view`, queueing, status dashboards, or implicit TUI server reuse.
 - PR 1 verification: `cargo fmt`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task target list`; `cargo run -p opencode-cli -- task target show`; `cargo run -p opencode-cli -- task target list --server http://127.0.0.1:9`; `cargo run -p opencode-cli -- task target --help`; live temporary-server smoke for list/select/show/clear.
-- 2026-09-16: PR 1 merged into `development` at merge commit `1c1ad44`; `FEAT-020` remains in `qa` for post-merge verification.
+- 2026-09-16: PR 1 merged into `development` at merge commit `1c1ad44`; `CLI-007` remains in `qa` for post-merge verification.
 
 ## Recommended Implementation Sequence
 
-### PR 1 - `FEAT-020` Default Task Target Selection
+### PR 1 - `CLI-007` Default Task Target Selection
 
-Branch: `feature/FEAT-020-task-target-selection`
+Branch: `feature/CLI-007-task-target-selection`
 
 1. Add CLI subcommands for target management, likely `opencode task target list|select|show|clear` with `ort` inheriting the same binary behavior.
 2. Store a selected default target with at least server URL and optional session ID. Prefer workspace-scoped storage first unless implementation discovery shows an existing config pattern that clearly supports global plus workspace precedence.
@@ -77,9 +77,9 @@ Verification gate:
 - Stop a selected server and confirm later target use fails clearly instead of silently choosing another server.
 - Confirm normal `ort` launch still starts according to the existing launcher contract.
 
-### PR 2 - `FEAT-021` Per-Session Prompt Queue
+### PR 2 - `CLI-008` Per-Session Prompt Queue
 
-Branch: `feature/FEAT-021-session-prompt-queue`
+Branch: `feature/CLI-008-session-prompt-queue`
 
 1. Add server-side per-session prompt queueing around the canonical `SessionPrompt` execution path.
 2. Queued work must preserve submit order per session.
@@ -94,12 +94,12 @@ Verification gate:
 - While one prompt is running, submit another and confirm ordered execution.
 - Submit several prompts quickly and confirm no history corruption or interleaving.
 
-### PR 3 - `FEAT-005` CLI Task Send/New/View
+### PR 3 - `CLI-001` CLI Task Send/New/View
 
-Branch: `feature/FEAT-005-cli-task-commands`
+Branch: `feature/CLI-001-cli-task-commands`
 
 1. Add `opencode task new`, `opencode task send`, and `opencode task view`.
-2. Use the explicit target options or selected default target from `FEAT-020`.
+2. Use the explicit target options or selected default target from `CLI-007`.
 3. `task new` creates a session on the target server, submits the prompt through the canonical queued/session prompt path, and updates the current/default session pointer only after session creation succeeds.
 4. `task send` sends a follow-up to the selected or explicit session through the canonical queued/session prompt path.
 5. `task view` reads the current or explicit session conversation without mutating the selected target or session state.
@@ -117,9 +117,9 @@ Verification gate:
 - Prompt text can include file paths and the agent can inspect them through normal tools.
 - The path uses `SessionPrompt`/server session runtime, not `AgentExecutor`.
 
-### PR 4 - `FEAT-019` CLI Status Visibility
+### PR 4 - `CLI-006` CLI Status Visibility
 
-Branch: `feature/FEAT-019-cli-task-status`
+Branch: `feature/CLI-006-cli-task-status`
 
 1. Add compact status/listing commands for active/recent task sessions.
 2. Reuse `GET /session/status` and session list data; do not create a separate status database.
@@ -134,10 +134,10 @@ Verification gate:
 
 ## Ordering and Dependencies
 
-- `FEAT-020` should land first because `FEAT-005` depends on the default target contract.
-- `FEAT-021` should land before `FEAT-005` if `task send` is expected to support TUI-open sessions from the start.
-- `FEAT-005` can land after `FEAT-020` and `FEAT-021`.
-- `FEAT-019` can land after `FEAT-021` or after `FEAT-005`; it is useful but not required to prove send/new/view behavior.
+- `CLI-007` should land first because `CLI-001` depends on the default target contract.
+- `CLI-008` should land before `CLI-001` if `task send` is expected to support TUI-open sessions from the start.
+- `CLI-001` can land after `CLI-007` and `CLI-008`.
+- `CLI-006` can land after `CLI-008` or after `CLI-001`; it is useful but not required to prove send/new/view behavior.
 - Do not bundle all four cards into one PR. The queue and CLI command surfaces are large enough to deserve separate QA.
 
 ## Suggested User-Facing CLI Shape

@@ -1,9 +1,9 @@
 ---
-id: "FEAT-021"
+id: "CLI-008"
 title: "Queue CLI task sends while TUI session is open"
 priority: "P2"
 type: "feature"
-area: "FEAT"
+area: "CLI"
 spec: ""
 status: "archived"
 created: "2026-09-16"
@@ -47,9 +47,9 @@ The desired CLI task workflow allows the user to keep a TUI session open while s
 
 ## Non-goals
 
-- Implementing the full `ort task` send/view surface; that is `FEAT-005`.
-- Implementing default target selection; that is `FEAT-020`.
-- Building a broad task dashboard; that is `FEAT-019`.
+- Implementing the full `ort task` send/view surface; that is `CLI-001`.
+- Implementing default target selection; that is `CLI-007`.
+- Building a broad task dashboard; that is `CLI-006`.
 - Changing normal `ort` TUI launch attach/reuse behavior.
 
 ## Done when
@@ -70,9 +70,9 @@ The desired CLI task workflow allows the user to keep a TUI session open while s
 
 ## Related Items
 
-- `FEAT-005` Copy Cline-style CLI task send conventions
-- `FEAT-019` Add CLI status visibility for tasks and background sessions
-- `FEAT-020` Add default task target selection for CLI sends
+- `CLI-001` Copy Cline-style CLI task send conventions
+- `CLI-006` Add CLI status visibility for tasks and background sessions
+- `CLI-007` Add default task target selection for CLI sends
 
 ## Notes
 

@@ -958,7 +958,7 @@ fn resume_hint_lines(session_id: Option<&str>, launcher: &str) -> Vec<String> {
 
 /// Prepare a fresh local server for the TUI in the current working directory.
 ///
-/// FEAT-016: the launcher never reuses or attaches to a previously recorded
+/// CLI-003: the launcher never reuses or attaches to a previously recorded
 /// local server. Every `ort` run starts a brand-new server bound to the
 /// workspace it was activated in, so no stale/other-workspace or pre-fix
 /// process can serve the TUI. `opencode attach <url>` remains the explicit

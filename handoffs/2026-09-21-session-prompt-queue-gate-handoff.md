@@ -8,7 +8,7 @@ owner: ""
 target: "development"
 blocked_reason: ""
 needs_human: ""
-items: ["GATE-001", "FEAT-021", "FEAT-005", "FEAT-019"]
+items: ["GATE-001", "CLI-008", "CLI-001", "CLI-006"]
 ---
 
 # GATE-001 Session Prompt Queue and Queued Display Parity - Handoff
@@ -32,13 +32,13 @@ and surface queued prompts to every client. The TUI must show the vanilla `QUEUE
 ## Included Board Items
 
 - `GATE-001` Gate: prompt queuing and queue display must match vanilla OpenCode exactly (acceptance).
-- `FEAT-021` Queue CLI task sends while TUI session is open (core implementation).
-- `FEAT-005` Copy Cline-style CLI task send conventions (CLI task send/new/view on the queue).
-- `FEAT-019` Add CLI status visibility for tasks and background sessions (surfaces queued state).
+- `CLI-008` Queue CLI task sends while TUI session is open (core implementation).
+- `CLI-001` Copy Cline-style CLI task send conventions (CLI task send/new/view on the queue).
+- `CLI-006` Add CLI status visibility for tasks and background sessions (surfaces queued state).
 
 ## Excluded / Not Owned Here
 
-- `FEAT-020` is already merged and in `qa`; it is not blocked.
+- `CLI-007` is already merged and in `qa`; it is not blocked.
 - `FEAT-007` (polling), `FEAT-036` (input-box draft recall), and `BUG-025` (concurrent DB sync loss) are
   out of scope.
 - Mid-turn steer injection is resolved out of scope in `GATE-001` (reference-only).
@@ -106,9 +106,9 @@ Reproduced from `GATE-001`; the implementation is wrong if any are violated.
 
 ## Recommended Implementation Sequence
 
-### PR 1 - `FEAT-021` Server queue + TUI queued display (satisfies GATE-001)
+### PR 1 - `CLI-008` Server queue + TUI queued display (satisfies GATE-001)
 
-Branch: `feature/FEAT-021-session-prompt-queue`
+Branch: `feature/CLI-008-session-prompt-queue`
 
 1. Add shared per-session queue state to `ServerState` (ordered pending prompts keyed by session; each
    entry carries the materialized user message ID plus resolved provider/model/agent context) and a
@@ -140,23 +140,23 @@ Verification gate:
   crates.
 - Side-by-side badge comparison against vanilla at the pinned commit.
 
-### PR 2 - `FEAT-005` CLI task send/new/view
+### PR 2 - `CLI-001` CLI task send/new/view
 
-Branch: `feature/FEAT-005-cli-task-commands`
+Branch: `feature/CLI-001-cli-task-commands`
 
-1. Add `opencode task new`, `send`, `view` using the explicit or selected (`FEAT-020`) target.
+1. Add `opencode task new`, `send`, `view` using the explicit or selected (`CLI-007`) target.
 2. Submit through the canonical queued prompt path; `task new` updates the current/default pointer only
    after session creation succeeds.
 3. Return immediately by default with target session, message ID, and `started`/`queued` status;
    `--stream` follows the request once active and reports queued status while waiting.
 4. `task view` reads conversation state without mutating the target.
 
-Verification gate: the H-003/FEAT-005 checklist (new/send/view, stdin text, explicit override, no
+Verification gate: the H-003/CLI-001 checklist (new/send/view, stdin text, explicit override, no
 `AgentExecutor`, unchanged `ort` lifecycle).
 
-### PR 3 - `FEAT-019` CLI status visibility
+### PR 3 - `CLI-006` CLI status visibility
 
-Branch: `feature/FEAT-019-cli-task-status`
+Branch: `feature/CLI-006-cli-task-status`
 
 1. Add compact list and single-session status commands reading `GET /session/status` and session list
    data; no separate status store.
@@ -169,9 +169,9 @@ reflects the `GATE-001` run status; `--json` parses.
 
 ## Ordering and Dependencies
 
-- `FEAT-021` (PR 1) must land first: it implements `GATE-001`, which blocks the other two.
-- `FEAT-005` (PR 2) depends on the queued prompt contract from PR 1.
-- `FEAT-019` (PR 3) depends on the queued run status from PR 1; it does not require PR 2.
+- `CLI-008` (PR 1) must land first: it implements `GATE-001`, which blocks the other two.
+- `CLI-001` (PR 2) depends on the queued prompt contract from PR 1.
+- `CLI-006` (PR 3) depends on the queued run status from PR 1; it does not require PR 2.
 - `GATE-001` itself is an acceptance artifact, not a code change; it is satisfied by PR 1.
 
 ## PR Workflow
@@ -200,6 +200,6 @@ called out rather than left ambiguous.
 
 - `GATE-001` is implemented, user-QA confirmed, and marked `done`; it is now the primary and sole story
   for session prompt queuing and the queued-message display.
-- `FEAT-021`, `FEAT-005`, and `FEAT-019` were archived by user request and will not be implemented. PR 1
+- `CLI-008`, `CLI-001`, and `CLI-006` were archived by user request and will not be implemented. PR 1
   was delivered by `GATE-001`; PR 2 and PR 3 are cancelled.
 - This handoff is closed. No further work is planned from it.
