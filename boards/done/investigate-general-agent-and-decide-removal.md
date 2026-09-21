@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -104,3 +104,4 @@ This product models `general` differently: it is a **primary** agent and is wire
 - Tests: updated `builtin_agents_have_expected_defaults` to assert `general` is absent and the default is `build`; renamed the model-override test to `config_can_reintroduce_general_agent_with_model` to document the config re-enable path.
 - Verification: `cargo fmt --all`; `cargo check -p opencode-session -p opencode-tui -p opencode-server`; `cargo test -p opencode-agent -p opencode-tool` (41 passed). Clippy on the affected crates shows only pre-existing unrelated warnings.
 - Concurrency note: unrelated in-progress changes from another work session were left uncommitted and were not included in this change set.
+- Closeout: merged via PR #51 into `development` (merge commit `9e4a8fd`).
