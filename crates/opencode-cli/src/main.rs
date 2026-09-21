@@ -66,6 +66,8 @@ enum Commands {
         mdns_domain: String,
         #[arg(long)]
         cors: Vec<String>,
+        #[arg(long, value_name = "URL")]
+        attach: Option<String>,
     },
     #[command(about = "Attach TUI to a running OpenCode server")]
     Attach {
@@ -621,6 +623,7 @@ async fn main() -> anyhow::Result<()> {
             mdns,
             mdns_domain,
             cors,
+            attach,
         }) => {
             run_tui(
                 project,
@@ -635,7 +638,7 @@ async fn main() -> anyhow::Result<()> {
                 mdns,
                 mdns_domain,
                 cors,
-                None,
+                attach,
                 None,
             )
             .await?;
@@ -900,7 +903,8 @@ async fn run_tui(
             eprintln!("Detached from TUI server.");
             eprintln!("Server: {}", base_url);
             eprintln!("Workspace: {}", workspace.display());
-            eprintln!("Reattach: opencode attach {}", base_url);
+            eprintln!("Reattach command: opencode attach {}", base_url);
+            eprintln!("ort reattach command: ort --attach {}", base_url);
         }
         opencode_tui::TuiExit::Exit { session_id } => {
             print_resume_hint(session_id.as_deref());

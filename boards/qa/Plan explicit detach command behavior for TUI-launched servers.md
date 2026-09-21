@@ -79,7 +79,10 @@ server alive after the TUI exits.
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/35
+- Follow-up attach option PR: https://github.com/cchris-p/opencode-modded-rust/pull/62
 
 ## QA Status
 
 - Merged into `development` via PR #35 on 2026-09-16; retained in `qa` for post-merge verification.
+- 2026-09-21 follow-up: clarified detach terminal output to print `Reattach command: opencode attach <url>`.
+- 2026-09-21 follow-up: added `opencode tui --attach <url>` so the local `ort --attach <url>` launcher shape is supported, and updated detach output to print both `opencode attach <url>` and `ort --attach <url>` reattach commands.
