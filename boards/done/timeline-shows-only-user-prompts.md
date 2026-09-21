@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "todo"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -50,3 +50,18 @@ The `/timeline` dialog currently lists every message in the session, including a
 ## Notes
 
 - Current code evidence: `handle_open_timeline` maps over all session messages and assigns `user`/`assistant`/`system` roles without filtering.
+
+## Dev Notes
+
+- Branch: `bug/BUG-020-timeline-user-prompts`
+- Change: extracted `timeline_entries_from_messages` in `crates/opencode-tui/src/app/app.rs` and filtered entries to `MessageRole::User`; `handle_open_timeline` now builds the timeline from that helper.
+- Decision: kept filtering at entry construction (per card scope) and preserved each entry's `message_id`, so `Enter` still calls `SessionView::scroll_to_message`. No change to `timeline.rs`; the existing empty state covers sessions with no user prompts.
+- Decision: did not touch `handle_fork_session`, which has a similar all-message mapping but is out of scope for this card.
+- Verification: `cargo fmt -p opencode-tui -- --check` clean; `cargo test -p opencode-tui -- --test-threads=1` 44 passed; `cargo check -p opencode-tui` clean; `cargo clippy -p opencode-tui --all-targets` no new warnings at the changed lines. Added tests `timeline_entries_include_only_user_prompts` and `timeline_entries_empty_when_no_user_prompts`.
+- Note: real-terminal `/timeline` check (`ort-build`/`ort`) was not run from the non-interactive agent shell; available for local QA on the PR branch.
+
+## Completion - 2026-09-21
+
+- Merged as PR #58 (merge commit `b116502`) into `development`.
+- Branch `bug/BUG-020-timeline-user-prompts` deleted remotely and locally after merge.
+- Promoted from `qa` to `done` on explicit user direction. No separate QA report was recorded: automated verification passed (44 `opencode-tui` tests, `cargo fmt --check`, `cargo check`, `cargo clippy --all-targets` with no new warnings), and real-terminal `/timeline` QA remains available on `development`.
