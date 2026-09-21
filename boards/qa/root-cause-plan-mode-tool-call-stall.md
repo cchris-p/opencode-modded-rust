@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -208,6 +208,32 @@ Concurrent-writer data loss (likely a separate defect):
 - Instrument `session_prompt` to record whether `execute_tool_calls` is reached and whether
   `persist_sessions_if_enabled` runs at `routes.rs:2066`.
 
+## Implementation - 2026-09-21 (export honesty)
+
+Scope was confirmed with the user as the export-honesty branch of "Done when". The historical stall is
+not re-fixed here: `BUG-016`'s guard already resolves unresolved tool calls in the live loop, and the
+destructive concurrent-sync half is owned by `BUG-025`. This change makes an incomplete transcript
+impossible to mistake for a complete one.
+
+- `build_session_transcript` now emits an explicit warning block when the session is still running
+  (`SessionStatus::Running` / `Retrying`) or when any recorded `ToolCall` part has no matching
+  `ToolResult` part across the exported message set
+  (`crates/opencode-tui/src/app/app.rs`).
+- The warning names the count and tool names of unresolved calls, so a tool-call-only export is
+  self-describing instead of silent.
+- Tool results that arrive in a separate later assistant message still count as resolved, so normal
+  completed turns do not warn.
+
+## Verification - 2026-09-21
+
+- `cargo test -p opencode-tui` passed (42 passed, 0 failed).
+- New tests: `transcript_warns_when_tool_calls_have_no_results`,
+  `transcript_warning_absent_when_tool_calls_are_resolved_across_messages`,
+  `transcript_warns_while_session_is_running`, `transcript_flags_only_unresolved_tool_calls`.
+- `cargo check -p opencode-session -p opencode-server -p opencode-tui` passed.
+- Live check of the original `Give me all the skills board items` plan-mode prompt is deferred to
+  user QA on the checked-out PR branch.
+
 ## Related Items
 
 - `BUG-016` Plan-mode session stalls after tool calls without tool results - symptom fix and prior
@@ -232,3 +258,14 @@ Concurrent-writer data loss (likely a separate defect):
 - The concurrent-writer deletion of sessions/messages (`sync_sessions_to_storage` full snapshot plus
   stale deletion, `server.rs:188-229`) is a separate, evidence-backed defect and should get its own
   card rather than being folded into this root-cause item.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/55
+
+## QA / Merge Disposition
+
+- Moved to `qa` on 2026-09-21 for local verification on `bug/BUG-023-export-honesty`.
+- User will run the original `Give me all the skills board items` plan-mode prompt in `ort` and confirm
+  the transcript no longer reads as a silent incomplete export.
+- PR stays open until the user verifies locally and explicitly requests merge closeout.

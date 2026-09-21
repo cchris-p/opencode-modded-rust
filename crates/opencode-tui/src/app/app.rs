@@ -2269,6 +2269,13 @@ impl App {
             return Some(output);
         }
 
+        if let Some(warning) =
+            transcript_incompleteness_warning(messages, session_ctx.status(session_id))
+        {
+            output.push_str(&warning);
+            output.push_str("---\n\n");
+        }
+
         for message in messages {
             let rendered = format_transcript_message(message, options);
             if rendered.trim().is_empty() {
@@ -3947,6 +3954,58 @@ impl Drop for App {
     }
 }
 
+fn unresolved_tool_calls(messages: &[Message]) -> Vec<(String, String)> {
+    let mut calls: Vec<(String, String)> = Vec::new();
+    let mut resolved: HashSet<String> = HashSet::new();
+    for message in messages {
+        for part in &message.parts {
+            match part {
+                ContextMessagePart::ToolCall { id, name, .. } => {
+                    calls.push((id.clone(), name.clone()));
+                }
+                ContextMessagePart::ToolResult { id, .. } => {
+                    resolved.insert(id.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    calls
+        .into_iter()
+        .filter(|(id, _)| !resolved.contains(id))
+        .collect()
+}
+
+fn transcript_incompleteness_warning(
+    messages: &[Message],
+    status: &SessionStatus,
+) -> Option<String> {
+    let unresolved = unresolved_tool_calls(messages);
+    let running = !matches!(status, SessionStatus::Idle);
+    if !running && unresolved.is_empty() {
+        return None;
+    }
+
+    let mut output = String::new();
+    output.push_str(
+        "> **Warning:** This transcript was exported while the session was still in progress. ",
+    );
+    if !unresolved.is_empty() {
+        let names = unresolved
+            .iter()
+            .map(|(_, name)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!(
+            "{} tool call(s) have no recorded result ({}), so this export may be incomplete. ",
+            unresolved.len(),
+            names
+        ));
+    }
+    output.push_str("Re-export after the run finishes for a complete transcript.\n\n");
+    Some(output)
+}
+
 fn format_transcript_message(message: &Message, options: TranscriptOptions) -> String {
     let mut output = String::new();
     match message.role {
@@ -4758,6 +4817,82 @@ mod tests {
         assert!(transcript.contains("private reasoning"));
         assert!(transcript.contains("**Input:**"));
         assert!(transcript.contains("**Output:**"));
+    }
+
+    #[test]
+    fn transcript_warns_when_tool_calls_have_no_results() {
+        let message = assistant_message(vec![
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "ls".to_string(),
+                arguments: "{}".to_string(),
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_2".to_string(),
+                name: "grep".to_string(),
+                arguments: "{}".to_string(),
+            },
+        ]);
+
+        let warning =
+            transcript_incompleteness_warning(&[message], &SessionStatus::Idle).expect("warning");
+        assert!(warning.contains("2 tool call(s) have no recorded result"));
+        assert!(warning.contains("ls"));
+        assert!(warning.contains("grep"));
+    }
+
+    #[test]
+    fn transcript_warning_absent_when_tool_calls_are_resolved_across_messages() {
+        let call = assistant_message(vec![ContextMessagePart::ToolCall {
+            id: "tool_1".to_string(),
+            name: "ls".to_string(),
+            arguments: "{}".to_string(),
+        }]);
+        let result = assistant_message(vec![ContextMessagePart::ToolResult {
+            id: "tool_1".to_string(),
+            result: "ok".to_string(),
+            is_error: false,
+        }]);
+
+        assert!(transcript_incompleteness_warning(&[call, result], &SessionStatus::Idle).is_none());
+    }
+
+    #[test]
+    fn transcript_warns_while_session_is_running() {
+        let message = assistant_message(vec![ContextMessagePart::Text {
+            text: "answer".to_string(),
+        }]);
+
+        let warning = transcript_incompleteness_warning(&[message], &SessionStatus::Running)
+            .expect("warning");
+        assert!(warning.contains("still in progress"));
+        assert!(!warning.contains("no recorded result"));
+    }
+
+    #[test]
+    fn transcript_flags_only_unresolved_tool_calls() {
+        let message = assistant_message(vec![
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "ls".to_string(),
+                arguments: "{}".to_string(),
+            },
+            ContextMessagePart::ToolResult {
+                id: "tool_1".to_string(),
+                result: "ok".to_string(),
+                is_error: false,
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_2".to_string(),
+                name: "grep".to_string(),
+                arguments: "{}".to_string(),
+            },
+        ]);
+
+        let warning =
+            transcript_incompleteness_warning(&[message], &SessionStatus::Idle).expect("warning");
+        assert!(warning.contains("1 tool call(s) have no recorded result (grep)"));
+        assert!(!warning.contains("(ls"));
     }
 
     #[test]
