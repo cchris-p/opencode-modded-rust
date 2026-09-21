@@ -1,6 +1,6 @@
 ---
 id: "BUG-024"
-title: "BUG: Mouse-selection copy captures TUI decoration (gutters, bullets, box-drawing) instead of clean markdown"
+title: "BUG: Mouse-selection copy captures selectable gutter decoration instead of clean text"
 priority: "P2"
 type: "bug"
 area: "BUG"
@@ -9,33 +9,41 @@ status: "todo"
 created: "2026-09-21"
 ---
 
-# BUG: Mouse-selection copy captures TUI decoration (gutters, bullets, box-drawing) instead of clean markdown
+# BUG: Mouse-selection copy captures selectable gutter decoration instead of clean text
 
 ## Summary
 
-Selecting text in the TUI and copying it puts the on-screen *rendering* on the clipboard, not the
-underlying source. Every decorative character the markdown renderer and message gutters emit is
-included verbatim: the `┃ ` user-message gutter, `│ ` blockquote/indent prefixes, code-block frame
-lines, table box-drawing, and `• ` bullets. Copying a block of prose therefore yields text polluted
-with vertical bars and indentation glyphs that are useless outside the terminal, and lists do not
-come back as markdown. The user expectation is that selecting rendered content and copying it yields
-clean markdown text that can be pasted into an editor, issue, or another session.
+Selecting text in the TUI and copying it puts visible layout decoration on the clipboard. The most
+painful case is leading message chrome such as spaces plus `│`, `┃`, `▸`, or similar caret/gutter
+markers. The selection highlight also makes those characters look like part of the selectable answer,
+so the user expects the copied result to include UI chrome before the real text. A copied line like
+`  │▸ I have enough to write the spec...` should paste as
+`I have enough to write the spec...`.
+
+The desired UI direction is to keep the TUI visually comfortable with padding/margins, but avoid
+placing selectable decoration glyphs in front of message content. Clean terminal selection should be
+possible without requiring the user to hand-clean leading bars, carets, or extra indentation.
 
 ## Reported behavior
 
-- Copying a selection includes the vertical line (`│` / `┃`) that the TUI draws.
-- Indentation/blockquote lines are copied as `│ ` prefix characters instead of real indentation or
-  `>` markers.
-- Bullet list items copy as `• item` rather than `- item` (and ordered items as the rendered number).
-- The result is not pasteable markdown; it has to be hand-cleaned every time.
+- Copying a selection includes leading UI chrome such as `│`, `┃`, `▸`, and the spaces used to align
+  those markers.
+- The copied text often starts with indentation that exists only because a gutter was rendered.
+- The selection highlight covers those glyphs, so the highlighted region does not visually match the
+  clean text the user expects to paste.
+- For normal prose, the result has to be hand-cleaned before it can be pasted into an editor, issue,
+  or another session.
+- Markdown decoration such as bullets, code-block frames, and table box drawing can still leak through
+  the same rendered-buffer copy path, but this card's first implementation target is the leading
+  selectable gutter/chrome problem.
 
 ## Why this exists
 
-Copy is the primary way content leaves the TUI. If selection copy faithfully reproduces screen
-decoration instead of the source text, the daily-driver workflow has no clean path from a rendered
-answer to a reusable markdown artifact. This is a correctness bug in the copy path: the same content
-already exists as markdown (the transcript is built from it), but the selection route bypasses it and
-scrapes the rendered buffer.
+Copy is the primary way content leaves the TUI. If normal terminal selection faithfully reproduces
+screen chrome instead of the visible answer text, the daily-driver workflow has no clean path from a
+rendered answer to a reusable note, issue, or follow-up prompt. A fully source-aware markdown copy
+path may still be valuable later, but the immediate fix should make ordinary mouse selection clean by
+keeping decorative gutter glyphs out of selectable message rows while preserving padding/margins.
 
 ## Code evidence
 
@@ -65,65 +73,76 @@ scrapes the rendered buffer.
 
 There are two independent copy mechanisms. `/copy` serializes the session from its source model,
 while mouse selection extracts characters from the already-rendered ratatui buffer. The rendered
-buffer is a lossy, decoration-laden projection of the markdown, so any selection made over rendered
-content necessarily carries the gutters, bullets, and box-drawing with it. Fixing this at the slicing
-layer alone cannot recover markdown that was never retained (e.g. `•` vs `-`, code fences, table
-pipes), so the fix needs a source-aware mapping or a parallel markdown projection per rendered line.
+buffer currently includes decorative gutter glyphs in the same selectable rows as message text, so
+terminal selection naturally copies those glyphs. The smallest correct fix is to stop rendering
+copy-visible leading chrome in message text rows and use whitespace padding/margins for visual
+separation instead.
+
+This will not make every rendered markdown construct perfectly source-faithful. For example, if the
+renderer still draws a bullet as `•` or a table with box-drawing characters, terminal selection may
+still copy those rendered glyphs. That broader source-markdown projection is not required for this
+first fix unless it is needed to remove leading gutter chrome.
 
 ## Scope
 
-- Make mouse-selection copy yield clean, pasteable markdown for assistant text, user messages, list
-  items, blockquotes, code blocks, and tables.
-- Remove copy-visible TUI decoration: `┃ `/`│ ` gutters, `• ` bullets, code-block frames, and table
-  box-drawing.
-- Preserve markdown semantics that the renderer currently discards: `-`/`*` bullets, ordered lists,
-  `>` blockquotes, fenced code blocks with language, and pipe tables.
+- Make normal mouse-selection copy for assistant and user prose omit leading UI chrome: `┃`, `│`,
+  `▸`, equivalent gutter/caret markers, and indentation that exists only to align those markers.
+- Preserve visual breathing room with blank padding/margins instead of selectable glyph gutters.
+- Make the highlighted selection look much closer to what will be copied; the user should not see
+  obvious gutter glyphs inside the selected region for ordinary message text.
+- Keep common markdown selections no worse than today, and remove leading message gutters from list,
+  blockquote, code-block, and table lines when those gutters are outside the content itself.
 - Keep the existing selection UX (drag to select, copy on release, toast) and column hit-testing
   behavior intact.
 - Keep `/copy` (full transcript) behavior as-is; this card is about selection copy.
-- Decide and document the approach (see Notes) and cover it with tests.
+- Prefer the minimal render/layout change over source-aware markdown mapping for this card.
+- Cover the final behavior with tests where practical.
 
 ## Non-goals
 
-- Rewriting the markdown renderer's on-screen appearance; the TUI may keep drawing gutters and
-  box-drawing.
+- Removing all visual padding or collapsing the message layout to the terminal edge.
+- Full source-aware markdown reconstruction for arbitrary partial selections.
 - Changing `/copy`, session export, or `TranscriptOptions`.
 - Adding a new copy keybinding or command; this is fidelity of the existing selection copy.
 - Rich-text/HTML or image clipboard formats.
 - Copying content that only exists as decoration (e.g. the code-block frame when no code is inside).
+- Perfect markdown fidelity for tables, code fences, and renderer-emitted bullets if those require a
+  larger source-offset mapping. Track that as a follow-up if needed after gutter cleanup.
 
 ## Done when
 
-- Selecting assistant or user markdown and copying yields source markdown with no `┃`, `│`, `•`,
-  `╭`, `╰`, or table box-drawing characters.
-- Bullet lists copy as `- item` (or the source marker), ordered lists as `1. item`, blockquotes with
-  `>`, code blocks with ``` fences and language, and tables as pipe tables.
+- Selecting a normal assistant or user prose line that currently copies as `  │▸ text` instead
+  copies as `text` with no leading UI-only spaces, `│`, `┃`, `▸`, or equivalent gutter/caret
+  glyphs.
+- Message content still has comfortable visual padding/margins in the TUI; the fix must not make the
+  transcript feel cramped against the terminal edge.
+- Highlighting ordinary message text no longer visibly includes leading gutter glyphs before the text.
+- List, blockquote, code-block, and table lines no longer include message-level gutter glyphs before
+  their content when selected. Renderer-specific markdown fidelity beyond that is not required here.
 - Partial selections (single line, first/last line, mid-line column bounds) still clip correctly and
   do not emit partial decoration glyphs.
 - Selection UX is unchanged: drag, release-to-copy, and toast still work; `/copy` is unaffected.
 - `cargo check -p opencode-tui` and `cargo test -p opencode-tui` pass, with tests asserting that
-  copied selection text contains markdown markers and none of the decoration glyphs.
+  copied selection text omits leading gutter/chrome glyphs.
 
 ## Recommended verification
 
-- `ort-build`, then `ort`; ask for a reply containing a bullet list, a blockquote, a fenced code
-  block, and a table.
-- Select the reply and paste into an editor; confirm it is valid markdown with no vertical bars or
-  box-drawing and that bullets are `-`.
-- Select a user message and confirm the `┃ ` gutter is not copied.
+- `ort-build`, then `ort`; ask for a reply containing prose plus at least one bullet list item.
+- Select a line that previously looked like/copy-pasted as `  │▸ I have enough...`; paste into
+  an editor and confirm it starts directly with `I have enough...`.
+- Select a user message and confirm no `┃`, `│`, `▸`, or leading gutter padding is copied.
 - Select a single line and a partial multi-line span; confirm clipping is correct and no stray glyphs
   appear at the boundaries.
 - Run `/copy` and confirm the full-transcript markdown output is unchanged.
-- Add unit tests over the selection/markdown-projection path covering decoration stripping and list
-  conversion.
+- Add tests around the render/capture/selection path, or the smallest reachable helper, proving
+  leading gutter/chrome glyphs are absent from copied selected text.
 
 ## Product decisions
 
-- Selection copy should produce markdown, not a screenshot of the terminal.
-- On-screen gutters and box-drawing remain a display affordance; they must not leak into the
-  clipboard.
-- The rendered view may stay lossy; the copy path is responsible for emitting faithful source
-  markdown.
+- The TUI should keep enough padding/margin that messages remain readable and visually separated.
+- Do not rely on visible vertical bars, carets, or gutter glyphs as selectable message prefixes.
+- The selection highlight should not suggest that UI chrome is part of the answer text.
+- For this card, clean prose copy is more important than full direct-markdown reconstruction.
 
 ## Related Items
 
@@ -141,14 +160,15 @@ pipes), so the fix needs a source-aware mapping or a parallel markdown projectio
   `crates/opencode-tui/src/components/markdown/renderer.rs` (decoration + list/table/code emission),
   `crates/opencode-tui/src/components/session_message.rs` (message gutter),
   `crates/opencode-tui/src/components/prompt.rs` (prompt gutter).
-- Candidate approaches to decide during refinement:
-  1. Source-aware mapping: track, per rendered line, the originating message/part and source offset,
-     and copy from the source markdown for that span. Most faithful, largest change.
-  2. Parallel markdown projection: build a per-row plain/markdown companion to `screen_lines` during
-     render and slice that instead. Medium change; requires keeping the two row sets in lockstep.
-  3. Strip-and-reconstruct on copy: remove known decoration and convert `• ` back to `- `. Smallest
-     change, but cannot faithfully recover code fences or tables.
+- Implementation direction:
+  1. Identify the active message render path for assistant and user messages.
+  2. Replace leading selectable gutter glyphs (`│`, `┃`, `▸`, and equivalents) with layout padding or
+     margins that preserve visual spacing without copying visible chrome.
+  3. If a marker is still needed visually, render it outside the selectable/captured text path if the
+     existing architecture supports that without a large rewrite; otherwise omit the marker.
+  4. Avoid source-aware markdown mapping in this card unless a minimal render/layout change cannot
+     remove the copied leading chrome.
 - `/copy`/`build_session_transcript` already demonstrates the desired markdown shape and should be
-  the reference for expected output.
+  left unchanged and can be used as a reference for clean prose output.
 - Confirm which session render path is actually used (session vs. session_message vs. message) before
   wiring the chosen approach, since decoration is added in more than one place.
