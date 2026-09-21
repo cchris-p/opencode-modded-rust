@@ -89,33 +89,46 @@ Frozen TypeScript reference line: `$HOME/repos/opencode-modded` at commit `e6291
 - Reworking the whole permission system beyond the `question` permission/action needed for this feature.
 - Persisting question requests across server restarts unless a later refinement decides that is necessary for daily-driver reliability.
 
+## Child Items
+
+The parity gaps below are tracked as child cards. This gate passes only when every child is either
+implemented or explicitly resolved as a documented deviation in this card.
+
+- `FEAT-038` Question schema and tool contract parity - `boards/todo/question-schema-and-tool-contract-parity.md`
+- `FEAT-039` Session-scoped question API parity - `boards/todo/session-scoped-question-api-parity.md`
+- `FEAT-040` Question runtime event and lifecycle parity - `boards/todo/question-runtime-event-and-lifecycle-parity.md`
+- `FEAT-041` TUI question prompt UX parity - `boards/todo/tui-question-prompt-ux-parity.md`
+- `FEAT-042` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; preceded by `FEAT-012`)
+- `FEAT-043` Question permission integration parity - `boards/todo/question-permission-integration-parity.md`
+- `FEAT-044` Question parity verification fixtures - `boards/todo/question-parity-verification-fixtures.md`
+
 ## Parity Gaps To Split Into Child Items
 
-1. Schema and tool contract parity
+1. Schema and tool contract parity -> `FEAT-038`
 
    Align `QuestionInput`, question prompt structs, option structs, answer output, JSON schema, and model-facing output with vanilla's `QuestionV2.Prompt`, `Info`, `Reply`, and `toModelOutput` behavior.
 
-2. Session-scoped question API parity
+2. Session-scoped question API parity -> `FEAT-039`
 
    Add routes equivalent to session list/reply/reject semantics and validate that a request belongs to the addressed session before accepting responses. Keep legacy/global endpoints only if there is a concrete local compatibility need.
 
-3. Runtime event and lifecycle parity
+3. Runtime event and lifecycle parity -> `FEAT-040`
 
    Publish or otherwise surface ask/reply/reject events consistently, clear pending requests on reply/reject/drop, reject waiters on shutdown where feasible, and ensure stale requests do not block a session forever.
 
-4. TUI prompt UX parity and improvements
+4. TUI prompt UX parity and improvements -> `FEAT-041`
 
    Support option descriptions, digit shortcuts, single-question fast reply, multi-question navigation/review, multi-select, custom answers, reject, and submitting-state/error recovery. Decide whether Rust keeps the current sequential flow, adopts vanilla's tabbed confirm flow, or implements a better hybrid.
 
-5. CLI/direct-run parity
+5. CLI/direct-run parity -> `FEAT-042` (hold; preceded by `FEAT-012`)
 
    When the Rust direct-run/CLI task surface is ready, handle pending questions without requiring the full TUI. Reuse as much prompt-state logic as practical rather than duplicating divergent behavior.
 
-6. Permission integration parity
+6. Permission integration parity -> `FEAT-043`
 
    Decide whether the Rust product needs an explicit `question` permission action/rule, then wire it consistently with agent permissions and tool registration.
 
-7. Verification fixtures
+7. Verification fixtures -> `FEAT-044`
 
    Add focused tests or smoke fixtures for single select, multi select, custom answer, multi-question reply shape, reject/unblock, wrong-session reply rejection, and pending cleanup.
 
@@ -166,12 +179,17 @@ Frozen TypeScript reference line: `$HOME/repos/opencode-modded` at commit `e6291
   question feature.
 - `PHASE-002` Transport/runtime parity foundation - phase parent for related parity work.
 
-## Refinement Questions
+## Refinement Questions (resolved 2026-09-21)
 
-- Should Rust keep the existing sequential multi-question flow, switch to vanilla's tabbed confirm flow, or use a hybrid with a final review screen?
-- Should `question` have a dedicated permission rule/action in Rust, or should it be treated as always allowed for normal agent flows?
-- Should pending questions survive TUI detach/reattach only within the same live server, or should they be persisted across server restart?
-- Should CLI/direct-run support land in this gate's first implementation wave or wait until the task/direct-run surface is already in place?
+- Multi-question flow: keep the existing Rust sequential flow and add an explicit review/confirm
+  screen before submission for multi-question requests; do not adopt vanilla's tabbed flow. This is
+  an intentional deviation (`FEAT-041`).
+- Question permission: treat the tool as available wherever agent tool-list resolution allows it; do
+  not add a new execution-time permission assert. This is an intentional deviation from vanilla's
+  execution-time assert (`FEAT-043`).
+- Persistence: pending questions are not persisted across server restart. They live only within a
+  live server for the session; detach/reattach to the same live server preserves them.
+- CLI/direct-run: deferred to `FEAT-042` once the CLI tool-loop surface (`FEAT-012`) exists.
 
 ## Done When
 
