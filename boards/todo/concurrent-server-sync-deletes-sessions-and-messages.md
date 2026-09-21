@@ -4,7 +4,7 @@ title: "Concurrent servers delete each other's sessions and messages via full-sn
 priority: "P1"
 type: "bug"
 area: "BUG"
-spec: "invariants/runtime-lifecycle.md"
+spec: "invariants/session-durability.md"
 status: "todo"
 created: "2026-09-21"
 ---
@@ -145,6 +145,11 @@ server instance happens to call sync last.
 - Redesigning the session schema or migrating existing data beyond what is needed to avoid loss.
 - Reworking TUI session display or message streaming.
 - Locking every session read/write behind a global mutex if a scoping or upsert approach suffices.
+- An owner/lease model for simultaneous writers of the same session; V1 accepts last-writer-wins with
+  the freshness guard (see Proposed Fix).
+- Per-server or per-workspace database files; the shared store is required for cross-workspace
+  `--session` resume (`FEAT-033`).
+- Session-scoped/dirty persistence optimization; it is a follow-up, not required for correctness.
 
 ## Done when
 
@@ -152,56 +157,80 @@ server instance happens to call sync last.
   other's data.
 - A sync from a server with a stale in-memory view never removes sessions or messages that exist in
   storage but not in its snapshot.
+- A sync from a server whose stored copy of a session is newer than its in-memory copy leaves the
+  stored session and its messages untouched.
+- Deleting a session removes the session, its messages, and any child sessions directly from storage
+  without relying on a later snapshot diff.
 - Message writes are atomic (transactional) so an interrupted sync cannot leave a session with
   partially deleted messages.
+- Loading or resuming a session id that does not exist surfaces a not-found error and does not open an
+  empty session.
 - A regression test starts two managers/states against one test DB, writes disjoint sessions, syncs
   both, and asserts all sessions and messages survive.
 
-## Proposed Fix (2026-09-21 investigation)
+## Proposed Fix (2026-09-21 investigation, decisions locked)
 
-The investigation above localizes the destructive behavior to one loop and confirms the storage layer
-already has the primitives for a surgical fix: `SessionRepository::delete`
-(`crates/opencode-storage/src/repository.rs:396`), `MessageRepository::delete_for_session`
+The investigation localizes the destructive behavior to one loop and confirms the storage layer
+already has the primitives needed: `SessionRepository::delete`
+(`crates/opencode-storage/src/repository.rs:396`), `SessionRepository::list`/`get`
+(`repository.rs:267`, `repository.rs:242`), `MessageRepository::delete_for_session`
 (`repository.rs:769`), and `MessageRepository::upsert` (`repository.rs:620`). No transaction is used
 anywhere in storage today.
 
-Recommended change - make snapshot sync upsert-only and own deletion explicitly:
+These decisions are constrained by `invariants/session-durability.md`: durable state is owned by the
+store, saves are additive, deletion is explicit, and a writer must not overwrite newer durable state.
 
 1. Remove the stale-deletion loop in `sync_sessions_to_storage`
-   (`crates/opencode-server/src/server.rs:202-207`). The sync must upsert each in-memory session and
-   never delete a persisted row that is absent from its snapshot.
-2. Own deletion in the explicit delete path. `delete_session` (`routes.rs:519-533`) already calls
-   `manager.delete`, which cascades to children (`session.rs:1328-1354`); make that route delete the
-   session row and its messages directly (`session_repo.delete` + `message_repo.delete_for_session`)
-   instead of relying on the next snapshot diff.
-3. Make the per-session message replace atomic/additive. Wrap the `delete_for_session` + `create` loop
-   (`server.rs:222-225`) in a transaction, or switch it to `MessageRepository::upsert`
-   (`repository.rs:620`). Without a transaction a crash mid-loop leaves a half-deleted session.
-4. Optional hardening: guard `session_repo.update` (`repository.rs:316`) with `updated_at` so a stale
-   server cannot overwrite a newer row written by another server.
+   (`crates/opencode-server/src/server.rs:202-207`). Saving is additive and never removes a stored
+   session that is absent from the caller's snapshot.
+2. Upsert session rows with a required freshness guard. Reuse the existing
+   `session_repo.list(None, 100_000)` read to build an `id -> updated_at` map, and skip the write for
+   any session whose stored `updated_at` is newer than the in-memory session's `time.updated`. The
+   guard is required, not optional: it is what stops a stale server from overwriting newer state.
+3. Replace message history atomically. Add `MessageRepository::replace_for_session` that opens one
+   transaction to `delete_for_session` plus insert the in-memory messages, and call it (gated by the
+   same freshness check) instead of the un-transacted loop at `server.rs:222-225`. Do not switch to
+   pure per-message upsert: explicit message removal (revert/delete) must still propagate.
+4. Own deletion explicitly. In `delete_session` (`routes.rs:519-533`), collect the root and all
+   descendant session ids from the manager (recursive `children`, `session.rs:1320`), call
+   `manager.delete` (`session.rs:1328`), then delete each id's row and messages directly
+   (`session_repo.delete` + `message_repo.delete_for_session`). Deletion must not depend on a later
+   snapshot diff.
+5. Secondary surface fix, in scope because it is the user-visible symptom: stop swallowing the
+   missing-session error on `--session`/resume (`crates/opencode-tui/src/app/app.rs:256-259`,
+   `crates/opencode-tui/src/api.rs:419-428`) and surface a not-found error instead of an empty session.
 
-Secondary, independent surface fix: stop the TUI from swallowing the missing-session error on
-`--session`/resume (`crates/opencode-tui/src/app/app.rs:256-259`,
-`crates/opencode-tui/src/api.rs:419-428`) and surface a not-found error instead of an empty session.
+Explicitly out of scope for this card (see Non-goals): an owner/lease model for simultaneous writers
+of the same session, and per-server/per-workspace database files.
+
+Residual after the fix: if two servers actively edit the same session at the same time, the last writer
+wins; the freshness guard prevents data loss but not a concurrent same-session edit race. That pattern
+is outside the single-TUI-per-session daily-driver workflow.
 
 Immediate mitigation (not a fix): kill leftover `opencode tui`/`serve` pairs so only one server writes
 the shared DB. The stale pair on port 3188 was running a `(deleted)` binary.
 
 Confidence:
 
-- Stops the reported symptom (one server deleting another's sessions): ~85%.
+- Stops the reported symptom (a stale server deleting another server's sessions/messages): ~90%.
+- No data loss under normal multi-server use (disjoint workspaces/sessions): ~85%.
 - Surgical, low-regression implementation: ~75%.
-- Fully correct under all concurrent multi-server races (cross-server writes to the same session,
-  crash windows, no lease/ownership): ~55%; residual last-writer-wins and single-writer concerns need
-  an owner/lease model.
-- Alternative (per-server/per-workspace DB files): ~60% worth doing now - cleaner isolation, but it
-  conflicts with cross-workspace `--session` resume from the shared store and is a larger migration.
+- Fully correct under simultaneous same-session edits from two servers: ~55%; documented residual.
+
+Optional follow-up (not required for correctness): scope persistence to sessions a server actually
+modified (dirty tracking) to also cut the all-sessions rewrite on every API call.
 
 ## Recommended verification
 
-- `cargo test -p opencode-server` with a new two-writer persistence test.
-- `cargo test -p opencode-storage` for atomic message replace/upsert behavior.
-- `cargo check -p opencode-server -p opencode-storage`.
+- `cargo test -p opencode-server` with a new two-writer persistence test: two states share one DB,
+  write disjoint sessions, both sync, and all sessions/messages survive.
+- `cargo test -p opencode-server` for the freshness guard: a state whose in-memory copy is older than
+  storage syncs and leaves the newer stored session/messages untouched.
+- `cargo test -p opencode-server` for explicit delete: `DELETE /session/:id` removes the session, its
+  messages, and child sessions/messages directly without a later sync.
+- `cargo test -p opencode-storage` for atomic `replace_for_session` behavior.
+- `cargo test -p opencode-tui` for a missing-session load surfacing an error instead of an empty view.
+- `cargo check -p opencode-server -p opencode-storage -p opencode-tui`.
 - Manual: run two `ort` instances in different workspaces, create sessions in each, then confirm both
   sessions and all messages remain in the DB after both have synced.
 
@@ -229,5 +258,9 @@ Confidence:
 - Follow-up investigation (same day) confirmed the deletion is performed by a **concurrent stale
   server**, not by exit; two live servers were caught holding divergent snapshots (5 vs 8 sessions)
   with mutual clobbering. See "Investigation Notes (2026-09-21)" and the Evidence section.
-- "Proposed Fix (2026-09-21 investigation)" records the recommended upsert-only snapshot plus
-  explicit-delete change and its confidence levels (stops the reported symptom ~85%).
+- "Proposed Fix (2026-09-21 investigation)" records the locked additive-snapshot plus explicit-delete
+  change and its confidence levels (stops the reported symptom ~90%).
+- Decisions locked 2026-09-21 against the new `invariants/session-durability.md`: additive session
+  save with a required freshness guard, transactional message replace, explicit delete with child
+  cascade, and an in-scope TUI missing-session error. Owner/lease and per-workspace DB files are
+  explicit non-goals; simultaneous same-session edits remain last-writer-wins.
