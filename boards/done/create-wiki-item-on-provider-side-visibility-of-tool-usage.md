@@ -5,7 +5,7 @@ priority: "P2"
 type: "docs"
 area: "START"
 spec: "wiki/README.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -113,3 +113,10 @@ Deferred (not implemented here, per non-goals):
 
 - Creating board items for the follow-up candidates was intentionally left to the user; item 1 already exists as `FEAT-010`.
 - No live request-body trace was captured; that remains a recommended future verification listed as an open question.
+
+## Merge closeout
+
+- Merged via PR #57 into `development` (merge commit `afda439`).
+- Branch `docs/START-028-provider-side-visibility` deleted remotely and locally.
+- `development` fast-forwarded to the merged result and is checked out locally.
+- Follow-up candidates remain documented in `wiki/provider-side-visibility.md`; no split-off board items were created (deferred per the item's non-goals).
