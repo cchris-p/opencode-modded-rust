@@ -3652,8 +3652,12 @@ async fn reply_permission(
 
         match update_config(&target_dir, &permanent_config_patch(&permission)) {
             Ok(()) => {
-                response.path =
-                    Some(target_dir.join("opencode.json").to_string_lossy().to_string());
+                response.path = Some(
+                    target_dir
+                        .join("opencode.json")
+                        .to_string_lossy()
+                        .to_string(),
+                );
             }
             Err(error) => {
                 response.ok = false;

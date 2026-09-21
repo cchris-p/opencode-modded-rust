@@ -256,10 +256,7 @@ impl PermissionPrompt {
                 Span::styled("[y] Allow  ", Style::default().fg(theme.success)),
                 Span::styled("[n] Deny  ", Style::default().fg(theme.error)),
                 Span::styled("[a] Always allow  ", Style::default().fg(theme.primary)),
-                Span::styled(
-                    "[p] Permanently allow",
-                    Style::default().fg(theme.warning),
-                ),
+                Span::styled("[p] Permanently allow", Style::default().fg(theme.warning)),
             ]),
         ];
 

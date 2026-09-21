@@ -123,10 +123,7 @@ description: Review code changes
         .iter()
         .find(|skill| skill.name == "reviewer")
         .expect("reviewer skill should be present");
-    assert_eq!(
-        reviewer.description.as_deref(),
-        Some("Review code changes")
-    );
+    assert_eq!(reviewer.description.as_deref(), Some("Review code changes"));
 
     std::fs::remove_dir_all(&root).expect("temp root should be cleaned up");
 }

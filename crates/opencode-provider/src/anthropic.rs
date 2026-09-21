@@ -224,8 +224,10 @@ impl Provider for AnthropicProvider {
             return Err(ProviderError::ApiError(format!("{}: {}", status, body)));
         }
 
-        let stream =
-            crate::stream::sse_event_stream(response.bytes_stream(), crate::stream::anthropic_line_events);
+        let stream = crate::stream::sse_event_stream(
+            response.bytes_stream(),
+            crate::stream::anthropic_line_events,
+        );
 
         Ok(stream)
     }
