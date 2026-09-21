@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "SKILLS"
 spec: ""
-status: "todo"
+status: "refinement"
 created: "2026-08-31"
 ---
 

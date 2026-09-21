@@ -5,7 +5,7 @@ priority: "P3"
 type: "research"
 area: "SKILLS"
 spec: "wiki/skills-parity-audit.md"
-status: "todo"
+status: "refinement"
 created: "2026-08-29"
 ---
 
