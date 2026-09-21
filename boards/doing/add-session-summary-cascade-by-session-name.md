@@ -1,9 +1,9 @@
 ---
-id: "SKILL-001"
+id: "SKILLS-004"
 title: "Add session-summary cascade skill by session name"
 priority: "P3"
 type: "feature"
-area: "SKILL"
+area: "SKILLS"
 spec: ""
 status: "todo"
 created: "2026-08-31"

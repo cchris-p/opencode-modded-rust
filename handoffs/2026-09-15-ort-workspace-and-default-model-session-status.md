@@ -104,7 +104,7 @@ inline config content and workspace config still apply.
 - `todo` (16): `PHASE-001..004`, `FEAT-013`, `FEAT-015`, tool/provider parity items, etc.
 - `hold` (6): the evaluation-harness set (`START-020..024`) plus `FEAT-005`.
 - `refinement` (0).
-- `doing` (3): `SKILL-001`, `SKILLS-001`, `SKILLS-002`.
+- `doing` (3): `SKILLS-004`, `SKILLS-001`, `SKILLS-002`.
 - `qa` (4): `BUG-007` batch tool, `BUG-007` `ls` listing, plus this session's `BUG-011` and
   `FEAT-016`.
 - `done`: `BUG-010` (config precedence), `FEAT-014` (single local TUI server), and 26 others.

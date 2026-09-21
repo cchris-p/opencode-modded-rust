@@ -71,7 +71,7 @@ During real coding work, a user often wants to split a tangent, alternate implem
 - `FEAT-001` Improve historical chat transcripts workflow
 - `FEAT-002` Keep sessions running after TUI exit
 - `FEAT-003` Add compact fork context for session branching
-- `SKILL-001` Add session-summary cascade skill by session name
+- `SKILLS-004` Add session-summary cascade skill by session name
 - `START-005` Define V1 runtime loop
 - `START-016` Define structured task state for V1
 
