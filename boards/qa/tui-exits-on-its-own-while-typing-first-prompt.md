@@ -206,3 +206,13 @@ The other candidate exit paths (event-channel disconnect, input reader death, fo
   regardless of route or prompt focus, which is a plausible product defect on its own.
 - Capture real runs and key sequences rather than assuming only one cause; if more than one exit path
   is real, fix the primary cause and split the remainder into separate items.
+
+## Merge closeout - 2026-09-21
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/49 merged into `development`
+  (merge commit `9c9c89c`).
+- Branch `bug/BUG-021-tui-plain-q-exit` deleted remotely and locally.
+- Local `development` synced and contains the fix (`app.rs` plain-`q` exit removed, regression test
+  present).
+- No QA report recorded yet; item remains in `qa` until the user records verification or explicitly
+  completes it.
