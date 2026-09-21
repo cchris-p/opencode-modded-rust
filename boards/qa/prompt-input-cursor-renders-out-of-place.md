@@ -77,6 +77,10 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 
 - 2026-09-19: Fixed cursor placement at the prompt content-width boundary. The visual cursor column can legitimately equal `input_width` when the insertion point is immediately after the last visible cell on a full line; rendering now allows that column instead of clamping it back to `input_width - 1`.
 - Added/extended cursor visual-position coverage for the exact full-width boundary case.
+- 2026-09-21: Reopened. Confirmed root cause: the cursor/height math and the rendered paragraph used two different wrapping algorithms. Rendering used ratatui's `Wrap { trim: false }` (grapheme-aware, word-boundary wrapper in `ratatui-0.27/src/widgets/reflow.rs`), while `input_cursor_visual_position`/`visual_line_count` used a greedy per-`char` column fill. Spaces, grapheme clusters, and wide characters made the two layouts disagree, producing the intermittent one-ahead/two-behind offsets. The PR #47 `max_col = input_width` change also drew the cursor on the right pad cell at an exact full-line edge.
+- 2026-09-21: Replaced the parallel wrap math with a single `wrap_prompt_input` (grapheme-aware, word-boundary, `trim=false`-style) that produces the visual lines and records the (line, column) of every grapheme. `Prompt::render` now feeds those pre-wrapped `Line`s to `Paragraph` (no `Wrap`) and derives cursor row/column, box height, and scroll from the same structure, so cursor and text can no longer disagree. A cursor at an exact full-line boundary lands on the next (phantom) row at column 0. Removed the `max_col` band-aid plus the old `input_cursor_visual_position`/`visual_line_count`.
+- 2026-09-21: Added `unicode-segmentation = "1"` to `crates/opencode-tui/Cargo.toml` for grapheme iteration (already present transitively via ratatui 0.27).
+- 2026-09-21: `desired_height`/`prompt_content_lines` now include the cursor's phantom row so the layout reserves that row before the next character wraps.
 
 ## Verification
 
@@ -86,6 +90,13 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 - `cargo fmt --check` failed on pre-existing formatting drift in `crates/opencode-provider/src/anthropic.rs` and `crates/opencode-tui/src/context/keybind.rs`, outside this change.
 - `ort-build` could not be run from this shell because the command was not found.
 - `cargo build` was attempted as a fallback in the original QA checkout and timed out after 120 seconds; rustc processes were terminated by timeout signal, not source diagnostics.
+- 2026-09-21: `cargo test -p opencode-tui cursor_visual_position -- --test-threads=1` passed (5 cursor-geometry tests).
+- 2026-09-21: `cargo test -p opencode-tui -- --test-threads=1 --skip tab_autocomplete_uses_first_candidate` passed (34 tests).
+- 2026-09-21: `cargo test -p opencode-tui -- --test-threads=1` still fails only on the pre-existing `tab_autocomplete_uses_first_candidate` (`test` vs `team`) and the resulting env-lock poison. Confirmed the same failure on clean `development` HEAD with these changes stashed, so it is unrelated to this item.
+- 2026-09-21: `cargo check -p opencode-tui`, `cargo build -p opencode-tui`, and `cargo clippy -p opencode-tui --all-targets` completed. No new clippy warnings in the changed code; pre-existing workspace/TUI warnings remain.
+- 2026-09-21: `rustfmt --edition 2021 --check crates/opencode-tui/src/components/prompt.rs` passed. Whole-workspace `cargo fmt` still flags only pre-existing drift in `anthropic.rs` and `keybind.rs`; an incidental reformat of `keybind.rs` was reverted.
+- 2026-09-21: Added a ratatui `TestBackend` test that renders the pre-wrapped lines and asserts the cursor cell points at the next grapheme, plus word-boundary, wide-char, newline, full-line-boundary, and grapheme-cluster cursor tests.
+- 2026-09-21: `ort-build`/`ort` are not on `PATH` in this shell, so real-terminal QA could not be run here. Needs interactive verification: type spaced/CJK/emoji prompts that wrap, paste multi-line text, move with Home/End/word keys, delete at start/middle/end, resize, and type again after streaming output.
 
 ## PR
 
@@ -94,3 +105,4 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 ## Completion
 
 - 2026-09-19: PR #47 merged into `development`; branch cleanup completed. Kept in `qa` for observation and revisit if the cursor misalignment is seen again.
+- 2026-09-21: Reopened and reworked on branch `bug/BUG-018-prompt-cursor-position`. Moved back to `qa` awaiting interactive/real-terminal verification; branch left checked out.
