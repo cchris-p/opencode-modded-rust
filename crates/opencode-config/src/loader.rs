@@ -1645,6 +1645,44 @@ mod tests {
     }
 
     #[test]
+    fn test_update_config_grant_preserves_keys_and_is_idempotent() {
+        let temp = TestDir::new("opencode_update_config");
+        fs::write(
+            temp.path.join("opencode.json"),
+            r#"{ "model": "keep-me", "permission": { "bash": { "git *": "allow" } } }"#,
+        )
+        .unwrap();
+
+        let patch = Config {
+            permission: Some(PermissionConfig {
+                rules: HashMap::from([(
+                    "bash".to_string(),
+                    PermissionRule::Object(HashMap::from([(
+                        "cargo test".to_string(),
+                        PermissionAction::Allow,
+                    )])),
+                )]),
+            }),
+            ..Default::default()
+        };
+
+        update_config(&temp.path, &patch).unwrap();
+        update_config(&temp.path, &patch).unwrap();
+
+        let written = fs::read_to_string(temp.path.join("opencode.json")).unwrap();
+        let parsed: Config = parse_jsonc(&written).unwrap();
+        assert_eq!(parsed.model.as_deref(), Some("keep-me"));
+
+        let rules = parsed.permission.unwrap().rules;
+        let PermissionRule::Object(patterns) = rules.get("bash").unwrap() else {
+            panic!("expected pattern map for bash");
+        };
+        assert_eq!(patterns.len(), 2);
+        assert_eq!(patterns.get("git *"), Some(&PermissionAction::Allow));
+        assert_eq!(patterns.get("cargo test"), Some(&PermissionAction::Allow));
+    }
+
+    #[test]
     fn test_load_project_finds_and_merges_parent_configs() {
         let temp = TestDir::new("opencode_config_findup");
         let root = temp.path.join("repo");

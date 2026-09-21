@@ -36,6 +36,8 @@ use crate::{ApiError, Result, ServerState};
 use opencode_agent::{AgentMode, AgentRegistry};
 use opencode_config::{
     load_config, update_config, Config as AppConfig, McpServerConfig as LoadedMcpServerConfig,
+    PermissionAction as ConfigPermissionAction, PermissionConfig as ConfigPermissionConfig,
+    PermissionRule as ConfigPermissionRule,
 };
 use opencode_plugin::subprocess::{PluginAuthBridge, PluginLoader, PluginSubprocessError};
 use opencode_provider::{
@@ -1832,7 +1834,14 @@ async fn session_prompt(
                         .map(|p| crate::agentic::ruleset_from_session(&p))
                         .unwrap_or_default()
                 };
-                let merged = crate::agentic::merged_ruleset(&rules, &session_rules);
+                let permanent_rules = {
+                    let permanent = PERMANENT_RULES.read().await;
+                    permanent.get(&session_id).cloned().unwrap_or_default()
+                };
+                let merged = crate::agentic::merged_ruleset(
+                    &crate::agentic::merged_ruleset(&rules, &session_rules),
+                    &permanent_rules,
+                );
                 match crate::agentic::classify_permission(
                     &merged,
                     &request.permission,
@@ -3521,6 +3530,12 @@ static PERMISSION_REQUESTS: Lazy<RwLock<HashMap<String, PermissionRequestInfo>>>
 static PERMISSION_WAITERS: Lazy<RwLock<HashMap<String, oneshot::Sender<ReplyPermissionRequest>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// Exact-pattern permanent grants applied during this server run, keyed by session id.
+/// Config is the durable source of truth; this overlay keeps an approved request from
+/// immediately re-prompting before the next config load.
+static PERMANENT_RULES: Lazy<RwLock<HashMap<String, opencode_permission::PermissionRuleset>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 async fn list_permissions() -> Json<Vec<PermissionRequestInfo>> {
     let pending = PERMISSION_REQUESTS.read().await;
     let mut result: Vec<_> = pending.values().cloned().collect();
@@ -3534,24 +3549,130 @@ pub struct ReplyPermissionRequest {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PermissionReplyResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Build the `Allow` rules a permanent grant should apply for the approved request.
+/// Patterns are normalized with the same helper used at evaluation time so the grant
+/// matches the resource the user actually approved.
+fn permanent_rules_for_request(
+    permission: &PermissionRequestInfo,
+) -> opencode_permission::PermissionRuleset {
+    use opencode_permission::{PermissionAction, PermissionRule};
+
+    let patterns: Vec<String> = if permission.patterns.is_empty() {
+        vec!["*".to_string()]
+    } else {
+        permission
+            .patterns
+            .iter()
+            .map(|pattern| {
+                opencode_permission::normalize_permission_pattern(&permission.permission, pattern)
+            })
+            .collect()
+    };
+
+    patterns
+        .into_iter()
+        .map(|pattern| PermissionRule {
+            permission: permission.permission.clone(),
+            pattern,
+            action: PermissionAction::Allow,
+        })
+        .collect()
+}
+
+/// Build a project-config patch that grants `Allow` for the approved request.
+fn permanent_config_patch(permission: &PermissionRequestInfo) -> AppConfig {
+    let rule = if permission.patterns.is_empty() {
+        ConfigPermissionRule::Action(ConfigPermissionAction::Allow)
+    } else {
+        let mut patterns = HashMap::new();
+        for pattern in &permission.patterns {
+            let normalized =
+                opencode_permission::normalize_permission_pattern(&permission.permission, pattern);
+            patterns.insert(normalized, ConfigPermissionAction::Allow);
+        }
+        ConfigPermissionRule::Object(patterns)
+    };
+
+    AppConfig {
+        permission: Some(ConfigPermissionConfig {
+            rules: HashMap::from([(permission.permission.clone(), rule)]),
+        }),
+        ..Default::default()
+    }
+}
+
 async fn reply_permission(
     State(state): State<Arc<ServerState>>,
     Path(id): Path<String>,
     Json(req): Json<ReplyPermissionRequest>,
-) -> Result<Json<bool>> {
+) -> Result<Json<PermissionReplyResponse>> {
     match req.reply.as_str() {
-        "once" | "always" | "reject" => {}
+        "once" | "always" | "reject" | "permanent" => {}
         _ => {
             return Err(ApiError::BadRequest(
-                "Invalid reply; expected `once`, `always`, or `reject`".to_string(),
+                "Invalid reply; expected `once`, `always`, `reject`, or `permanent`".to_string(),
             ));
         }
     }
 
-    let mut pending = PERMISSION_REQUESTS.write().await;
-    let permission = pending
-        .remove(&id)
-        .ok_or_else(|| ApiError::NotFound(format!("Permission request not found: {}", id)))?;
+    let permission = {
+        let mut pending = PERMISSION_REQUESTS.write().await;
+        pending
+            .remove(&id)
+            .ok_or_else(|| ApiError::NotFound(format!("Permission request not found: {}", id)))?
+    };
+
+    let mut response = PermissionReplyResponse {
+        ok: true,
+        path: None,
+        error: None,
+    };
+
+    if req.reply == "permanent" {
+        // Project-local config is the durable grant; the workspace is the session directory.
+        let session_dir = {
+            let sessions = state.sessions.lock().await;
+            sessions
+                .get(&permission.session_id)
+                .map(|session| PathBuf::from(session.directory.clone()))
+        };
+        let target_dir = session_dir
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .or_else(|| current_project_dir().ok())
+            .unwrap_or_default();
+
+        match update_config(&target_dir, &permanent_config_patch(&permission)) {
+            Ok(()) => {
+                response.path =
+                    Some(target_dir.join("opencode.json").to_string_lossy().to_string());
+            }
+            Err(error) => {
+                response.ok = false;
+                response.error = Some(error.to_string());
+            }
+        }
+
+        // Apply the exact-pattern grant to the running session so the same request does not
+        // immediately prompt again before the next config load.
+        let rules = permanent_rules_for_request(&permission);
+        if !rules.is_empty() {
+            PERMANENT_RULES
+                .write()
+                .await
+                .entry(permission.session_id.clone())
+                .or_default()
+                .extend(rules);
+        }
+    }
 
     if let Some(waiter) = PERMISSION_WAITERS.write().await.remove(&id) {
         let _ = waiter.send(ReplyPermissionRequest {
@@ -3561,7 +3682,10 @@ async fn reply_permission(
     }
 
     if req.reply == "reject" {
-        pending.retain(|_, item| item.session_id != permission.session_id);
+        PERMISSION_REQUESTS
+            .write()
+            .await
+            .retain(|_, item| item.session_id != permission.session_id);
     }
 
     state.broadcast(
@@ -3571,6 +3695,7 @@ async fn reply_permission(
             "sessionID": permission.session_id,
             "reply": req.reply,
             "message": req.message,
+            "path": response.path.clone(),
         })
         .to_string(),
     );
@@ -3582,7 +3707,53 @@ async fn reply_permission(
         })
         .to_string(),
     );
-    Ok(Json(true))
+    Ok(Json(response))
+}
+
+#[cfg(test)]
+mod permission_grant_tests {
+    use super::*;
+
+    fn request(permission: &str, patterns: &[&str]) -> PermissionRequestInfo {
+        PermissionRequestInfo {
+            id: "perm_test".to_string(),
+            session_id: "ses_test".to_string(),
+            permission: permission.to_string(),
+            patterns: patterns.iter().map(|pattern| pattern.to_string()).collect(),
+            tool: permission.to_string(),
+            input: serde_json::json!({}),
+            message: permission.to_string(),
+        }
+    }
+
+    #[test]
+    fn permanent_config_patch_encodes_pattern_map() {
+        let patch = permanent_config_patch(&request("bash", &["cargo test"]));
+        let value = serde_json::to_value(&patch).unwrap();
+        assert_eq!(
+            value["permission"]["bash"]["cargo test"],
+            serde_json::json!("allow")
+        );
+    }
+
+    #[test]
+    fn permanent_rules_normalize_external_directory_patterns() {
+        let rules = permanent_rules_for_request(&request("external_directory", &["/tmp/ext"]));
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].permission, "external_directory");
+        assert_eq!(rules[0].pattern, "/tmp/ext/*");
+        assert_eq!(
+            rules[0].action,
+            opencode_permission::PermissionAction::Allow
+        );
+    }
+
+    #[test]
+    fn permanent_rules_without_patterns_grant_wildcard() {
+        let rules = permanent_rules_for_request(&request("bash", &[]));
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "*");
+    }
 }
 
 fn project_routes() -> Router<Arc<ServerState>> {

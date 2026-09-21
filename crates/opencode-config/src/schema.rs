@@ -1178,7 +1178,20 @@ impl DeepMerge for LspConfig {
 impl DeepMerge for PermissionConfig {
     fn deep_merge(&mut self, other: Self) {
         for (key, value) in other.rules {
-            self.rules.insert(key, value);
+            match (self.rules.remove(&key), value) {
+                // Merge sibling patterns under the same permission key instead of
+                // replacing the whole rule, so a later config overlay (e.g. a
+                // permanent grant) does not clobber unrelated patterns.
+                (Some(PermissionRule::Object(mut existing)), PermissionRule::Object(incoming)) => {
+                    for (pattern, action) in incoming {
+                        existing.insert(pattern, action);
+                    }
+                    self.rules.insert(key, PermissionRule::Object(existing));
+                }
+                (_, incoming) => {
+                    self.rules.insert(key, incoming);
+                }
+            }
         }
     }
 }
@@ -1464,5 +1477,45 @@ mod tests {
         assert_eq!(options.get("a"), Some(&serde_json::json!(1)));
         assert_eq!(options.get("b"), Some(&serde_json::json!(2)));
         assert!(agents.contains_key("research"));
+    }
+
+    #[test]
+    fn permission_merge_preserves_sibling_patterns_and_is_idempotent() {
+        let mut base = Config {
+            permission: Some(PermissionConfig {
+                rules: HashMap::from([(
+                    "bash".to_string(),
+                    PermissionRule::Object(HashMap::from([(
+                        "git *".to_string(),
+                        PermissionAction::Allow,
+                    )])),
+                )]),
+            }),
+            ..Default::default()
+        };
+
+        let grant = |pattern: &str| Config {
+            permission: Some(PermissionConfig {
+                rules: HashMap::from([(
+                    "bash".to_string(),
+                    PermissionRule::Object(HashMap::from([(
+                        pattern.to_string(),
+                        PermissionAction::Allow,
+                    )])),
+                )]),
+            }),
+            ..Default::default()
+        };
+
+        base.merge(grant("cargo test"));
+        base.merge(grant("cargo test"));
+
+        let rules = base.permission.unwrap().rules;
+        let PermissionRule::Object(patterns) = rules.get("bash").unwrap() else {
+            panic!("expected pattern map for bash");
+        };
+        assert_eq!(patterns.len(), 2);
+        assert_eq!(patterns.get("git *"), Some(&PermissionAction::Allow));
+        assert_eq!(patterns.get("cargo test"), Some(&PermissionAction::Allow));
     }
 }
