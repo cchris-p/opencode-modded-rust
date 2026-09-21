@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-19"
 ---
 
@@ -180,11 +180,11 @@ Likely failure area to confirm:
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/48
-- Follow-up fix PR: (pending)
+- Follow-up fix PR: https://github.com/cchris-p/opencode-modded-rust/pull/54
 
 ## Completion
 
 - 2026-09-19: PR #48 merged into `development`; BUG-019 feature branch and temporary worktree
   cleaned up. Keeping this item in `qa` for observation and revisit if the issue appears again.
-- 2026-09-21: Recurrence observed and root-caused (reasoning-only aborted turn). Follow-up fix in
-  progress.
+- 2026-09-21: Recurrence observed and root-caused (reasoning-only aborted turn). Follow-up fix merged
+  via PR #54; item moves to `done`.
