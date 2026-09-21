@@ -529,10 +529,18 @@ impl Prompt {
                 }
             }
             KeyCode::Up => {
-                self.history_previous();
+                if self.cursor_position == 0 {
+                    self.history_previous();
+                } else {
+                    self.move_cursor_vertical(true);
+                }
             }
             KeyCode::Down => {
-                self.history_next();
+                if self.cursor_position >= self.input.len() {
+                    self.history_next();
+                } else {
+                    self.move_cursor_vertical(false);
+                }
             }
             _ => {}
         }
@@ -721,7 +729,7 @@ impl Prompt {
 
         if let Some(idx) = self.history_index {
             self.input = self.history[idx].clone();
-            self.cursor_position = self.input.len();
+            self.cursor_position = 0;
             self.recompute_suggestions();
         }
     }
@@ -747,6 +755,32 @@ impl Prompt {
     fn reset_history_cursor(&mut self) {
         self.history_index = None;
         self.history_draft = None;
+    }
+
+    fn move_cursor_vertical(&mut self, up: bool) {
+        let cursor = self.cursor_position.min(self.input.len());
+        let (line_start, line_end) = line_bounds(&self.input, cursor);
+        let column = self.input[line_start..cursor].chars().count();
+
+        if up {
+            if line_start == 0 {
+                self.cursor_position = 0;
+                return;
+            }
+            let prev_end = line_start - 1;
+            let (prev_start, _) = line_bounds(&self.input, prev_end);
+            let target = byte_offset_for_column(&self.input[prev_start..prev_end], column);
+            self.cursor_position = prev_start + target;
+        } else {
+            if line_end >= self.input.len() {
+                self.cursor_position = self.input.len();
+                return;
+            }
+            let next_start = line_end + 1;
+            let (_, next_end) = line_bounds(&self.input, next_start);
+            let target = byte_offset_for_column(&self.input[next_start..next_end], column);
+            self.cursor_position = next_start + target;
+        }
     }
 
     fn push_history(&mut self, entry: String) {
@@ -1553,6 +1587,23 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
+fn line_bounds(input: &str, offset: usize) -> (usize, usize) {
+    let offset = offset.min(input.len());
+    let start = input[..offset].rfind('\n').map(|idx| idx + 1).unwrap_or(0);
+    let end = input[offset..]
+        .find('\n')
+        .map(|idx| offset + idx)
+        .unwrap_or(input.len());
+    (start, end)
+}
+
+fn byte_offset_for_column(line: &str, column: usize) -> usize {
+    line.char_indices()
+        .nth(column)
+        .map(|(idx, _)| idx)
+        .unwrap_or(line.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1620,6 +1671,100 @@ mod tests {
             assert_eq!(prompt.get_input(), "@src/main.rs#12-20");
 
             let _ = std::fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn bare_up_recalls_history_only_at_cursor_start() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+
+            // Mid-draft Up snaps the cursor to the start without recalling.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "draft");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // A second Up now recalls the previous entry, cursor landing at start.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "beta");
+            assert_eq!(prompt.cursor_position(), 0);
+        });
+    }
+
+    #[test]
+    fn bare_down_recalls_history_only_at_cursor_end() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+
+            // Recall "beta"; entering history places the cursor at the start.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "beta");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // From the start, Down first snaps to the end without recalling...
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "beta");
+            assert_eq!(prompt.cursor_position(), "beta".len());
+
+            // ...then the next Down recalls the preserved draft.
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "draft");
+            assert_eq!(prompt.cursor_position(), "draft".len());
+        });
+    }
+
+    #[test]
+    fn bare_arrows_navigate_multiline_draft_without_recall() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("old".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("ab\ncd".to_string());
+            assert_eq!(prompt.cursor_position(), "ab\ncd".len());
+
+            // Up walks the draft lines and never touches history.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "ab\ncd");
+            assert_eq!(prompt.cursor_position(), "ab".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "ab\ncd");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // Only at the very start does Up recall.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "old");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // Down from the recalled entry's start navigates, then recalls the draft.
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "old");
+            assert_eq!(prompt.cursor_position(), "old".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "ab\ncd");
+            assert_eq!(prompt.cursor_position(), "ab\ncd".len());
+        });
+    }
+
+    #[test]
+    fn explicit_history_navigation_is_ungated() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+            prompt.cursor_position = 2;
+
+            prompt.history_previous_entry();
+            assert_eq!(prompt.get_input(), "alpha");
         });
     }
 
