@@ -210,3 +210,10 @@ All changes are local to the prompt component; no keybind, storage, or app chang
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/69
+
+## Merge Closeout
+
+- 2026-09-21: PR #69 merged into `development` at `4ca0cbe1bc92e8ed7c312757818d50508c29eff3`.
+- Remote branch `bug/BUG-030-history-down-newest-no-clear` was deleted by the merge closeout path;
+  local branch cleanup was already complete after merge.
+- Card remains in `qa` until a QA report is recorded or a human explicitly marks it complete.
