@@ -1,23 +1,50 @@
 ---
-id: "FEAT-024"
-title: "Question tool full parity epic"
+id: "GATE-002"
+title: "Gate: Question tool must match vanilla OpenCode exactly"
 priority: "P2"
-type: "epic"
-area: "FEAT"
+type: "gate"
+area: "GATE"
 spec: ""
 status: "todo"
+predecessors: ""
 created: "2026-09-18"
 ---
 
-# Question tool full parity epic
+# Gate: Question tool must match vanilla OpenCode exactly
 
 ## Summary
 
-Bring the Rust product's question/Q&A feature to full core parity with vanilla OpenCode while preserving room for intentional UX improvements over vanilla behavior.
+Hard gate. Bring the Rust product's question/Q&A feature to full parity with vanilla OpenCode. No
+question-tool-dependent story may be treated as complete until the question tool and every
+user/model-facing question surface match how the question feature works in vanilla.
 
-"Full parity" for this epic means the Rust product supports the same core user and model-facing capabilities as vanilla OpenCode's question feature: first-class question tool semantics, pending-question lifecycle, session-scoped APIs, visible interactive responses in the TUI and CLI/direct-run surfaces, rejection, multi-question answers, single/multiple selection, custom answers, and durable enough runtime integration that questions are normal session events rather than an ad hoc side channel.
+This card was previously `FEAT-024` (Question tool full parity epic). It is repurposed here as the gate
+for question-tool work rather than a separate epic, per the existing-item rule.
 
-Parity does not mean copying every vanilla UI detail. If a better daily-driver UX is identified, prefer the deliberate Rust UX as long as the core capability remains covered and the deviation is documented.
+## Gate requirement
+
+> The question tool and every question surface must work the same way the question feature works in
+> vanilla OpenCode.
+
+Parity is judged against the frozen reference source (below), not a paraphrase. Where the Rust runner
+has no equivalent mechanism, the observable behavior and display must still match; internals that cannot
+be reused are reference-only and must be called out explicitly.
+
+"Full parity" means the Rust product supports the same core user and model-facing capabilities as
+vanilla OpenCode's question feature: first-class question tool semantics, pending-question lifecycle,
+session-scoped APIs, visible interactive responses in the TUI and CLI/direct-run surfaces, rejection,
+multi-question answers, single/multiple selection, custom answers, and durable enough runtime
+integration that questions are normal session events rather than an ad hoc side channel.
+
+Parity does not mean copying every vanilla UI detail. If a better daily-driver UX is identified, prefer
+the deliberate Rust UX as long as the core capability remains covered and the deviation is documented
+and explicitly resolved in this card.
+
+## Blocked Items
+
+- `FEAT-012` CLI/AgentExecutor tool-loop parity (`boards/hold/cli-agentexecutor-tool-loop-parity.md`) -
+  on hold until this gate passes; its CLI ask/approval path must use the parity question UX.
+
 
 ## Vanilla Reference Evidence
 
@@ -39,7 +66,7 @@ Frozen TypeScript reference line: `$HOME/repos/opencode-modded` at commit `e6291
 - `crates/opencode-tui/src/api.rs` can list all questions, reply, and reject, but the API is not session-scoped like vanilla's `/api/session/:sessionID/question` routes.
 - `crates/opencode-tui/src/app/app.rs` filters listed questions by active session and walks multi-question requests sequentially.
 - `crates/opencode-tui/src/components/question.rs` renders a basic prompt with text, single-choice, and multiple-choice modes, but drops option descriptions, lacks custom-answer option semantics, lacks a tabbed/review flow, and uses letter shortcuts instead of vanilla's digit shortcuts.
-- `boards/done/complete-tui-approval-and-question-handling.md` finished the first live TUI integration path; this epic is the broader parity pass, not a replacement for that completed work.
+- `boards/done/complete-tui-approval-and-question-handling.md` finished the first live TUI integration path; this gate is the broader parity pass, not a replacement for that completed work.
 
 ## Scope
 
@@ -132,21 +159,27 @@ Frozen TypeScript reference line: `$HOME/repos/opencode-modded` at commit `e6291
 
 ## Related Items
 
-- `START-018` Complete TUI approval and question handling
-- `START-008` Full parity deferred
-- `FEAT-012` CLI AgentExecutor tool loop parity
-- `FEAT-021` Queue CLI task sends while TUI session is open
-- `PHASE-002` Transport/runtime parity foundation
+- `FEAT-012` CLI AgentExecutor tool loop parity - blocked by this gate; moved to `hold`
+  (`boards/hold/cli-agentexecutor-tool-loop-parity.md`).
+- `START-018` Complete TUI approval and question handling - completed first live integration path.
+- `START-008` Full parity deferred - product stance; this gate is the deliberate exception for the
+  question feature.
+- `PHASE-002` Transport/runtime parity foundation - phase parent for related parity work.
 
 ## Refinement Questions
 
 - Should Rust keep the existing sequential multi-question flow, switch to vanilla's tabbed confirm flow, or use a hybrid with a final review screen?
 - Should `question` have a dedicated permission rule/action in Rust, or should it be treated as always allowed for normal agent flows?
 - Should pending questions survive TUI detach/reattach only within the same live server, or should they be persisted across server restart?
-- Should CLI/direct-run support land in this epic's first implementation wave or wait until the task/direct-run surface is already in place?
+- Should CLI/direct-run support land in this gate's first implementation wave or wait until the task/direct-run surface is already in place?
 
 ## Done When
 
-- Child items exist for the implementation slices above or the epic itself has been refined into an implementation-ready handoff.
-- The Rust product covers the core vanilla question feature semantics across runtime, server API, TUI, and relevant CLI surfaces.
+- The question tool and every question surface match how the question feature works in vanilla OpenCode
+  at the frozen reference commit, verified side-by-side.
+- The Rust product covers the core vanilla question feature semantics across runtime, server API, TUI,
+  and relevant CLI surfaces.
+- Every parity gap listed under "Parity Gaps To Split Into Child Items" is either implemented or
+  explicitly resolved as a documented deviation in this card.
 - Any preferred UX deviations are documented as deliberate product choices, not accidental parity gaps.
+- `FEAT-012` and any other blocked question-tool story is unblocked and may proceed from `development`.

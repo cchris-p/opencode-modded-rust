@@ -5,11 +5,20 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "hold"
+predecessors: "GATE-002"
 created: "2026-09-09"
 ---
 
 # CLI/AgentExecutor tool-loop parity
+
+## Blocked By
+
+- `GATE-002` Gate: Question tool must match vanilla OpenCode exactly
+  (`boards/todo/gate-question-tool-full-parity.md`).
+- The CLI tool-loop path must wire a real ask/approval (question) path instead of
+  hard-denying `Ask` tools. That question UX must reach full vanilla parity before this
+  card can be completed, so it is on hold until `GATE-002` is satisfied.
 
 ## Summary
 

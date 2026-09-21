@@ -23,7 +23,7 @@ Close the structural parity gaps that let behavior diverge across providers and 
 
 - `FEAT-010` Anthropic provider tool transport parity.
 - `FEAT-011` Consolidate the v1/v2 session prompt loops.
-- `FEAT-012` CLI/`AgentExecutor` tool-loop parity.
+- `FEAT-012` CLI/`AgentExecutor` tool-loop parity (on hold; blocked by `GATE-002` question-tool parity).
 - Keep `invariants/coding-session-behavior.md` and `wiki/coding-session-parity-audit.md` current as behavior changes.
 
 ## Done when
@@ -36,7 +36,7 @@ Close the structural parity gaps that let behavior diverge across providers and 
 
 - `FEAT-010` Anthropic provider tool transport parity
 - `FEAT-011` Consolidate v1/v2 session prompt loops
-- `FEAT-012` CLI/AgentExecutor tool-loop parity
+- `FEAT-012` CLI/AgentExecutor tool-loop parity (on hold; blocked by `GATE-002`)
 - `BUG-006` DeepSeek tool loop (completed; OpenAI-compatible path)
 - `START-008` Full parity deferred (boundary; this phase is targeted, not broad parity)
 
