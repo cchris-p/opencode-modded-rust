@@ -33,6 +33,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `cli-task-targeting.md` defines CLI task target selection and queued cross-client send requirements.
 - `coding-session-polling.md` defines low-context polling requirements for coding-session waits.
 - `verification.md` defines verification requirements.
+- `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.
 - Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
 
 ## Cross-repo boundary
