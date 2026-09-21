@@ -19,9 +19,9 @@ pub use router::{Route, Router};
 pub use terminal::{reset_title, set_session_title, set_title};
 pub use theme::Theme;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TuiExit {
-    Exit,
+    Exit { session_id: Option<String> },
     Detach,
 }
 
