@@ -98,3 +98,32 @@ This excludes URL-loaded skills, which are tracked separately by `SKILLS-002`.
 - Merged PR #46 into `development` on 2026-09-19.
 - Remote and local feature branches are cleaned up.
 - Item remains in `qa` pending post-merge QA evidence or explicit completion direction.
+
+## QA Verification - 2026-09-21
+
+Environment: `development` at `0564ab7`, macOS, vanilla checkout at `$HOME/repos/opencode-modded` (`35699e56d`), `bun` available.
+
+Passing:
+
+- `cargo check -p opencode-config -p opencode-tool -p opencode-server -p opencode-tui` - pass.
+- `cargo test -p opencode-tool skill` - 8 passed.
+- `cargo test -p opencode-config skills` - 1 passed (`flat_skills_config_splits_local_paths_and_urls_like_vanilla`).
+- `cargo test -p opencode-tui skill_list` - 2 passed.
+- `cargo test -p opencode-server --test skill_route skill_route_returns_discovered_names_and_descriptions` - 1 passed.
+- `bash -n scripts/compare-local-skills-parity.sh` - pass.
+- Cross-product parity with both products pinned to the standard config root: `VANILLA_OPENCODE_CMD='XDG_CONFIG_HOME="$HOME/.config" bun .../debug skill' RUST_OPENCODE_CMD='XDG_CONFIG_HOME="$HOME/.config" cargo run ... debug skill' scripts/compare-local-skills-parity.sh .` - `Local skill name lists match.` (37 names identical).
+
+Blocking finding (card stays in `qa`):
+
+- The verification command exactly as listed on the card, `PATH="$HOME/.bun/bin:$PATH" scripts/compare-local-skills-parity.sh .`, fails on this machine. This shell sets `XDG_CONFIG_HOME=/Users/cchrisleepyles/standards/nvim-configs/profiles`, and the script's inner `bash -lc` re-exports it.
+- Vanilla resolves its global config root as `${XDG_CONFIG_HOME}/opencode` (`packages/core/src/global.ts:13` via `xdg-basedir`), so it scans `/Users/cchrisleepyles/standards/nvim-configs/profiles/opencode/{skill,skills}` and discovers only the project-local `transcript-session-audit`.
+- Rust ignores `XDG_CONFIG_HOME` here and scans `~/.config/opencode/{skill,skills}` plus the platform config dir, discovering all 37 global skills.
+- Net result: in an environment with a non-default `XDG_CONFIG_HOME`, vanilla and Rust read different global roots and the exact-list parity invariant (`invariants/skills/discovery.md:7`) does not hold: vanilla = 1 local name, Rust = 37.
+- Acceptance criterion "Given the same local global and project skill files, vanilla OpenCode and OpenCode Rust discover the exact same local skill names" is therefore not met for this environment.
+
+Options to close before moving to `done`:
+
+1. Make Rust honor `XDG_CONFIG_HOME` for the macOS `~/.config/opencode` compatibility root so both products agree under a non-default XDG, or
+2. Make the parity script normalize/isolate `XDG_CONFIG_HOME` (or explicitly document it as a precondition) and update the invariant accordingly.
+
+Standard-environment behavior (XDG unset) is exact parity and passes; the gap is specific to a non-default `XDG_CONFIG_HOME`.
