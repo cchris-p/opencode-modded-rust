@@ -79,6 +79,7 @@ server alive after the TUI exits.
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/35
+- Follow-up attach option PR: https://github.com/cchris-p/opencode-modded-rust/pull/62
 
 ## QA Status
 
