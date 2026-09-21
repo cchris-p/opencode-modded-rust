@@ -1,7 +1,7 @@
 ---
 id: "H-004"
 title: "GATE-001 session prompt queue and queued display parity - Handoff"
-status: "ready"
+status: "closed"
 created: "2026-09-21"
 updated: "2026-09-21"
 owner: ""
@@ -195,3 +195,11 @@ shared queue state, status shape, abort/cancel, restart, optimistic reconciliati
 the residual decisions (`--stream` while queued, status formats) are resolved. The one deliberate
 partial is the CLI run-footer manage surface, which is conditional on a CLI run surface existing and is
 called out rather than left ambiguous.
+
+## Closeout (2026-09-21)
+
+- `GATE-001` is implemented, user-QA confirmed, and marked `done`; it is now the primary and sole story
+  for session prompt queuing and the queued-message display.
+- `FEAT-021`, `FEAT-005`, and `FEAT-019` were archived by user request and will not be implemented. PR 1
+  was delivered by `GATE-001`; PR 2 and PR 3 are cancelled.
+- This handoff is closed. No further work is planned from it.

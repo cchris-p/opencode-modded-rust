@@ -23,7 +23,8 @@ queued work; and `prompt_async` reports `queued` without executing. See
 `invariants/message-queuing.md` for the current-behavior evidence and target invariants.
 
 This card documents the vanilla behavior to target (section below), the current Rust gaps, and the
-concrete acceptance criteria. It is the refinement artifact for the blocked stories.
+concrete acceptance criteria. It is the primary and sole story for session prompt queuing and the
+queued-message display.
 
 ## Gate requirement
 
@@ -259,18 +260,21 @@ implementation. They are binding alongside the observable behavior above.
 - `cargo test -p opencode-server` including the concurrent-send regression test; `cargo test -p
   opencode-tui` for the queued display.
 
-## Blocked Items
+## Archived Follow-ups
 
-- `FEAT-021` Queue CLI task sends while TUI session is open.
-- `FEAT-005` Copy Cline-style CLI task send conventions.
-- `FEAT-019` Add CLI status visibility for tasks and background sessions.
+- `FEAT-021` Queue CLI task sends while TUI session is open - archived 2026-09-21 (not planned).
+- `FEAT-005` Copy Cline-style CLI task send conventions - archived 2026-09-21 (not planned).
+- `FEAT-019` Add CLI status visibility for tasks and background sessions - archived 2026-09-21 (not planned).
+
+Session prompt queuing and the queued-message display are owned solely by this card. The three
+follow-up stories were archived by user request on 2026-09-21 and will not be implemented.
 
 ## Related Items
 
 - `invariants/message-queuing.md` - current-behavior evidence and target invariants for this gate.
-- `FEAT-021` Queue CLI task sends while TUI session is open - core queue implementation story.
-- `FEAT-005` Copy Cline-style CLI task send conventions - submits prompts into the queue.
-- `FEAT-019` Add CLI status visibility for tasks and background sessions - surfaces queued state.
+- `FEAT-021` Queue CLI task sends while TUI session is open - archived 2026-09-21; queue implemented by this card.
+- `FEAT-005` Copy Cline-style CLI task send conventions - archived 2026-09-21; not planned.
+- `FEAT-019` Add CLI status visibility for tasks and background sessions - archived 2026-09-21; not planned.
 - `FEAT-020` Add default task target selection for CLI sends - routing into a target; already merged,
   not blocked.
 - `FEAT-007` Add advanced coding-session polling - adjacent waiting-on-state work, not queueing.
@@ -366,3 +370,9 @@ Side-by-side parity evidence:
 
 User confirmed queuing works very well and is similar to vanilla OpenCode. Further testing deferred;
 card marked `done` and moved from `qa` to `done` on user request. No follow-up items identified.
+
+## Queue Consolidation (2026-09-21)
+
+- `FEAT-021`, `FEAT-005`, and `FEAT-019` were archived by user request and will not be implemented.
+  This card is now the primary and sole story for session prompt queuing and the queued-message display.
+- The Merge Closeout instruction to start those three cards from `development` is superseded.

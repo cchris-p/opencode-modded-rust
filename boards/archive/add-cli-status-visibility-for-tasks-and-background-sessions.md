@@ -5,17 +5,16 @@ priority: "P3"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
-predecessors: "GATE-001"
+status: "archived"
 created: "2026-09-16"
 ---
 
 # Add CLI status visibility for tasks and background sessions
 
-## Blocked By
+## Archived
 
-- `GATE-001` Gate: prompt queuing and queue display must match vanilla OpenCode exactly.
-  Do not complete this story until GATE-001 is satisfied.
+Archived 2026-09-21 at user request; not planned for implementation. Session prompt queuing and its
+queued-message display are owned by `GATE-001` (done).
 
 ## Summary
 
