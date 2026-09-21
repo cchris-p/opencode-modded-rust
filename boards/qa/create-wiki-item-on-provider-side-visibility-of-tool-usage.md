@@ -5,7 +5,7 @@ priority: "P2"
 type: "docs"
 area: "START"
 spec: "wiki/README.md"
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -84,3 +84,32 @@ The product now attaches an agent system prompt, environment context, and a perm
 - Treat this as a documentation and evaluation item; the deliverable is the wiki document plus any split-off gaps.
 - Prefer concrete evidence (request traces, file references) over general statements about privacy.
 - If a section cannot be grounded in code or an observed request, mark it as an open question rather than asserting it.
+
+## Dev Notes
+
+Delivered `wiki/provider-side-visibility.md` and linked it from `wiki/README.md` navigation.
+
+What the document covers:
+
+- Request assembly: system prompt (agent/model + environment block), conversation history, attachments, tool schemas, tool calls, and tool results, with code references (`crates/opencode-server/src/agentic.rs`, `crates/opencode-session/src/prompt.rs`, `crates/opencode-session/src/system.rs`).
+- Provider-path differences: OpenAI-compatible sends the full payload (tools, tool calls, tool results); Anthropic and Google currently send system text plus text history only and drop tools/tool results (`FEAT-010`); Ollama is an OpenAI-compatible local route.
+- Sensitivity classification split into provider-visible versus provider-inferable, with concrete examples and file references.
+- Exposure-limiting controls (permission filtering, output truncation and caps, compaction, local routing) stated explicitly as size/gating limits, not privacy guarantees.
+- Follow-up candidates and open questions, including the absence of secret redaction, absolute-path exposure in the environment block, separate egress from `websearch`/`codesearch`/`webfetch`, and unaudited plugin/provider-option transforms.
+
+Notable findings:
+
+- The broadest exposure (file bodies, command output) currently only reaches OpenAI-compatible providers; Anthropic and Google receive prompt and text history but no tools or tool results. This is a transport gap, not a privacy boundary.
+- Instruction files (`AGENTS.md`/`CLAUDE.md`) become provider-visible both via the `read` tool injection path and, for global files, during session assembly.
+- There is no content redaction on any path.
+
+Verification performed:
+
+- Read and cross-checked request assembly, system prompt/environment, instruction injection, provider conversion, tool registry, and tool output limits against source.
+- Confirmed tool serialization shape in `openai_chat.rs`, and absence of a `tools` field in the Anthropic and Google request structs.
+- Confirmed output limits in `bash.rs`, `truncation.rs`, `glob_tool.rs`, `grep_tool.rs`, and `read.rs`.
+
+Deferred (not implemented here, per non-goals):
+
+- Creating board items for the follow-up candidates was intentionally left to the user; item 1 already exists as `FEAT-010`.
+- No live request-body trace was captured; that remains a recommended future verification listed as an open question.
