@@ -278,6 +278,59 @@ impl ToolResult {
     }
 }
 
+/// Tracks which instruction files (`AGENTS.md`, etc.) have already been
+/// injected into a session's tool output, so repeated `read` calls do not
+/// re-attach identical content.
+///
+/// Values are the last-injected content per instruction file path. A path is
+/// injected again only when its content differs from the recorded version.
+#[derive(Clone, Default)]
+pub struct LoadedInstructions {
+    loaded: Arc<std::sync::Mutex<HashMap<String, String>>>,
+}
+
+impl LoadedInstructions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns `true` when the instruction file at `path` should be injected
+    /// (never seen, or content changed) and records the new content.
+    pub fn mark_for_injection(&self, path: &str, content: &str) -> bool {
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match loaded.get(path) {
+            Some(existing) if existing == content => false,
+            _ => {
+                loaded.insert(path.to_string(), content.to_string());
+                true
+            }
+        }
+    }
+
+    pub fn is_loaded(&self, path: &str) -> bool {
+        self.loaded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(path)
+    }
+}
+
+impl std::fmt::Debug for LoadedInstructions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let count = self
+            .loaded
+            .lock()
+            .map(|loaded| loaded.len())
+            .unwrap_or_default();
+        f.debug_struct("LoadedInstructions")
+            .field("count", &count)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct ToolContext {
     pub session_id: String,
@@ -304,6 +357,7 @@ pub struct ToolContext {
     pub get_last_model: Option<GetLastModelCallback>,
     pub create_synthetic_message: Option<CreateSyntheticMessageCallback>,
     pub project_root: String,
+    pub loaded_instructions: LoadedInstructions,
     pub registry: Option<Arc<ToolRegistry>>,
     #[cfg(feature = "lsp")]
     pub lsp_registry: Option<Arc<LspClientRegistry>>,
@@ -336,6 +390,7 @@ impl ToolContext {
             get_last_model: None,
             create_synthetic_message: None,
             project_root: directory,
+            loaded_instructions: LoadedInstructions::new(),
             registry: None,
             #[cfg(feature = "lsp")]
             lsp_registry: None,
@@ -354,6 +409,13 @@ impl ToolContext {
 
     pub fn with_registry(mut self, registry: Arc<ToolRegistry>) -> Self {
         self.registry = Some(registry);
+        self
+    }
+
+    /// Share a loaded-instruction set across tool calls in the same session or
+    /// prompt turn so instruction files are injected at most once.
+    pub fn with_loaded_instructions(mut self, loaded: LoadedInstructions) -> Self {
+        self.loaded_instructions = loaded;
         self
     }
 
