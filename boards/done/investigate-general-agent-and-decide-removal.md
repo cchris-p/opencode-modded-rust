@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -14,6 +14,17 @@ created: "2026-09-21"
 ## Summary
 
 Determine what the builtin `general` agent actually does in this product, why it exists, and whether it should be removed, demoted to a subagent, or kept. The current expectation is that it is redundant with `build` and that removing it is the right call, but that decision needs a grounded trace before anything is deleted.
+
+## Outcome (2026-09-21)
+
+Investigation completed and the decision was made to **disable `general` for now** rather than delete it.
+
+- Verdict: `general` was redundant, not useless. It was selectable and did affect requests, but only as a strictly inferior duplicate of `build`: generic system prompt, `temperature 0.7`, and a defaults-only permission set that denied `question` and `plan_enter`. As a default it was unreachable because `resolve_agent_name` prefers `build`. Vanilla's `general` is a subagent, not a primary mode.
+- Action taken: removed `BuiltinAgent::General` from `BuiltinAgent::all()` (so it is not registered), made `AgentInfo::default_agent()` return `build()`, dropped the `general` preference from `AgentRegistry::default_agent()`, and removed `general` from the TUI `known_agents`, the task-tool subagent catalog, and the session/metadata agent fallbacks (now `build`).
+- The `BuiltinAgent::General` variant and `AgentInfo::general()` were retained so the disable is a one-line reversal.
+- Documentation: `wiki/agent-modes-and-custom-agents.md` is the extensive write-up of the agent model, default resolution, custom-agent config, permission rulesets, and the disable decision.
+
+Remaining open question (why this item stays open): should `general` be removed permanently, or reintroduced as a `Subagent` matching the reference's parallel general-purpose role? Revisit after some use of the disabled state.
 
 ## Why this exists
 
@@ -81,3 +92,16 @@ This product models `general` differently: it is a **primary** agent and is wire
 
 - This is the inverse of the parity audit's "default-agent inconsistency": even if `general` were the intended default, `resolve_agent_name` currently overrides it with `build`, so the two halves of the codebase disagree. Any resolution must pick one story.
 - `compaction` is also registered as a builtin but is a `Subagent`/internal agent, which is the pattern to follow if `general` is kept as non-primary.
+
+## Dev Notes
+
+- Implemented the disable (see Outcome above). Code changes:
+  - `crates/opencode-agent/src/agent.rs` — dropped `General` from `BuiltinAgent::all()` (`BuiltinAgent::all()` now 5 entries), `AgentInfo::default_agent()` returns `build()`, and `AgentRegistry::default_agent()` prefers `build` deterministically before falling back to the first non-hidden non-subagent.
+  - `crates/opencode-tool/src/task.rs` — removed `general` from the static subagent catalog.
+  - `crates/opencode-session/src/prompt.rs` — three agent-metadata fallbacks now default to `"build"` instead of `"general"`.
+  - `crates/opencode-tui/src/components/prompt.rs` — removed `general` from `known_agents`.
+- Documentation: added `wiki/agent-modes-and-custom-agents.md` and linked it from `wiki/README.md`.
+- Tests: updated `builtin_agents_have_expected_defaults` to assert `general` is absent and the default is `build`; renamed the model-override test to `config_can_reintroduce_general_agent_with_model` to document the config re-enable path.
+- Verification: `cargo fmt --all`; `cargo check -p opencode-session -p opencode-tui -p opencode-server`; `cargo test -p opencode-agent -p opencode-tool` (41 passed). Clippy on the affected crates shows only pre-existing unrelated warnings.
+- Concurrency note: unrelated in-progress changes from another work session were left uncommitted and were not included in this change set.
+- Closeout: merged via PR #51 into `development` (merge commit `9e4a8fd`).

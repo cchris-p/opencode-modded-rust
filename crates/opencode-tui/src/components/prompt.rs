@@ -169,7 +169,6 @@ impl Prompt {
             known_agents: vec![
                 "build".to_string(),
                 "plan".to_string(),
-                "general".to_string(),
                 "explore".to_string(),
                 "compaction".to_string(),
                 "title".to_string(),

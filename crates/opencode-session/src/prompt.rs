@@ -2048,7 +2048,7 @@ impl SessionPrompt {
                         let agent = item
                             .get("agent")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("general")
+                            .unwrap_or("build")
                             .to_string();
                         let prompt = item
                             .get("prompt")
@@ -2440,7 +2440,7 @@ impl SessionPrompt {
                             .metadata
                             .get("agent")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("general")
+                            .unwrap_or("build")
                             .to_string(),
                         model: V2ModelRef {
                             provider_id: msg
@@ -2514,7 +2514,7 @@ impl SessionPrompt {
                             .metadata
                             .get("agent")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("general")
+                            .unwrap_or("build")
                             .to_string(),
                         path: MessagePath {
                             cwd: ".".to_string(),
