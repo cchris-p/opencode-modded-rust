@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -144,14 +144,14 @@ All changes are local to the prompt component; no keybind, storage, or app chang
 
 ## Acceptance criteria
 
-- [ ] `Down` at the newest history entry never introduces `""` into an otherwise non-empty box.
-- [ ] With an empty pre-browse draft, `Down` at the newest entry leaves the newest entry visible
+- [x] `Down` at the newest history entry never introduces `""` into an otherwise non-empty box.
+- [x] With an empty pre-browse draft, `Down` at the newest entry leaves the newest entry visible
       and repeated `Down` presses are inert.
-- [ ] A captured non-empty pre-browse draft is restored exactly, cursor at end.
-- [ ] `Alt+Down` exhibits the same bottom-of-walk behavior as bare `Down`.
-- [ ] Existing `history_navigation_preserves_draft` still passes.
-- [ ] New tests cover the empty-draft, non-empty-draft, and repeat-`Down` cases.
-- [ ] `cargo test -p opencode-tui --lib prompt -- --test-threads=1` passes for the new tests
+- [x] A captured non-empty pre-browse draft is restored exactly, cursor at end.
+- [x] `Alt+Down` exhibits the same bottom-of-walk behavior as bare `Down`.
+- [x] Existing `history_navigation_preserves_draft` still passes.
+- [x] New tests cover the empty-draft, non-empty-draft, and repeat-`Down` cases.
+- [x] `cargo test -p opencode-tui --lib prompt -- --test-threads=1` passes for the new tests
       (existing unrelated failures excepted).
 
 ## Recommended verification
@@ -191,3 +191,22 @@ All changes are local to the prompt component; no keybind, storage, or app chang
   have.
 - Keep the implementation to the single `history_next` branch plus tests; do not refactor the
   history model in this card.
+
+## Dev Notes
+
+- Implemented the bottom-of-walk rule in `Prompt::history_next`: when there is no non-empty
+  pre-browse draft to restore, `Down`/`Alt+Down` stays parked on the newest history entry instead of
+  replacing the prompt with `""`.
+- Preserved the existing non-empty draft restore behavior and kept storage, keybinds, and clear
+  semantics unchanged.
+- Added focused prompt unit tests for empty-draft parking, restored-draft inert repeat `Down`, and
+  no-op `Down` without an active recall.
+
+## Verification
+
+- `cargo fmt --all --check`
+- `cargo test -p opencode-tui --lib prompt -- --test-threads=1`
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/69
