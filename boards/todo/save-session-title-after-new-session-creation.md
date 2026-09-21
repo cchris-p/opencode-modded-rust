@@ -1,5 +1,5 @@
 ---
-id: "BUG-020"
+id: "BUG-026"
 title: "Save session title after new session creation"
 priority: "P2"
 type: "bug"
