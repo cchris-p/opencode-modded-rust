@@ -32,6 +32,11 @@ struct ThinkingToggleHit {
     reasoning_id: String,
 }
 
+struct ToolToggleHit {
+    line_index: usize,
+    tool_id: String,
+}
+
 pub struct SessionView {
     context: Arc<AppContext>,
     session_id: String,
@@ -40,6 +45,8 @@ pub struct SessionView {
     messages_viewport_height: usize,
     expanded_reasoning: HashSet<String>,
     thinking_toggle_hits: Vec<ThinkingToggleHit>,
+    expanded_tool_calls: HashSet<String>,
+    tool_toggle_hits: Vec<ToolToggleHit>,
     last_messages_area: Option<Rect>,
     line_to_message: Vec<Option<String>>,
     message_first_lines: HashMap<String, usize>,
@@ -58,6 +65,8 @@ impl SessionView {
             messages_viewport_height: 0,
             expanded_reasoning: HashSet::new(),
             thinking_toggle_hits: Vec::new(),
+            expanded_tool_calls: HashSet::new(),
+            tool_toggle_hits: Vec::new(),
             last_messages_area: None,
             line_to_message: Vec::new(),
             message_first_lines: HashMap::new(),
@@ -554,7 +563,9 @@ impl SessionView {
 
         self.last_messages_area = Some(messages_area);
         self.thinking_toggle_hits.clear();
+        self.tool_toggle_hits.clear();
         let mut visible_reasoning_ids = HashSet::new();
+        let mut visible_tool_ids = HashSet::new();
 
         let mut lines = Vec::new();
         let mut line_to_message: Vec<Option<String>> = Vec::new();
@@ -781,21 +792,40 @@ impl SessionView {
                                     } else {
                                         super::session_tool::ToolState::Pending
                                     };
-                                    let tool_lines = super::session_tool::render_tool_call(
+                                    let expanded = self.expanded_tool_calls.contains(id);
+                                    let start_line = lines.len();
+                                    let rendered = super::session_tool::render_tool_call(
                                         id,
                                         name,
                                         arguments,
                                         state,
                                         &tool_results,
                                         show_tool_details,
+                                        expanded,
                                         &theme,
                                     );
-                                    append_message_lines(
-                                        &mut lines,
-                                        &mut line_to_message,
-                                        &msg.id,
-                                        tool_lines,
-                                    );
+                                    if !rendered.lines.is_empty() {
+                                        let end_line = start_line + rendered.lines.len() - 1;
+                                        if rendered.collapsible {
+                                            visible_tool_ids.insert(id.clone());
+                                            self.tool_toggle_hits.push(ToolToggleHit {
+                                                line_index: start_line,
+                                                tool_id: id.clone(),
+                                            });
+                                            if end_line > start_line {
+                                                self.tool_toggle_hits.push(ToolToggleHit {
+                                                    line_index: end_line,
+                                                    tool_id: id.clone(),
+                                                });
+                                            }
+                                        }
+                                        append_message_lines(
+                                            &mut lines,
+                                            &mut line_to_message,
+                                            &msg.id,
+                                            rendered.lines,
+                                        );
+                                    }
                                     prev_was_text = false;
                                     prev_was_tool = true;
                                 }
@@ -886,6 +916,8 @@ impl SessionView {
 
         self.expanded_reasoning
             .retain(|id| visible_reasoning_ids.contains(id));
+        self.expanded_tool_calls
+            .retain(|id| visible_tool_ids.contains(id));
         self.line_to_message = line_to_message;
         self.message_first_lines = message_first_lines;
 
@@ -937,6 +969,19 @@ impl SessionView {
         if line_index >= self.rendered_line_count {
             return false;
         }
+
+        if let Some(tool_id) = self
+            .tool_toggle_hits
+            .iter()
+            .find(|hit| hit.line_index == line_index)
+            .map(|hit| hit.tool_id.clone())
+        {
+            if !self.expanded_tool_calls.insert(tool_id.clone()) {
+                self.expanded_tool_calls.remove(&tool_id);
+            }
+            return true;
+        }
+
         let Some(reasoning_id) = self
             .thinking_toggle_hits
             .iter()
