@@ -268,4 +268,7 @@ impossible to mistake for a complete one.
 - Moved to `qa` on 2026-09-21 for local verification on `bug/BUG-023-export-honesty`.
 - User will run the original `Give me all the skills board items` plan-mode prompt in `ort` and confirm
   the transcript no longer reads as a silent incomplete export.
-- PR stays open until the user verifies locally and explicitly requests merge closeout.
+- PR #55 merged into `development` on 2026-09-21 (`a98ae0f`); the merged PR branch was deleted both
+  remotely and locally, and the local checkout is back on `development`.
+- Remains in `qa` pending a recorded QA report or explicit user direction to complete. No live
+  plan-mode reproduction result has been recorded on this card yet.
