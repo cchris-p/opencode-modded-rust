@@ -5,11 +5,15 @@ priority: "P3"
 type: "docs"
 area: "START"
 spec: ""
-status: "todo"
+status: "archived"
 created: "2026-08-28"
 ---
 
 # Full parity deferred
+
+## Archived
+
+Archived 2026-09-21 at user request; broad parity tracking is no longer needed because the tool is sufficient for the current daily-driver workflow.
 
 ## Summary
 

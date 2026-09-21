@@ -5,11 +5,15 @@ priority: "P2"
 type: "epic"
 area: "PHASE"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "archived"
 created: "2026-09-10"
 ---
 
 # Transport and runtime parity foundation
+
+## Archived
+
+Archived 2026-09-21 at user request; phase-level parity tracking is no longer needed because the tool is sufficient for the current daily-driver workflow.
 
 ## Summary
 

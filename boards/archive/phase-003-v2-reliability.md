@@ -5,11 +5,15 @@ priority: "P2"
 type: "epic"
 area: "PHASE"
 spec: "wiki/v2.md"
-status: "todo"
+status: "archived"
 created: "2026-09-10"
 ---
 
 # V2 reliability
+
+## Archived
+
+Archived 2026-09-21 at user request; phase-level tracking is no longer needed because the tool is sufficient for the current daily-driver workflow.
 
 ## Summary
 
