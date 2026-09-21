@@ -176,11 +176,6 @@ fn get_agent(name: &str) -> Option<AgentInfo> {
 fn get_available_agents() -> Vec<AgentInfo> {
     vec![
         AgentInfo {
-            name: "general".to_string(),
-            model: None,
-            can_use_task: false,
-        },
-        AgentInfo {
             name: "explore".to_string(),
             model: None,
             can_use_task: false,
