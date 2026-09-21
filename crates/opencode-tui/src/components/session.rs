@@ -533,6 +533,23 @@ impl SessionView {
             .iter()
             .rposition(|m| matches!(m.role, MessageRole::Assistant));
 
+        // Vanilla queued boundary: `completed` is the last assistant message
+        // with a completion timestamp; `pending` is the last assistant after it
+        // that is still in flight. User messages after `pending` are queued.
+        let completed_assistant_idx = messages
+            .iter()
+            .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
+        let pending_assistant_idx = messages
+            .iter()
+            .enumerate()
+            .filter(|(idx, m)| {
+                matches!(m.role, MessageRole::Assistant)
+                    && m.completed_at.is_none()
+                    && completed_assistant_idx.map_or(true, |completed| *idx > completed)
+            })
+            .map(|(idx, _)| idx)
+            .last();
+
         let message_gap_lines = 1usize;
 
         self.last_messages_area = Some(messages_area);
@@ -574,11 +591,13 @@ impl SessionView {
                 MessageRole::User => {
                     let message_bg = user_bg;
                     let message_border = user_border_color_for_agent(msg.agent.as_deref(), &theme);
+                    let is_queued = pending_assistant_idx.is_some_and(|pending| idx > pending);
                     let user_lines = super::session_message::render_user_message(
                         msg,
                         &theme,
                         show_timestamps,
                         msg.agent.as_deref(),
+                        is_queued,
                     );
                     append_message_lines(
                         &mut lines,
