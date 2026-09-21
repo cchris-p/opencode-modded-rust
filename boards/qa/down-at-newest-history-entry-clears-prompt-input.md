@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -206,3 +206,7 @@ All changes are local to the prompt component; no keybind, storage, or app chang
 
 - `cargo fmt --all --check`
 - `cargo test -p opencode-tui --lib prompt -- --test-threads=1`
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/69
