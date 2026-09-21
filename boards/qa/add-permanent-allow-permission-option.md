@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-19"
 ---
 
@@ -103,3 +103,60 @@ Persisting to **project-local** config (inside the working directory) is the poi
 - Project-local is the whole point: the config lives with the repo so `git commit` propagates permissions across machines. Do not fall back to global config.
 - Reuse the existing config schema, loader search order, and permission normalization instead of introducing a parallel representation.
 - Server owns the write because it knows the workspace directory and already links `update_config` for project config patches (`crates/opencode-server/src/routes.rs:2691-2698`).
+
+## Implementation Notes
+
+- Shortcut is `p`. The rule writes to the workspace's plain `opencode.json` via `update_config`; an existing `opencode.jsonc` is left untouched (load order reads `.jsonc` then `.json`, so the new rule wins). Comment-preserving JSONC writes remain deferred.
+- `PermissionConfig` deep-merge was made pattern-aware (`crates/opencode-config/src/schema.rs`): merging rules under the same permission key now unions sibling patterns instead of replacing the whole rule. This is what makes a permanent grant preserve unrelated patterns and stay idempotent on repeat.
+- TUI: `PermissionAction::ApprovePermanent`, `p` handler, a fourth hint-row button, and mouse hit-testing fixed to four column ranges (`crates/opencode-tui/src/components/permission.rs`, `crates/opencode-tui/src/app/app.rs`). The reply value is `permanent`.
+- Server (`crates/opencode-server/src/routes.rs`): accepts `permanent`, derives exact-pattern `Allow` rules from the request (using `normalize_permission_pattern`, so `external_directory` boundaries are handled), writes project config, and records the grant in an in-memory per-session overlay merged into the ask evaluation. The overlay keeps an approved request from re-prompting before the next config load; config remains the durable source of truth.
+- Reply response changed from `bool` to `PermissionReplyResponse { ok, path, error }` so the TUI can toast the exact config file written and surface write failures. `path` is also included in the `permission.replied` broadcast.
+
+## Verification
+
+- `cargo build` (full workspace)
+- `cargo test -p opencode-config` (58 unit + 5 integration, including `permission_merge_preserves_sibling_patterns_and_is_idempotent` and `test_update_config_grant_preserves_keys_and_is_idempotent`)
+- `cargo test -p opencode-permission`
+- `cargo test -p opencode-server --lib` (including `permission_grant_tests`)
+- `cargo test -p opencode-tui --lib app::app::tests` and the permission-focused `components::prompt` checks in isolation
+- Deferred to manual QA: interactive `ort-build` + `ort` run confirming the fourth button, the toast path, cross-session/config reuse, and the second-machine/repo-clone grant.
+
+## QA Report - 2026-09-21 (partial)
+
+Environment: workspace `/Users/cchrisleepyles/repos/opencode-modded-rust`, uncommitted FEAT-027 working tree.
+
+User-verified: the `p` (Permanently allow) hotkey works and approves the request.
+
+Verified by closeout QA:
+
+- Project-local write is real: `opencode.json` exists at the workspace root (untracked, created during the `p` test), not in `~/.config`.
+- The file contains the expected `permission.external_directory` grant map:
+  `/private/tmp/*`, `/Users/cchrisleepyles/.config/opencode/*`, `/private/*`, and
+  `/Users/cchrisleepyles/repos/opencode-modded/packages/core/src/plugin/*`, all `allow`.
+- Every saved rule's target directory exists (`/private/tmp`, `/private`,
+  `~/.config/opencode`, and the opencode-modded `packages/core/src/plugin` path).
+- Durable load proven with a fresh process: `opencode debug config` (cwd = workspace) merges
+  `opencode.json` with `opencode.jsonc`; `model: deepseek/deepseek-v4-flash` is preserved and all
+  four `permission.external_directory` rules are present in the resolved config.
+- Tests pass: `opencode-config` 58+5 (incl. `permission_merge_preserves_sibling_patterns_and_is_idempotent`,
+  `test_update_config_grant_preserves_keys_and_is_idempotent`), `opencode-permission` 9,
+  `opencode-server` `permission_grant` 3 (incl. external-directory normalization).
+
+Deferred acceptance criteria (review later, not yet verified):
+
+- Fresh session in the same workspace auto-approves matching requests without prompting.
+- Full TUI/server restart still honors the grant.
+- Committing the config and cloning to a second location honors the grant.
+- Repeat `p` on the same request keeps a single rule (idempotency proven by unit test only, not live).
+- Toast names the exact config file path in the live TUI.
+
+Status: remains in `qa`. The feature is committed and merged (see Merge Closeout), but the deferred
+acceptance criteria above are not yet verified, so the item cannot move to `done`.
+
+## Merge Closeout
+
+- Committed as `f7eaba6` on `feature/FEAT-027-permanent-allow-permission`.
+- Merged via PR #50 into `development` (merge commit `f0dfb34`) on 2026-09-21.
+- Local and remote feature branches deleted; `development` fast-forwarded to `f0dfb34`.
+- Item remains in `qa` pending the deferred acceptance-criteria review.
+

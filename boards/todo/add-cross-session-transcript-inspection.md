@@ -48,7 +48,7 @@ The first implementation should not automatically pull another session's full tr
 
 - Injecting another session's full transcript into the current session's context automatically.
 - Writing to, resuming, or otherwise mutating the inspected session.
-- Replacing `FEAT-003` compact fork context or `SKILL-001` session-summary cascade; this card is about reading raw-ish session chats.
+- Replacing `FEAT-003` compact fork context or `SKILLS-004` session-summary cascade; this card is about reading raw-ish session chats.
 - Merging two sessions into one.
 - Building a full global multi-workspace session browser.
 - Guaranteeing live/streaming updates of an in-progress session's transcript in the first pass.
@@ -92,7 +92,7 @@ The first implementation should not automatically pull another session's full tr
 - `FEAT-007` Add advanced coding-session polling
 - `FEAT-022` Persist session workspace identity
 - `FEAT-023` Filter session list and load by workspace
-- `SKILL-001` Add session-summary cascade skill by session name
+- `SKILLS-004` Add session-summary cascade skill by session name
 
 ## Notes
 

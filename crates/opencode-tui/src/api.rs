@@ -283,6 +283,16 @@ pub struct PermissionReplyRequest {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PermissionReplyResult {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionOptionInfo {
     pub label: String,
@@ -796,7 +806,7 @@ impl ApiClient {
         request_id: &str,
         reply: &str,
         message: Option<String>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<PermissionReplyResult> {
         let url = format!("{}/permission/{}/reply", self.base_url, request_id);
         let response = self
             .client
@@ -818,7 +828,7 @@ impl ApiClient {
             );
         }
 
-        Ok(response.json::<bool>()?)
+        Ok(response.json::<PermissionReplyResult>()?)
     }
 
     pub fn list_questions(&self) -> anyhow::Result<Vec<QuestionInfo>> {
