@@ -1908,9 +1908,11 @@ impl App {
             return;
         }
         let lines = self.screen_lines.clone();
-        let text = self
-            .selection
-            .get_selected_text(|row| lines.get(row as usize).cloned());
+        let text = clean_selection_text(
+            self.selection
+                .get_selected_text(|row| lines.get(row as usize).cloned())
+                .as_str(),
+        );
         if !text.is_empty() {
             match Clipboard::write_text(&text) {
                 Ok(()) => {
@@ -3904,6 +3906,32 @@ impl App {
     }
 }
 
+fn clean_selection_text(text: &str) -> String {
+    text.lines()
+        .map(clean_selection_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn clean_selection_line(line: &str) -> &str {
+    let trimmed = line.trim_start_matches(' ');
+    let Some(first) = trimmed.chars().next() else {
+        return "";
+    };
+
+    if matches!(first, '│' | '┃' | '▸') {
+        return trimmed
+            .trim_start_matches(['│', '┃', '▸', ' '])
+            .trim_start_matches(' ');
+    }
+
+    if line.len().saturating_sub(trimmed.len()) == 2 {
+        return trimmed;
+    }
+
+    line
+}
+
 fn prompt_should_handle_key(key: KeyEvent) -> bool {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return false;
@@ -4731,6 +4759,24 @@ fn timeline_entries_from_messages(msgs: &[Message]) -> Vec<TimelineEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clean_selection_text_removes_reported_leading_chrome() {
+        assert_eq!(
+            clean_selection_text("  │▸ I have enough to write the spec."),
+            "I have enough to write the spec."
+        );
+    }
+
+    #[test]
+    fn clean_selection_text_removes_padding_only_message_prefix() {
+        assert_eq!(clean_selection_text("  I have enough"), "I have enough");
+    }
+
+    #[test]
+    fn clean_selection_text_preserves_non_layout_indentation() {
+        assert_eq!(clean_selection_text("    let x = 1;"), "    let x = 1;");
+    }
 
     fn assistant_message(parts: Vec<ContextMessagePart>) -> Message {
         Message {
