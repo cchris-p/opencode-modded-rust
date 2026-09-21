@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -92,3 +92,15 @@ This is distinct from `FEAT-028` (hide tool calls / collapse to a count). FEAT-0
 - The mouse path is already wired for session clicks (`app.rs:699-710`); the new hits only need to be consulted alongside `thinking_toggle_hits` in `handle_click`, and the click must be consumed so it does not also seed a selection (`app.rs:708-710`).
 - `thinking_toggle_hits` is cleared at `session.rs:556` before the message loop; `tool_toggle_hits` should be cleared in the same pass and line indices must stay consistent with the `Paragraph` scroll used at `session.rs:901-907`.
 - Keep the `expanded_reasoning.retain(...)` pruning pattern in mind (`session.rs:887-888`) so expansion state for calls no longer present is dropped; the analogous pruning applies to expanded tool calls.
+
+## Dev Notes
+
+- Implemented in PR #63 (`feature/FEAT-030-terminal-tool-output-expandable`).
+- `render_tool_call` now returns `ToolCallRender { lines, collapsible }` and takes an `expanded` flag. The block header renders as `│ ● $ <command>` with a `▸`/`▾` indicator; collapsed preview limits are unchanged (10 shell / 6 other); the affordance row is `▸ N more lines — click to expand` / `▾ click to collapse` styled with `theme.info`; error output expands fully.
+- `session.rs` adds `expanded_tool_calls`, `tool_toggle_hits`, and `ToolToggleHit`. Header and tail hit regions are recorded per collapsible call, keyed by tool call id; `handle_click` toggles tool calls before reasoning hits; state is pruned to visible ids each render and stays session-local.
+- Verification: `cargo fmt --check -p opencode-tui` clean; `cargo check -p opencode-tui` clean; `cargo test -p opencode-tui` 55 passed / 0 failed, including 4 new `session_tool` tests (long-output collapse + expand, short-output non-collapsible, hidden-details early return, error expansion).
+- Manual TUI verification (`ort-build` / `ort`) was not performed in this pass.
+
+## QA Notes
+
+- Pending local verification on the PR branch: collapsed preview plus affordance, expand/collapse toggling and indicator flip, independent expansion of multiple calls in one turn, error expansion, and `show_tool_details` off/on behavior.
