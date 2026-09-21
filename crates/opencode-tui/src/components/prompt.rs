@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, Padding, Paragraph},
     Frame,
 };
 use std::collections::hash_map::DefaultHasher;
@@ -12,7 +12,8 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::context::{AppContext, SessionStatus};
 use crate::file_index::FileIndex;
@@ -230,12 +231,20 @@ impl Prompt {
             .saturating_sub(PROMPT_BLOCK_PAD_BOTTOM)
             .max(PROMPT_MIN_INPUT_LINES);
         let input_width = prompt_input_width(area.width);
-        let cursor_visual_position = input_cursor_visual_position(
-            &self.input,
+        let wrapped_input = wrap_prompt_input(&self.input, input_width);
+        let cursor_visual_position = wrapped_input.cursor_visual_position(
+            self.input.len(),
             self.cursor_position.min(self.input.len()),
             input_width,
         );
-        let content_lines = self.input_display_lines(area.width).min(max_content_lines);
+        let needed_lines = wrapped_input
+            .lines
+            .len()
+            .max(cursor_visual_position.row.saturating_add(1));
+        let content_lines = u16::try_from(needed_lines)
+            .unwrap_or(u16::MAX)
+            .max(PROMPT_MIN_INPUT_LINES)
+            .min(max_content_lines);
         let input_scroll = cursor_visual_position
             .row
             .saturating_sub(usize::from(content_lines.saturating_sub(1)));
@@ -287,7 +296,15 @@ impl Prompt {
                 theme.text_muted
             }))
         } else {
-            Paragraph::new(self.input.clone())
+            let mut display_lines: Vec<Line> = wrapped_input
+                .lines
+                .iter()
+                .map(|line| Line::from(line.clone()))
+                .collect();
+            while display_lines.len() < needed_lines {
+                display_lines.push(Line::from(""));
+            }
+            Paragraph::new(display_lines)
                 .block(
                     Block::default()
                         .borders(Borders::LEFT)
@@ -302,7 +319,6 @@ impl Prompt {
                         .style(Style::default().bg(theme.background_element)),
                 )
                 .scroll((u16::try_from(input_scroll).unwrap_or(u16::MAX), 0))
-                .wrap(Wrap { trim: false })
                 .style(Style::default().fg(if self.focused {
                     theme.text
                 } else {
@@ -320,9 +336,8 @@ impl Prompt {
                 .saturating_add(1)
                 .saturating_add(PROMPT_BLOCK_PAD_LEFT);
             let content_y = chunks[0].y.saturating_add(PROMPT_BLOCK_PAD_TOP);
-            let max_col = input_width;
             frame.set_cursor(
-                content_x.saturating_add(cursor_col.min(max_col)),
+                content_x.saturating_add(cursor_col),
                 content_y.saturating_add(cursor_row.min(content_lines.saturating_sub(1))),
             );
         }
@@ -635,7 +650,7 @@ impl Prompt {
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
-        self.input_display_lines(width)
+        self.prompt_content_lines(width)
             .saturating_add(PROMPT_BLOCK_PAD_TOP)
             .saturating_add(PROMPT_BLOCK_PAD_BOTTOM)
             .saturating_add(3)
@@ -1017,12 +1032,18 @@ impl Prompt {
         Some((start, end, token))
     }
 
-    fn input_display_lines(&self, width: u16) -> u16 {
-        let input_width = usize::from(prompt_input_width(width));
-        let raw_lines = visual_line_count(&self.input, input_width) as u16;
-        raw_lines
-            .max(PROMPT_MIN_INPUT_LINES)
-            .min(PROMPT_MAX_INPUT_LINES)
+    fn prompt_content_lines(&self, width: u16) -> u16 {
+        let input_width = prompt_input_width(width);
+        let wrapped = wrap_prompt_input(&self.input, input_width);
+        let cursor = wrapped.cursor_visual_position(
+            self.input.len(),
+            self.cursor_position.min(self.input.len()),
+            input_width,
+        );
+        let needed = wrapped.lines.len().max(cursor.row.saturating_add(1));
+        u16::try_from(needed)
+            .unwrap_or(u16::MAX)
+            .clamp(PROMPT_MIN_INPUT_LINES, PROMPT_MAX_INPUT_LINES)
     }
 
     fn render_status_line(&self, theme: &Theme) -> Line<'static> {
@@ -1159,46 +1180,188 @@ fn prompt_input_width(width: u16) -> u16 {
     width.saturating_sub(reserved).max(1)
 }
 
-fn input_cursor_visual_position(
-    input: &str,
-    cursor_position: usize,
-    width: u16,
-) -> CursorVisualPosition {
-    let width = usize::from(width.max(1));
-    let cursor_position = cursor_position.min(input.len());
-    let prefix = if input.is_char_boundary(cursor_position) {
-        &input[..cursor_position]
-    } else {
-        let boundary = input
-            .char_indices()
-            .map(|(idx, _)| idx)
-            .take_while(|idx| *idx < cursor_position)
-            .last()
-            .unwrap_or(0);
-        &input[..boundary]
-    };
+fn prompt_grapheme_is_whitespace(grapheme: &str) -> bool {
+    grapheme == "\u{200b}" || (grapheme != "\u{00a0}" && grapheme.chars().all(char::is_whitespace))
+}
 
-    let mut row = 0usize;
-    let mut col = 0usize;
-    for ch in prefix.chars() {
-        if ch == '\n' {
-            row += 1;
-            col = 0;
+fn prompt_grapheme_width(grapheme: &str) -> usize {
+    UnicodeWidthStr::width(grapheme)
+}
+
+fn prompt_text_width(text: &str) -> usize {
+    text.graphemes(true).map(prompt_grapheme_width).sum()
+}
+
+fn saturating_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+#[derive(Debug, Clone, Default)]
+struct WrappedPromptInput {
+    lines: Vec<String>,
+    positions: HashMap<usize, (usize, u16)>,
+}
+
+impl WrappedPromptInput {
+    fn cursor_visual_position(
+        &self,
+        input_len: usize,
+        cursor_position: usize,
+        width: u16,
+    ) -> CursorVisualPosition {
+        let width = usize::from(width.max(1));
+        let cursor_position = cursor_position.min(input_len);
+        let mut position = self.positions.get(&cursor_position).copied();
+        if position.is_none() && cursor_position < input_len {
+            position = self
+                .positions
+                .iter()
+                .filter(|(offset, _)| **offset <= cursor_position)
+                .max_by_key(|(offset, _)| **offset)
+                .map(|(_, value)| *value);
+        }
+
+        if let Some((line, col)) = position {
+            let col = usize::from(col);
+            if col >= width {
+                return CursorVisualPosition {
+                    row: line.saturating_add(1),
+                    col: 0,
+                };
+            }
+            return CursorVisualPosition {
+                row: line,
+                col: saturating_u16(col),
+            };
+        }
+
+        let last_line = self.lines.len().saturating_sub(1);
+        let last_width = self
+            .lines
+            .get(last_line)
+            .map_or(0, |line| prompt_text_width(line));
+        if last_width >= width {
+            CursorVisualPosition {
+                row: self.lines.len(),
+                col: 0,
+            }
+        } else {
+            CursorVisualPosition {
+                row: last_line,
+                col: saturating_u16(last_width),
+            }
+        }
+    }
+}
+
+fn append_pending_prompt_whitespace(
+    current: &mut String,
+    current_width: &mut usize,
+    pending_ws: &mut Vec<(usize, String)>,
+    pending_ws_width: &mut usize,
+    positions: &mut HashMap<usize, (usize, u16)>,
+    line_index: usize,
+) {
+    for (offset, grapheme) in pending_ws.drain(..) {
+        positions.insert(offset, (line_index, saturating_u16(*current_width)));
+        *current_width = current_width.saturating_add(prompt_grapheme_width(&grapheme));
+        current.push_str(&grapheme);
+    }
+    *pending_ws_width = 0;
+}
+
+fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
+    let width = usize::from(width.max(1));
+    let mut lines: Vec<String> = Vec::new();
+    let mut positions: HashMap<usize, (usize, u16)> = HashMap::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    let mut pending_ws: Vec<(usize, String)> = Vec::new();
+    let mut pending_ws_width = 0usize;
+
+    let graphemes: Vec<(usize, &str)> = input.grapheme_indices(true).collect();
+    let mut index = 0usize;
+    while index < graphemes.len() {
+        let (byte_offset, grapheme) = graphemes[index];
+        if grapheme == "\n" {
+            append_pending_prompt_whitespace(
+                &mut current,
+                &mut current_width,
+                &mut pending_ws,
+                &mut pending_ws_width,
+                &mut positions,
+                lines.len(),
+            );
+            positions.insert(byte_offset, (lines.len(), saturating_u16(current_width)));
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            index += 1;
+            continue;
+        }
+        if prompt_grapheme_is_whitespace(grapheme) {
+            pending_ws_width = pending_ws_width.saturating_add(prompt_grapheme_width(grapheme));
+            pending_ws.push((byte_offset, grapheme.to_string()));
+            index += 1;
             continue;
         }
 
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if col > 0 && col + ch_width > width {
-            row += 1;
-            col = 0;
+        let word_start = index;
+        let mut word_end = index;
+        let mut word_width = 0usize;
+        while word_end < graphemes.len() {
+            let (_, candidate) = graphemes[word_end];
+            if candidate == "\n" || prompt_grapheme_is_whitespace(candidate) {
+                break;
+            }
+            word_width = word_width.saturating_add(prompt_grapheme_width(candidate));
+            word_end += 1;
         }
-        col += ch_width;
+
+        if !current.is_empty() && current_width + pending_ws_width + word_width > width {
+            for (offset, _) in &pending_ws {
+                positions.insert(*offset, (lines.len(), saturating_u16(current_width)));
+            }
+            pending_ws.clear();
+            pending_ws_width = 0;
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        } else {
+            for (offset, whitespace) in pending_ws.drain(..) {
+                positions.insert(offset, (lines.len(), saturating_u16(current_width)));
+                current_width = current_width.saturating_add(prompt_grapheme_width(&whitespace));
+                current.push_str(&whitespace);
+            }
+            pending_ws_width = 0;
+        }
+
+        for (offset, grapheme) in graphemes[word_start..word_end].iter().copied() {
+            let grapheme_width = prompt_grapheme_width(grapheme);
+            if current_width > 0 && current_width + grapheme_width > width {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            positions.insert(offset, (lines.len(), saturating_u16(current_width)));
+            current.push_str(grapheme);
+            current_width = current_width.saturating_add(grapheme_width);
+        }
+
+        index = word_end;
     }
 
-    CursorVisualPosition {
-        row,
-        col: u16::try_from(col).unwrap_or(u16::MAX),
+    append_pending_prompt_whitespace(
+        &mut current,
+        &mut current_width,
+        &mut pending_ws,
+        &mut pending_ws_width,
+        &mut positions,
+        lines.len(),
+    );
+    lines.push(std::mem::take(&mut current));
+    if lines.is_empty() {
+        lines.push(String::new());
     }
+
+    WrappedPromptInput { lines, positions }
 }
 
 fn truncate_for_status(input: &str, max_chars: usize) -> String {
@@ -1211,31 +1374,6 @@ fn truncate_for_status(input: &str, max_chars: usize) -> String {
     }
     out.push('…');
     out
-}
-
-fn visual_line_count(text: &str, width: usize) -> usize {
-    if text.is_empty() {
-        return 1;
-    }
-
-    let mut rows = 1usize;
-    let mut col = 0usize;
-    for ch in text.chars() {
-        if ch == '\n' {
-            rows += 1;
-            col = 0;
-            continue;
-        }
-
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if col > 0 && col + ch_width > width {
-            rows += 1;
-            col = 0;
-        }
-        col += ch_width;
-    }
-
-    rows.max(1)
 }
 
 fn dedup_sort(mut items: Vec<String>) -> Vec<String> {
@@ -1561,36 +1699,221 @@ mod tests {
         });
     }
 
+    fn cursor_position(input: &str, cursor: usize, width: u16) -> CursorVisualPosition {
+        wrap_prompt_input(input, width).cursor_visual_position(input.len(), cursor, width)
+    }
+
     #[test]
     fn cursor_visual_position_follows_wrapped_input() {
         assert_eq!(
-            input_cursor_visual_position("abcdef", 5, 3),
+            cursor_position("abcdef", 5, 3),
             CursorVisualPosition { row: 1, col: 2 }
         );
         assert_eq!(
-            input_cursor_visual_position("abc", 3, 3),
-            CursorVisualPosition { row: 0, col: 3 }
+            cursor_position("abcdef", 3, 3),
+            CursorVisualPosition { row: 1, col: 0 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_uses_word_boundaries_like_renderer() {
+        let wrapped = wrap_prompt_input("ab cdefgh", 6);
+        assert_eq!(wrapped.lines, vec!["ab".to_string(), "cdefgh".to_string()]);
+        assert_eq!(
+            wrapped.cursor_visual_position("ab cdefgh".len(), 7, 6),
+            CursorVisualPosition { row: 1, col: 4 }
+        );
+
+        let wrapped = wrap_prompt_input("hello world", 6);
+        assert_eq!(
+            wrapped.lines,
+            vec!["hello".to_string(), "world".to_string()]
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position("hello world".len(), "hello world".len(), 6),
+            CursorVisualPosition { row: 1, col: 5 }
         );
     }
 
     #[test]
     fn cursor_visual_position_handles_newlines_and_wide_chars() {
         assert_eq!(
-            input_cursor_visual_position("ab\ncd", 5, 10),
+            cursor_position("ab\ncd", 5, 10),
             CursorVisualPosition { row: 1, col: 2 }
         );
+
+        let wrapped = wrap_prompt_input("你a好", 3);
+        assert_eq!(wrapped.lines, vec!["你a".to_string(), "好".to_string()]);
         assert_eq!(
-            input_cursor_visual_position("abc", 3, 3),
-            CursorVisualPosition { row: 0, col: 3 }
+            wrapped.cursor_visual_position("你a好".len(), "你a".len(), 3),
+            CursorVisualPosition { row: 1, col: 0 }
         );
         assert_eq!(
-            input_cursor_visual_position("你a好", "你a".len(), 3),
-            CursorVisualPosition { row: 0, col: 3 }
-        );
-        assert_eq!(
-            input_cursor_visual_position("你a好", "你a好".len(), 3),
+            wrapped.cursor_visual_position("你a好".len(), "你a好".len(), 3),
             CursorVisualPosition { row: 1, col: 2 }
         );
+    }
+
+    #[test]
+    fn cursor_visual_position_handles_full_line_boundary() {
+        let wrapped = wrap_prompt_input("abc", 3);
+        assert_eq!(wrapped.lines, vec!["abc".to_string()]);
+        assert_eq!(
+            wrapped.cursor_visual_position(3, 2, 3),
+            CursorVisualPosition { row: 0, col: 2 }
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position(3, 3, 3),
+            CursorVisualPosition { row: 1, col: 0 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_handles_grapheme_clusters() {
+        let combining = "e\u{301}x";
+        let wrapped = wrap_prompt_input(combining, 3);
+        assert_eq!(wrapped.lines, vec![combining.to_string()]);
+        assert_eq!(
+            wrapped.cursor_visual_position(combining.len(), "e\u{301}".len(), 3),
+            CursorVisualPosition { row: 0, col: 1 }
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position(combining.len(), combining.len(), 3),
+            CursorVisualPosition { row: 0, col: 2 }
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position(combining.len(), 1, 3),
+            CursorVisualPosition { row: 0, col: 0 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_never_reaches_full_width() {
+        // The render path no longer clamps the cursor column to `input_width`
+        // because `cursor_visual_position` can never return a column at or past
+        // the content width; a column that would reach the edge is reported on
+        // the next (phantom) row instead. This guards that invariant.
+        let inputs = [
+            "",
+            " ",
+            "abc",
+            "ab cdefgh",
+            "hello world",
+            "你a好",
+            "e\u{301}x",
+            "ab\ncd",
+            "abcdefghij",
+        ];
+        for width in 1..=6u16 {
+            for input in inputs {
+                let wrapped = wrap_prompt_input(input, width);
+                for cursor in 0..=input.len() {
+                    let pos = wrapped.cursor_visual_position(input.len(), cursor, width);
+                    assert!(
+                        pos.col < width,
+                        "col {} >= width {} for {input:?} at byte {cursor}",
+                        pos.col,
+                        width
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_cursor_matches_insertion_point() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        // (input, cursor byte offset, terminal width)
+        let cases: &[(&str, usize, u16)] = &[
+            ("ab cdefgh", 7, 9),
+            ("abc", 2, 6),
+            ("abc", 3, 6),
+            ("hello world", 6, 9),
+            ("你a好", 3, 6),
+            ("你a好", 7, 6),
+            ("ab\ncd", 3, 8),
+            ("e\u{301}x", 3, 6),
+        ];
+
+        with_isolated_prompt(|mut prompt| {
+            for &(input, cursor, width) in cases {
+                let input_width = prompt_input_width(width);
+                let wrapped = wrap_prompt_input(input, input_width);
+                let pos = wrapped.cursor_visual_position(input.len(), cursor, input_width);
+
+                // Render layout offsets: content_x = left border (1) + pad_left (1);
+                // content_y = pad_top (1). These short inputs never scroll.
+                let expected = (2 + pos.col, 1 + u16::try_from(pos.row).unwrap());
+
+                prompt.set_input(input.to_string());
+                prompt.cursor_position = cursor;
+
+                let mut terminal = Terminal::new(TestBackend::new(width, 12)).expect("terminal");
+                terminal
+                    .draw(|frame| prompt.render(frame, frame.size()))
+                    .expect("draw");
+
+                assert_eq!(
+                    terminal.get_cursor().expect("cursor"),
+                    expected,
+                    "cursor cell for {input:?} at byte {cursor} width {width}"
+                );
+
+                // Non-tautological check: when the cursor sits before a real
+                // grapheme, the cell under the cursor must be that grapheme.
+                if cursor < input.len() {
+                    let grapheme = input[cursor..].graphemes(true).next().unwrap();
+                    let cell = terminal.backend().buffer().get(expected.0, expected.1);
+                    assert_eq!(
+                        cell.symbol(),
+                        grapheme,
+                        "cursor cell content for {input:?} at byte {cursor} width {width}"
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn rendered_cursor_tracks_scroll_for_long_drafts() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let input = "one two three four five six seven eight nine ten";
+        let width = 9u16;
+        let height = 8u16;
+        let cursor = input.len();
+
+        let input_width = prompt_input_width(width);
+        let wrapped = wrap_prompt_input(input, input_width);
+        let pos = wrapped.cursor_visual_position(input.len(), cursor, input_width);
+        // Render content height for this area: height - 3 chrome rows - 2 padding.
+        let content_lines = height - 3 - PROMPT_BLOCK_PAD_TOP - PROMPT_BLOCK_PAD_BOTTOM;
+        let scroll = pos.row.saturating_sub(usize::from(content_lines - 1));
+        let visible_row = pos.row - scroll;
+        let expected = (2 + pos.col, 1 + u16::try_from(visible_row).unwrap());
+
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input(input.to_string());
+            prompt.cursor_position = cursor;
+
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+            terminal
+                .draw(|frame| prompt.render(frame, frame.size()))
+                .expect("draw");
+
+            assert!(
+                pos.row >= usize::from(content_lines),
+                "draft must overflow the visible content height to exercise scroll"
+            );
+            assert_eq!(terminal.get_cursor().expect("cursor"), expected);
+            assert!(
+                expected.1 < height,
+                "cursor must stay inside the prompt area"
+            );
+        });
     }
 }
 

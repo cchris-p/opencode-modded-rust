@@ -891,18 +891,65 @@ async fn run_tui(
     std::env::remove_var("OPENCODE_TUI_SESSION");
 
     let tui_exit = run_result?;
-    if tui_exit == opencode_tui::TuiExit::Detach {
-        if let Some(server) = local_server.as_mut() {
-            server.detach();
+    match tui_exit {
+        opencode_tui::TuiExit::Detach => {
+            if let Some(server) = local_server.as_mut() {
+                server.detach();
+            }
+            let workspace = std::env::current_dir()?;
+            eprintln!("Detached from TUI server.");
+            eprintln!("Server: {}", base_url);
+            eprintln!("Workspace: {}", workspace.display());
+            eprintln!("Reattach: opencode attach {}", base_url);
         }
-        let workspace = std::env::current_dir()?;
-        eprintln!("Detached from TUI server.");
-        eprintln!("Server: {}", base_url);
-        eprintln!("Workspace: {}", workspace.display());
-        eprintln!("Reattach: opencode attach {}", base_url);
+        opencode_tui::TuiExit::Exit { session_id } => {
+            print_resume_hint(session_id.as_deref());
+        }
     }
 
     Ok(())
+}
+
+/// Print a copy-pasteable command that reopens the session the user just left.
+///
+/// FEAT-033: a normal TUI exit tears down the local server, so a server URL
+/// would be stale. A session-scoped CLI command relaunches a fresh server for
+/// the current workspace and reopens the stored session instead.
+fn print_resume_hint(session_id: Option<&str>) {
+    let launcher = resume_launcher();
+    for line in resume_hint_lines(session_id, launcher) {
+        eprintln!("{line}");
+    }
+}
+
+/// Choose the launcher named in the resume hint.
+///
+/// The personal `ort` wrapper exports `OPENCODE_RUST_REPO`; when that is
+/// present, prefer `ort` so the hint resolves to this Rust build instead of a
+/// possibly-vanilla `opencode` on `PATH`.
+fn resume_launcher() -> &'static str {
+    resume_launcher_from(std::env::var_os("OPENCODE_RUST_REPO").is_some())
+}
+
+fn resume_launcher_from(rust_launcher_env_present: bool) -> &'static str {
+    if rust_launcher_env_present {
+        "ort"
+    } else {
+        "opencode"
+    }
+}
+
+fn resume_hint_lines(session_id: Option<&str>, launcher: &str) -> Vec<String> {
+    match session_id {
+        Some(session_id) if !session_id.is_empty() => vec![
+            "Resume this session:".to_string(),
+            format!("  {launcher} --session {session_id}"),
+        ],
+        _ => vec![
+            "Resume your most recent session:".to_string(),
+            format!("  {launcher} --continue"),
+        ],
+    }
 }
 
 /// Prepare a fresh local server for the TUI in the current working directory.
@@ -6070,5 +6117,35 @@ mod tests {
         // `base` is held, so the next free port must be strictly greater.
         let free = find_available_port("127.0.0.1", base).unwrap();
         assert!(free > base);
+    }
+
+    #[test]
+    fn resume_launcher_prefers_ort_when_env_present() {
+        assert_eq!(resume_launcher_from(true), "ort");
+        assert_eq!(resume_launcher_from(false), "opencode");
+    }
+
+    #[test]
+    fn resume_hint_uses_session_id_when_available() {
+        let lines = resume_hint_lines(Some("ses_123"), "ort");
+        assert_eq!(
+            lines,
+            vec!["Resume this session:", "  ort --session ses_123"]
+        );
+    }
+
+    #[test]
+    fn resume_hint_falls_back_to_continue_without_session_id() {
+        let lines = resume_hint_lines(None, "opencode");
+        assert_eq!(
+            lines,
+            vec!["Resume your most recent session:", "  opencode --continue"]
+        );
+
+        let empty = resume_hint_lines(Some(""), "opencode");
+        assert_eq!(
+            empty,
+            vec!["Resume your most recent session:", "  opencode --continue"]
+        );
     }
 }

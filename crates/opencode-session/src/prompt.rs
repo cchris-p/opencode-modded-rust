@@ -1497,11 +1497,17 @@ impl SessionPrompt {
         assistant
             .metadata
             .insert("finish_reason".to_string(), serde_json::json!("aborted"));
-        let has_visible_part = assistant.parts.iter().any(|part| match &part.part_type {
-            PartType::Text { text, .. } | PartType::Reasoning { text } => !text.is_empty(),
-            _ => true,
+        // Only real assistant output (text or a tool call) makes the message a
+        // valid provider turn. A run interrupted during its thinking phase can
+        // hold nothing but reasoning, and reasoning is not serialized as
+        // assistant content, so such a turn must still receive visible text or
+        // the next request fails with "content or tool_calls must be set".
+        let has_valid_content = assistant.parts.iter().any(|part| match &part.part_type {
+            PartType::Text { text, .. } => !text.is_empty(),
+            PartType::ToolCall { .. } => true,
+            _ => false,
         });
-        if !has_visible_part {
+        if !has_valid_content {
             assistant.add_text("Aborted by user.");
         }
     }
@@ -4563,6 +4569,36 @@ mod tests {
             Some(&serde_json::json!("aborted"))
         );
         assert_eq!(assistant.get_text(), "Aborted by user.");
+    }
+
+    #[test]
+    fn mark_aborted_adds_text_when_only_reasoning_present() {
+        // BUG-019: an interrupt during the thinking phase leaves an assistant
+        // message carrying only reasoning. Reasoning is not serialized as
+        // assistant content, so abort must add visible text to keep the next
+        // provider request valid.
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "stop this"));
+        let mut assistant = SessionMessage::assistant(sid);
+        assistant.add_reasoning("weighing the request");
+        session.messages.push(assistant);
+
+        SessionPrompt::mark_aborted(&mut session);
+
+        let assistant = session.messages.last().expect("assistant message exists");
+        assert_eq!(
+            assistant.metadata.get("error"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(
+            assistant.metadata.get("finish_reason"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(assistant.get_text(), "Aborted by user.");
+        assert_eq!(assistant.get_reasoning(), "weighing the request");
     }
 
     #[test]
