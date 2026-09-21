@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -104,6 +104,10 @@ to true so behavior matches vanilla when omitted.
 - `FEAT-043` question permission integration parity.
 - `FEAT-044` question parity verification fixtures.
 - `FEAT-012` CLI/AgentExecutor tool-loop parity - blocked by `GATE-002`.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/65
 
 ## Dev Notes (2026-09-21, PR feature/FEAT-038-question-schema-tool-contract)
 
