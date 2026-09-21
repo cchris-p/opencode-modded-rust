@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-19"
 ---
 
@@ -174,6 +174,13 @@ QA concern from live use: directory permanent-allow still feels too granular.
 
 Status: remains in `qa`. The feature is committed and merged (see Merge Closeout), but the deferred
 acceptance criteria above are not yet verified, so the item cannot move to `done`.
+
+## Closeout - 2026-09-21
+
+- User re-tested the directory permanent-allow concern from live use and reported no issue with
+  permanent allow: the deferred `external_directory` granularity concern does not reproduce.
+- Closed as `done`; the remaining deferred acceptance criteria are accepted as-is rather than
+  blocking.
 
 ## Merge Closeout
 
