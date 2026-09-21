@@ -220,5 +220,14 @@ Status: **unconfirmed root cause; this is a coverage fix, not a proven one.** Th
 
 ## PR
 
-- Pending (opened in the same execution as this note).
+- https://github.com/cchris-p/opencode-modded-rust/pull/66
+
+## Completion
+
+- 2026-09-21: PR #66 merged into `development` (merge commit `2e5a531`). Feature branch
+  `bug/BUG-029-interrupt-confirmation` deleted remotely and locally; temporary worktree/stash
+  cleaned up.
+- Card intentionally **remains in `qa`**: the fix is unverified against a live reproduction and the
+  root cause is unconfirmed, so it must not move to `done` until the user reproduces in the TUI and
+  records a QA report (or explicitly directs completion).
 
