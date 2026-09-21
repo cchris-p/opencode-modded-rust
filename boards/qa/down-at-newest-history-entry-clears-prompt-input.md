@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -144,15 +144,18 @@ All changes are local to the prompt component; no keybind, storage, or app chang
 
 ## Acceptance criteria
 
-- [ ] `Down` at the newest history entry never introduces `""` into an otherwise non-empty box.
-- [ ] With an empty pre-browse draft, `Down` at the newest entry leaves the newest entry visible
+- [x] `Down` at the newest history entry never introduces `""` into an otherwise non-empty box.
+- [x] With an empty pre-browse draft, `Down` at the newest entry leaves the newest entry visible
       and repeated `Down` presses are inert.
-- [ ] A captured non-empty pre-browse draft is restored exactly, cursor at end.
-- [ ] `Alt+Down` exhibits the same bottom-of-walk behavior as bare `Down`.
-- [ ] Existing `history_navigation_preserves_draft` still passes.
-- [ ] New tests cover the empty-draft, non-empty-draft, and repeat-`Down` cases.
-- [ ] `cargo test -p opencode-tui --lib prompt -- --test-threads=1` passes for the new tests
+- [x] A captured non-empty pre-browse draft is restored exactly, cursor at end.
+- [x] `Alt+Down` exhibits the same bottom-of-walk behavior as bare `Down`.
+- [x] Existing `history_navigation_preserves_draft` still passes.
+- [x] New tests cover the empty-draft, non-empty-draft, and repeat-`Down` cases.
+- [x] `cargo test -p opencode-tui --lib prompt -- --test-threads=1` passes for the new tests
       (existing unrelated failures excepted).
+      - Verified with `cargo test -p opencode-tui --lib history -- --test-threads=1`: 4 passed.
+      - `tab_autocomplete_uses_first_candidate` is a pre-existing flaky test (fails roughly 4/5
+        runs on the base commit with no BUG-030 changes) and is unrelated to this card.
 
 ## Recommended verification
 
@@ -178,6 +181,23 @@ All changes are local to the prompt component; no keybind, storage, or app chang
   consistent when the box contents are restored.
 - `BUG-013` Cursor on the input field needs to always be visible - cursor behavior in the prompt.
 - `PHASE-001` V1 daily-driver hardening.
+
+## Dev Notes
+
+- Implemented the decided behavior in `history_next`
+  (`crates/opencode-tui/src/components/prompt.rs:812-832`): only a non-empty captured draft is
+  restored (cursor at end, `history_index = None`); otherwise the newest entry stays visible and
+  `history_index` is parked at the newest index, so repeated `Down` is inert instead of writing
+  `""` into the box.
+- `history_previous`, `reset_history_cursor`, `take_input`, and `clear` are unchanged. Any edit or
+  `Ctrl+C`-clear exits the parked state, matching the "use `Ctrl+C` to blank the box" decision.
+- Tests added next to `history_navigation_preserves_draft`: `history_next_at_newest_without_draft_does_not_clear`,
+  `history_next_from_recall_back_to_draft_then_repeat_is_inert`, and `history_next_without_recall_is_noop`.
+- Verification: `cargo test -p opencode-tui --lib history -- --test-threads=1` → 4 passed, 0 failed.
+  `cargo test -p opencode-tui --lib prompt -- --test-threads=1` still surfaces the pre-existing
+  flaky `tab_autocomplete_uses_first_candidate` failure (proven flaky on the base commit); it is
+  unrelated to this change.
+- Not yet verified interactively in the TUI (`ort-build` + `ort`); left for QA on the PR branch.
 
 ## Notes
 

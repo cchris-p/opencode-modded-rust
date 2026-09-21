@@ -815,9 +815,20 @@ impl Prompt {
             self.input = self.history[next].clone();
             self.cursor_position = self.input.len();
         } else {
-            self.history_index = None;
-            self.input = self.history_draft.take().unwrap_or_default();
-            self.cursor_position = self.input.len();
+            match self.history_draft.take() {
+                Some(draft) if !draft.is_empty() => {
+                    self.input = draft;
+                    self.cursor_position = self.input.len();
+                    self.history_index = None;
+                }
+                _ => {
+                    // No pre-browse draft to restore: keep the newest entry
+                    // visible instead of clearing the box. Stay parked on the
+                    // newest index so further Down presses are inert until the
+                    // user edits, clears, or recalls.
+                    self.history_index = Some(idx);
+                }
+            }
         }
         self.recompute_suggestions();
     }
@@ -1764,6 +1775,61 @@ mod tests {
 
             prompt.history_next_entry();
             assert_eq!(prompt.get_input(), "draft");
+        });
+    }
+
+    #[test]
+    fn history_next_at_newest_without_draft_does_not_clear() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+
+            prompt.history_previous_entry();
+            assert_eq!(prompt.get_input(), "beta");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "beta");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "beta");
+        });
+    }
+
+    #[test]
+    fn history_next_from_recall_back_to_draft_then_repeat_is_inert() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+
+            prompt.history_previous_entry();
+            prompt.history_previous_entry();
+            assert_eq!(prompt.get_input(), "alpha");
+
+            prompt.history_next_entry();
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "draft");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "draft");
+        });
+    }
+
+    #[test]
+    fn history_next_without_recall_is_noop() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("keep".to_string());
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "keep");
         });
     }
 
