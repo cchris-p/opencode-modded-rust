@@ -100,10 +100,10 @@ to true so behavior matches vanilla when omitted.
 - `FEAT-039` session-scoped question API parity.
 - `FEAT-040` question runtime event and lifecycle parity.
 - `FEAT-041` TUI question prompt UX parity.
-- `FEAT-042` CLI and direct-run question parity (hold).
+- `CLI-009` CLI and direct-run question parity (hold).
 - `FEAT-043` question permission integration parity.
 - `FEAT-044` question parity verification fixtures.
-- `FEAT-012` CLI/AgentExecutor tool-loop parity - blocked by `GATE-002`.
+- `CLI-002` CLI/AgentExecutor tool-loop parity - blocked by `GATE-002`.
 
 ### PR Link
 
@@ -144,5 +144,16 @@ to true so behavior matches vanilla when omitted.
   `405a6e1ad6651e77897b08da02d3ed886a8be77f`; remote and local feature branch deleted.
 - Card intentionally kept in `qa` for post-merge local verification; not moved to `done` because no QA
   report is recorded and the user's closeout request covered the merge, not final completion.
-- `GATE-002` remains open until `FEAT-039`..`FEAT-044` are delivered or resolved; `FEAT-042` stays in
-  `hold` behind `FEAT-012`.
+- `GATE-002` remains open until `FEAT-039`..`FEAT-044` are delivered or resolved; `CLI-009` stays in
+  `hold` behind `CLI-002`.
+
+## QA Feedback Fix (2026-09-21)
+
+- Feedback: pressing `Enter` in a TUI option question submitted the question even when no option was
+  toggled/selected.
+- Fix: `crates/opencode-tui/src/components/question.rs` now leaves option prompts open and returns no
+  answer from `QuestionPrompt::confirm()` when the selected answer set is empty; text prompts keep their
+  existing behavior.
+- Regression coverage: added component tests for single-choice and multiple-choice no-selection guards,
+  plus selected-option submission.
+- Verification: `cargo fmt --all`; `cargo test -p opencode-tui question::tests`.

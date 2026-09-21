@@ -150,6 +150,9 @@ impl QuestionPrompt {
                 .map(|(_, opt)| opt.id.clone())
                 .collect::<Vec<_>>()
         };
+        if q.question_type != QuestionType::Text && answers.is_empty() {
+            return None;
+        }
         let request = self.current_question.take()?;
         self.is_open = false;
         self.selected_index = 0;
@@ -281,5 +284,59 @@ impl QuestionPrompt {
 impl Default for QuestionPrompt {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn option_prompt(question_type: QuestionType) -> QuestionPrompt {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(QuestionRequest {
+            id: "request-1".to_string(),
+            question: "Choose one".to_string(),
+            question_type,
+            options: vec![
+                QuestionOption {
+                    id: "a".to_string(),
+                    label: "A".to_string(),
+                },
+                QuestionOption {
+                    id: "b".to_string(),
+                    label: "B".to_string(),
+                },
+            ],
+        });
+        prompt
+    }
+
+    #[test]
+    fn confirm_ignores_single_choice_without_selection() {
+        let mut prompt = option_prompt(QuestionType::SingleChoice);
+
+        assert!(prompt.confirm().is_none());
+        assert!(prompt.is_open);
+        assert!(prompt.current().is_some());
+    }
+
+    #[test]
+    fn confirm_ignores_multiple_choice_without_selection() {
+        let mut prompt = option_prompt(QuestionType::MultipleChoice);
+
+        assert!(prompt.confirm().is_none());
+        assert!(prompt.is_open);
+        assert!(prompt.current().is_some());
+    }
+
+    #[test]
+    fn confirm_submits_selected_option() {
+        let mut prompt = option_prompt(QuestionType::SingleChoice);
+        prompt.toggle_selected();
+
+        let (_request, answers) = prompt.confirm().expect("selected answer submits");
+
+        assert_eq!(answers, vec!["a".to_string()]);
+        assert!(!prompt.is_open);
     }
 }
