@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-18"
 ---
 
@@ -57,4 +57,8 @@ Map `Ctrl+R` in the TUI session view to the existing session rename action.
 ## Merge Status
 
 - PR #41 merged into `development` on 2026-09-19.
-- Kept in `qa` per user request for post-merge verification.
+
+## Completion
+
+- 2026-09-21: QA passed by user smoke test - `Ctrl+R` opens the rename flow and works great.
+- Moved to `done`.
