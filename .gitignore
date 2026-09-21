@@ -21,3 +21,6 @@
 
 # Logs
 *.log
+
+# Local runtime workspace config (machine-specific permission grants)
+/opencode.json

@@ -72,11 +72,14 @@ The prompt input is the primary daily-driver interaction surface. If the cursor 
 - `BUG-013` Cursor on the input field needs to always be visible - established that the cursor must be drawn; this item covers its correctness when drawn.
 - `FEAT-006` Make Ctrl+D exit the TUI and Ctrl+C clear the prompt - same prompt-input key handling surface.
 - `PHASE-001` V1 daily-driver hardening - misaligned cursor blocks trust in the primary input loop.
+- `FEAT-034` Render prompt cursor as a software cursor - archived fallback strategy only; do not pursue before isolating the current off-by-one behavior.
 
 ## Dev Notes
 
 - 2026-09-19: Fixed cursor placement at the prompt content-width boundary. The visual cursor column can legitimately equal `input_width` when the insertion point is immediately after the last visible cell on a full line; rendering now allows that column instead of clamping it back to `input_width - 1`.
 - Added/extended cursor visual-position coverage for the exact full-width boundary case.
+- 2026-09-21: QA reported the cursor still sometimes feels off by one character. Primary focus remains proving and fixing the concrete off-by-one in the current cursor/layout implementation, not replacing the cursor strategy preemptively.
+- 2026-09-21: Created archived follow-up `FEAT-034` for the software-cursor fallback. That option should only be revived if the remaining behavior proves structural after direct off-by-one investigation.
 
 ## Verification
 

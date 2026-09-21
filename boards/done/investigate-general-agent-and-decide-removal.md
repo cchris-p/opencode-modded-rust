@@ -24,7 +24,7 @@ Investigation completed and the decision was made to **disable `general` for now
 - The `BuiltinAgent::General` variant and `AgentInfo::general()` were retained so the disable is a one-line reversal.
 - Documentation: `wiki/agent-modes-and-custom-agents.md` is the extensive write-up of the agent model, default resolution, custom-agent config, permission rulesets, and the disable decision.
 
-Remaining open question (why this item stays open): should `general` be removed permanently, or reintroduced as a `Subagent` matching the reference's parallel general-purpose role? Revisit after some use of the disabled state.
+Closeout confirmation: human QA confirmed `general` is removed from normal mode selection/registration. Any future `general` subagent parity work should be tracked as a separate item if needed.
 
 ## Why this exists
 
@@ -105,3 +105,4 @@ This product models `general` differently: it is a **primary** agent and is wire
 - Verification: `cargo fmt --all`; `cargo check -p opencode-session -p opencode-tui -p opencode-server`; `cargo test -p opencode-agent -p opencode-tool` (41 passed). Clippy on the affected crates shows only pre-existing unrelated warnings.
 - Concurrency note: unrelated in-progress changes from another work session were left uncommitted and were not included in this change set.
 - Closeout: merged via PR #51 into `development` (merge commit `9e4a8fd`).
+- QA confirmation: human confirmed `general` is removed from the normal product mode surface; card remains in `done`.
