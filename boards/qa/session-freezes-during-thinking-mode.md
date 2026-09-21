@@ -229,6 +229,8 @@ them, the fix confidence jumps and the incremental-update approach is the right 
 - Verification: `cargo check -p opencode-tui -p opencode-cli` and `cargo build -p opencode-cli`
   passed; `cargo fmt -p opencode-tui -- --check` clean; `cargo clippy -p opencode-tui --all-targets`
   reports no new warnings at the changed code (pre-existing workspace warnings remain).
+- 2026-09-21: Change delivered in PR #60 (base `development`): `feat(tui): add env-gated stall
+  tracing for BUG-027`. Card moved to `qa` for local verification of the tracing.
 - Status: **root cause not yet confirmed; no fix implemented.** This change delivers the measurement
   tooling and the corrected symptom only. Next step is the run protocol: capture
   `OPENCODE_TUI_TRACE` logs with `/thinking` on and off, then read the per-second `SAMPLE` duty cycle
