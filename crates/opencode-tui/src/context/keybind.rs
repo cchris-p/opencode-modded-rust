@@ -267,15 +267,7 @@ mod tests {
 
         assert!(registry.match_key("input_newline", KeyCode::Char('j'), KeyModifiers::CONTROL,));
         assert!(!registry.match_key("input_newline", KeyCode::Char('j'), KeyModifiers::NONE));
-        assert!(registry.match_key(
-            "input_newline_alt",
-            KeyCode::Enter,
-            KeyModifiers::ALT,
-        ));
-        assert!(!registry.match_key(
-            "input_newline_alt",
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        ));
+        assert!(registry.match_key("input_newline_alt", KeyCode::Enter, KeyModifiers::ALT,));
+        assert!(!registry.match_key("input_newline_alt", KeyCode::Enter, KeyModifiers::NONE,));
     }
 }

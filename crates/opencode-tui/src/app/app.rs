@@ -656,7 +656,11 @@ impl App {
                                             self.respond_to_permission(&request.id, "always", None);
                                         }
                                         PermissionAction::ApprovePermanent => {
-                                            self.respond_to_permission(&request.id, "permanent", None);
+                                            self.respond_to_permission(
+                                                &request.id,
+                                                "permanent",
+                                                None,
+                                            );
                                         }
                                     }
                                 }
@@ -3146,27 +3150,29 @@ impl App {
         };
 
         match client.reply_permission(request_id, reply, message) {
-            Ok(result) => {
-                match reply {
-                    "reject" => self.toast.show(ToastVariant::Info, "Permission rejected", 1800),
-                    "permanent" => {
-                        if let Some(error) = result.error.as_deref() {
-                            self.toast.show(
-                                ToastVariant::Error,
-                                &format!("Permission approved, but saving it failed: {error}"),
-                                3200,
-                            );
-                        } else {
-                            let feedback = match result.path.as_deref() {
-                                Some(path) => format!("Permanently allowed - wrote {path}"),
-                                None => "Permission approved permanently".to_string(),
-                            };
-                            self.toast.show(ToastVariant::Info, &feedback, 3200);
-                        }
+            Ok(result) => match reply {
+                "reject" => self
+                    .toast
+                    .show(ToastVariant::Info, "Permission rejected", 1800),
+                "permanent" => {
+                    if let Some(error) = result.error.as_deref() {
+                        self.toast.show(
+                            ToastVariant::Error,
+                            &format!("Permission approved, but saving it failed: {error}"),
+                            3200,
+                        );
+                    } else {
+                        let feedback = match result.path.as_deref() {
+                            Some(path) => format!("Permanently allowed - wrote {path}"),
+                            None => "Permission approved permanently".to_string(),
+                        };
+                        self.toast.show(ToastVariant::Info, &feedback, 3200);
                     }
-                    _ => self.toast.show(ToastVariant::Info, "Permission approved", 1800),
                 }
-            }
+                _ => self
+                    .toast
+                    .show(ToastVariant::Info, "Permission approved", 1800),
+            },
             Err(err) => self.toast.show(
                 ToastVariant::Error,
                 &format!("Failed to reply to permission request: {}", err),
