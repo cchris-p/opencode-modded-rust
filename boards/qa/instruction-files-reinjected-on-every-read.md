@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-10"
 ---
 
