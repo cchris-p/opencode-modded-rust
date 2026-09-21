@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -176,6 +176,7 @@ first fix unless it is needed to remove leading gutter chrome.
 ## Dev Notes
 
 - Branch: `bug/BUG-024-clean-selection-gutters`
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/59
 - Change: assistant text rendering now uses two-column padding instead of the visible `▸ ` marker;
   user message rendering now uses two-column padding instead of the visible `┃ ` gutter.
 - Change: mouse-selection copy runs selected screen text through a small normalizer that removes known
