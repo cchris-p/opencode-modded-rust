@@ -997,6 +997,16 @@ impl SessionPrompt {
         let mut post_first_step_ran = false;
         let loaded_instructions = opencode_tool::LoadedInstructions::new();
 
+        // Title generation is driven by the first *user* message, not the first
+        // assistant step, so tool-first, aborted, and stream entrypoints all get
+        // a durable title. `should_generate_title` re-reads the session on every
+        // prompt, which lets a failed LLM upgrade retry later while a manual
+        // rename (which clears the pending marker) is never overwritten.
+        if session.should_generate_title() {
+            Self::ensure_title(session, provider.clone(), &model_id).await;
+            Self::emit_session_update(update_hook.as_ref(), session);
+        }
+
         loop {
             if token.is_cancelled() {
                 tracing::info!("Prompt loop cancelled for session {}", session_id);
@@ -1324,7 +1334,6 @@ impl SessionPrompt {
             Self::emit_session_update(update_hook.as_ref(), session);
 
             if Self::should_run_first_step_postprocessing(post_first_step_ran, has_tool_calls) {
-                Self::ensure_title(session, provider.clone(), &model_id).await;
                 let _ = Self::summarize_session(
                     session,
                     &session_id,
@@ -2344,7 +2353,7 @@ impl SessionPrompt {
     }
 
     async fn ensure_title(session: &mut Session, provider: Arc<dyn Provider>, model_id: &str) {
-        if !session.is_default_title() {
+        if !session.should_generate_title() {
             return;
         }
 
@@ -2359,9 +2368,18 @@ impl SessionPrompt {
             return;
         }
 
+        let fallback = generate_session_title(&first_user_text);
         let title = generate_session_title_llm(&first_user_text, provider, model_id).await;
-        if !title.trim().is_empty() {
-            session.set_title(title);
+        if title.trim().is_empty() {
+            return;
+        }
+
+        if title.trim() == fallback.trim() {
+            // The LLM failed (or echoed the fallback). Keep the durable fallback
+            // and leave it pending so a later prompt can retry the upgrade.
+            session.set_auto_title(fallback);
+        } else {
+            session.finalize_auto_title(title);
         }
     }
 
@@ -3725,6 +3743,70 @@ mod tests {
         assert!(!SessionPrompt::should_run_first_step_postprocessing(
             true, false
         ));
+    }
+
+    fn title_test_provider() -> Arc<dyn Provider> {
+        Arc::new(ScriptedStreamProvider {
+            model: ModelInfo {
+                id: "test-model".to_string(),
+                name: "Test Model".to_string(),
+                provider: "mock".to_string(),
+                context_window: 8192,
+                max_output_tokens: 1024,
+                supports_vision: false,
+                supports_tools: false,
+                cost_per_million_input: 0.0,
+                cost_per_million_output: 0.0,
+            },
+            events: Vec::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn ensure_title_titles_tool_first_session_from_first_user_message() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+        // Simulate a first assistant turn that only called tools. Title generation
+        // must not depend on `should_run_first_step_postprocessing`, so the
+        // fallback title is still applied even though the turn was tool-first.
+        let assistant = session.add_assistant_message();
+        assistant.add_tool_call(
+            "call_1",
+            "read".to_string(),
+            serde_json::json!({ "filePath": "src/lib.rs" }),
+        );
+
+        SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
+
+        assert!(!session.is_default_title());
+        assert_eq!(session.title, "Investigate the flaky test");
+    }
+
+    #[tokio::test]
+    async fn ensure_title_never_overwrites_user_rename() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+        session.set_title("My own title");
+        session.mark_title_user_owned();
+
+        SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
+
+        assert_eq!(session.title, "My own title");
+        assert!(!session.should_generate_title());
+    }
+
+    #[tokio::test]
+    async fn ensure_title_retries_pending_fallback_without_clobbering_it() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+        session.set_auto_title("Investigate the flaky test");
+
+        // The failing provider returns the fallback, so the title stays pending
+        // for a later retry instead of being finalized with the fallback text.
+        SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
+
+        assert_eq!(session.title, "Investigate the flaky test");
+        assert!(session.is_auto_title_pending());
     }
 
     #[test]

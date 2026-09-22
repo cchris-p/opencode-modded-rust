@@ -321,6 +321,10 @@ pub struct Session {
 impl Session {
     const VERSION: &'static str = "1.0.0";
 
+    /// Session metadata key marking a generated title as still pending LLM
+    /// upgrade. Absent means the title is user-authored or already finalized.
+    const TITLE_AUTO_METADATA_KEY: &'static str = "title_auto";
+
     fn require_stage(
         current: &TaskStage,
         expected: TaskStage,
@@ -440,6 +444,45 @@ impl Session {
 
         let timestamp_part = &self.title[prefix.len()..];
         chrono::DateTime::parse_from_rfc3339(timestamp_part).is_ok()
+    }
+
+    /// True when the title is an auto-generated fallback that has not yet been
+    /// finalized (upgraded by the LLM) and may still be retried.
+    pub fn is_auto_title_pending(&self) -> bool {
+        self.metadata
+            .get(Self::TITLE_AUTO_METADATA_KEY)
+            .and_then(|value| value.as_bool())
+            == Some(true)
+    }
+
+    /// True when the session still needs a generated title: either it never had
+    /// one (the creation placeholder is intact) or a previous auto title attempt
+    /// is still pending upgrade/retry.
+    pub fn should_generate_title(&self) -> bool {
+        self.is_default_title() || self.is_auto_title_pending()
+    }
+
+    /// Apply a durable fallback title and mark it as auto-generated so a later
+    /// prompt (or LLM upgrade) can still replace it while it stays pending.
+    pub fn set_auto_title(&mut self, title: impl Into<String>) {
+        self.set_title(title);
+        self.metadata.insert(
+            Self::TITLE_AUTO_METADATA_KEY.to_string(),
+            serde_json::json!(true),
+        );
+    }
+
+    /// Finalize an auto-generated title after a successful LLM upgrade so later
+    /// prompts do not regenerate it.
+    pub fn finalize_auto_title(&mut self, title: impl Into<String>) {
+        self.set_title(title);
+        self.metadata.remove(Self::TITLE_AUTO_METADATA_KEY);
+    }
+
+    /// Mark the current title as user-authored. Generated titles must never
+    /// overwrite a manual rename, so this clears any pending auto-title marker.
+    pub fn mark_title_user_owned(&mut self) {
+        self.metadata.remove(Self::TITLE_AUTO_METADATA_KEY);
     }
 
     /// Get a forked title
@@ -1548,6 +1591,36 @@ mod tests {
         assert_eq!(child.parent_id.unwrap(), parent.id);
         assert_eq!(child.workspace_identity, parent.workspace_identity);
         assert!(child.title.starts_with("Child session"));
+    }
+
+    #[test]
+    fn test_auto_title_lifecycle_and_user_rename_guard() {
+        let mut session = Session::new("project-1", "/path/to/project");
+        assert!(session.is_default_title());
+        assert!(session.should_generate_title());
+        assert!(!session.is_auto_title_pending());
+
+        // A fallback title is durable but still pending an LLM upgrade.
+        session.set_auto_title("Fix the build");
+        assert!(!session.is_default_title());
+        assert!(session.is_auto_title_pending());
+        assert!(session.should_generate_title());
+
+        // A manual rename clears the pending marker so generated titles never
+        // overwrite the user's choice.
+        session.set_title("My own title");
+        session.mark_title_user_owned();
+        assert_eq!(session.title, "My own title");
+        assert!(!session.is_auto_title_pending());
+        assert!(!session.should_generate_title());
+
+        // Finalizing an auto title also stops later regeneration.
+        let mut finalized = Session::new("project-1", "/path/to/project");
+        finalized.set_auto_title("Fix the build");
+        finalized.finalize_auto_title("Fix the broken build");
+        assert_eq!(finalized.title, "Fix the broken build");
+        assert!(!finalized.is_auto_title_pending());
+        assert!(!finalized.should_generate_title());
     }
 
     #[test]

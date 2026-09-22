@@ -265,6 +265,78 @@ async fn persist_sessions_if_enabled(state: &Arc<ServerState>) {
     }
 }
 
+fn first_user_message_text(session: &opencode_session::Session) -> String {
+    session
+        .messages
+        .iter()
+        .find(|message| matches!(message.role, opencode_session::MessageRole::User))
+        .map(|message| message.get_text())
+        .unwrap_or_default()
+}
+
+/// Synchronously give a freshly created session its first durable, human-readable
+/// title as soon as the first user message is materialized. Uses the instant
+/// first-line fallback so the title survives aborts, tool-first turns, and server
+/// restarts. The prompt runner (or [`spawn_title_upgrade`] on the SSE path)
+/// replaces it with an LLM title later while the session stays auto-titled.
+///
+/// Returns `true` when a new fallback title was applied.
+fn apply_initial_session_title(session: &mut opencode_session::Session) -> bool {
+    if !session.is_default_title() {
+        return false;
+    }
+
+    let first_user_text = first_user_message_text(session);
+    if first_user_text.trim().is_empty() {
+        return false;
+    }
+
+    session.set_auto_title(opencode_session::generate_session_title(&first_user_text));
+    true
+}
+
+/// Upgrade a durable fallback title to an LLM-generated one on the non-agentic
+/// `/stream` path, which has no prompt runner to do it. No-op once the title has
+/// been finalized or manually renamed.
+fn spawn_title_upgrade(
+    state: Arc<ServerState>,
+    session_id: String,
+    provider: Arc<dyn opencode_provider::Provider>,
+    model_id: String,
+    first_user_text: String,
+) {
+    tokio::spawn(async move {
+        let fallback = opencode_session::generate_session_title(&first_user_text);
+        let generated =
+            opencode_session::generate_session_title_llm(&first_user_text, provider, &model_id)
+                .await;
+
+        let mut sessions = state.sessions.lock().await;
+        let Some(session) = sessions.get_mut(&session_id) else {
+            return;
+        };
+        if !session.is_auto_title_pending() {
+            return;
+        }
+        if generated.trim().is_empty() || generated.trim() == fallback.trim() {
+            // Leave the durable fallback in place and keep it retryable.
+            return;
+        }
+        session.finalize_auto_title(generated);
+        drop(sessions);
+
+        state.broadcast(
+            &serde_json::json!({
+                "type": "session.updated",
+                "sessionID": session_id,
+                "source": "prompt.title",
+            })
+            .to_string(),
+        );
+        persist_sessions_if_enabled(&state).await;
+    });
+}
+
 async fn list_sessions(
     State(state): State<Arc<ServerState>>,
     Query(query): Query<ListSessionsQuery>,
@@ -696,6 +768,7 @@ async fn set_session_title(
         .get_mut(&id)
         .ok_or_else(|| ApiError::SessionNotFound(id.clone()))?;
     session.set_title(&req.title);
+    session.mark_title_user_owned();
     let info = session_to_info(session);
     drop(sessions);
     persist_sessions_if_enabled(&state).await;
@@ -1951,13 +2024,16 @@ async fn stream_message(
             .await?;
     drop(config);
 
-    let (history, msg_id, selected_variant) = {
+    let (history, msg_id, selected_variant, title_pending, title_text) = {
         let mut sessions = state.sessions.lock().await;
         let session = sessions
             .get_mut(&session_id)
             .ok_or_else(|| ApiError::SessionNotFound(session_id.clone()))?;
 
         session.add_user_message(&req.content);
+        apply_initial_session_title(session);
+        let title_pending = session.is_auto_title_pending();
+        let title_text = first_user_message_text(session);
         let history = session.messages.clone();
         let selected_variant = req.variant.clone().or_else(|| {
             session
@@ -1980,8 +2056,27 @@ async fn stream_message(
             .insert("model_id".to_string(), serde_json::json!(model_id.clone()));
 
         let assistant_msg = session.add_assistant_message();
-        (history, assistant_msg.id.clone(), selected_variant)
+        (
+            history,
+            assistant_msg.id.clone(),
+            selected_variant,
+            title_pending,
+            title_text,
+        )
     };
+
+    // Make the first-message title durable before streaming begins so it survives
+    // an aborted or failed SSE turn, then upgrade it to an LLM title off-path.
+    if title_pending {
+        persist_sessions_if_enabled(&state).await;
+        spawn_title_upgrade(
+            state.clone(),
+            session_id.clone(),
+            provider.clone(),
+            model_id.clone(),
+            title_text,
+        );
+    }
 
     let provider_messages = session_messages_to_provider_messages(&history);
     let variant = selected_variant.clone();
@@ -2396,6 +2491,7 @@ async fn accept_prompt(
             message
                 .metadata
                 .insert("admitted_seq".to_string(), serde_json::json!(seq));
+            apply_initial_session_title(session);
         }
 
         queue.pending.push_back(PendingPrompt {
@@ -2970,6 +3066,7 @@ async fn update_session(
 
     if let Some(title) = req.title {
         session.set_title(title);
+        session.mark_title_user_owned();
     }
     if let Some(time) = req.time {
         if let Some(archived) = time.archived {
@@ -6643,5 +6740,146 @@ mod delete_session_tests {
             .await
             .expect("list child messages")
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod session_title_tests {
+    use super::*;
+    use crate::server::test_state_with_repos;
+    use opencode_provider::{ChatRequest, ChatResponse, ModelInfo, ProviderError, StreamResult};
+    use opencode_storage::{Database, MessageRepository, SessionRepository};
+
+    /// Provider that never answers: these tests cover the durable fallback title
+    /// written at accept time, before any completion can run.
+    struct FailingProvider;
+
+    #[async_trait::async_trait]
+    impl opencode_provider::Provider for FailingProvider {
+        fn id(&self) -> &str {
+            "test"
+        }
+
+        fn name(&self) -> &str {
+            "Test"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            Vec::new()
+        }
+
+        fn get_model(&self, _id: &str) -> Option<&ModelInfo> {
+            None
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest(
+                "title disabled in test".to_string(),
+            ))
+        }
+
+        async fn chat_stream(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<StreamResult, ProviderError> {
+            Err(ProviderError::InvalidRequest(
+                "stream disabled in test".to_string(),
+            ))
+        }
+    }
+
+    /// Pretend a run already owns the session so the drain loop never starts.
+    async fn pin_active(session_id: &str) {
+        let mut queues = SESSION_QUEUES.lock().await;
+        queues.entry(session_id.to_string()).or_default().active = true;
+    }
+
+    async fn state_with_repos() -> (Arc<ServerState>, SessionRepository) {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should init");
+        let pool = db.pool().clone();
+        let state = Arc::new(test_state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        ));
+        (state, SessionRepository::new(pool))
+    }
+
+    #[tokio::test]
+    async fn accepted_prompt_persists_fallback_title_without_completing_the_turn() {
+        let (state, session_repo) = state_with_repos().await;
+        let session_id = {
+            let mut manager = state.sessions.lock().await;
+            manager.create("default", ".").id.clone()
+        };
+        pin_active(&session_id).await;
+
+        accept_prompt(
+            &state,
+            &session_id,
+            "Investigate the flaky test".to_string(),
+            Arc::new(FailingProvider),
+            "test".to_string(),
+            "test-model".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("accept should succeed");
+
+        {
+            let manager = state.sessions.lock().await;
+            let session = manager.get(&session_id).expect("session should exist");
+            assert!(!session.is_default_title());
+            assert_eq!(session.title, "Investigate the flaky test");
+            assert!(
+                session.is_auto_title_pending(),
+                "fallback title must stay upgradeable after a tool-first/aborted turn"
+            );
+        }
+
+        let stored = session_repo
+            .get(&session_id)
+            .await
+            .expect("get stored session")
+            .expect("stored session should exist");
+        assert_eq!(stored.title, "Investigate the flaky test");
+        assert!(!stored.title.starts_with("New session"));
+    }
+
+    #[tokio::test]
+    async fn accepted_prompt_keeps_user_renamed_title() {
+        let (state, _session_repo) = state_with_repos().await;
+        let session_id = {
+            let mut manager = state.sessions.lock().await;
+            let id = manager.create("default", ".").id.clone();
+            let session = manager.get_mut(&id).expect("session should exist");
+            session.set_title("User chosen title");
+            session.mark_title_user_owned();
+            id
+        };
+        pin_active(&session_id).await;
+
+        accept_prompt(
+            &state,
+            &session_id,
+            "Investigate the flaky test".to_string(),
+            Arc::new(FailingProvider),
+            "test".to_string(),
+            "test-model".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("accept should succeed");
+
+        let manager = state.sessions.lock().await;
+        let session = manager.get(&session_id).expect("session should exist");
+        assert_eq!(session.title, "User chosen title");
+        assert!(!session.is_auto_title_pending());
     }
 }

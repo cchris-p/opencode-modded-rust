@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "docs/opencode-session.md"
-status: "todo"
+status: "doing"
 created: "2026-09-21"
 ---
 
@@ -141,6 +141,42 @@ UI polish if the current surfaces still lag.
 - Send a prompt through `/stream` and through `/prompt`; confirm both persist a title.
 - Rename a session, then run another prompt; confirm the rename is preserved.
 - `cargo test -p opencode-session -p opencode-server -p opencode-tui`.
+
+## Dev Notes
+
+Implemented the leaning from the card: **1 + 3** for timing, **2** for the durable write, and
+`is_default_title()`-style guards for **5**.
+
+- **Title is driven by the first user message, not the first assistant step.**
+  `SessionPrompt::loop_inner` now calls `ensure_title` once before the step loop whenever
+  `Session::should_generate_title()` is true, and the old call inside the
+  `should_run_first_step_postprocessing` block was removed. Tool-first and aborted turns are
+  now titled (`crates/opencode-session/src/prompt.rs`).
+- **Durable fallback written at accept time.** `apply_initial_session_title` writes the instant
+  `generate_session_title` fallback for a still-placeholder session and is called by the shared
+  `accept_prompt` (covers `/prompt` and `/prompt/async`) and by `stream_message` (covers
+  `/stream`). `accept_prompt`'s existing `persist_sessions_if_enabled` flushes it; `/stream`
+  persists before streaming so an aborted turn still keeps the title
+  (`crates/opencode-server/src/routes.rs`).
+- **Async LLM upgrade.** The agentic runner upgrades the fallback in-loop and its snapshots carry
+  the title; the `/stream` path has no runner, so `spawn_title_upgrade` performs the LLM upgrade
+  off the request path. Both keep the fallback if the LLM fails.
+- **Rename and retry guards.** `Session` gained `title_auto` metadata plus
+  `is_auto_title_pending` / `should_generate_title` / `set_auto_title` / `finalize_auto_title` /
+  `mark_title_user_owned`. `set_session_title` and `update_session` mark the title user-owned, so
+  a manual rename clears the pending marker and is never overwritten. A failed LLM upgrade stays
+  pending and is retried on a later prompt; a successful upgrade finalizes
+  (`crates/opencode-session/src/session.rs`).
+- **Tests.** `ensure_title_titles_tool_first_session_from_first_user_message`,
+  `ensure_title_never_overwrites_user_rename`, `ensure_title_retries_pending_fallback_without_clobbering_it`,
+  `test_auto_title_lifecycle_and_user_rename_guard`,
+  `accepted_prompt_persists_fallback_title_without_completing_the_turn` (asserts the SQLite row),
+  and `accepted_prompt_keeps_user_renamed_title`.
+
+Verification run: `cargo test -p opencode-session -p opencode-server -p opencode-tui`. New tests
+pass. Two pre-existing `opencode-session` instruction-path tests and two pre-existing
+`opencode-tui` prompt tests fail unchanged on the clean base (macOS path/UTF-8 environment), not
+touched by this change.
 
 ## Related Items
 
