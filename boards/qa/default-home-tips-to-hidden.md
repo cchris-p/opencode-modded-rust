@@ -74,3 +74,8 @@ Current behavior:
 - Kept `/tips.toggle` (alias `/tips`), the command palette entry, persistence, and rotation behavior unchanged.
 - Verification run: `cargo check -p opencode-tui -p opencode-config`; `cargo test -p opencode-tui tips` (2 passed: `components::home::tests::tips_are_only_visible_when_not_hidden`, `context::app_context::tests::tips_default_to_hidden_when_unset`).
 
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/75
+
+
