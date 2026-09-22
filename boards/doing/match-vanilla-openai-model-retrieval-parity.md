@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "invariants/providers.md"
-status: "todo"
+status: "doing"
 created: "2026-09-22"
 ---
 
@@ -114,3 +114,11 @@ Prefer the smallest approach that makes all Rust OpenAI model listing surfaces a
 - [x] Product invariant has been updated in `invariants/providers.md`.
 - [x] Related Codex setup work is linked through `START-029`.
 - [x] Acceptance criteria specify exact user-facing surfaces to verify.
+
+## Dev Notes - 2026-09-22
+
+- Refreshed the bundled OpenAI fallback catalog in `crates/opencode-provider/src/bootstrap.rs` with current reference OpenAI/Codex-family entries including `gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, and `gpt-5.5-pro`.
+- Kept the bootstrap/models.dev-derived provider state as the authoritative listing source for wrapped runtime providers; `OpenAIProvider` still handles transport for exact model ids.
+- Updated fallback env registration to wrap concrete providers with catalog-derived provider state, preventing fallback registration from exposing the stale hardcoded `openai.rs` model list.
+- Added regression coverage that fails if wrapped OpenAI listings omit the current catalog models or fall back to the old `o1-preview` hardcoded set.
+- Verification: `git -C "$HOME/repos/opencode-modded" fetch origin dev`; reference paths still use `ModelsDev.Service`/`fromModelsDevProvider`; `cargo test -p opencode-provider openai`; `cargo test -p opencode-provider bootstrap`.

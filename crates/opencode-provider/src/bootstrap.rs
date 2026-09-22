@@ -291,28 +291,103 @@ fn bundled_v1_models_data() -> ModelsData {
                 model(
                     "gpt-5.3-codex",
                     "GPT-5.3 Codex",
-                    "2026-08-01",
+                    "2026-02-05",
                     400_000,
                     128_000,
                     true,
                     true,
                     true,
+                    true,
+                    1.75,
+                    14.0,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "gpt-5.3-codex-spark",
+                    "GPT-5.3 Codex Spark",
+                    "2026-02-05",
+                    128_000,
+                    32_000,
+                    true,
+                    true,
+                    true,
+                    true,
+                    1.75,
+                    14.0,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "gpt-5.5",
+                    "GPT-5.5",
+                    "2026-04-23",
+                    1_050_000,
+                    128_000,
+                    true,
                     false,
-                    1.5,
-                    6.0,
+                    true,
+                    true,
+                    5.0,
+                    30.0,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "gpt-5.5-pro",
+                    "GPT-5.5 Pro",
+                    "2026-04-23",
+                    1_050_000,
+                    128_000,
+                    true,
+                    false,
+                    true,
+                    true,
+                    30.0,
+                    180.0,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "gpt-5.4",
+                    "GPT-5.4",
+                    "2026-03-05",
+                    1_050_000,
+                    128_000,
+                    true,
+                    false,
+                    true,
+                    true,
+                    2.5,
+                    15.0,
+                    "@ai-sdk/openai",
+                    "https://api.openai.com/v1",
+                ),
+                model(
+                    "gpt-5.4-mini",
+                    "GPT-5.4 mini",
+                    "2026-03-17",
+                    400_000,
+                    128_000,
+                    true,
+                    false,
+                    true,
+                    true,
+                    0.75,
+                    4.5,
                     "@ai-sdk/openai",
                     "https://api.openai.com/v1",
                 ),
                 model(
                     "gpt-5-mini",
                     "GPT-5 Mini",
-                    "2026-08-01",
+                    "2025-08-07",
                     400_000,
                     128_000,
                     true,
-                    true,
-                    true,
                     false,
+                    true,
+                    true,
                     0.25,
                     2.0,
                     "@ai-sdk/openai",
@@ -321,13 +396,13 @@ fn bundled_v1_models_data() -> ModelsData {
                 model(
                     "gpt-5-nano",
                     "GPT-5 Nano",
-                    "2026-08-01",
+                    "2025-08-07",
                     400_000,
                     128_000,
                     true,
-                    true,
-                    true,
                     false,
+                    true,
+                    true,
                     0.05,
                     0.4,
                     "@ai-sdk/openai",
@@ -336,13 +411,13 @@ fn bundled_v1_models_data() -> ModelsData {
                 model(
                     "o4-mini",
                     "o4 Mini",
-                    "2026-08-01",
+                    "2025-04-16",
                     200_000,
                     100_000,
                     true,
-                    true,
-                    true,
                     false,
+                    true,
+                    true,
                     1.1,
                     4.4,
                     "@ai-sdk/openai",
@@ -3003,7 +3078,7 @@ fn load_models_dev_cache() -> ModelsData {
     }
 }
 
-fn register_fallback_env_providers(registry: &mut ProviderRegistry) {
+fn register_fallback_env_providers(registry: &mut ProviderRegistry, models_dev: &ModelsData) {
     let fallback: Vec<(&str, Vec<&str>)> = vec![
         ("anthropic", vec!["ANTHROPIC_API_KEY"]),
         ("openai", vec!["OPENAI_API_KEY"]),
@@ -3041,16 +3116,22 @@ fn register_fallback_env_providers(registry: &mut ProviderRegistry) {
     ];
 
     for (provider_id, env_keys) in fallback {
-        let state = ProviderState {
-            id: provider_id.to_string(),
-            name: provider_id.to_string(),
-            source: "env".to_string(),
-            env: env_keys.into_iter().map(|k| k.to_string()).collect(),
-            key: None,
-            options: HashMap::new(),
-            models: HashMap::new(),
-        };
+        let mut state = models_dev
+            .get(provider_id)
+            .map(from_models_dev_provider)
+            .unwrap_or_else(|| ProviderState {
+                id: provider_id.to_string(),
+                name: provider_id.to_string(),
+                source: "env".to_string(),
+                env: vec![],
+                key: None,
+                options: HashMap::new(),
+                models: HashMap::new(),
+            });
+        state.source = "env".to_string();
+        state.env = env_keys.into_iter().map(|k| k.to_string()).collect();
         if let Some(provider) = create_concrete_provider(provider_id, &state) {
+            let provider = wrap_provider_for_state(&state, provider);
             registry.register_arc(provider);
         }
     }
@@ -3115,7 +3196,7 @@ fn bootstrap_registry(
         tracing::debug!(
             "No providers registered from bootstrap state, falling back to direct env registration"
         );
-        register_fallback_env_providers(&mut registry);
+        register_fallback_env_providers(&mut registry, &models_dev);
     }
 
     registry
@@ -3337,6 +3418,8 @@ mod tests {
 
         assert!(data["ollama"].models.contains_key(OLLAMA_DEFAULT_MODEL_ID));
         assert!(data["openai"].models.contains_key("gpt-5.3-codex"));
+        assert!(data["openai"].models.contains_key("gpt-5.5"));
+        assert!(data["openai"].models.contains_key("gpt-5.4-mini"));
         assert!(data["anthropic"].models.contains_key("claude-sonnet-5"));
         assert!(data["deepseek"].models.contains_key("deepseek-v4-pro"));
         assert!(data["openrouter"]
@@ -3351,6 +3434,25 @@ mod tests {
 
         let provider = create_concrete_provider("openai", &state).expect("provider should exist");
         assert_eq!(provider.id(), "openai");
+    }
+
+    #[test]
+    fn wrapped_openai_provider_lists_catalog_models() {
+        let data = bundled_v1_models_data();
+        let mut state =
+            from_models_dev_provider(data.get("openai").expect("openai catalog exists"));
+        state.key = Some("test-key".to_string());
+
+        let provider = create_concrete_provider("openai", &state).expect("provider should exist");
+        let provider = wrap_provider_for_state(&state, provider);
+        let models = provider.models();
+
+        assert!(models.iter().any(|model| model.id == "gpt-5.3-codex"));
+        assert!(models.iter().any(|model| model.id == "gpt-5.5"));
+        assert!(models.iter().any(|model| model.id == "gpt-5.4-mini"));
+        assert!(models.iter().any(|model| model.id == "gpt-5-mini"));
+        assert!(models.iter().any(|model| model.id == "o4-mini"));
+        assert!(!models.iter().any(|model| model.id == "o1-preview"));
     }
 
     #[test]
