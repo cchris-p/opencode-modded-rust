@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "docs/opencode-session.md"
-status: "doing"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -143,6 +143,10 @@ UI polish if the current surfaces still lag.
 - `cargo test -p opencode-session -p opencode-server -p opencode-tui`.
 
 ## Dev Notes
+
+PR: https://github.com/cchris-p/opencode-modded-rust/pull/71 (branch
+`bug/BUG-026-save-session-title-after-new-session-creation`, target `development`). Awaiting local
+QA on the PR branch.
 
 Implemented the leaning from the card: **1 + 3** for timing, **2** for the durable write, and
 `is_default_title()`-style guards for **5**.
