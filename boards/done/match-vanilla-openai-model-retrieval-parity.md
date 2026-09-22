@@ -175,6 +175,8 @@ Prefer the smallest approach that makes all Rust OpenAI model listing surfaces a
 - QA report recorded above; verification evidence reproduced and passing.
 - Marked `done` by explicit user direction.
 - Follow-up filed: `START-031` Auto-refresh the models.dev catalog for standing OpenAI parity.
-- Code fix delivered in the follow-up PR `feature/START-030-openai-model-parity-fix`; merge reference is recorded in the final closeout note.
+- Code fix delivered in PR #76 (`feature/START-030-openai-model-parity-fix`), merged into `development` at `835bdb89c925989f15e046e6add5ec9d8ed8256a`.
+- Branch cleanup completed for `feature/START-030-openai-model-parity-fix` (remote and local deleted).
+
 
 
