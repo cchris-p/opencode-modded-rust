@@ -123,3 +123,9 @@ Prefer the smallest approach that makes all Rust OpenAI model listing surfaces a
 - Added regression coverage that fails if wrapped OpenAI listings omit the current catalog models or fall back to the old `o1-preview` hardcoded set.
 - PR: https://github.com/cchris-p/opencode-modded-rust/pull/73
 - Verification: `git -C "$HOME/repos/opencode-modded" fetch origin dev`; reference paths still use `ModelsDev.Service`/`fromModelsDevProvider`; `cargo test -p opencode-provider openai`; `cargo test -p opencode-provider bootstrap`.
+
+## Closeout - 2026-09-22
+
+- PR #73 merged into `development` at `74a1135fa7c38deaa56854b5716db4fe7a7c7404`.
+- Branch cleanup completed for `feature/START-030-openai-model-parity`.
+- Item remains in `qa` pending post-merge QA report or explicit completion direction.
