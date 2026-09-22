@@ -882,14 +882,6 @@ impl CustomLoader for OpenAILoader {
     ) -> CustomLoaderResult {
         let mut result = CustomLoaderResult::default();
         result.has_custom_get_model = true;
-        // Blacklist non-chat models
-        result.blacklist.extend(vec![
-            "whisper".to_string(),
-            "tts".to_string(),
-            "dall-e".to_string(),
-            "embedding".to_string(),
-            "moderation".to_string(),
-        ]);
         result
     }
 }
@@ -1636,13 +1628,106 @@ pub fn from_models_dev_model(provider: &ModelsProviderInfo, model: &ModelInfo) -
     }
 }
 
-/// Transform a models.dev provider into a runtime ProviderState.
-pub fn from_models_dev_provider(provider: &ModelsProviderInfo) -> ProviderState {
-    let models = provider
-        .models
+fn camel_case_option_key(key: &str) -> String {
+    let mut result = String::with_capacity(key.len());
+    let mut uppercase_next = false;
+    for ch in key.chars() {
+        if ch == '_' {
+            uppercase_next = true;
+            continue;
+        }
+        if uppercase_next {
+            result.extend(ch.to_uppercase());
+            uppercase_next = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+fn mode_options(
+    base: &ProviderModel,
+    body: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> HashMap<String, serde_json::Value> {
+    let Some(body) = body else {
+        return base.options.clone();
+    };
+
+    let mut options: HashMap<String, serde_json::Value> = body
         .iter()
-        .map(|(id, model)| (id.clone(), from_models_dev_model(provider, model)))
+        .map(|(key, value)| (camel_case_option_key(key), value.clone()))
         .collect();
+
+    let reasoning_mode = body
+        .get("reasoning")
+        .and_then(|reasoning| reasoning.as_object())
+        .and_then(|reasoning| reasoning.get("mode"))
+        .and_then(|mode| mode.as_str());
+    if base.api.npm == "@ai-sdk/openai" {
+        if let Some(mode) = reasoning_mode {
+            options.remove("reasoning");
+            options.insert(
+                "reasoningMode".to_string(),
+                serde_json::Value::String(mode.to_string()),
+            );
+        }
+    }
+
+    options
+}
+
+fn merge_mode_cost(base: &ProviderModelCost, mode_cost: Option<&ModelCost>) -> ProviderModelCost {
+    match mode_cost {
+        None => base.clone(),
+        Some(cost) => ProviderModelCost {
+            input: cost.input,
+            output: cost.output,
+            cache: ModelCostCache {
+                read: cost.cache_read.unwrap_or(0.0),
+                write: cost.cache_write.unwrap_or(0.0),
+            },
+            experimental_over_200k: base.experimental_over_200k.clone(),
+        },
+    }
+}
+
+fn capitalize_mode(mode: &str) -> String {
+    let mut chars = mode.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Transform a models.dev provider into a runtime ProviderState.
+///
+/// Mirrors vanilla `fromModelsDevProvider`: each model's `experimental.modes`
+/// entries become additional addressable models suffixed with the mode name.
+pub fn from_models_dev_provider(provider: &ModelsProviderInfo) -> ProviderState {
+    let mut models: HashMap<String, ProviderModel> = HashMap::new();
+
+    for (id, model) in &provider.models {
+        let base = from_models_dev_model(provider, model);
+        models.insert(id.clone(), base.clone());
+
+        let Some(modes) = model.experimental.as_ref().and_then(|e| e.modes()) else {
+            continue;
+        };
+
+        for (mode, mode_config) in modes {
+            let mode_provider = mode_config.provider.as_ref();
+            let mut derived = base.clone();
+            derived.id = format!("{}-{}", model.id, mode);
+            derived.name = format!("{} {}", model.name, capitalize_mode(mode));
+            derived.cost = merge_mode_cost(&base.cost, mode_config.cost.as_ref());
+            derived.options = mode_options(&base, mode_provider.and_then(|p| p.body.as_ref()));
+            if let Some(headers) = mode_provider.and_then(|p| p.headers.as_ref()) {
+                derived.headers = headers.clone();
+            }
+            models.insert(derived.id.clone(), derived);
+        }
+    }
 
     ProviderState {
         id: provider.id.clone(),
@@ -2925,6 +3010,7 @@ struct AliasedProvider {
     inner: Arc<dyn RuntimeProvider>,
     models: Vec<RuntimeModelInfo>,
     model_index: HashMap<String, RuntimeModelInfo>,
+    api_aliases: HashMap<String, String>,
 }
 
 impl AliasedProvider {
@@ -2933,6 +3019,7 @@ impl AliasedProvider {
         name: String,
         inner: Arc<dyn RuntimeProvider>,
         models: Vec<RuntimeModelInfo>,
+        api_aliases: HashMap<String, String>,
     ) -> Self {
         let model_index = models
             .iter()
@@ -2944,6 +3031,15 @@ impl AliasedProvider {
             inner,
             models,
             model_index,
+            api_aliases,
+        }
+    }
+
+    fn resolve_api_model(&self, request: &mut crate::ChatRequest) {
+        if let Some(api_id) = self.api_aliases.get(&request.model) {
+            if api_id != &request.model {
+                request.model = api_id.clone();
+            }
         }
     }
 }
@@ -2968,15 +3064,17 @@ impl RuntimeProvider for AliasedProvider {
 
     async fn chat(
         &self,
-        request: crate::ChatRequest,
+        mut request: crate::ChatRequest,
     ) -> Result<crate::ChatResponse, crate::ProviderError> {
+        self.resolve_api_model(&mut request);
         self.inner.chat(request).await
     }
 
     async fn chat_stream(
         &self,
-        request: crate::ChatRequest,
+        mut request: crate::ChatRequest,
     ) -> Result<crate::StreamResult, crate::ProviderError> {
+        self.resolve_api_model(&mut request);
         self.inner.chat_stream(request).await
     }
 }
@@ -2996,6 +3094,15 @@ fn state_model_to_runtime(provider_id: &str, model: &ProviderModel) -> RuntimeMo
         cost_per_million_input: model.cost.input,
         cost_per_million_output: model.cost.output,
     }
+}
+
+fn build_api_aliases(provider_state: &ProviderState) -> HashMap<String, String> {
+    provider_state
+        .models
+        .values()
+        .filter(|model| model.api.id != model.id)
+        .map(|model| (model.id.clone(), model.api.id.clone()))
+        .collect()
 }
 
 fn wrap_provider_for_state(
@@ -3020,11 +3127,14 @@ fn wrap_provider_for_state(
             .collect()
     };
 
+    let api_aliases = build_api_aliases(provider_state);
+
     Arc::new(AliasedProvider::new(
         provider_state.id.clone(),
         provider_state.name.clone(),
         provider,
         models,
+        api_aliases,
     ))
 }
 
@@ -3453,6 +3563,147 @@ mod tests {
         assert!(models.iter().any(|model| model.id == "gpt-5-mini"));
         assert!(models.iter().any(|model| model.id == "o4-mini"));
         assert!(!models.iter().any(|model| model.id == "o1-preview"));
+    }
+
+    #[test]
+    fn models_dev_openai_experimental_modes_and_embeddings_are_listed() {
+        let raw = r#"{
+          "openai": {
+            "id": "openai",
+            "name": "OpenAI",
+            "env": ["OPENAI_API_KEY"],
+            "npm": "@ai-sdk/openai",
+            "models": {
+              "gpt-5.5": {
+                "id": "gpt-5.5",
+                "name": "GPT-5.5",
+                "release_date": "2026-04-23",
+                "attachment": true,
+                "reasoning": true,
+                "temperature": false,
+                "tool_call": true,
+                "cost": {"input": 5.0, "output": 30.0, "cache_read": 0.5},
+                "limit": {"context": 1050000, "output": 128000},
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+                "experimental": {
+                  "modes": {
+                    "fast": {
+                      "cost": {"input": 12.5, "output": 75.0, "cache_read": 1.25},
+                      "provider": {"body": {"service_tier": "priority"}}
+                    }
+                  }
+                }
+              },
+              "gpt-5.6": {
+                "id": "gpt-5.6",
+                "name": "GPT-5.6",
+                "release_date": "2026-07-09",
+                "attachment": true,
+                "reasoning": true,
+                "temperature": false,
+                "tool_call": true,
+                "limit": {"context": 1050000, "output": 128000},
+                "modalities": {"input": ["text"], "output": ["text"]},
+                "experimental": {
+                  "modes": {
+                    "pro": {"provider": {"body": {"reasoning": {"mode": "pro"}}}}
+                  }
+                }
+              },
+              "gpt-4-turbo": {
+                "id": "gpt-4-turbo",
+                "name": "GPT-4 Turbo",
+                "status": "deprecated",
+                "attachment": true,
+                "reasoning": false,
+                "temperature": true,
+                "tool_call": true,
+                "limit": {"context": 128000, "output": 4096},
+                "modalities": {"input": ["text"], "output": ["text"]}
+              },
+              "text-embedding-3-small": {
+                "id": "text-embedding-3-small",
+                "name": "text-embedding-3-small",
+                "attachment": false,
+                "reasoning": false,
+                "temperature": false,
+                "tool_call": false,
+                "limit": {"context": 8191, "output": 1536},
+                "modalities": {"input": ["text"], "output": ["text"]}
+              }
+            }
+          }
+        }"#;
+
+        let data: ModelsData = serde_json::from_str(raw).expect("fixture parses");
+        assert!(data.contains_key("openai"), "openai survives parsing");
+
+        let mut auth_store = HashMap::new();
+        auth_store.insert(
+            "openai".to_string(),
+            AuthInfo::Api {
+                key: "test-key".to_string(),
+            },
+        );
+        let state = ProviderBootstrapState::init(&data, &BootstrapConfig::default(), &auth_store);
+
+        let openai = state
+            .get_provider("openai")
+            .expect("openai provider is retained");
+        let mut ids: Vec<&str> = openai.models.keys().map(|id| id.as_str()).collect();
+        ids.sort_unstable();
+
+        assert_eq!(
+            ids,
+            vec![
+                "gpt-5.5",
+                "gpt-5.5-fast",
+                "gpt-5.6",
+                "gpt-5.6-pro",
+                "text-embedding-3-small",
+            ],
+            "openai listing matches vanilla models.dev expansion and excludes deprecated entries"
+        );
+
+        let fast = &openai.models["gpt-5.5-fast"];
+        assert_eq!(fast.name, "GPT-5.5 Fast");
+        assert_eq!(fast.api.id, "gpt-5.5");
+        assert_eq!(
+            fast.options.get("serviceTier"),
+            Some(&serde_json::json!("priority"))
+        );
+        assert_eq!(fast.cost.input, 12.5);
+
+        let pro = &openai.models["gpt-5.6-pro"];
+        assert_eq!(pro.name, "GPT-5.6 Pro");
+        assert_eq!(pro.api.id, "gpt-5.6");
+        assert_eq!(
+            pro.options.get("reasoningMode"),
+            Some(&serde_json::json!("pro"))
+        );
+
+        let aliases = build_api_aliases(openai);
+        assert_eq!(aliases.get("gpt-5.5-fast"), Some(&"gpt-5.5".to_string()));
+        assert_eq!(aliases.get("gpt-5.6-pro"), Some(&"gpt-5.6".to_string()));
+        assert_eq!(aliases.get("gpt-5.5"), None);
+        assert_eq!(aliases.get("gpt-5.6"), None);
+    }
+
+    #[test]
+    fn legacy_boolean_experimental_field_does_not_drop_models() {
+        let raw = r#"{
+          "id": "gpt-legacy",
+          "name": "GPT Legacy",
+          "experimental": true,
+          "limit": {"context": 1000, "output": 100}
+        }"#;
+
+        let model: ModelInfo = serde_json::from_str(raw).expect("legacy bool experimental parses");
+        assert!(model
+            .experimental
+            .as_ref()
+            .and_then(|e| e.modes())
+            .is_none());
     }
 
     #[test]

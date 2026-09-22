@@ -1917,6 +1917,8 @@ async fn setup_providers(config: &opencode_config::Config) -> anyhow::Result<Pro
         config.small_model.clone(),
     );
 
+    opencode_provider::ensure_models_dev_cache().await;
+
     Ok(create_registry_from_bootstrap_config(
         &bootstrap_config,
         &auth_store,

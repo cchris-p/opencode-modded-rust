@@ -143,6 +143,7 @@ impl ServerState {
         let auth_store = auth_manager.list().await;
 
         let bootstrap_config = load_provider_bootstrap_config();
+        opencode_provider::ensure_models_dev_cache().await;
         *state.providers.write().unwrap() =
             create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
         let db = Database::new().await?;
@@ -160,6 +161,7 @@ impl ServerState {
     pub async fn refresh_providers(&self) -> anyhow::Result<()> {
         let auth_store = self.auth_manager.list().await;
         let bootstrap_config = load_provider_bootstrap_config();
+        opencode_provider::ensure_models_dev_cache().await;
         *self.providers.write().unwrap() =
             create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
         Ok(())

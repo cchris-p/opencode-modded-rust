@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-pub const MODELS_DEV_URL: &str = "https://models.dev";
+pub const MODELS_DEV_URL: &str = "https://models.opencode.ai";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCost {
@@ -47,6 +47,44 @@ pub enum ModelInterleaved {
     Field { field: String },
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelExperimentalModeProvider {
+    #[serde(default)]
+    pub body: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelExperimentalMode {
+    #[serde(default)]
+    pub cost: Option<ModelCost>,
+    #[serde(default)]
+    pub provider: Option<ModelExperimentalModeProvider>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelExperimentalModes {
+    #[serde(default)]
+    pub modes: HashMap<String, ModelExperimentalMode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModelExperimental {
+    Legacy(bool),
+    Modes(ModelExperimentalModes),
+}
+
+impl ModelExperimental {
+    pub fn modes(&self) -> Option<&HashMap<String, ModelExperimentalMode>> {
+        match self {
+            ModelExperimental::Legacy(_) => None,
+            ModelExperimental::Modes(modes) => Some(&modes.modes),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
@@ -71,7 +109,7 @@ pub struct ModelInfo {
     #[serde(default)]
     pub modalities: Option<ModelModalities>,
     #[serde(default)]
-    pub experimental: Option<bool>,
+    pub experimental: Option<ModelExperimental>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
@@ -199,6 +237,15 @@ impl Default for ModelsRegistry {
             .join("models.json");
         Self::new(cache_path)
     }
+}
+
+/// Ensure the on-disk models.dev catalog cache is populated before provider
+/// bootstrapping reads it. `bootstrap_registry` only reads the cache file and
+/// otherwise falls back to the bundled snapshot, so without this the runtime
+/// provider/model list can silently lag the canonical catalog.
+pub async fn ensure_models_dev_cache() {
+    let registry = ModelsRegistry::default();
+    let _ = registry.get().await;
 }
 
 pub fn default_model_limits() -> (u64, u64) {
