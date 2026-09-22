@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "docs/opencode-session.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -144,9 +144,11 @@ UI polish if the current surfaces still lag.
 
 ## Dev Notes
 
-PR: https://github.com/cchris-p/opencode-modded-rust/pull/71 (branch
-`bug/BUG-026-save-session-title-after-new-session-creation`, target `development`). Awaiting local
-QA on the PR branch.
+Merged via PR https://github.com/cchris-p/opencode-modded-rust/pull/71 (merge commit `0310c38`)
+into `development`; branch `bug/BUG-026-save-session-title-after-new-session-creation` deleted
+remotely and locally. Re-verified on `development`: `cargo test -p opencode-session -p
+opencode-server -p opencode-tui` (new tests pass; only the pre-existing macOS/UTF-8 failures
+remain).
 
 Implemented the leaning from the card: **1 + 3** for timing, **2** for the durable write, and
 `is_default_title()`-style guards for **5**.
