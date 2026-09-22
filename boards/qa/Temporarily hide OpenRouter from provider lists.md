@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-22"
 ---
 
@@ -85,6 +85,10 @@ The pulled card claimed `BUG-031`, which collided with `dialog-input-cursor-and-
 - `cargo fmt --all -- --check` clean.
 - `cargo check -p opencode-provider -p opencode-tui -p opencode-cli -p opencode-server` clean.
 - `cargo test -p opencode-provider -p opencode-tui -p opencode-server -p opencode-cli` all passing (0 failures).
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/74 (`development` base)
 
 ## Related items
 
