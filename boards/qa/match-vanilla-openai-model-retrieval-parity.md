@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "invariants/providers.md"
-status: "doing"
+status: "qa"
 created: "2026-09-22"
 ---
 
@@ -121,4 +121,5 @@ Prefer the smallest approach that makes all Rust OpenAI model listing surfaces a
 - Kept the bootstrap/models.dev-derived provider state as the authoritative listing source for wrapped runtime providers; `OpenAIProvider` still handles transport for exact model ids.
 - Updated fallback env registration to wrap concrete providers with catalog-derived provider state, preventing fallback registration from exposing the stale hardcoded `openai.rs` model list.
 - Added regression coverage that fails if wrapped OpenAI listings omit the current catalog models or fall back to the old `o1-preview` hardcoded set.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/73
 - Verification: `git -C "$HOME/repos/opencode-modded" fetch origin dev`; reference paths still use `ModelsDev.Service`/`fromModelsDevProvider`; `cargo test -p opencode-provider openai`; `cargo test -p opencode-provider bootstrap`.
