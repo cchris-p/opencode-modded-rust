@@ -3513,6 +3513,9 @@ fn variants_for_model(
 }
 
 fn is_v1_catalog_provider(provider_id: &str) -> bool {
+    if opencode_provider::is_provider_temporarily_hidden(provider_id) {
+        return false;
+    }
     matches!(
         provider_id,
         "ollama" | "openai" | "anthropic" | "deepseek" | "openrouter"
@@ -6412,6 +6415,9 @@ async fn effective_provider_setup(state: &ServerState, config: &AppConfig) -> Pr
     let (ollama_base_url, ollama_base_url_source) = effective_ollama_base_url(config);
     let mut auth = HashMap::new();
     for provider_id in ["ollama", "openai", "anthropic", "deepseek", "openrouter"] {
+        if opencode_provider::is_provider_temporarily_hidden(provider_id) {
+            continue;
+        }
         auth.insert(
             provider_id.to_string(),
             provider_auth_status_from_runtime(state, provider_id, config).await,
