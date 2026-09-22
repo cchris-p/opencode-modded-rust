@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "invariants/providers.md"
-status: "qa"
+status: "done"
 created: "2026-09-22"
 ---
 
@@ -129,3 +129,52 @@ Prefer the smallest approach that makes all Rust OpenAI model listing surfaces a
 - PR #73 merged into `development` at `74a1135fa7c38deaa56854b5716db4fe7a7c7404`.
 - Branch cleanup completed for `feature/START-030-openai-model-parity`.
 - Item remains in `qa` pending post-merge QA report or explicit completion direction.
+
+## QA Report - 2026-09-22
+
+### Reported symptom
+
+- User could not see "Codex 5.5" (the OpenAI `gpt-5.5` entry) in the product's model surfaces after the START-030 merge.
+
+### Root cause (the parity claim was not reproducible)
+
+- `crates/opencode-provider/src/models.rs` typed `ModelInfo.experimental` as `Option<bool>`. The canonical catalog (`https://models.opencode.ai/api.json`) emits an object for this field, e.g. `gpt-5.5` has `experimental.modes.fast`.
+- Strict `serde` deserialization therefore failed for the whole `openai`, `anthropic`, and `github-copilot` providers. `load_models_dev_cache`'s per-provider fallback silently drops providers that fail to parse, so OpenAI disappeared from every listing surface entirely.
+- The pre-existing tests (`wrapped_openai_provider_lists_catalog_models`, `bundled_v1_catalog_includes_ollama_local_path`) only validated the hand-written bundled fallback in `bootstrap.rs`, never the models.dev parse path, so they passed while the real runtime list was empty.
+- Consequently the original "parity" assertion had no path to detect divergence and did not hold.
+
+### Fix
+
+- Typed the experimental schema (`ModelExperimental` / `ModelExperimentalMode` / `ModelExperimentalModeProvider`) instead of `Option<bool>`.
+- `from_models_dev_provider` now expands each `experimental.modes` entry into an addressable `<model-id>-<mode>` model, matching vanilla `fromModelsDevProvider`: derived name, merged mode cost, mode provider body options (`serviceTier`, `reasoningMode`), mode headers, and base `api.id`.
+- Removed the undocumented `OpenAI` custom-loader blacklist (`whisper`/`tts`/`dall-e`/`embedding`/`moderation`); vanilla does not blacklist these, and only the embedding entries exist in the current catalog.
+- Added `ensure_models_dev_cache()` and call it from server startup/refresh and CLI provider setup, so parity no longer depends on a pre-existing cache file; on miss the canonical catalog is fetched before provider bootstrapping.
+- Aligned the fetch source to vanilla's endpoint (`https://models.opencode.ai`).
+- `AliasedProvider` now routes derived mode model ids to their base API model id at request time, so listed mode variants do not emit invalid model ids.
+
+### How parity is determined
+
+- `scripts/compare-openai-model-parity.sh` is the parity check. It fetches the canonical catalog, derives the expected OpenAI list with vanilla's rules (drop `deprecated`; drop `alpha` unless experimental models are enabled; expand `experimental.modes` into `<id>-<mode>`), runs the Rust CLI against a temporary cache seeded with that exact catalog, and diffs both sorted sets. Non-zero exit on divergence.
+
+### Verification evidence
+
+- `scripts/compare-openai-model-parity.sh` -> `OpenAI model list matches vanilla models.dev catalog (49 models).`
+- `opencode models openai` -> 49 ids including `gpt-5.5`, `gpt-5.5-fast`, `gpt-5.5-pro`, `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`, and the three `text-embedding-*` entries.
+- Server `GET /provider` -> same 49 OpenAI ids (TUI `Settings > Provider` reads this endpoint).
+- Fresh-cache check: with `~/.cache/opencode/models.json` removed, the CLI fetched the canonical catalog and still listed 49 OpenAI ids.
+- `cargo test -p opencode-provider` -> 96 + 7 passed; new test `models_dev_openai_experimental_modes_and_embeddings_are_listed`.
+- `cargo check --workspace` clean.
+
+### Documented follow-up
+
+- Catalog freshness/auto-refresh is tracked by `START-031` "Auto-refresh the models.dev catalog for standing OpenAI parity". Without it this card's match is point-in-time only.
+- Mode-variant execution options (`serviceTier` / `reasoningMode`) are listed with correct metadata, and derived ids route to the base model, but the Rust request path does not yet translate the mode provider body into request options. That is transport work outside this item's retrieval/listing scope and is not yet carded.
+
+## Completion - 2026-09-22
+
+- QA report recorded above; verification evidence reproduced and passing.
+- Marked `done` by explicit user direction.
+- Follow-up filed: `START-031` Auto-refresh the models.dev catalog for standing OpenAI parity.
+- Code fix delivered in the follow-up PR `feature/START-030-openai-model-parity-fix`; merge reference is recorded in the final closeout note.
+
+
