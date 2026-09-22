@@ -95,3 +95,9 @@ This is distinct from the existing `show_tool_details` state (`crates/opencode-t
 ### PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/72
+
+## Merge Closeout - 2026-09-22
+
+- PR #72 merged into `development` at `15201ae0edcf175c0cb4caf4567eabf79375ec91`.
+- Remote PR branch `feature/feat-028-hide-tool-calls` was deleted by `gh pr merge --delete-branch`; the local PR branch is no longer present in the worktree used for implementation.
+- Code/task completeness checked against this card before merge; item remains in `qa` pending post-merge QA report or explicit completion direction.
