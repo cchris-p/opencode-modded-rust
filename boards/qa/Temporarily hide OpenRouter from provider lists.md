@@ -90,6 +90,12 @@ The pulled card claimed `BUG-031`, which collided with `dialog-input-cursor-and-
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/74 (`development` base)
 
+## Merge closeout
+
+- Merged into `development` via merge commit `5bf0821` (2026-09-22).
+- PR branch `feature/BUG-032-hide-openrouter-provider-lists` deleted remotely and locally.
+- Item stays in `qa` until a QA report is recorded or a human explicitly completes it.
+
 ## Related items
 
 - `START-012` Refresh provider and model catalog
