@@ -70,6 +70,7 @@ pub enum CommandAction {
     ExternalEditor,
     ToggleTimestamps,
     ToggleThinking,
+    ToggleToolCalls,
     ToggleToolDetails,
     ToggleDensity,
     ToggleSemanticHighlight,
@@ -419,6 +420,17 @@ impl CommandRegistry {
             keybind: None,
             suggested: false,
             action: CommandAction::ToggleThinking,
+        });
+
+        self.register(SlashCommand {
+            name: "/tool-calls".to_string(),
+            aliases: vec!["/tools".to_string(), "/toggle-tools".to_string()],
+            title: "Toggle Tool Calls".to_string(),
+            description: "Show/hide tool call blocks".to_string(),
+            category: CommandCategory::Display,
+            keybind: None,
+            suggested: false,
+            action: CommandAction::ToggleToolCalls,
         });
 
         self.register(SlashCommand {

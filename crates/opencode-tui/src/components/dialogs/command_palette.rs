@@ -120,6 +120,12 @@ impl CommandPalette {
                 category: "View".to_string(),
             },
             Command {
+                action: CommandAction::ToggleToolCalls,
+                title: "Toggle tool calls".to_string(),
+                keybind: None,
+                category: "View".to_string(),
+            },
+            Command {
                 action: CommandAction::ToggleToolDetails,
                 title: "Toggle tool details".to_string(),
                 keybind: None,
@@ -291,6 +297,7 @@ impl CommandPalette {
     pub fn sync_visibility_labels(
         &mut self,
         show_thinking: bool,
+        show_tool_calls: bool,
         show_tool_details: bool,
         density: MessageDensity,
         semantic_highlight: bool,
@@ -325,6 +332,13 @@ impl CommandPalette {
                     "Hide thinking".to_string()
                 } else {
                     "Show thinking".to_string()
+                };
+            }
+            if matches!(&command.action, CommandAction::ToggleToolCalls) {
+                command.title = if show_tool_calls {
+                    "Hide tool calls".to_string()
+                } else {
+                    "Show tool calls".to_string()
                 };
             }
             if matches!(&command.action, CommandAction::ToggleToolDetails) {

@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -83,3 +83,15 @@ This is distinct from the existing `show_tool_details` state (`crates/opencode-t
 - The existing toggle scaffolding to copy is: `CommandAction::ToggleThinking` (`crates/opencode-tui/src/command.rs:72`), the `/thinking` registration (`command.rs:413-422`), the handler branch (`crates/opencode-tui/src/app/app.rs:1781-1783`), and `AppContext::toggle_thinking` (`crates/opencode-tui/src/context/app_context.rs:234-238`).
 - `render_tool_call` (`crates/opencode-tui/src/components/session_tool.rs:58`) currently decides between inline and block layouts per call; the collapse decision belongs one level up, where runs are assembled in `session.rs`, so a single summary can replace a whole run.
 - Do not conflate this with `tool_details_visibility`: that keeps the call header and drops the body, while this drops the individual headers into a count.
+
+## Implementation Notes
+
+- Added persisted `tool_calls_visibility` state with `/tool-calls`, `/tools`, and `/toggle-tools` display commands plus command-palette labels.
+- Added optional `tool_calls` keybind schema support and TUI key handling; no default keybind is registered.
+- Collapsed hidden contiguous tool-call runs at render time into one `N tool calls` summary line, preserving running, failed, and denied state visibility; clicking a summary expands that run inline.
+- Left `show_tool_details` behavior independent: when tool calls are visible, per-call rendering still uses the existing details toggle.
+- Verification run: `cargo check -p opencode-tui -p opencode-config`; `cargo test -p opencode-tui tool_run_summary -- --nocapture`.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/72

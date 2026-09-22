@@ -624,6 +624,10 @@ impl App {
                     self.context.toggle_thinking();
                     return Ok(());
                 }
+                if self.matches_keybind("tool_calls", *key) {
+                    self.context.toggle_tool_calls();
+                    return Ok(());
+                }
                 if self.matches_keybind("tool_details", *key) {
                     self.context.toggle_tool_details();
                     return Ok(());
@@ -1841,6 +1845,9 @@ impl App {
             }
             CommandAction::ToggleThinking => {
                 self.context.toggle_thinking();
+            }
+            CommandAction::ToggleToolCalls => {
+                self.context.toggle_tool_calls();
             }
             CommandAction::ToggleToolDetails => {
                 self.context.toggle_tool_details();
@@ -3777,6 +3784,7 @@ impl App {
 
     fn sync_command_palette_labels(&mut self) {
         let show_thinking = *self.context.show_thinking.read();
+        let show_tool_calls = *self.context.show_tool_calls.read();
         let show_tool_details = *self.context.show_tool_details.read();
         let density = *self.context.message_density.read();
         let semantic_hl = *self.context.semantic_highlight.read();
@@ -3785,6 +3793,7 @@ impl App {
         let tips_hidden = *self.context.tips_hidden.read();
         self.command_palette.sync_visibility_labels(
             show_thinking,
+            show_tool_calls,
             show_tool_details,
             density,
             semantic_hl,
