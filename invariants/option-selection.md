@@ -45,12 +45,12 @@ of them deliberately; the choice must not collide with text entry.
 - Known violation: the export dialog binds bare digits `1`/`2`/`3` to its Include-options toggles,
   so a filename or path cannot contain those digits
   (`crates/opencode-tui/src/components/dialogs/session_export.rs:48-55`). This is tracked as
-  `BUG-029`.
+  `BUG-031`.
 
 ## Applied decision
 
 - The export dialog's options move to focus selection: `Tab`/`Shift+Tab` cycles focus across the
   filename field and the three option rows, `Space` toggles the focused option, and `Enter` exports.
-  Bare digits become typeable in the filename field (`BUG-029`).
+  Bare digits become typeable in the filename field (`BUG-031`).
 - The main prompt input and every dialog text field follow the caret-editability rule via the
   existing cursor model (`crates/opencode-tui/src/components/prompt.rs:75`, `:491-511`).

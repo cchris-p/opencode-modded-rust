@@ -96,4 +96,4 @@ Make the export completion/confirmation UI identify the saved file clearly enoug
   `std::env::current_dir()` in `export_session_to_file`
   (`crates/opencode-tui/src/app/app.rs:2298-2311`).
 - Closed as done on 2026-09-21. The related dialog text-input defects found during retest are
-  tracked separately as `BUG-029`.
+  tracked separately as `BUG-031`.
