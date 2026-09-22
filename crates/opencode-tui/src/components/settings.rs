@@ -692,6 +692,7 @@ fn filtered_providers(context: &Arc<AppContext>) -> Vec<ProviderInfo> {
                 .iter()
                 .find(|provider| provider.id == *provider_id)
         })
+        .filter(|provider| !opencode_provider::is_provider_temporarily_hidden(&provider.id))
         .cloned()
         .collect()
 }

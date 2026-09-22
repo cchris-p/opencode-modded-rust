@@ -1856,7 +1856,8 @@ fn list_models_interactive(registry: &ProviderRegistry) {
         if !matches!(
             provider.id(),
             "openai" | "anthropic" | "deepseek" | "openrouter"
-        ) {
+        ) || opencode_provider::is_provider_temporarily_hidden(provider.id())
+        {
             continue;
         }
         println!("  [{}]", provider.id());
@@ -1875,7 +1876,8 @@ fn list_providers_interactive(registry: &ProviderRegistry) {
         if !matches!(
             provider.id(),
             "openai" | "anthropic" | "deepseek" | "openrouter"
-        ) {
+        ) || opencode_provider::is_provider_temporarily_hidden(provider.id())
+        {
             continue;
         }
         let models_count = provider.models().len();
@@ -3428,7 +3430,6 @@ async fn list_models(
         println!("No providers configured. Set API keys to enable providers:");
         println!("  - ANTHROPIC_API_KEY");
         println!("  - OPENAI_API_KEY");
-        println!("  - OPENROUTER_API_KEY");
         println!("  - GOOGLE_API_KEY");
         println!("  - MISTRAL_API_KEY");
         println!("  - GROQ_API_KEY");
@@ -3445,6 +3446,9 @@ async fn list_models(
     }
 
     for provider in providers {
+        if opencode_provider::is_provider_temporarily_hidden(provider.id()) {
+            continue;
+        }
         if let Some(ref filter) = provider_filter {
             if !provider.id().contains(filter.to_lowercase().as_str()) {
                 continue;
@@ -3688,6 +3692,9 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
         AuthCommands::List => {
             println!("\nCredential providers:");
             for (provider, env_var) in AUTH_ENV_PROVIDERS {
+                if opencode_provider::is_provider_temporarily_hidden(provider) {
+                    continue;
+                }
                 let status = if std::env::var(env_var).is_ok() {
                     "set"
                 } else {
@@ -3703,6 +3710,9 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
             } else {
                 println!("No provider specified. Supported providers:");
                 for (p, _) in AUTH_ENV_PROVIDERS {
+                    if opencode_provider::is_provider_temporarily_hidden(p) {
+                        continue;
+                    }
                     println!("  - {}", p);
                 }
                 print!("Provider: ");
@@ -3751,6 +3761,9 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
             } else {
                 println!("Specify provider to logout. Currently supported:");
                 for (p, _) in AUTH_ENV_PROVIDERS {
+                    if opencode_provider::is_provider_temporarily_hidden(p) {
+                        continue;
+                    }
                     println!("  - {}", p);
                 }
                 print!("Provider: ");

@@ -29,6 +29,25 @@ pub struct ProviderInfo {
     pub options: HashMap<String, serde_json::Value>,
 }
 
+/// Providers that remain fully implemented and explicitly configurable, but are
+/// temporarily removed from normal provider/model selection surfaces.
+///
+/// This is a visibility-only switch: it must not delete provider modules,
+/// catalog entries, auth key mappings, transforms, or tests. To re-enable a
+/// provider, remove its id from this list and update the board item that
+/// tracks the temporary exception.
+///
+/// Tracking: board item `BUG-032` "Temporarily hide OpenRouter from provider lists".
+pub const TEMPORARILY_HIDDEN_PROVIDER_IDS: &[&str] = &["openrouter"];
+
+/// Returns true when a provider is temporarily hidden from normal
+/// provider/model selection lists.
+pub fn is_provider_temporarily_hidden(provider_id: &str) -> bool {
+    TEMPORARILY_HIDDEN_PROVIDER_IDS
+        .iter()
+        .any(|hidden| hidden.eq_ignore_ascii_case(provider_id))
+}
+
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn id(&self) -> &str;
