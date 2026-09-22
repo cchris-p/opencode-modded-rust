@@ -303,9 +303,12 @@ guard prevents loss but not a concurrent same-session edit race (documented non-
 
 ## Completion
 
-- 2026-09-21: PR #70 merged into `development` at merge commit
-  `e0a059f69fee9ebdcc27fbf4d12c0f8a89fdb1b7`; branch `bug/BUG-025-concurrent-sync-data-loss` deleted
-  remotely and locally; local checkout is back on `development` and current.
+- 2026-09-21: [PR #70](https://github.com/cchris-p/opencode-modded-rust/pull/70) merged into
+  `development` at merge commit `e0a059f69fee9ebdcc27fbf4d12c0f8a89fdb1b7`; branch
+  `bug/BUG-025-concurrent-sync-data-loss` deleted remotely and locally; local checkout is back on
+  `development` and current.
+- 2026-09-22: confirmed no local or remote branch, worktree, or stash for BUG-025 remains; card left
+  in `done`.
 - Automated verification: `cargo test -p opencode-storage -p opencode-server` (27 + 3 + 1) and
   `cargo test -p opencode-tui --lib` (68) pass, including the new two-writer, freshness-guard,
   delete-cascade, and missing-session tests.
@@ -315,4 +318,5 @@ guard prevents loss but not a concurrent same-session edit race (documented non-
   `stale_state_does_not_overwrite_newer_stored_session`.
 - The branch also delivered the `invariants/session-durability.md` invariant, the BUG-025
   investigation docs, FEAT-037 prompt-history gating (`05f1c1e`), and the `.opencode/plans` notes.
-  FEAT-037's card was not moved off `todo` in this closeout (out of scope for BUG-025).
+  FEAT-037 was out of scope for this closeout and has since been closed as
+  `boards/done/gate-prompt-history-to-cursor-boundaries.md`.
