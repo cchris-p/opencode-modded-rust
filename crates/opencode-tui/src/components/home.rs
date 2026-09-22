@@ -256,10 +256,12 @@ impl HomeView {
     }
 
     fn should_show_tips(&self) -> bool {
-        let is_first_time_user = self.context.session.read().sessions.is_empty();
-        let tips_hidden = *self.context.tips_hidden.read();
-        !is_first_time_user && !tips_hidden
+        tips_visible(*self.context.tips_hidden.read())
     }
+}
+
+fn tips_visible(tips_hidden: bool) -> bool {
+    !tips_hidden
 }
 
 fn parse_tip_highlights(tip: &str, theme: &crate::theme::Theme) -> Vec<Span<'static>> {
@@ -313,4 +315,15 @@ fn parse_tip_highlights(tip: &str, theme: &crate::theme::Theme) -> Vec<Span<'sta
     }
 
     spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tips_visible;
+
+    #[test]
+    fn tips_are_only_visible_when_not_hidden() {
+        assert!(!tips_visible(true));
+        assert!(tips_visible(false));
+    }
 }

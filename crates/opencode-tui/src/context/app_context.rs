@@ -11,6 +11,8 @@ use crate::event::EventBus;
 use crate::router::Router;
 use crate::theme::Theme;
 
+const DEFAULT_TIPS_HIDDEN: bool = true;
+
 #[derive(Clone)]
 pub struct ProviderInfo {
     pub id: String,
@@ -144,7 +146,7 @@ impl AppContext {
             show_sidebar: RwLock::new(false),
             show_header: RwLock::new(ui_kv.get_bool("header_visible", true)),
             show_scrollbar: RwLock::new(ui_kv.get_bool("scrollbar_visible", false)),
-            tips_hidden: RwLock::new(ui_kv.get_bool("tips_hidden", false)),
+            tips_hidden: RwLock::new(ui_kv.get_bool("tips_hidden", DEFAULT_TIPS_HIDDEN)),
             sidebar_mode: RwLock::new(SidebarMode::Auto),
             animations_enabled: RwLock::new(true),
             pending_permissions: RwLock::new(0),
@@ -466,4 +468,16 @@ fn ui_kv_path() -> Option<PathBuf> {
                     .join("kv.json")
             })
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UiKv, DEFAULT_TIPS_HIDDEN};
+
+    #[test]
+    fn tips_default_to_hidden_when_unset() {
+        assert!(DEFAULT_TIPS_HIDDEN);
+        let kv = UiKv::default();
+        assert!(kv.get_bool("tips_hidden", DEFAULT_TIPS_HIDDEN));
+    }
 }
