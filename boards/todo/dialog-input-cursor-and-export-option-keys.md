@@ -1,5 +1,5 @@
 ---
-id: "BUG-029"
+id: "BUG-031"
 title: "Dialog text inputs lack cursor navigation and the export option toggles capture digits"
 priority: "P2"
 type: "bug"
