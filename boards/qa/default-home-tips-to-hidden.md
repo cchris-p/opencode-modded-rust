@@ -79,3 +79,9 @@ Current behavior:
 - https://github.com/cchris-p/opencode-modded-rust/pull/75
 
 
+
+## Merge Closeout - 2026-09-22
+
+- PR #75 merged into `development` at `c9b5d3a8cfecbaefd8215be780d126f17cd3d791`.
+- Remote PR branch `feature/FEAT-052-default-home-tips-to-hidden` deleted; local PR branch deleted with `git branch -d`.
+- Code/task completeness checked against this card before merge; item remains in `qa` pending post-merge QA report or explicit completion direction.
