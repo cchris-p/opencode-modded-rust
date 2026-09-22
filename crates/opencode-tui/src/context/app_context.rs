@@ -112,6 +112,7 @@ pub struct AppContext {
     pub pending_permissions: RwLock<usize>,
     pub show_timestamps: RwLock<bool>,
     pub show_thinking: RwLock<bool>,
+    pub show_tool_calls: RwLock<bool>,
     pub show_tool_details: RwLock<bool>,
     pub message_density: RwLock<MessageDensity>,
     pub semantic_highlight: RwLock<bool>,
@@ -149,6 +150,7 @@ impl AppContext {
             pending_permissions: RwLock::new(0),
             show_timestamps: RwLock::new(ui_kv.get_timestamps()),
             show_thinking: RwLock::new(ui_kv.get_bool("thinking_visibility", true)),
+            show_tool_calls: RwLock::new(ui_kv.get_bool("tool_calls_visibility", true)),
             show_tool_details: RwLock::new(ui_kv.get_bool("tool_details_visibility", true)),
             message_density: RwLock::new(MessageDensity::from_str_lossy(
                 &ui_kv.get_string("message_density", "compact"),
@@ -243,6 +245,12 @@ impl AppContext {
         self.ui_kv
             .write()
             .set_bool("tool_details_visibility", *show);
+    }
+
+    pub fn toggle_tool_calls(&self) {
+        let mut show = self.show_tool_calls.write();
+        *show = !*show;
+        self.ui_kv.write().set_bool("tool_calls_visibility", *show);
     }
 
     pub fn toggle_message_density(&self) {

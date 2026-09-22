@@ -8,12 +8,48 @@ use serde_json::Value;
 
 use crate::theme::Theme;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolState {
     Pending,
     Running,
     Completed,
     Failed,
+}
+
+pub fn render_tool_run_summary(
+    count: usize,
+    state: ToolState,
+    is_denied: bool,
+    expanded: bool,
+    theme: &Theme,
+) -> Line<'static> {
+    let bg = theme.background_panel;
+    let (state_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let label = if count == 1 {
+        "1 tool call".to_string()
+    } else {
+        format!("{} tool calls", count)
+    };
+    let mut spans = vec![
+        block_prefix(theme, bg),
+        Span::styled(format!("{} ", state_icon), icon_style.bg(bg)),
+        Span::styled("● ", icon_style.bg(bg)),
+        Span::styled(label, name_style.bg(bg)),
+    ];
+    if is_denied {
+        spans.push(Span::styled(
+            "  denied",
+            Style::default()
+                .fg(theme.error)
+                .add_modifier(Modifier::BOLD)
+                .bg(bg),
+        ));
+    }
+    spans.push(Span::styled(
+        format!("  {}", if expanded { "▾" } else { "▸" }),
+        Style::default().fg(theme.text_muted).bg(bg),
+    ));
+    Line::from(spans)
 }
 
 /// Threshold: tool results longer than this are "block" tools with expandable output
@@ -437,7 +473,7 @@ fn extract_path(value: &Value) -> Option<String> {
     None
 }
 
-fn is_denied_result(result_text: &str) -> bool {
+pub(crate) fn is_denied_result(result_text: &str) -> bool {
     let lower = result_text.to_ascii_lowercase();
     lower.contains("permission denied")
         || lower.contains("denied")

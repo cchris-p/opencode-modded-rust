@@ -202,6 +202,8 @@ pub struct KeybindsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub messages_toggle_conceal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_details: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_list: Option<String>,
@@ -853,6 +855,7 @@ impl DeepMerge for KeybindsConfig {
             &mut self.messages_toggle_conceal,
             other.messages_toggle_conceal,
         );
+        merge_option_replace(&mut self.tool_calls, other.tool_calls);
         merge_option_replace(&mut self.tool_details, other.tool_details);
         merge_option_replace(&mut self.model_list, other.model_list);
         merge_option_replace(&mut self.model_cycle_recent, other.model_cycle_recent);

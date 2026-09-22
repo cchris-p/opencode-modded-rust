@@ -528,6 +528,7 @@ impl SessionView {
         let session_ctx = self.context.session.read();
         let show_thinking = *self.context.show_thinking.read();
         let show_timestamps = *self.context.show_timestamps.read();
+        let show_tool_calls = *self.context.show_tool_calls.read();
         let show_tool_details = *self.context.show_tool_details.read();
         let semantic_hl = *self.context.semantic_highlight.read();
         let fallback_model = self.context.current_model.read().clone();
@@ -677,7 +678,9 @@ impl SessionView {
                     } else {
                         let mut prev_was_text = false;
                         let mut prev_was_tool = false;
-                        for (part_idx, part) in msg.parts.iter().enumerate() {
+                        let mut part_idx = 0;
+                        while part_idx < msg.parts.len() {
+                            let part = &msg.parts[part_idx];
                             match part {
                                 MessagePart::Text { text } => {
                                     // Add margin when transitioning from tool back to text
@@ -781,53 +784,103 @@ impl SessionView {
                                             vec![Line::from("")],
                                         );
                                     }
-                                    let state = if let Some((_, is_error)) = tool_results.get(id) {
-                                        if *is_error {
-                                            super::session_tool::ToolState::Failed
-                                        } else {
-                                            super::session_tool::ToolState::Completed
+                                    if !show_tool_calls {
+                                        let run_start = part_idx;
+                                        let mut run_end = run_start;
+                                        while matches!(
+                                            msg.parts.get(run_end),
+                                            Some(MessagePart::ToolCall { .. })
+                                        ) {
+                                            run_end += 1;
                                         }
-                                    } else if running_tool_call == Some(id.as_str()) {
-                                        super::session_tool::ToolState::Running
-                                    } else {
-                                        super::session_tool::ToolState::Pending
-                                    };
-                                    let expanded = self.expanded_tool_calls.contains(id);
-                                    let start_line = lines.len();
-                                    let rendered = super::session_tool::render_tool_call(
-                                        id,
-                                        name,
-                                        arguments,
-                                        state,
-                                        &tool_results,
-                                        show_tool_details,
-                                        expanded,
-                                        &theme,
-                                    );
-                                    if !rendered.lines.is_empty() {
-                                        let end_line = start_line + rendered.lines.len() - 1;
-                                        if rendered.collapsible {
-                                            visible_tool_ids.insert(id.clone());
-                                            self.tool_toggle_hits.push(ToolToggleHit {
-                                                line_index: start_line,
-                                                tool_id: id.clone(),
-                                            });
-                                            if end_line > start_line {
-                                                self.tool_toggle_hits.push(ToolToggleHit {
-                                                    line_index: end_line,
-                                                    tool_id: id.clone(),
-                                                });
-                                            }
-                                        }
+                                        let run_id = format!("{}:tools:{run_start}", msg.id);
+                                        let expanded_run =
+                                            self.expanded_tool_calls.contains(&run_id);
+                                        let summary = tool_run_summary(
+                                            &msg.parts[run_start..run_end],
+                                            &tool_results,
+                                            running_tool_call,
+                                        );
+                                        let start_line = lines.len();
                                         append_message_lines(
                                             &mut lines,
                                             &mut line_to_message,
                                             &msg.id,
-                                            rendered.lines,
+                                            vec![super::session_tool::render_tool_run_summary(
+                                                summary.count,
+                                                summary.state,
+                                                summary.denied,
+                                                expanded_run,
+                                                &theme,
+                                            )],
                                         );
+                                        visible_tool_ids.insert(run_id.clone());
+                                        self.tool_toggle_hits.push(ToolToggleHit {
+                                            line_index: start_line,
+                                            tool_id: run_id,
+                                        });
+
+                                        if expanded_run {
+                                            for run_part in &msg.parts[run_start..run_end] {
+                                                if let MessagePart::ToolCall {
+                                                    id,
+                                                    name,
+                                                    arguments,
+                                                } = run_part
+                                                {
+                                                    let start_line = lines.len();
+                                                    let rendered = render_tool_call_part(
+                                                        id,
+                                                        name,
+                                                        arguments,
+                                                        &tool_results,
+                                                        running_tool_call,
+                                                        self.expanded_tool_calls.contains(id),
+                                                        show_tool_details,
+                                                        &theme,
+                                                    );
+                                                    append_rendered_tool_call(
+                                                        rendered,
+                                                        id,
+                                                        &msg.id,
+                                                        start_line,
+                                                        &mut visible_tool_ids,
+                                                        &mut self.tool_toggle_hits,
+                                                        &mut lines,
+                                                        &mut line_to_message,
+                                                    );
+                                                }
+                                            }
+                                        }
+
+                                        part_idx = run_end;
+                                    } else {
+                                        let start_line = lines.len();
+                                        let rendered = render_tool_call_part(
+                                            id,
+                                            name,
+                                            arguments,
+                                            &tool_results,
+                                            running_tool_call,
+                                            self.expanded_tool_calls.contains(id),
+                                            show_tool_details,
+                                            &theme,
+                                        );
+                                        append_rendered_tool_call(
+                                            rendered,
+                                            id,
+                                            &msg.id,
+                                            start_line,
+                                            &mut visible_tool_ids,
+                                            &mut self.tool_toggle_hits,
+                                            &mut lines,
+                                            &mut line_to_message,
+                                        );
+                                        part_idx += 1;
                                     }
                                     prev_was_text = false;
                                     prev_was_tool = true;
+                                    continue;
                                 }
                                 MessagePart::ToolResult { .. } => {}
                                 MessagePart::File { path, mime } => {
@@ -874,6 +927,7 @@ impl SessionView {
                                     );
                                 }
                             }
+                            part_idx += 1;
                         }
                     }
 
@@ -1134,6 +1188,125 @@ fn append_non_message_lines(
         line_to_message.push(None);
     }
     lines.extend(new_lines);
+}
+
+struct ToolRunSummary {
+    count: usize,
+    state: super::session_tool::ToolState,
+    denied: bool,
+}
+
+fn tool_run_summary(
+    parts: &[MessagePart],
+    tool_results: &HashMap<String, (String, bool)>,
+    running_tool_call: Option<&str>,
+) -> ToolRunSummary {
+    let mut count = 0;
+    let mut state = super::session_tool::ToolState::Completed;
+    let mut denied = false;
+
+    for part in parts {
+        let MessagePart::ToolCall { id, .. } = part else {
+            continue;
+        };
+        count += 1;
+        let tool_state = tool_call_state(id, tool_results, running_tool_call);
+        state = combine_tool_state(state, tool_state);
+        if tool_results.get(id).is_some_and(|(result, is_error)| {
+            *is_error && super::session_tool::is_denied_result(result)
+        }) {
+            denied = true;
+        }
+    }
+
+    ToolRunSummary {
+        count,
+        state,
+        denied,
+    }
+}
+
+fn combine_tool_state(
+    current: super::session_tool::ToolState,
+    next: super::session_tool::ToolState,
+) -> super::session_tool::ToolState {
+    use super::session_tool::ToolState;
+    match (current, next) {
+        (ToolState::Failed, _) | (_, ToolState::Failed) => ToolState::Failed,
+        (ToolState::Running, _) | (_, ToolState::Running) => ToolState::Running,
+        (ToolState::Pending, _) | (_, ToolState::Pending) => ToolState::Pending,
+        _ => ToolState::Completed,
+    }
+}
+
+fn tool_call_state(
+    id: &str,
+    tool_results: &HashMap<String, (String, bool)>,
+    running_tool_call: Option<&str>,
+) -> super::session_tool::ToolState {
+    if let Some((_, is_error)) = tool_results.get(id) {
+        if *is_error {
+            super::session_tool::ToolState::Failed
+        } else {
+            super::session_tool::ToolState::Completed
+        }
+    } else if running_tool_call == Some(id) {
+        super::session_tool::ToolState::Running
+    } else {
+        super::session_tool::ToolState::Pending
+    }
+}
+
+fn render_tool_call_part(
+    id: &str,
+    name: &str,
+    arguments: &str,
+    tool_results: &HashMap<String, (String, bool)>,
+    running_tool_call: Option<&str>,
+    expanded: bool,
+    show_tool_details: bool,
+    theme: &crate::theme::Theme,
+) -> super::session_tool::ToolCallRender {
+    super::session_tool::render_tool_call(
+        id,
+        name,
+        arguments,
+        tool_call_state(id, tool_results, running_tool_call),
+        tool_results,
+        show_tool_details,
+        expanded,
+        theme,
+    )
+}
+
+fn append_rendered_tool_call(
+    rendered: super::session_tool::ToolCallRender,
+    id: &str,
+    message_id: &str,
+    start_line: usize,
+    visible_tool_ids: &mut HashSet<String>,
+    tool_toggle_hits: &mut Vec<ToolToggleHit>,
+    lines: &mut Vec<Line<'static>>,
+    line_to_message: &mut Vec<Option<String>>,
+) {
+    if rendered.lines.is_empty() {
+        return;
+    }
+    let end_line = start_line + rendered.lines.len() - 1;
+    if rendered.collapsible {
+        visible_tool_ids.insert(id.to_string());
+        tool_toggle_hits.push(ToolToggleHit {
+            line_index: start_line,
+            tool_id: id.to_string(),
+        });
+        if end_line > start_line {
+            tool_toggle_hits.push(ToolToggleHit {
+                line_index: end_line,
+                tool_id: id.to_string(),
+            });
+        }
+    }
+    append_message_lines(lines, line_to_message, message_id, rendered.lines);
 }
 
 fn paint_block_lines(
@@ -1472,4 +1645,80 @@ fn format_number(value: u64) -> String {
         out.push(ch);
     }
     out.chars().rev().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_call(id: &str) -> MessagePart {
+        MessagePart::ToolCall {
+            id: id.to_string(),
+            name: "read".to_string(),
+            arguments: "{}".to_string(),
+        }
+    }
+
+    #[test]
+    fn tool_run_summary_counts_calls_and_prefers_active_state() {
+        let parts = vec![tool_call("one"), tool_call("two"), tool_call("three")];
+        let mut results = HashMap::new();
+        results.insert("one".to_string(), ("ok".to_string(), false));
+
+        let summary = tool_run_summary(&parts, &results, Some("two"));
+
+        assert_eq!(summary.count, 3);
+        assert_eq!(
+            summary.state,
+            super::super::session_tool::ToolState::Running
+        );
+        assert!(!summary.denied);
+    }
+
+    #[test]
+    fn tool_run_summary_surfaces_failures_and_denials() {
+        let parts = vec![tool_call("one"), tool_call("two")];
+        let mut results = HashMap::new();
+        results.insert("one".to_string(), ("permission denied".to_string(), true));
+        results.insert("two".to_string(), ("ok".to_string(), false));
+
+        let summary = tool_run_summary(&parts, &results, None);
+
+        assert_eq!(summary.count, 2);
+        assert_eq!(summary.state, super::super::session_tool::ToolState::Failed);
+        assert!(summary.denied);
+    }
+
+    #[test]
+    fn tool_run_summary_renders_singular_and_plural_labels() {
+        let theme = crate::theme::Theme::dark();
+        let singular = super::super::session_tool::render_tool_run_summary(
+            1,
+            super::super::session_tool::ToolState::Completed,
+            false,
+            false,
+            &theme,
+        );
+        let plural = super::super::session_tool::render_tool_run_summary(
+            2,
+            super::super::session_tool::ToolState::Completed,
+            false,
+            false,
+            &theme,
+        );
+
+        let singular_text = singular
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let plural_text = plural
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(singular_text.contains("1 tool call"));
+        assert!(plural_text.contains("2 tool calls"));
+    }
 }
