@@ -1,1 +1,1 @@
--e /Users/cchrisleepyles/repos/boards-plugin
+-e ${HOME}/repos/boards-plugin
