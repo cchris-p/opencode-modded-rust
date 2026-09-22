@@ -180,3 +180,11 @@ These board items are implementation-ready as a sequence. The remaining choices 
 - `CLI-001` and `CLI-006` were reactivated on 2026-09-22 as prerequisite gates for the remaining `CLI-*`
   stories. This handoff remains superseded by `H-004`; use the reactivated cards for current scope.
 - `CLI-007` has merged (PR #37) and is the target input consumed by `CLI-001`. `CLI-008` remains archived.
+
+## Archived Outcome
+
+- Superseded by `H-004` (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`) on 2026-09-21 for the
+  `CLI-008`/`CLI-001`/`CLI-006` scope.
+- Folded into `H-004` and archived on 2026-09-22 because both handoffs covered the same board-item set.
+- `CLI-007` delivered via PR #37; `GATE-001` (in `H-004`) delivered the queue; `CLI-001`/`CLI-006` were
+  reactivated on 2026-09-22 under `H-004`.

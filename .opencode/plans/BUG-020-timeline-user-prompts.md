@@ -180,7 +180,7 @@ user prompts"). No role toggles/filters added.
     - Commit `docs(boards): complete BUG-020 and move card to done (PR #<N>)` and
       `git push` to `origin/development`.
 20. Handoffs: confirm no active handoff covers BUG-020
-    (`handoffs/2026-09-15-ort-workspace-…`, `handoffs/2026-09-16-cli-task-targeting-handoff.md`).
+    (`handoffs/2026-09-15-ort-workspace-…`, `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`).
     If one does, update it; otherwise no handoff change.
 
 ## Tests to add

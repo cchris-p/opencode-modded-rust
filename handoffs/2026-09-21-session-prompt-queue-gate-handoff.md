@@ -3,12 +3,12 @@ id: "H-004"
 title: "GATE-001 session prompt queue and queued display parity - Handoff"
 status: "closed"
 created: "2026-09-21"
-updated: "2026-09-21"
+updated: "2026-09-22"
 owner: ""
 target: "development"
 blocked_reason: ""
 needs_human: ""
-items: ["GATE-001", "CLI-008", "CLI-001", "CLI-006"]
+items: ["GATE-001", "CLI-007", "CLI-008", "CLI-001", "CLI-006"]
 ---
 
 # GATE-001 Session Prompt Queue and Queued Display Parity - Handoff
@@ -209,3 +209,34 @@ called out rather than left ambiguous.
 - The user reactivated `CLI-001` and `CLI-006` on 2026-09-22 as prerequisite gates for the remaining
   `CLI-*` stories. Only their cancellation is superseded; `CLI-008` remains archived (its queue behavior was
   delivered by `GATE-001`). This handoff otherwise stays closed.
+
+## Folded Predecessor - H-003 (2026-09-22)
+
+`H-003` (`handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`) was folded into this handoff and moved to
+`handoffs/archive/` because it covered the same board-item set (`CLI-001`, `CLI-006`, `CLI-008`) and was
+already marked superseded by this document. Content merged in:
+
+- `CLI-007` (merged, PR #37, branch `feature/CLI-007-task-target-selection`) shipped
+  `opencode task target list|select|show|clear` with workspace-local `.opencode/task-target.json` storage
+  and live validation of explicit target servers/sessions. It is the target input consumed by `CLI-001`
+  and is the only part of `H-003` that was not superseded by this handoff.
+- `H-003` verification for `CLI-007`: `cargo fmt`; `cargo check -p opencode-cli`; the `task target`
+  subcommands including an unavailable-target check (`--server http://127.0.0.1:9`); and a live
+  temporary-server smoke for list/select/show/clear.
+- Intended CLI shape carried forward from `H-003`:
+
+  ```sh
+  ort task target list
+  ort task target select
+  ort task target show
+  ort task target clear
+
+  ort task new "Fix the failing provider test"
+  ort task send "Now run the focused tests"
+  ort task view
+  ```
+
+- Excluded then and still excluded here: `CLI-004` (detach) and `CLI-005` (same-workspace attach/reuse);
+  first-class file/image attachments; interactive `task chat` (use `opencode attach <url>`).
+- Ordering rationale retained: `CLI-007` first (target contract), queue (`GATE-001`) before `CLI-001` when
+  `task send` must support TUI-open sessions, then `CLI-006` status visibility after.

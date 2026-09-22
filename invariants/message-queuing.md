@@ -249,7 +249,8 @@ This shape satisfies the invariants above; exact types are implementation detail
   - `FEAT-007` Add advanced coding-session polling (waiting on session state; related but distinct)
   - `FEAT-036` Persist and recall typed input-box messages (hold; local drafts, not a queue)
 - **Handoffs:** `handoffs/2026-09-21-session-prompt-queue-gate-handoff.md` (`H-004`, closed; satisfied by
-  `GATE-001`). `handoffs/2026-09-16-cli-task-targeting-handoff.md` (`H-003`) is superseded.
+  `GATE-001`; also owns the reactivated `CLI-001`/`CLI-006`). `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`
+  (`H-003`) is superseded and folded into `H-004` (2026-09-22).
 - **Existing invariants:** `invariants/cli-task-targeting.md` (targeting rules; its enqueue
   rule references this doc), `invariants/coding-session-behavior.md` (canonical session path),
   `invariants/runtime-lifecycle.md` (no lifecycle changes).

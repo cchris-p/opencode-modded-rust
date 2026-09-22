@@ -3,7 +3,7 @@ id: "H-005"
 title: "GATE-002 question tool full parity - Handoff"
 status: "in_progress"
 created: "2026-09-21"
-updated: "2026-09-21"
+updated: "2026-09-22"
 owner: ""
 target: "development"
 blocked_reason: ""
@@ -38,7 +38,10 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
   kept in `qa` for local verification.
 - `FEAT-039` is in `qa` with PR #67 open for local verification; `FEAT-040`, `FEAT-041`, `FEAT-043`, and `FEAT-044` remain in `todo`.
 - `CLI-009` remains in `hold`, now blocked behind `CLI-001`/`CLI-006` in addition to `CLI-002` (all three
-  were gated on 2026-09-22).
+  were gated on 2026-09-22). The reactivated `CLI-001`/`CLI-006` are owned by `H-004`
+  (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`), which consolidated the former `H-003`
+  (`handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`). This handoff does not restate that CLI
+  scope; track `CLI-001`/`CLI-006` progress in `H-004` and keep `CLI-009` blocked until they land.
 
 ## Included Board Items
 
@@ -179,7 +182,9 @@ Verification gate:
 
 Do not start `CLI-009` until `CLI-001`/`CLI-006` land the canonical CLI task/status surface and `CLI-002`
 routes the CLI model loop, so pending questions can be exercised outside the TUI. Keep `CLI-009` in `hold`
-until then.
+until then. `CLI-001`/`CLI-006` are owned by `H-004`
+(`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`, which folded and archived the former `H-003`);
+check that handoff for their status rather than duplicating their plan here.
 
 ## PR Workflow
 
