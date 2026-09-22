@@ -174,3 +174,9 @@ Names may change during implementation, but the behavior must satisfy `invariant
 ## Readiness Assessment
 
 These board items are implementation-ready as a sequence. The remaining choices are implementation details, not blockers, as long as the invariants and ordering above are followed.
+
+## Reactivation Addendum (2026-09-22)
+
+- `CLI-001` and `CLI-006` were reactivated on 2026-09-22 as prerequisite gates for the remaining `CLI-*`
+  stories. This handoff remains superseded by `H-004`; use the reactivated cards for current scope.
+- `CLI-007` has merged (PR #37) and is the target input consumed by `CLI-001`. `CLI-008` remains archived.

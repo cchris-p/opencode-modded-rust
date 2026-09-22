@@ -4,11 +4,21 @@ title: "Decide whether same-workspace server attach or reuse should exist"
 priority: "P2"
 type: "feature"
 area: "CLI"
-status: "todo"
+status: "hold"
+predecessors: "CLI-001, CLI-006"
 created: "2026-09-16"
+updated: "2026-09-22"
+attention: "Human decision gate: implementation requires explicit 110% confirmation of the desired attach/reuse behavior"
 ---
 
 # Decide whether same-workspace server attach or reuse should exist
+
+## Blocked By - 2026-09-22
+
+- `CLI-001` Copy Cline-style CLI task send conventions (prerequisite gate).
+- `CLI-006` Add CLI status visibility for tasks and background sessions (prerequisite gate).
+- This is a human decision gate; do not start or resolve it until `CLI-001`/`CLI-006` land and the user
+  gives explicit 110% confirmation.
 
 ## Summary
 

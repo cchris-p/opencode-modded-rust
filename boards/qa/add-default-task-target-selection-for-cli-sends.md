@@ -7,6 +7,7 @@ area: "CLI"
 spec: ""
 status: "qa"
 created: "2026-09-16"
+attention: "Needs post-merge QA; provides the target input for CLI-001 (reactivated 2026-09-22), so closeout can proceed against the merged target commands"
 ---
 
 # Add default task target selection for CLI sends
@@ -83,3 +84,21 @@ This must not reintroduce unsafe implicit server discovery, stale-server reuse, 
 - Added `opencode task target list|select|show|clear`, workspace-local `.opencode/task-target.json` storage, and live target validation via `/health` plus `/session`.
 - Verified with `cargo fmt`, `cargo check -p opencode-cli`, empty/unavailable target command checks, help output, and a live temporary-server smoke test for list/select/show/clear.
 - Merged into `development` on 2026-09-16 via PR #37 at merge commit `1c1ad44`; remains in `qa` for post-merge verification.
+
+## QA Closeout Checklist - 2026-09-22
+
+Code-complete: PR #37 merged into `development`. No handoff needed.
+
+- [ ] `opencode task target list` shows live candidates and marks stale entries unavailable.
+- [ ] `opencode task target select --server <url> [--session <id>]` persists the workspace-local target.
+- [ ] `opencode task target show` reflects the selection; `clear` removes it.
+- [ ] A stopped/unreachable selected target fails clearly with no silent fallback.
+- [ ] Normal `ort` launch/exit semantics are unchanged.
+
+On pass, move this card from `qa` to `done`.
+
+## Open Dependency - 2026-09-22
+
+`task target` is the routing input for `CLI-001` (reactivated 2026-09-22). It has no consumer until `CLI-001`
+lands, but it is now the prerequisite that `CLI-001` consumes rather than an orphan, so this card's QA can
+proceed against the merged target commands.

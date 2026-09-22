@@ -119,7 +119,7 @@ Potential regression target:
 - `BUG-006` DeepSeek tool loop reasoning passback and split toolcall.
 - `BUG-008` batch tool is advertised but unusable on the session path.
 - `BUG-012` Session summary runs before tool results and breaks OpenAI-compatible continuation.
-- `CLI-002` CLI/AgentExecutor tool-loop parity.
+- `CLI-002` Route `opencode run` through the canonical session runtime.
 - `SKILLS-001` and `SKILLS-002` were the board items the original prompt was trying to list.
 
 ## Implementation Notes - 2026-09-19

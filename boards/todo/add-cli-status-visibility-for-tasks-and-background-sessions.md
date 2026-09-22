@@ -5,16 +5,22 @@ priority: "P3"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "archived"
+status: "todo"
 created: "2026-09-16"
+updated: "2026-09-22"
 ---
 
 # Add CLI status visibility for tasks and background sessions
 
-## Archived
+## Status - 2026-09-22
 
-Archived 2026-09-21 at user request; not planned for implementation. Session prompt queuing and its
-queued-message display are owned by `GATE-001` (done).
+Reactivated at user request as a co-prerequisite gate for the remaining `CLI-*` stories. Cline-like
+functionality (`CLI-001`) plus CLI status visibility must exist before other CLI stories are refined
+further.
+
+Prerequisite already in place: `GATE-001` (done) exposes `status` (`idle|busy|queued|retry|...`) plus
+`position`/`depth` from `GET /session/status`, which is this card's data source. Do not synthesize
+`queued` client-side.
 
 ## Summary
 

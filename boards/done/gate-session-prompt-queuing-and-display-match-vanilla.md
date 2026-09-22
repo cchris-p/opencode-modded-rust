@@ -376,3 +376,11 @@ card marked `done` and moved from `qa` to `done` on user request. No follow-up i
 - `CLI-008`, `CLI-001`, and `CLI-006` were archived by user request and will not be implemented.
   This card is now the primary and sole story for session prompt queuing and the queued-message display.
 - The Merge Closeout instruction to start those three cards from `development` is superseded.
+
+## Reactivation Addendum (2026-09-22)
+
+- The queue/status display remains owned solely by this card (`done`); nothing here is reopened.
+- `CLI-001` and `CLI-006` were reactivated by user request on 2026-09-22 as prerequisite gates for the
+  remaining `CLI-*` stories. The "archived ... will not be implemented" statements above are superseded for
+  those two cards only.
+- `CLI-008` remains archived: its queue behavior is delivered by this card.

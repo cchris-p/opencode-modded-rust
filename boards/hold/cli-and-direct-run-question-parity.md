@@ -6,8 +6,9 @@ type: "feature"
 area: "CLI"
 spec: ""
 status: "hold"
-predecessors: "CLI-002"
+predecessors: "CLI-001, CLI-006, CLI-002"
 created: "2026-09-21"
+updated: "2026-09-22"
 ---
 
 # CLI and direct-run question parity
@@ -24,10 +25,18 @@ duplicating divergent behavior.
 
 ## Blocked By
 
-- `CLI-002` CLI/AgentExecutor tool-loop parity (`boards/hold/cli-agentexecutor-tool-loop-parity.md`)
-  is on hold until `GATE-002` passes. It must first attach tools and run a tool loop, otherwise there
-  is no interactive CLI surface to route questions through.
-- This card stays in `hold` until `CLI-002` (or an equivalent direct-run surface) lands.
+- `CLI-001` Copy Cline-style CLI task send conventions (prerequisite gate: canonical direct-run task surface).
+- `CLI-006` Add CLI status visibility for tasks and background sessions (prerequisite gate).
+- `CLI-002` Route `opencode run` through the canonical session runtime
+  (`boards/hold/route-opencode-run-through-session-runtime.md`) is on hold until `GATE-002` passes. The CLI
+  model loop/routing must land first so ask handling attaches to one canonical loop, otherwise there is no
+  interactive CLI surface to route questions through.
+- This card stays in `hold` until `CLI-001`, `CLI-006`, and `CLI-002` land.
+
+## Gate Note - 2026-09-22
+
+- `CLI-001`/`CLI-006` were reactivated on 2026-09-22, so the direct-run task surface premise is restored.
+  Do not start this card until those gates land.
 
 ## Problem
 
@@ -63,5 +72,7 @@ duplicating divergent behavior.
 ## Related Items
 
 - `GATE-002` question-tool full parity - parent gate.
-- `CLI-002` CLI/AgentExecutor tool-loop parity - predecessor; on hold.
+- `CLI-001` Copy Cline-style CLI task send conventions - prerequisite gate.
+- `CLI-006` Add CLI status visibility for tasks and background sessions - prerequisite gate.
+- `CLI-002` Route `opencode run` through the canonical session runtime - predecessor; on hold.
 - `FEAT-041` TUI question prompt UX parity - shared prompt logic.

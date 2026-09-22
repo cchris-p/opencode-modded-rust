@@ -103,7 +103,7 @@ to true so behavior matches vanilla when omitted.
 - `CLI-009` CLI and direct-run question parity (hold).
 - `FEAT-043` question permission integration parity.
 - `FEAT-044` question parity verification fixtures.
-- `CLI-002` CLI/AgentExecutor tool-loop parity - blocked by `GATE-002`.
+- `CLI-002` Route `opencode run` through the canonical session runtime - gated by `CLI-001`/`CLI-006`.
 
 ### PR Link
 
@@ -145,7 +145,7 @@ to true so behavior matches vanilla when omitted.
 - Card intentionally kept in `qa` for post-merge local verification; not moved to `done` because no QA
   report is recorded and the user's closeout request covered the merge, not final completion.
 - `GATE-002` remains open until `FEAT-039`..`FEAT-044` are delivered or resolved; `CLI-009` stays in
-  `hold` behind `CLI-002`.
+  `hold` behind `CLI-001`/`CLI-006` and `CLI-002`.
 
 ## QA Feedback Fix (2026-09-21)
 

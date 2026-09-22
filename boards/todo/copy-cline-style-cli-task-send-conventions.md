@@ -5,16 +5,25 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "archived"
+status: "todo"
 created: "2026-09-08"
+updated: "2026-09-22"
 ---
 
 # Copy Cline-style CLI task send conventions
 
-## Archived
+## Status - 2026-09-22
 
-Archived 2026-09-21 at user request; not planned for implementation. Session prompt queuing and its
-queued-message display are owned by `GATE-001` (done).
+Reactivated at user request. This card is now the primary Cline-like CLI task surface and a prerequisite
+gate for the remaining `CLI-*` stories: Cline-like functionality must exist before other CLI stories are
+refined further. `CLI-006` is the co-prerequisite for status visibility.
+
+Prerequisites are already in place:
+
+- `GATE-001` (done) shipped the per-session prompt queue and the `Queued { position, depth }` run status, so
+  `task new`/`send` return `started`/`queued` and `--stream` behaves as described below.
+- `CLI-007` (merged, PR #37) shipped `opencode task target list|select|show|clear`, which this card consumes.
+- `invariants/cli-task-targeting.md` and `invariants/message-queuing.md` remain binding.
 
 ## Summary
 
@@ -114,7 +123,7 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - `CLI-005` Decide whether same-workspace server attach or reuse should exist
 - `CLI-007` Add default task target selection for CLI sends
 - `CLI-008` Queue CLI task sends while TUI session is open
-- `CLI-002` CLI/AgentExecutor tool-loop parity
+- `CLI-002` Route `opencode run` through the canonical session runtime
 - `QA-001` Build a repeatable debug/QA verification suite for the session/stream runtime
 - `START-008` Full parity deferred
 - `START-020` Constrain primary product surface to the V1 workflow

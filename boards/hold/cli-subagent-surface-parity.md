@@ -5,9 +5,10 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "todo"
-predecessors: ""
+status: "hold"
+predecessors: "CLI-001, CLI-006, GATE-004"
 created: "2026-09-21"
+updated: "2026-09-22"
 ---
 
 # CLI subagent surface parity
@@ -69,3 +70,13 @@ Reference `f54ce313b99a`:
 - `GATE-004` subagent feature parity.
 - `CLI-002` CLI/`AgentExecutor` tool-loop parity - overlapping CLI dispatch (blocked by `GATE-002`).
 - `GATE-001` session prompt queue - precedent for recording a CLI-footer scope as a documented partial.
+
+## Blocked By - 2026-09-22
+
+- `CLI-001` Copy Cline-style CLI task send conventions (prerequisite gate: defines the CLI run surface).
+- `CLI-006` Add CLI status visibility for tasks and background sessions (prerequisite gate).
+- `GATE-004` subagent feature parity is open; this card is its gap 6 and cannot complete before the gate.
+- No handoff covers this card. Its CLI dependency overlaps `CLI-002` (routing, blocked by `GATE-002`), so
+  there is no CLI run surface to host a subagent view yet. Do not start until `CLI-001`, `CLI-006`, and
+  `GATE-004` land.
+- Reference pin is `f54ce313b99a` (current). Re-verify all vanilla line references at that pin before use.

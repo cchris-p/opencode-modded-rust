@@ -28,8 +28,8 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
 - `FEAT-038` (`boards/qa/question-schema-and-tool-contract-parity.md`) is merged and in QA; use it as the
   completed baseline, not as evidence that the whole gate passed.
 - Frozen reference line per current `AGENTS.md`: `$HOME/repos/opencode-modded` `dev` at
-  `f54ce313b99a6661d7758ad042f7a6e05c8e0972` unless re-pinned by a later gate. The `GATE-002` card still
-  names the superseded `e62912b...` pin; refresh that reference before doing side-by-side comparisons.
+  `f54ce313b99a6661d7758ad042f7a6e05c8e0972` unless re-pinned by a later gate. `GATE-002` now uses this
+  pin (refreshed 2026-09-21 closeout), so side-by-side comparisons can proceed directly.
 
 ## Current State
 
@@ -37,7 +37,8 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
 - `FEAT-038` is merged into `development` at merge commit `405a6e1ad6651e77897b08da02d3ed886a8be77f`, then
   kept in `qa` for local verification.
 - `FEAT-039` is in `qa` with PR #67 open for local verification; `FEAT-040`, `FEAT-041`, `FEAT-043`, and `FEAT-044` remain in `todo`.
-- `CLI-009` remains in `hold`, blocked behind `CLI-002`.
+- `CLI-009` remains in `hold`, now blocked behind `CLI-001`/`CLI-006` in addition to `CLI-002` (all three
+  were gated on 2026-09-22).
 
 ## Included Board Items
 
@@ -47,7 +48,8 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
 - `FEAT-041` TUI question prompt UX parity.
 - `FEAT-043` Question permission integration parity.
 - `FEAT-044` Question parity verification fixtures.
-- `CLI-009` CLI and direct-run question parity, only after `CLI-002` creates the needed CLI tool-loop surface.
+- `CLI-009` CLI and direct-run question parity, only after `CLI-001`/`CLI-006` and `CLI-002` create the
+  needed CLI surface.
 
 ## Excluded / Not Owned Here
 
@@ -175,8 +177,9 @@ Verification gate:
 
 ### Deferred - `CLI-009` CLI and Direct-Run Question Parity
 
-Do not start `CLI-009` until `CLI-002` lands enough CLI/`AgentExecutor` tool-loop surface to exercise pending
-questions outside the TUI. Keep `CLI-009` in `hold` until then.
+Do not start `CLI-009` until `CLI-001`/`CLI-006` land the canonical CLI task/status surface and `CLI-002`
+routes the CLI model loop, so pending questions can be exercised outside the TUI. Keep `CLI-009` in `hold`
+until then.
 
 ## PR Workflow
 

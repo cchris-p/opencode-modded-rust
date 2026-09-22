@@ -42,8 +42,11 @@ and explicitly resolved in this card.
 
 ## Blocked Items
 
-- `CLI-002` CLI/AgentExecutor tool-loop parity (`boards/hold/cli-agentexecutor-tool-loop-parity.md`) -
+- `CLI-011` CLI/AgentExecutor ask and approval parity (`boards/hold/cli-agentexecutor-ask-approval-parity.md`) -
   on hold until this gate passes; its CLI ask/approval path must use the parity question UX.
+- `CLI-002` Route `opencode run` through the canonical session runtime
+  (`boards/hold/route-opencode-run-through-session-runtime.md`) - gated by `CLI-001`/`CLI-006`; predecessor for
+  `CLI-011`.
 
 
 ## Vanilla Reference Evidence
@@ -98,7 +101,7 @@ implemented or explicitly resolved as a documented deviation in this card.
 - `FEAT-039` Session-scoped question API parity - `boards/todo/session-scoped-question-api-parity.md`
 - `FEAT-040` Question runtime event and lifecycle parity - `boards/todo/question-runtime-event-and-lifecycle-parity.md`
 - `FEAT-041` TUI question prompt UX parity - `boards/todo/tui-question-prompt-ux-parity.md`
-- `CLI-009` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; preceded by `CLI-002`)
+- `CLI-009` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; preceded by `CLI-001`/`CLI-006` and `CLI-002`)
 - `FEAT-043` Question permission integration parity - `boards/todo/question-permission-integration-parity.md`
 - `FEAT-044` Question parity verification fixtures - `boards/todo/question-parity-verification-fixtures.md`
 
@@ -120,7 +123,7 @@ implemented or explicitly resolved as a documented deviation in this card.
 
    Support option descriptions, digit shortcuts, single-question fast reply, multi-question navigation/review, multi-select, custom answers, reject, and submitting-state/error recovery. Decide whether Rust keeps the current sequential flow, adopts vanilla's tabbed confirm flow, or implements a better hybrid.
 
-5. CLI/direct-run parity -> `CLI-009` (hold; preceded by `CLI-002`)
+5. CLI/direct-run parity -> `CLI-009` (hold; preceded by `CLI-001`/`CLI-006` and `CLI-002`)
 
    When the Rust direct-run/CLI task surface is ready, handle pending questions without requiring the full TUI. Reuse as much prompt-state logic as practical rather than duplicating divergent behavior.
 
@@ -172,8 +175,10 @@ implemented or explicitly resolved as a documented deviation in this card.
 
 ## Related Items
 
-- `CLI-002` CLI AgentExecutor tool loop parity - blocked by this gate; moved to `hold`
-  (`boards/hold/cli-agentexecutor-tool-loop-parity.md`).
+- `CLI-011` CLI/AgentExecutor ask and approval parity - blocked by this gate; in `hold`
+  (`boards/hold/cli-agentexecutor-ask-approval-parity.md`).
+- `CLI-002` Route `opencode run` through the canonical session runtime - gated by `CLI-001`/`CLI-006` and the
+  predecessor for `CLI-011` (`boards/hold/route-opencode-run-through-session-runtime.md`).
 - `START-018` Complete TUI approval and question handling - completed first live integration path.
 - `START-008` Full parity deferred - product stance; this gate is the deliberate exception for the
   question feature.
@@ -191,7 +196,8 @@ implemented or explicitly resolved as a documented deviation in this card.
   execution-time assert (`FEAT-043`).
 - Persistence: pending questions are not persisted across server restart. They live only within a
   live server for the session; detach/reattach to the same live server preserves them.
-- CLI/direct-run: deferred to `CLI-009` once the CLI tool-loop surface (`CLI-002`) exists.
+- CLI/direct-run: deferred to `CLI-009` once the CLI surface (`CLI-001`/`CLI-006`) and the routed loop
+  (`CLI-002`) exist.
 
 ## Done When
 
@@ -202,4 +208,4 @@ implemented or explicitly resolved as a documented deviation in this card.
 - Every parity gap listed under "Parity Gaps To Split Into Child Items" is either implemented or
   explicitly resolved as a documented deviation in this card.
 - Any preferred UX deviations are documented as deliberate product choices, not accidental parity gaps.
-- `CLI-002` and any other blocked question-tool story is unblocked and may proceed from `development`.
+- `CLI-011` and any other blocked question-tool story is unblocked and may proceed from `development`.

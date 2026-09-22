@@ -233,8 +233,8 @@ reused are reference-only and must be called out explicitly.
 - `GATE-002` Question tool full parity - sibling gate; pattern for gate/child structure.
 - `FEAT-031` Investigate the builtin `general` agent and decide whether to remove it - done; decided
   to disable `general` for now and flag subagent parity as a separate item (this gate).
-- `CLI-002` CLI/`AgentExecutor` tool-loop parity - on hold, blocked by `GATE-002`; its subagent
-  dispatch path overlaps `FEAT-046`.
+- `CLI-002` Route `opencode run` through the canonical session runtime - on hold, gated by
+  `CLI-001`/`CLI-006`; its subagent dispatch path overlaps `FEAT-046`.
 - `PHASE-002` Transport/runtime parity foundation - phase parent for related parity work.
 - `wiki/agent-modes-and-custom-agents.md` - current agent model and the `general` decision.
 

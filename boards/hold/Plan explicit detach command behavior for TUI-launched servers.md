@@ -4,11 +4,20 @@ title: "Plan explicit detach command behavior for TUI-launched servers"
 priority: "P2"
 type: "feature"
 area: "CLI"
-status: "qa"
+status: "hold"
+predecessors: "CLI-001, CLI-006"
 created: "2026-09-16"
+updated: "2026-09-22"
 ---
 
 # Plan explicit detach command behavior for TUI-launched servers
+
+## Blocked By - 2026-09-22
+
+- `CLI-001` Copy Cline-style CLI task send conventions (prerequisite gate).
+- `CLI-006` Add CLI status visibility for tasks and background sessions (prerequisite gate).
+- Code for this card is already merged into `development` (PR #35, PR #62). The gate defers further
+  refinement and QA closeout; do not act on this card until `CLI-001`/`CLI-006` land.
 
 ## Summary
 
@@ -75,6 +84,20 @@ server alive after the TUI exits.
 
 - `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `CLI-005` Decide whether same-workspace server attach or reuse should exist
+
+## QA Closeout Checklist - 2026-09-22
+
+This item is code-complete (PR #35 and PR #62 merged into `development`) and needs post-merge
+verification, not a handoff. It has no handoff dependency.
+
+- [ ] From `development`, run `ort`, then `/detach`; confirm the TUI exits and the launched server stays up.
+- [ ] Confirm the terminal prints the server URL, workspace, and the `opencode attach <url>` reattach command.
+- [ ] Confirm `ort --attach <url>` reattaches to the detached server.
+- [ ] Run `/detach` while a turn is running; confirm the TUI exits and work continues server-side.
+- [ ] Confirm `Ctrl-D`, Esc, and `/exit` still terminate the launched server.
+- [ ] Confirm no detach-time process/server record is written.
+
+On pass, move this card from `qa` to `done`.
 
 ## PR
 

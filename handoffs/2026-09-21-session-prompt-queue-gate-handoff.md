@@ -203,3 +203,9 @@ called out rather than left ambiguous.
 - `CLI-008`, `CLI-001`, and `CLI-006` were archived by user request and will not be implemented. PR 1
   was delivered by `GATE-001`; PR 2 and PR 3 are cancelled.
 - This handoff is closed. No further work is planned from it.
+
+## Reactivation Addendum (2026-09-22)
+
+- The user reactivated `CLI-001` and `CLI-006` on 2026-09-22 as prerequisite gates for the remaining
+  `CLI-*` stories. Only their cancellation is superseded; `CLI-008` remains archived (its queue behavior was
+  delivered by `GATE-001`). This handoff otherwise stays closed.

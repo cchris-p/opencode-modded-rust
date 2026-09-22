@@ -237,13 +237,19 @@ This shape satisfies the invariants above; exact types are implementation detail
 ## Relationship To Other Artifacts
 
 - **Board items (queuing-related):**
-  - `CLI-008` Queue CLI task sends while TUI session is open (primary owner)
-  - `CLI-001` Copy Cline-style CLI task send conventions (producer of queued sends)
-  - `CLI-007` Add default task target selection for CLI sends (routing into the queue; in `qa`)
-  - `CLI-006` Add CLI status visibility for tasks and background sessions (surfaces queued state)
+  - `GATE-001` Gate: prompt queuing and queue display must match vanilla OpenCode exactly
+    (primary and sole owner; `done` - implemented the per-session queue and the vanilla `QUEUED` badge).
+  - `CLI-007` Add default task target selection for CLI sends (routing into the queue; merged in PR #37,
+    in `qa`; the target input consumed by `CLI-001`).
+  - `CLI-001` Copy Cline-style CLI task send conventions (reactivated 2026-09-22; canonical CLI task send
+    surface and prerequisite gate for the remaining `CLI-*` stories).
+  - `CLI-006` Add CLI status visibility for tasks and background sessions (reactivated 2026-09-22; surfaces
+    queued state; co-prerequisite gate).
+  - `CLI-008` Queue CLI task sends while TUI session is open (archived 2026-09-21; queue delivered by `GATE-001`).
   - `FEAT-007` Add advanced coding-session polling (waiting on session state; related but distinct)
   - `FEAT-036` Persist and recall typed input-box messages (hold; local drafts, not a queue)
-- **Handoff:** `handoffs/2026-09-16-cli-task-targeting-handoff.md` (PR 2 is `CLI-008`).
+- **Handoffs:** `handoffs/2026-09-21-session-prompt-queue-gate-handoff.md` (`H-004`, closed; satisfied by
+  `GATE-001`). `handoffs/2026-09-16-cli-task-targeting-handoff.md` (`H-003`) is superseded.
 - **Existing invariants:** `invariants/cli-task-targeting.md` (targeting rules; its enqueue
   rule references this doc), `invariants/coding-session-behavior.md` (canonical session path),
   `invariants/runtime-lifecycle.md` (no lifecycle changes).
