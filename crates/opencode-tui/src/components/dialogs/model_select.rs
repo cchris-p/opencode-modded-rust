@@ -75,18 +75,6 @@ impl ModelSelectDialog {
                 provider: "deepseek".into(),
                 context_window: 128000,
             },
-            Model {
-                id: "anthropic/claude-sonnet-5".into(),
-                name: "Claude Sonnet 5 (OpenRouter)".into(),
-                provider: "openrouter".into(),
-                context_window: 200000,
-            },
-            Model {
-                id: "openai/gpt-5-mini".into(),
-                name: "GPT-5 Mini (OpenRouter)".into(),
-                provider: "openrouter".into(),
-                context_window: 400000,
-            },
         ];
 
         let filtered = (0..models.len()).collect();
