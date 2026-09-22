@@ -54,7 +54,7 @@ pub use transform::{
 };
 
 pub use models::{
-    get_model_context_limit, supports_function_calling, supports_vision, ModelCost,
-    ModelInfo as ModelsDevInfo, ModelLimit, ModelModalities, ModelsData, ModelsRegistry,
+    ensure_models_dev_cache, get_model_context_limit, supports_function_calling, supports_vision,
+    ModelCost, ModelInfo as ModelsDevInfo, ModelLimit, ModelModalities, ModelsData, ModelsRegistry,
     ProviderInfo as ModelsProviderInfo,
 };
