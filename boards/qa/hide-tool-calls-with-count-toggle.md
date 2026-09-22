@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -91,3 +91,7 @@ This is distinct from the existing `show_tool_details` state (`crates/opencode-t
 - Collapsed hidden contiguous tool-call runs at render time into one `N tool calls` summary line, preserving running, failed, and denied state visibility; clicking a summary expands that run inline.
 - Left `show_tool_details` behavior independent: when tool calls are visible, per-call rendering still uses the existing details toggle.
 - Verification run: `cargo check -p opencode-tui -p opencode-config`; `cargo test -p opencode-tui tool_run_summary -- --nocapture`.
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/72
