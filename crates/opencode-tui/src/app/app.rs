@@ -2384,7 +2384,7 @@ impl App {
         match self.context.current_route() {
             Route::Home => {
                 let optimistic_session_id = self.create_optimistic_session();
-                let opt_id = self.append_optimistic_user_message(
+                let _opt_id = self.append_optimistic_user_message(
                     &optimistic_session_id,
                     &input,
                     agent.clone(),
@@ -2427,8 +2427,11 @@ impl App {
                     model.clone(),
                     variant.clone(),
                 ) {
-                    self.remove_optimistic_message(&session.id, &opt_id);
-                    self.set_session_status(&session.id, SessionStatus::Idle);
+                    let _ = client.delete_session(&session.id);
+                    self.remove_optimistic_session(&session.id);
+                    self.context.navigate(Route::Home);
+                    self.active_session_id = None;
+                    self.session_view = None;
                     self.sync_prompt_spinner_state();
                     self.alert_dialog
                         .set_message(&format!("Failed to send prompt:\n{}", err));
