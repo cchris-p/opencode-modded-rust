@@ -185,7 +185,7 @@ Verification gate:
 Do not start `CLI-009` until `CLI-001`/`CLI-006` land the canonical CLI task/status surface and `CLI-002`
 routes the CLI model loop, so pending questions can be exercised outside the TUI. Keep `CLI-009` in `hold`
 until then. `CLI-001`/`CLI-006` are owned by `H-004`
-(`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`, which folded and archived the former `H-003`);
+(`handoffs/archive/2026-09-21-session-prompt-queue-gate-handoff.md`, which folded and archived the former `H-003`);
 check that handoff for their status rather than duplicating their plan here.
 
 ## PR Workflow

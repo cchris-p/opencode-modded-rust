@@ -247,8 +247,9 @@ The TUI behavior below is implemented; the CLI/API items remain target until `CL
   - `CLI-008` Queue CLI task sends while TUI session is open (archived 2026-09-21; queue delivered by `GATE-001`).
   - `FEAT-007` Add advanced coding-session polling (waiting on session state; related but distinct)
   - `FEAT-036` Persist and recall typed input-box messages (hold; local drafts, not a queue)
-- **Handoffs:** `handoffs/2026-09-21-session-prompt-queue-gate-handoff.md` (`H-004`, closed; satisfied by
-  `GATE-001`; also owns the reactivated `CLI-001`/`CLI-006`). `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`
+- **Handoffs:** `handoffs/archive/2026-09-21-session-prompt-queue-gate-handoff.md` (`H-004`, closed and
+  archived 2026-09-22; satisfied by `GATE-001`; the reactivated `CLI-001`/`CLI-006` are now owned by `H-006`,
+  `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md`). `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`
   (`H-003`) is superseded and folded into `H-004` (2026-09-22).
 - **Canonical behavior doc:** `wiki/cli-surface.md` (current + target CLI task and TUI lifecycle behavior).
 - **Existing invariants:** `invariants/cli-task-targeting.md` (targeting rules; its enqueue

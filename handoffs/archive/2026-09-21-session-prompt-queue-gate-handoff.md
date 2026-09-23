@@ -247,4 +247,4 @@ already marked superseded by this document. Content merged in:
 - Archived by user direction after audit.
 - Handoff is explicitly closed; `GATE-001` is in `boards/done/` and was delivered by merged PR #61.
 - Reactivated `CLI-001` and `CLI-006` work is owned by `H-006`
-  (`handoffs/2026-09-22-cli-task-surface-and-status-handoff.md`), so this handoff is historical only.
+  (`handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md`), so this handoff is historical only.

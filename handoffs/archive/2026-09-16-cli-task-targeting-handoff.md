@@ -49,7 +49,7 @@ Implement the CLI task workflow for `ort task ...` without reintroducing unsafe 
 
 ## Execution Notes
 
-- 2026-09-21: Superseded by `H-004` (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`) for the
+- 2026-09-21: Superseded by `H-004` (`handoffs/archive/2026-09-21-session-prompt-queue-gate-handoff.md`) for the
   remaining `CLI-008`/`CLI-001`/`CLI-006` scope. `CLI-007` merged as PR #37; the queue semantics
   that this handoff left open are now pinned by `GATE-001` and `invariants/message-queuing.md`. Use
   `H-004` for implementation.
@@ -184,7 +184,7 @@ These board items are implementation-ready as a sequence. The remaining choices 
 
 ## Archived Outcome
 
-- Superseded by `H-004` (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`) on 2026-09-21 for the
+- Superseded by `H-004` (`handoffs/archive/2026-09-21-session-prompt-queue-gate-handoff.md`) on 2026-09-21 for the
   `CLI-008`/`CLI-001`/`CLI-006` scope.
 - Folded into `H-004` and archived on 2026-09-22 because both handoffs covered the same board-item set.
 - `CLI-007` delivered via PR #37; `GATE-001` (in `H-004`) delivered the queue; `CLI-001`/`CLI-006` were
