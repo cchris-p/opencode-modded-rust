@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "wiki/v1.md"
-status: "todo"
+status: "doing"
 created: "2026-09-11"
 ---
 
