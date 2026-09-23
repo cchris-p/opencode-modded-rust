@@ -43,6 +43,22 @@ use crate::TuiExit;
 const TICK_RATE_MS: u64 = 16;
 const MAX_EVENTS_PER_FRAME: usize = 256;
 
+/// Minimum spacing between full-session refetches driven by streaming
+/// `session.updated` events. While reasoning streams, the server emits those at
+/// up to ~20/s; refetching the whole (growing) session on each event blocks the
+/// TUI event loop and freezes it for the entire thinking phase (BUG-027).
+/// Coalescing streaming refetches to this cadence keeps live output flowing
+/// while leaving the loop time to read input and redraw.
+const STREAM_SYNC_MIN_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Whether a streaming refetch may start now. When this returns false the
+/// caller defers to `pending_session_sync` so a burst of `session.updated`
+/// events collapses into a single refetch on a later tick (trailing-edge
+/// coalescing).
+fn can_start_stream_sync(last_sync: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_sync) >= STREAM_SYNC_MIN_INTERVAL
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct TranscriptOptions {
     include_thinking: bool,
@@ -808,7 +824,7 @@ impl App {
                     trace::record_session_updated();
                     if let Route::Session { session_id: active } = self.context.current_route() {
                         if active == *session_id {
-                            if self.last_session_sync.elapsed() >= Duration::from_millis(50) {
+                            if can_start_stream_sync(self.last_session_sync, Instant::now()) {
                                 let _ = self.sync_session_from_server(session_id);
                                 self.pending_session_sync = None;
                             } else {
@@ -828,6 +844,15 @@ impl App {
                 }
                 CustomEvent::StateChanged(StateChange::SessionStatusIdle(session_id)) => {
                     self.set_session_status(session_id, SessionStatus::Idle);
+                    // The turn ended; pull the final transcript immediately so the
+                    // completed content appears without waiting for the periodic
+                    // sync. This is a single refetch, not the streaming storm.
+                    if let Route::Session { session_id: active } = self.context.current_route() {
+                        if active == *session_id {
+                            let _ = self.sync_session_from_server(session_id);
+                            self.pending_session_sync = None;
+                        }
+                    }
                     self.sync_prompt_spinner_state();
                 }
                 CustomEvent::StateChanged(StateChange::SessionStatusRetrying {
@@ -863,7 +888,7 @@ impl App {
                 let route = self.context.current_route();
                 if let Route::Session { session_id } = route {
                     if self.pending_session_sync.as_deref() == Some(session_id.as_str())
-                        && self.last_session_sync.elapsed() >= Duration::from_millis(50)
+                        && can_start_stream_sync(self.last_session_sync, Instant::now())
                     {
                         if self.sync_session_from_server(&session_id).is_ok() {
                             tick_changed = true;
@@ -5102,6 +5127,35 @@ mod tests {
         let mut opened = false;
         open_initial_session(Ok(()), || opened = true).expect("sync success should open the view");
         assert!(opened);
+    }
+
+    #[test]
+    fn stream_sync_is_deferred_inside_the_coalescing_window() {
+        let now = Instant::now();
+        assert!(
+            !can_start_stream_sync(now, now),
+            "two updates in the same instant must coalesce into one refetch"
+        );
+        assert!(
+            !can_start_stream_sync(
+                now,
+                now + STREAM_SYNC_MIN_INTERVAL - Duration::from_millis(1)
+            ),
+            "an update just inside the window must be deferred"
+        );
+    }
+
+    #[test]
+    fn stream_sync_runs_once_the_coalescing_window_elapses() {
+        let now = Instant::now();
+        assert!(
+            can_start_stream_sync(now, now + STREAM_SYNC_MIN_INTERVAL),
+            "a refetch may run as soon as the window elapses"
+        );
+        assert!(
+            can_start_stream_sync(now, now + STREAM_SYNC_MIN_INTERVAL + Duration::from_secs(5)),
+            "a quiet stream must still refresh on the next tick"
+        );
     }
 
     #[test]

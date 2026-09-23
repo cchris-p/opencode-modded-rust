@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 ---
 
@@ -97,3 +97,24 @@ This was not introduced by deleting the bundled DeepSeek model. The bundled fall
 - PR #78 merged into `development` at `ab299a28756cbd3314c2c8cf274cc5a7996719fa`.
 - Merged PR branch `bug/BUG-034-deepseek-default-model-pr` was deleted remotely and locally by `gh pr merge --delete-branch`.
 - Card remains in `qa` pending runtime QA with Rust tooling available.
+
+## QA Notes (re-verified 2026-09-23, Rust tooling available)
+
+- Product default is `deepseek/deepseek-flash` (`crates/opencode-config/src/loader.rs:23`
+  `DEFAULT_MODEL`).
+- `cargo test -p opencode-config default_model` -> 3 passed
+  (`product_default_model_applies_without_workspace_config`,
+  `workspace_config_overrides_product_default_model`,
+  `product_default_model_reports_product_default_source`).
+- Bundled fallback catalog contains `deepseek-flash` (`crates/opencode-provider/src/bootstrap.rs`);
+  the remaining `deepseek-v4-flash` string in `loader.rs` tests is the unrelated OpenRouter override
+  fixture noted previously.
+- The only remaining live check is a fresh `ort` `/config/providers` + first-prompt acceptance, which
+  this headless environment cannot run.
+- Related: `BUG-038` (DeepSeek mid-turn stall on the default model) is in the same stability cluster;
+  its stream-idle-timeout fix landed in the `bug/BUG-027-028-029-038-stability-cluster` branch.
+
+## Merge Closeout - 2026-09-23
+
+- Cluster closeout PR #89 merged into `development`; card moved `qa -> done`.
+- The default-model fix was already merged (PR #78); this closeout records the re-verification.
