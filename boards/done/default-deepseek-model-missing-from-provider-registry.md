@@ -118,3 +118,16 @@ This was not introduced by deleting the bundled DeepSeek model. The bundled fall
 
 - Cluster closeout PR #89 merged into `development`; card moved `qa -> done`.
 - The default-model fix was already merged (PR #78); this closeout records the re-verification.
+
+## Follow-up fix - 2026-09-23
+
+- PR #78 missed a remaining product-owned default in the QA smoke harness:
+  `scripts/qa/stream-smoke.sh` still defaulted
+  `MODEL="${DEEPSEEK_MODEL:-deepseek/deepseek-v4-flash}"`.
+- Under the live canonical catalog that ID is `deprecated` and filtered from the provider
+  registry, so the smoke test would fail at model resolution for the same reason the
+  original bug did.
+- Updated the default to `deepseek/deepseek-flash`, matching `DEFAULT_MODEL`
+  (`crates/opencode-config/src/loader.rs:23`).
+- Remaining `deepseek-v4-flash` hits in the repo are intentional non-defaults: OpenRouter
+  catalog entries in `crates/opencode-provider/src/bootstrap.rs` and test fixtures.
