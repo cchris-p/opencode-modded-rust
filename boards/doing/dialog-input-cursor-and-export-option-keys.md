@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-21"
 updated: "2026-09-23"
 ---
