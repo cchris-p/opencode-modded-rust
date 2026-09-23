@@ -140,6 +140,14 @@ Documented in `docs/provider-setup.md`.
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/86 (`development` base)
 
+## Completion
+
+- Merged into `development` via merge commit `4e709e6` (PR #86, 2026-09-23).
+- PR branch `feature/FEAT-015-preserve-model-provider-selection` deleted remotely and locally.
+- Closed out on explicit user request. Code/task completeness holds and the
+  automated tests pass; the item remains in `qa` until a QA report is recorded
+  on `development` or the user explicitly marks it done.
+
 ## Related Items
 
 - `BUG-010` Repo default model and provider ignored due to config precedence
