@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 predecessors: "BUG-022"
 created: "2026-09-23"
 updated: "2026-09-23"
@@ -121,3 +121,23 @@ expressible in config.
   `header`, `scrollbar`, `tips_hidden`; `message_density` accepts `compact`/`cozy`. Precedence is
   persisted `kv.json` override > config startup default > built-in default. The TUI loads config with
   `ConfigLoader::load_all(workspace_dir)` and seeds via `AppContext::new_with_config`.
+
+## Dev Notes - 2026-09-23
+
+- Added the nine snake_case keys (`thinking`, `tool_calls`, `tool_details`, `timestamps`,
+  `message_density`, `semantic_highlight`, `header`, `scrollbar`, `tips_hidden`) to `TuiConfig`
+  (`crates/opencode-config/src/schema.rs`).
+- Added `UiKv::get_bool_opt` / `get_string_opt` / `get_timestamps_opt` and
+  `seed_bool` / `seed_string` / `seed_timestamps` helpers implementing the precedence rule.
+- `AppContext::new_with_config(&Config)` seeds every display flag; `AppContext::new()` delegates to
+  `Config::default()`. `App::new()` resolves the workspace directory, loads config once with
+  `opencode_config::load_config` (same as the existing FEAT-048 capability read), and builds the
+  context from it.
+- Tests: `config_seeds_display_flags_when_kv_is_absent`,
+  `persisted_kv_override_beats_config_startup_default`,
+  `builtin_defaults_apply_when_kv_and_config_are_absent`,
+  `timestamps_opt_decodes_string_and_bool_encodings`.
+- Docs: `docs/opencode-config.md` gained the `tui` key table; `docs/opencode-tui.md` documents the
+  `kv.json` runtime store and precedence.
+- Verification: `cargo test -p opencode-config` (64 passed) and `cargo test -p opencode-tui` green.
+- Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.

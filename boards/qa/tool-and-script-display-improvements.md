@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -119,3 +119,25 @@ break alignment and hide most of the output.
 - `wrap_block_line`/`wrap_spans` (`crates/opencode-tui/src/components/session.rs:1453-1485`) is
   upgraded to word-aware wrapping with a hard-break fallback for parity with the markdown
   `Paragraph::wrap`.
+
+## Dev Notes - 2026-09-23
+
+- Tool render output now flows through `paint_block_lines` in `append_rendered_tool_call`
+  (`session.rs`), so tool blocks get the same gutter, background, padding, and wrapping as text/
+  file/image/footer parts. Toggle hit line indices are computed from the painted line count.
+- Removed the fixed 96-column truncation (`format_preview_line(line, 96)`) from output and inline
+  summaries; rendering wraps to the content width instead.
+- Upgraded `wrap_spans` to word-aware wrapping with a hard-break fallback for over-width tokens.
+- Folded the dead `ToolRenderMode` classification into `is_block_tool` as the single inline-vs-block
+  authority; write/edit/apply_patch/task/todowrite/question/glob/grep/list now always render blocks.
+- Ported per-tool semantics into the live renderer: read/write/edit/apply_patch/todowrite detail
+  lines, richer argument previews, and glob/grep/list match counts.
+- Deleted the unused `components/message.rs`, `components/tool_call.rs`, and
+  `components/tool_views.rs` stacks and their `mod.rs` re-exports.
+- Tests: `wrap_spans_moves_whole_words_to_the_next_line`,
+  `wrap_spans_hard_breaks_tokens_wider_than_the_line`, `wrap_spans_preserves_explicit_newlines`,
+  `todowrite_renders_status_icons_and_content`, `edit_renders_old_and_new_lines`,
+  `glob_reports_match_count_and_pattern`, `long_output_lines_are_not_truncated_at_96_columns`.
+- Verification: `cargo test -p opencode-tui` green; `grep` confirms no `ToolCallView`/`BashToolView`/
+  `tool_views` references remain.
+- Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.

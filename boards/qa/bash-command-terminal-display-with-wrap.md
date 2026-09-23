@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 predecessors: "FEAT-055"
 created: "2026-09-23"
 updated: "2026-09-23"
@@ -107,3 +107,21 @@ read long commands or their output.
 - Coordinate with FEAT-055 so the bash terminal block is the concrete instance of the unified tool
   render path rather than yet another special case. `BashToolView` is reference semantics only: the
   unused `tool_call.rs` widget is deleted under FEAT-055. Implement after the FEAT-055 core.
+
+## Dev Notes - 2026-09-23
+
+- Added `render_bash_block` in `session_tool.rs`, dispatched from `render_tool_call` for bash/shell
+  after the FEAT-055 unified path.
+- Every command line is `$ `-prefixed and pre-wrapped with `wrap_text` to `content_width - prefix`
+  so long commands wrap onto multiple prompt lines (continuing lines keep the `$` prompt and align
+  under the icon column).
+- Output renders in an inset `│ ` region (`bash_output_line`), keeping collapse/expand and the
+  collapsed preview; output is no longer truncated at 96 columns.
+- The `Command exited with code: N` line is lifted out of the output into a dedicated status line;
+  `bash_status` reports `running…`, `exit 0`, or `exit N`/`failed`.
+- `render_tool_call` now takes a `width` parameter, threaded from `content_width` via
+  `render_tool_call_part`.
+- Tests: `long_bash_command_wraps_onto_multiple_prompt_lines`,
+  `failed_bash_lifts_exit_code_into_a_status_line`.
+- Verification: `cargo test -p opencode-tui` green.
+- Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.
