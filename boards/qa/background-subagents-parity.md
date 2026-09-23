@@ -122,6 +122,15 @@ Reference `f54ce313b99a`:
 - PR #99 (https://github.com/cchris-p/opencode-modded-rust/pull/99) — `feature/FEAT-048-background-subagents` → `development`.
 - Program: GATE-004 (H-009), PR 5/7. Awaiting human test/merge on the checked-out branch.
 
+### 2026-09-23 - Merged into `development`
+
+- Merged via PR #99 (merge commit `0bdde09003305cca9e332d302aaf923288450bfa`) on explicit user
+  approval.
+- Branch cleanup complete: remote and local `feature/FEAT-048-background-subagents` deleted; local
+  `development` fast-forwarded to `0bdde09`.
+- Card remains in `qa` pending a recorded QA report (post-merge background smoke on `development`).
+  The merge alone does not move it to `done`.
+
 ## Related Items
 
 - `GATE-004` subagent feature parity.

@@ -530,6 +530,15 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
   (`FEAT-051`) starts. Documented deviation: the parent observes the injected result on its next
   turn rather than auto-resuming.
 
+### 2026-09-23 — PR 5 (`FEAT-048`) merged
+
+- PR #99 merged into `development` at merge commit
+  `0bdde09003305cca9e332d302aaf923288450bfa` on explicit user approval.
+- Branch cleanup complete: remote and local `feature/FEAT-048-background-subagents` deleted; local
+  `development` fast-forwarded to `0bdde09`.
+- `FEAT-048` remains in `qa` pending a recorded post-merge QA report.
+- Gate check for PR 6: `FEAT-051` may start now that PR 5 is merged.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
@@ -540,4 +549,6 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
   2026-09-23). Card `FEAT-047` kept in `qa` pending post-merge QA.
 - PR 4 (`FEAT-049`) — PR #98 / merge commit `24207e0edaff90b1ade5d9c5f88e459653940245` (merged
   2026-09-23). Card `FEAT-049` in `qa` pending post-merge QA.
+- PR 5 (`FEAT-048`) — PR #99 / merge commit `0bdde09003305cca9e332d302aaf923288450bfa` (merged
+  2026-09-23). Card `FEAT-048` in `qa` pending post-merge QA.
 
