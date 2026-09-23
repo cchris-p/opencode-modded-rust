@@ -31,7 +31,7 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 ## Current understanding (verify before relying on it)
 
 - `scopemux-core` exposes a C API through headers under `scopemux-core/core/include/scopemux/` and builds with CMake (`scopemux-core/CMakeLists.txt`).
-- The shipped Python extension registers only `ParserContext` and `ContextEngine` (`scopemux-core/core/src/bindings/module.c`); `ProjectContext`, tiered context, search, and prompt assembly are **not** exposed to Python today. Any integration that needs the project IR must use the C API (FFI or a compiled helper), not the Python module.
+- The shipped Python extension registers `ParserContext`, `ASTNode`, `CSTNode`, `ContextEngine`, `InfoBlock`, module functions (`detect_language`, `parse_c_file_to_cst`), and a test processor (`scopemux-core/core/src/bindings/module.c` and siblings); `ProjectContext`, tiered context, search, and prompt assembly are **not** exposed to Python today. Any integration that needs the project IR must use the C API (FFI or a compiled helper), not the Python module. (`FIX-004` corrects the upstream `README.md`, which currently claims only `ParserContext` and `ContextEngine`.)
 - Supported grammars today are C, C++, Python, JavaScript, and TypeScript (`scopemux-core/README.md`). **Rust is not a supported grammar**, which matters because this product and typical downstream Rust workspaces cannot be parsed by `scopemux-core` yet.
 - `scopemux-core` is explicitly development-oriented and not packaged for standard distribution (`scopemux-core/README.md` "Limitations"), so the integration must pin and build it rather than assume a system install.
 - This runtime currently builds context directly inside session and prompt code, which is what `START-025` exists to abstract.
@@ -87,6 +87,7 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 - `PHASE-003` V2 reliability - parent phase where early ScopeMux integration was scheduled.
 - `START-016` Define structured task state for V1 - source of task/stage intent the retrieval request is built from.
 - `PHASE-001` / `START-005` - V1 runtime loop that must remain generic and ScopeMux-free.
+- Upstream prerequisites in `$HOME/apps/scopemux-notes`: `FIX-001` (C++ resolver registration and declaration), `FIX-003` (Python interpreter range), `FIX-004` (Python API surface docs). These make the C API and build contract reliable before integration; the full core conflict set is `FIX-001`-`FIX-006` composed by `H-001`.
 
 ## Notes
 

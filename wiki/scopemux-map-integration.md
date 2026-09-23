@@ -172,6 +172,7 @@ The product's own repository is Rust, and `scopemux-core` does not parse Rust to
 
 ## Phasing
 
+- **Prerequisites.** Upstream core conflict fixes (`FIX-001`-`FIX-006`, handoff `H-001`) and enabling items (`WI-018`, `WI-030`-`WI-036`) in `$HOME/apps/scopemux-notes`; the product boundary `START-025` gates `SCOPE-002`.
 - **Phase 0 - Boundary.** Land `START-025` and the near-term provider integration (`SCOPE-002`). No plan nodes required.
 - **Phase 1 - Map core.** Rust grammar and resolution, incremental reconciliation, InfoBlock origin/lifecycle/provenance, delta view, agent map API. This is the minimum that makes the map useful on this product's own repo.
 - **Phase 2 - Plan projection.** Project the authoritative task record into plan nodes and reconcile them (`SCOPE-003`).
@@ -207,4 +208,4 @@ Each phase is independently useful and must not make the previous phase a hard d
 
 ## Cross-Repo References
 
-Referenced by path, not by inheritance. Upstream scope and IR context live in `$HOME/apps/scopemux-notes` (`wiki/concepts.md`, `wiki/indexing-pipeline.md`, `wiki/supported-ir-structures.md`, `features/mapping-dependency-relationships.md`, `features/watcher-and-incremental-indexer.md`, `features/documentation-suite-feature-archived.md`) and the engine in `$HOME/apps/scopemux-core` (`core/include/scopemux/`). Any rule that must bind `scopemux-code` is restated here or in `invariants/`.
+Referenced by path, not by inheritance. Upstream scope and IR context live in `$HOME/apps/scopemux-notes` (`wiki/concepts.md`, `wiki/indexing-pipeline.md`, `wiki/supported-ir-structures.md`, `features/mapping-dependency-relationships.md`, `features/watcher-and-incremental-indexer.md`, `features/documentation-suite-feature-archived.md`), the core invariants in `$HOME/apps/scopemux-notes/invariants/`, and the conflict-fix program in `$HOME/apps/scopemux-notes/handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`). The engine is `$HOME/apps/scopemux-core` (`core/include/scopemux/`). Any rule that must bind `scopemux-code` is restated here or in `invariants/`.

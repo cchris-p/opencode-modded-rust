@@ -95,10 +95,36 @@ All map use crosses the `START-025` retrieval-provider boundary. Each runtime st
 
 The generic provider remains the default and fallback; unsupported language is an explicit provenance signal. Rust grammar and Rust reference resolution are phase-one enabling work because this product's own repository is Rust.
 
+## Prerequisites
+
+Every prerequisite is tracked in this repo or in `$HOME/apps/scopemux-notes`. No phase starts until its prerequisites are met.
+
+| Prerequisite | Home | Gates | Status |
+| --- | --- | --- | --- |
+| `START-025` retrieval-provider boundary | this repo | `SCOPE-002` implementation | todo |
+| `FIX-001` C++ resolver registration/declaration | scopemux-notes | trustworthy C API core for `SCOPE-002` | todo |
+| `FIX-003` Python interpreter range alignment | scopemux-notes | pinned/reproducible build for `SCOPE-002` | todo |
+| `FIX-004` Python API surface correction | scopemux-notes | honest C-only boundary for `SCOPE-002` | todo |
+| `FIX-002` InfoBlock terminology disambiguation | scopemux-notes | trustworthy context model for Phase 2/3 | todo |
+| `FIX-006` planning-doc alignment | scopemux-notes | docs cannot be mistaken for implementation | todo |
+| `FIX-005` duplicate `parser_free` declaration | scopemux-notes | clean parser public surface | todo |
+| `WI-030` Rust grammar and reference resolution | scopemux-notes | Phase 1 usefulness on this repo | todo |
+| `WI-018` incremental index and watcher | scopemux-notes | map stays current | todo |
+| `WI-031` durable map store | scopemux-notes | plan persistence | todo |
+| `WI-032` target-state (plan) InfoBlocks | scopemux-notes | `SCOPE-003` | todo |
+| `WI-033` InfoBlock origin/lifecycle/provenance | scopemux-notes | `WI-032`, `WI-034` | todo |
+| `WI-034` observability InfoBlocks | scopemux-notes | `SCOPE-004` | todo |
+| `WI-035` duplication/refactor detection | scopemux-notes | `SCOPE-004` | todo |
+| `WI-036` delta view and map query API | scopemux-notes | `SCOPE-003`, `SCOPE-004` | todo |
+
+- The core invariants that constrain the upstream fixes are `$HOME/apps/scopemux-notes/invariants/`.
+- `FIX-001`-`FIX-006` are correctness prerequisites with no standalone feature value; they are composed by `$HOME/apps/scopemux-notes/handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`).
+- `SCOPE-002` is gated by `START-025` and must not start before that boundary exists. The `FIX-*` items are strongly recommended before `SCOPE-002` because they make the C API surface and build contract reliable, but they do not block a spike.
+
 ## Phasing
 
 - **Phase 0 - Boundary.** `START-025` and `SCOPE-002`. No plan nodes required.
-- **Phase 1 - Map core.** Rust grammar/resolution, incremental reconciliation, InfoBlock origin/lifecycle/provenance, delta view, agent map API. Upstream work in `$HOME/apps/scopemux-notes` (`WI-018`, `WI-030`-`WI-036`).
+- **Phase 1 - Map core.** Rust grammar/resolution, incremental reconciliation, InfoBlock origin/lifecycle/provenance, delta view, agent map API. Upstream work in `$HOME/apps/scopemux-notes` (`WI-018`, `WI-030`-`WI-036`), with `FIX-001`-`FIX-006` clearing core conflicts first.
 - **Phase 2 - Plan projection.** Project the task record into plan nodes and reconcile them (`SCOPE-003`).
 - **Phase 3 - Consumption.** Stage-aware retrieval of delta, observability, and refactor nodes (`SCOPE-004`).
 - **Later.** Refactor automation, richer observability and trace IR, cross-repo maps.
@@ -139,4 +165,5 @@ The generic provider remains the default and fallback; unsupported language is a
 
 - This is a design item. Do not start `SCOPE-002` implementation before `START-025` exists.
 - Upstream `scopemux-notes` items: `WI-018` (incremental index/watcher, refined), `WI-030` (Rust grammar), `WI-031` (durable map store), `WI-032` (plan InfoBlocks), `WI-033` (InfoBlock origin/lifecycle), `WI-034` (observability blocks), `WI-035` (duplication/refactor detection), `WI-036` (delta and map query API).
+- Core conflict fixes: `FIX-001`-`FIX-006`, composed by `handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`); core invariants at `$HOME/apps/scopemux-notes/invariants/`.
 - Cross-repo material is referenced by path only; binding rules are restated in this repo per `invariants/documentation-boundary.md`.
