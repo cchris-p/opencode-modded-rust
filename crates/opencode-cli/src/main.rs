@@ -28,7 +28,7 @@ use opencode_session::system::{EnvironmentContext, SystemPrompt};
 use opencode_storage::{Database, MessageRepository, SessionRepository};
 use opencode_tool::skill::list_available_skills;
 use opencode_tool::{registry::create_default_registry, ToolContext};
-use opencode_types::{MessagePart, Session, SessionMessage};
+use opencode_types::{MessagePart, MessageRole, PartType, Session, SessionMessage, SessionStatus};
 
 #[derive(Parser)]
 #[command(name = "opencode")]
@@ -371,6 +371,26 @@ enum SessionCommands {
     Show {
         #[arg(required = true)]
         session_id: String,
+    },
+    #[command(about = "Find sessions by name (title, id, or slug)")]
+    Find {
+        #[arg(value_name = "NAME")]
+        name: String,
+        #[arg(long = "max-count", short = 'n', default_value_t = 20)]
+        max_count: i64,
+        #[arg(long, default_value = "table")]
+        format: SessionListFormat,
+        #[arg(long)]
+        project: Option<String>,
+    },
+    #[command(about = "Show a diagnostic for a session by name or id")]
+    Inspect {
+        #[arg(value_name = "NAME_OR_ID")]
+        target: String,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+        #[arg(long, default_value_t = false)]
+        full: bool,
     },
     #[command(about = "Delete a session")]
     Delete {
@@ -3979,6 +3999,176 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
+const SESSION_LOOKUP_LIMIT: i64 = 1000;
+
+fn format_session_time(ms: i64) -> String {
+    match chrono::DateTime::from_timestamp_millis(ms) {
+        Some(dt) => dt
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        None => ms.to_string(),
+    }
+}
+
+fn session_status_label(status: &SessionStatus) -> &'static str {
+    match status {
+        SessionStatus::Active => "active",
+        SessionStatus::Completed => "completed",
+        SessionStatus::Archived => "archived",
+        SessionStatus::Compacting => "compacting",
+    }
+}
+
+/// Resolve a session from an explicit id/slug or a human name (title). A name
+/// must match exactly one session; ambiguous names return an error listing the
+/// candidates instead of guessing.
+fn resolve_session<'a>(sessions: &'a [Session], target: &str) -> Result<&'a Session, String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err("Session name or id is required.".to_string());
+    }
+
+    if let Some(session) = sessions.iter().find(|s| s.id == target) {
+        return Ok(session);
+    }
+    if let Some(session) = sessions.iter().find(|s| s.slug == target) {
+        return Ok(session);
+    }
+
+    let needle = target.to_lowercase();
+    if let Some(session) = sessions.iter().find(|s| s.title.to_lowercase() == needle) {
+        return Ok(session);
+    }
+
+    let matches: Vec<&Session> = sessions
+        .iter()
+        .filter(|s| s.title.to_lowercase().contains(&needle))
+        .collect();
+
+    match matches.len() {
+        0 => Err(format!("No session matches '{}'.", target)),
+        1 => Ok(matches[0]),
+        _ => {
+            let mut message = format!(
+                "'{}' matches {} sessions; use the full id or a more specific name:",
+                target,
+                matches.len()
+            );
+            for session in matches.iter().take(10) {
+                message.push_str(&format!(
+                    "\n  {}  {}",
+                    session.id,
+                    truncate_text(&session.title, 60)
+                ));
+            }
+            Err(message)
+        }
+    }
+}
+
+fn part_label(part: &PartType) -> &'static str {
+    match part {
+        PartType::Text { .. } => "text",
+        PartType::ToolCall { .. } => "toolCall",
+        PartType::ToolResult { .. } => "toolResult",
+        PartType::Reasoning { .. } => "reasoning",
+        PartType::File { .. } => "file",
+        PartType::StepStart { .. } => "stepStart",
+        PartType::StepFinish { .. } => "stepFinish",
+        PartType::Snapshot { .. } => "snapshot",
+        PartType::Patch { .. } => "patch",
+        PartType::Agent { .. } => "agent",
+        PartType::Subtask { .. } => "subtask",
+        PartType::Retry { .. } => "retry",
+        PartType::Compaction { .. } => "compaction",
+    }
+}
+
+/// Heuristic for whether a session is wedged, based only on what was persisted.
+fn diagnostic_verdict(session: &Session, messages: &[SessionMessage]) -> String {
+    if session.status != SessionStatus::Active {
+        return format!(
+            "Session status is {} (not active).",
+            session_status_label(&session.status)
+        );
+    }
+
+    let Some(last) = messages.last() else {
+        return "Session is active but has no persisted messages.".to_string();
+    };
+
+    match &last.role {
+        MessageRole::User => {
+            "Session is active; the last persisted message is a user prompt with no assistant \
+             reply. The turn likely never started or produced no persisted output."
+                .to_string()
+        }
+        MessageRole::Assistant => {
+            if last.parts.is_empty() {
+                return "Session is active; the last assistant message has no persisted parts. \
+                        The turn may have stalled before writing any output."
+                    .to_string();
+            }
+
+            let has_terminal = last.parts.iter().any(|part| {
+                matches!(
+                    part.part_type,
+                    PartType::ToolResult { .. }
+                        | PartType::StepFinish { .. }
+                        | PartType::Compaction { .. }
+                )
+            });
+            let output_tokens = session.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
+
+            if !has_terminal && output_tokens == 0 {
+                "Session is active; the last assistant turn has no terminal record (no tool \
+                 result, step finish, or output tokens). This looks like a stalled turn."
+                    .to_string()
+            } else {
+                "Session is active; the last assistant turn has persisted output.".to_string()
+            }
+        }
+        other => format!("Session is active; the last message role is {:?}.", other),
+    }
+}
+
+fn part_preview(part: &MessagePart, full: bool) -> Option<String> {
+    let limit = if full { 400 } else { 160 };
+    match &part.part_type {
+        PartType::Text { text } => Some(format!("text: \"{}\"", truncate_text(text, limit))),
+        PartType::Reasoning { text } => {
+            Some(format!("reasoning: \"{}\"", truncate_text(text, limit)))
+        }
+        PartType::ToolCall { name, input, .. } => Some(format!(
+            "toolCall: {} {}",
+            name,
+            truncate_text(&input.to_string(), limit)
+        )),
+        PartType::ToolResult {
+            content, is_error, ..
+        } => Some(format!(
+            "toolResult{}: \"{}\"",
+            if *is_error { " (error)" } else { "" },
+            truncate_text(content, limit)
+        )),
+        PartType::StepFinish { .. } => Some("stepFinish".to_string()),
+        PartType::Retry { count, reason } => Some(format!("retry {}: {}", count, reason)),
+        PartType::Compaction { summary } => {
+            Some(format!("compaction: \"{}\"", truncate_text(summary, limit)))
+        }
+        PartType::File { filename, .. } => Some(format!("file: {}", filename)),
+        PartType::Patch { filepath, .. } => Some(format!("patch: {}", filepath)),
+        PartType::Agent { name, status } => Some(format!("agent: {} ({})", name, status)),
+        PartType::Subtask {
+            description,
+            status,
+            ..
+        } => Some(format!("subtask: {} ({})", description, status)),
+        PartType::Snapshot { .. } | PartType::StepStart { .. } => None,
+    }
+}
+
 async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
     let db = Database::new()
         .await
@@ -4067,6 +4257,212 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
             println!("  Created: {}", session.time.created);
             println!("  Updated: {}", session.time.updated);
             println!("  Messages: {}", messages.len());
+        }
+        SessionCommands::Find {
+            name,
+            max_count,
+            format,
+            project,
+        } => {
+            let sessions = session_repo
+                .list(project.as_deref(), SESSION_LOOKUP_LIMIT)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to list sessions: {}", e))?;
+
+            let needle = name.to_lowercase();
+            let mut hits: Vec<Session> = sessions
+                .into_iter()
+                .filter(|s| s.parent_id.is_none())
+                .filter(|s| {
+                    s.title.to_lowercase().contains(&needle)
+                        || s.id.to_lowercase().contains(&needle)
+                        || s.slug.to_lowercase().contains(&needle)
+                })
+                .collect();
+
+            if hits.is_empty() {
+                println!("No sessions match '{}'.", name);
+                return Ok(());
+            }
+
+            let total = hits.len();
+            hits.truncate(max_count.max(1) as usize);
+
+            match format {
+                SessionListFormat::Json => {
+                    let rows: Vec<_> = hits
+                        .iter()
+                        .map(|s| {
+                            serde_json::json!({
+                                "id": s.id,
+                                "slug": s.slug,
+                                "title": s.title,
+                                "status": session_status_label(&s.status),
+                                "created": s.time.created,
+                                "updated": s.time.updated,
+                                "directory": s.directory,
+                                "workspaceIdentity": s.workspace_identity,
+                            })
+                        })
+                        .collect();
+                    println!("{}", serde_json::to_string_pretty(&rows)?);
+                }
+                SessionListFormat::Table => {
+                    println!("Matched {} session(s) for '{}':", total, name);
+                    println!(
+                        "Session ID                     Status      Updated             Title"
+                    );
+                    println!("--------------------------------------------------------------------------------------------");
+                    for session in &hits {
+                        println!(
+                            "{:<30} {:<11} {:<19} {}",
+                            session.id,
+                            session_status_label(&session.status),
+                            format_session_time(session.time.updated),
+                            truncate_text(&session.title, 50)
+                        );
+                    }
+                    if total > hits.len() {
+                        println!("... and {} more (raise --max-count)", total - hits.len());
+                    }
+                }
+            }
+        }
+        SessionCommands::Inspect { target, json, full } => {
+            let sessions = session_repo
+                .list(None, SESSION_LOOKUP_LIMIT)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to list sessions: {}", e))?;
+
+            let session = match resolve_session(&sessions, &target) {
+                Ok(session) => session.clone(),
+                Err(message) => {
+                    eprintln!("{}", message);
+                    return Ok(());
+                }
+            };
+
+            let messages = message_repo
+                .list_for_session(&session.id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to load session messages: {}", e))?;
+
+            let verdict = diagnostic_verdict(&session, &messages);
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "session": session,
+                        "messages": messages,
+                        "verdict": verdict,
+                    }))?
+                );
+                return Ok(());
+            }
+
+            let mut part_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+            let mut total_parts = 0usize;
+            for message in &messages {
+                for part in &message.parts {
+                    *part_counts.entry(part_label(&part.part_type)).or_insert(0) += 1;
+                    total_parts += 1;
+                }
+            }
+
+            let user_messages = messages
+                .iter()
+                .filter(|m| m.role == MessageRole::User)
+                .count();
+            let assistant_messages = messages
+                .iter()
+                .filter(|m| m.role == MessageRole::Assistant)
+                .count();
+
+            println!("\nSession: {}", session.id);
+            println!("  Title: {}", session.title);
+            println!("  Slug: {}", session.slug);
+            println!("  Status: {}", session_status_label(&session.status));
+            println!("  Project: {}", session.project_id);
+            println!("  Directory: {}", session.directory);
+            println!(
+                "  Workspace: {}",
+                session
+                    .workspace_identity
+                    .as_deref()
+                    .unwrap_or("legacy/unknown")
+            );
+            println!(
+                "  Created: {} ({})",
+                format_session_time(session.time.created),
+                session.time.created
+            );
+            println!(
+                "  Updated: {} ({})",
+                format_session_time(session.time.updated),
+                session.time.updated
+            );
+            let age_ms = chrono::Utc::now().timestamp_millis() - session.time.updated;
+            println!("  Age since update: {:.1}s", age_ms as f64 / 1000.0);
+            println!(
+                "  Messages: {} (user={}, assistant={})",
+                messages.len(),
+                user_messages,
+                assistant_messages
+            );
+            println!("  Parts: {}", total_parts);
+            if !part_counts.is_empty() {
+                let summary = part_counts
+                    .iter()
+                    .map(|(label, count)| format!("{}={}", label, count))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!("    {}", summary);
+            }
+            if let Some(usage) = &session.usage {
+                println!(
+                    "  Tokens: input={} output={} reasoning={} cache_read={} cache_write={} cost={:.4}",
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.reasoning_tokens,
+                    usage.cache_read_tokens,
+                    usage.cache_write_tokens,
+                    usage.total_cost
+                );
+            }
+            println!("  Verdict: {}", verdict);
+            println!();
+
+            if messages.is_empty() {
+                println!("(No persisted messages)");
+                return Ok(());
+            }
+
+            let displayed = if full {
+                messages.len()
+            } else {
+                messages.len().min(40)
+            };
+            for (index, message) in messages.iter().take(displayed).enumerate() {
+                println!(
+                    "  [{}] {:?} {} parts={}",
+                    index,
+                    message.role,
+                    format_session_time(message.created_at.timestamp_millis()),
+                    message.parts.len()
+                );
+                for part in &message.parts {
+                    if let Some(preview) = part_preview(part, full) {
+                        println!("        {}", preview);
+                    }
+                }
+            }
+            if displayed < messages.len() {
+                println!(
+                    "  ... {} more message(s); pass --full to show all",
+                    messages.len() - displayed
+                );
+            }
         }
         SessionCommands::Delete { session_id } => {
             message_repo
