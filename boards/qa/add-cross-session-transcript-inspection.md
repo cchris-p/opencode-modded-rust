@@ -97,6 +97,8 @@ The first implementation should not automatically pull another session's full tr
 
 ## Progress
 
+- Agent surface PR: https://github.com/cchris-p/opencode-modded-rust/pull/93
+  (`feature/FEAT-026-agent-session-inspect`), awaiting QA.
 - The CLI now ships the enumerate + read surface for this workflow:
   `opencode session find "<name>"` lists sessions by title/id/slug, and
   `opencode session inspect "<name|id>"` reads a session's persisted transcript
