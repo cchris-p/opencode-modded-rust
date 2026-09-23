@@ -291,6 +291,35 @@ enum DbCommands {
 
 #[derive(Subcommand)]
 enum TaskCommands {
+    #[command(about = "Start a new task session and submit a prompt")]
+    New {
+        #[arg(value_name = "PROMPT")]
+        prompt: Vec<String>,
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long, default_value_t = false)]
+        stream: bool,
+    },
+    #[command(about = "Send a follow-up prompt to the selected task session")]
+    Send {
+        #[arg(value_name = "PROMPT")]
+        prompt: Vec<String>,
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+        #[arg(long, default_value_t = false)]
+        stream: bool,
+    },
+    #[command(about = "View a task session transcript without opening the TUI")]
+    View {
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     #[command(about = "Manage the default CLI task target")]
     Target {
         #[command(subcommand)]
@@ -1289,6 +1318,45 @@ struct CheckedTaskTarget {
     available: bool,
     sessions: Vec<RemoteSessionInfo>,
     error: Option<String>,
+}
+
+#[derive(Debug)]
+struct ResolvedTaskTarget {
+    server: String,
+    session: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskPromptResponse {
+    status: String,
+    message_id: String,
+    model: Option<String>,
+    variant: Option<String>,
+    position: Option<usize>,
+    depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RemoteMessageInfo {
+    id: String,
+    role: String,
+    parts: Vec<RemoteMessagePart>,
+    created_at: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RemoteMessagePart {
+    #[serde(rename = "type")]
+    part_type: String,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteSessionStatusInfo {
+    status: String,
+    idle: bool,
+    position: Option<usize>,
+    depth: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2645,10 +2713,284 @@ fn print_checked_task_target(checked: &CheckedTaskTarget, selected: Option<&Task
     }
 }
 
+fn selected_task_target(
+    server: Option<String>,
+    session: Option<String>,
+    require_session: bool,
+) -> anyhow::Result<ResolvedTaskTarget> {
+    let selection = load_task_target_selection()?;
+    let server = match server {
+        Some(server) => normalize_task_server(&server)?,
+        None => selection
+            .as_ref()
+            .map(|target| target.server.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No task target selected. Run `opencode task target select --server <url>` or pass --server."
+                )
+            })?,
+    };
+    let session = session.or_else(|| selection.as_ref().and_then(|target| target.session.clone()));
+    if require_session && session.is_none() {
+        anyhow::bail!(
+            "No task session selected. Run `opencode task new ...`, `opencode task target select --server <url> --session <id>`, or pass --session."
+        );
+    }
+    Ok(ResolvedTaskTarget { server, session })
+}
+
+async fn ensure_task_target_available(
+    client: &reqwest::Client,
+    target: &ResolvedTaskTarget,
+) -> anyhow::Result<()> {
+    let checked = check_task_target_server(client, &target.server).await;
+    if !checked.available {
+        anyhow::bail!(
+            "Task target {} is unavailable: {}",
+            checked.server,
+            checked.error.as_deref().unwrap_or("unknown error")
+        );
+    }
+    if let Some(session_id) = target.session.as_deref() {
+        let exists = checked
+            .sessions
+            .iter()
+            .any(|session| session.id == session_id);
+        if !exists {
+            anyhow::bail!(
+                "Task session {} was not reported by target {}",
+                session_id,
+                checked.server
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn create_task_session(
+    client: &reqwest::Client,
+    server: &str,
+    title: Option<&str>,
+) -> anyhow::Result<String> {
+    let endpoint = server_url(server, "/session/");
+    let created: RemoteSessionInfo = parse_http_json(
+        client
+            .post(endpoint)
+            .json(&serde_json::json!({ "title": title }))
+            .send()
+            .await?,
+    )
+    .await?;
+    Ok(created.id)
+}
+
+async fn send_task_prompt(
+    client: &reqwest::Client,
+    server: &str,
+    session_id: &str,
+    prompt: String,
+) -> anyhow::Result<TaskPromptResponse> {
+    let endpoint = server_url(server, &format!("/session/{}/prompt", session_id));
+    parse_http_json(
+        client
+            .post(endpoint)
+            .json(&serde_json::json!({ "message": prompt }))
+            .send()
+            .await?,
+    )
+    .await
+}
+
+fn print_task_prompt_response(session_id: &str, response: &TaskPromptResponse) {
+    println!("Session: {}", session_id);
+    println!("Message: {}", response.message_id);
+    println!("Status: {}", response.status);
+    if let Some(model) = response.model.as_deref() {
+        println!("Model: {}", model);
+    }
+    if let Some(variant) = response.variant.as_deref() {
+        println!("Variant: {}", variant);
+    }
+    if let Some(position) = response.position {
+        println!("Queue position: {}", position);
+    }
+    if let Some(depth) = response.depth {
+        println!("Queue depth: {}", depth);
+    }
+}
+
+fn task_message_text(message: &RemoteMessageInfo) -> String {
+    message
+        .parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn print_task_messages(session_id: &str, messages: &[RemoteMessageInfo]) {
+    println!("Session: {}", session_id);
+    if messages.is_empty() {
+        println!("No messages.");
+        return;
+    }
+    for message in messages {
+        let text = task_message_text(message);
+        if text.trim().is_empty() {
+            continue;
+        }
+        println!("\n{}:", message.role.to_uppercase());
+        println!("{}", text.trim_end());
+    }
+}
+
+async fn fetch_task_messages(
+    client: &reqwest::Client,
+    server: &str,
+    session_id: &str,
+) -> anyhow::Result<Vec<RemoteMessageInfo>> {
+    let endpoint = server_url(server, &format!("/session/{}/message", session_id));
+    parse_http_json(client.get(endpoint).send().await?).await
+}
+
+async fn follow_task_until_idle(
+    client: &reqwest::Client,
+    server: &str,
+    session_id: &str,
+) -> anyhow::Result<()> {
+    let mut last_status = String::new();
+    loop {
+        let endpoint = server_url(server, "/session/status");
+        let statuses: HashMap<String, RemoteSessionStatusInfo> =
+            parse_http_json(client.get(endpoint).send().await?).await?;
+        let Some(status) = statuses.get(session_id) else {
+            anyhow::bail!(
+                "Task session {} was not reported by target {}",
+                session_id,
+                server
+            );
+        };
+        if status.status != last_status {
+            print!("Status: {}", status.status);
+            if let Some(position) = status.position {
+                print!(" position={}", position);
+            }
+            if let Some(depth) = status.depth {
+                print!(" depth={}", depth);
+            }
+            println!();
+            last_status = status.status.clone();
+        }
+        if status.idle {
+            let messages = fetch_task_messages(client, server, session_id).await?;
+            print_task_messages(session_id, &messages);
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 async fn handle_task_command(action: TaskCommands) -> anyhow::Result<()> {
     match action {
+        TaskCommands::New {
+            prompt,
+            server,
+            stream,
+        } => handle_task_new(prompt, server, stream).await,
+        TaskCommands::Send {
+            prompt,
+            server,
+            session,
+            stream,
+        } => handle_task_send(prompt, server, session, stream).await,
+        TaskCommands::View {
+            server,
+            session,
+            json,
+        } => handle_task_view(server, session, json).await,
         TaskCommands::Target { action } => handle_task_target_command(action).await,
     }
+}
+
+async fn handle_task_new(
+    prompt: Vec<String>,
+    server: Option<String>,
+    stream: bool,
+) -> anyhow::Result<()> {
+    let input = collect_run_input(prompt)?;
+    if input.trim().is_empty() {
+        anyhow::bail!("task new requires prompt text from arguments or stdin");
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let target = selected_task_target(server, None, false)?;
+    ensure_task_target_available(&client, &target).await?;
+    let title = input.lines().next().map(truncate_text_for_title);
+    let session_id = create_task_session(&client, &target.server, title.as_deref()).await?;
+    let response = send_task_prompt(&client, &target.server, &session_id, input).await?;
+    let workspace = std::env::current_dir()?.display().to_string();
+    save_task_target_selection(&TaskTargetSelection {
+        server: target.server.clone(),
+        session: Some(session_id.clone()),
+        workspace,
+        selected_at: chrono::Utc::now().timestamp_millis(),
+    })?;
+    print_task_prompt_response(&session_id, &response);
+    if stream {
+        let stream_client = reqwest::Client::new();
+        follow_task_until_idle(&stream_client, &target.server, &session_id).await?;
+    }
+    Ok(())
+}
+
+async fn handle_task_send(
+    prompt: Vec<String>,
+    server: Option<String>,
+    session: Option<String>,
+    stream: bool,
+) -> anyhow::Result<()> {
+    let input = collect_run_input(prompt)?;
+    if input.trim().is_empty() {
+        anyhow::bail!("task send requires prompt text from arguments or stdin");
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let target = selected_task_target(server, session, true)?;
+    ensure_task_target_available(&client, &target).await?;
+    let session_id = target.session.as_deref().expect("session required");
+    let response = send_task_prompt(&client, &target.server, session_id, input).await?;
+    print_task_prompt_response(session_id, &response);
+    if stream {
+        let stream_client = reqwest::Client::new();
+        follow_task_until_idle(&stream_client, &target.server, session_id).await?;
+    }
+    Ok(())
+}
+
+async fn handle_task_view(
+    server: Option<String>,
+    session: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let target = selected_task_target(server, session, true)?;
+    ensure_task_target_available(&client, &target).await?;
+    let session_id = target.session.as_deref().expect("session required");
+    let messages = fetch_task_messages(&client, &target.server, session_id).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&messages)?);
+    } else {
+        print_task_messages(session_id, &messages);
+    }
+    Ok(())
+}
+
+fn truncate_text_for_title(text: &str) -> String {
+    truncate_text(text.trim(), 80)
 }
 
 async fn handle_task_target_command(action: TaskTargetCommands) -> anyhow::Result<()> {

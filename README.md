@@ -85,7 +85,8 @@ From the repo root use `./target/debug/opencode` or `cargo run -p opencode-cli -
 - `tui` – Start interactive terminal UI
 - `attach` – Attach to a running server
 - `run` – Run a single message
-- `task target` – Select, show, list, or clear the explicit default target for future CLI task commands
+- `task new|send|view` – Start, continue, or inspect a task session on an explicit server/session target
+- `task target` – Select, show, list, or clear the explicit default target for CLI task commands
 - `serve` – Start HTTP server
 - `web` – Start headless server and open web UI
 - `acp` – Start ACP server
@@ -109,6 +110,7 @@ Subcommand help:
 ```bash
 ./target/debug/opencode tui --help
 ./target/debug/opencode run --help
+./target/debug/opencode task --help
 ./target/debug/opencode task target --help
 ./target/debug/opencode serve --help
 ./target/debug/opencode session --help
