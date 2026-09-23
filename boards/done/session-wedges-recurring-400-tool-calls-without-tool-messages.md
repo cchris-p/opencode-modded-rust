@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -277,3 +277,9 @@ every failure.
 - No regression from the BUG-038 stream-timeout change on the same request path.
 - The live TUI acceptance sequence (empty-argument tool call -> abort -> follow-up prompt) was **not**
   run in this headless environment; that remains the only open live check.
+
+## Merge Closeout - 2026-09-23
+
+- Cluster closeout PR #89 merged into `development`; card moved `qa -> done`.
+- The request-boundary normalizer and its tests were already merged (PR #64); this closeout records
+  the re-verification on the current tree.

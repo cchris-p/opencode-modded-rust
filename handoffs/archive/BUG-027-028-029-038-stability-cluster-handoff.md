@@ -1,7 +1,7 @@
 ---
 id: "H-008"
 title: "P1 stability cluster: BUG-027/028/029/038 - Handoff"
-status: "open"
+status: "complete"
 created: "2026-09-23"
 updated: "2026-09-23"
 owner: ""
@@ -108,3 +108,14 @@ the now-deprecated `deepseek-v4-flash` to `deepseek-flash`, which is the model
   SSE parser an explicit `Done`), which would allow a stricter
   "closed-without-terminal is an error" rule at the session layer.
 - Non-OpenAI-compatible request-path normalizers for `BUG-028`.
+
+## Completed With
+
+- PR #89 merged into `development`: `fix: P1 stability cluster (BUG-038 stream stall, BUG-027 thinking
+  freeze)` on `bug/BUG-027-028-029-038-stability-cluster`.
+- Delivered: `BUG-038` provider-stream idle timeout; `BUG-027` streaming-refetch coalescing.
+- Re-verified and closed: `BUG-038`, `BUG-027`, `BUG-028`, `BUG-029`, `BUG-034` (all moved to `done`).
+- Remaining (non-blocking, post-merge): live `ort` / `OPENCODE_TUI_TRACE` verification of the
+  thinking-phase fix and the DeepSeek stall reproduction, which the headless closeout environment
+  could not run.
+

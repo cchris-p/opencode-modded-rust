@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -244,5 +244,11 @@ Status: **unconfirmed root cause; this is a coverage fix, not a proven one.** Th
 - The BUG-038 stream-timeout change also makes a silently wedged stream return control to the loop,
   which removes the "quiet stream ignores the cancel token" amplifier described by H3.
 - Live reproduction during a thinking phase was **not** run in this headless environment; the root
-  cause remains unconfirmed by live capture, which is why the card stays in `qa`.
+  cause remains unconfirmed by live capture.
+
+## Merge Closeout - 2026-09-23
+
+- Cluster closeout PR #89 merged into `development`; card moved `qa -> done`.
+- The interrupt state-machine fix and its tests were already merged (PR #66); the BUG-038 stream
+  timeout also removes the quiet-stream cancel-token amplifier this card flagged (H3).
 

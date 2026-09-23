@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 ---
 
@@ -113,3 +113,8 @@ This was not introduced by deleting the bundled DeepSeek model. The bundled fall
   this headless environment cannot run.
 - Related: `BUG-038` (DeepSeek mid-turn stall on the default model) is in the same stability cluster;
   its stream-idle-timeout fix landed in the `bug/BUG-027-028-029-038-stability-cluster` branch.
+
+## Merge Closeout - 2026-09-23
+
+- Cluster closeout PR #89 merged into `development`; card moved `qa -> done`.
+- The default-model fix was already merged (PR #78); this closeout records the re-verification.

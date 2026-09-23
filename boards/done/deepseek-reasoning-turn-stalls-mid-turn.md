@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 ---
 
@@ -170,3 +170,10 @@ Implemented a provider-stream idle timeout (2026-09-23).
   run in this headless environment; the behavior is covered by the stream-level
   and session-level regression tests. Re-run the captured prompt on the PR
   branch for live confirmation.
+
+## Merge Closeout - 2026-09-23
+
+- PR #89 merged into `development` (branch `bug/BUG-027-028-029-038-stability-cluster`).
+- Card moved `todo -> qa -> done` with the cluster closeout.
+- Automated QA recorded above; live `ort` reproduction was not available in the headless environment
+  and remains advisable as a post-merge sanity check.

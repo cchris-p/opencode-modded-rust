@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -305,5 +305,11 @@ Implemented the bounded-refetch fix for the streaming refetch storm (H1/H2).
 - `cargo test -p opencode-tui` -> 104 passed, 0 failed.
 - `cargo check --workspace` clean; `cargo fmt --all -- --check` clean.
 - Live TUI duty-cycle measurement (`OPENCODE_TUI_TRACE`) and input-responsiveness check on the PR
-  branch were **not** run in this headless environment. The card stays in `qa` until that live
-  before/after check is recorded.
+  branch were **not** run in this headless environment.
+
+## Merge Closeout - 2026-09-23
+
+- PR #89 merged into `development` (branch `bug/BUG-027-028-029-038-stability-cluster`).
+- Card moved `qa -> done` with the cluster closeout.
+- The bounded-refetch fix is landed; the live `OPENCODE_TUI_TRACE` before/after measurement is still
+  recommended as a post-merge check and is the deepest remaining follow-up.
