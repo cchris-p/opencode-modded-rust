@@ -935,6 +935,9 @@ impl SessionView {
                                                         id,
                                                         &msg.id,
                                                         start_line,
+                                                        message_bg,
+                                                        message_border,
+                                                        content_width,
                                                         &mut visible_tool_ids,
                                                         &mut self.tool_toggle_hits,
                                                         &mut lines,
@@ -962,6 +965,9 @@ impl SessionView {
                                             id,
                                             &msg.id,
                                             start_line,
+                                            message_bg,
+                                            message_border,
+                                            content_width,
                                             &mut visible_tool_ids,
                                             &mut self.tool_toggle_hits,
                                             &mut lines,
@@ -1401,6 +1407,9 @@ fn append_rendered_tool_call(
     id: &str,
     message_id: &str,
     start_line: usize,
+    background: Color,
+    border_color: Color,
+    width: usize,
     visible_tool_ids: &mut HashSet<String>,
     tool_toggle_hits: &mut Vec<ToolToggleHit>,
     lines: &mut Vec<Line<'static>>,
@@ -1409,7 +1418,13 @@ fn append_rendered_tool_call(
     if rendered.lines.is_empty() {
         return;
     }
-    let end_line = start_line + rendered.lines.len() - 1;
+    // FEAT-055: tool lines go through the same block pipeline as every other
+    // message part so they get the gutter, background, padding, and wrapping.
+    let painted = paint_block_lines(rendered.lines, background, border_color, width);
+    if painted.is_empty() {
+        return;
+    }
+    let end_line = start_line + painted.len() - 1;
     if rendered.collapsible {
         visible_tool_ids.insert(id.to_string());
         tool_toggle_hits.push(ToolToggleHit {
@@ -1423,7 +1438,7 @@ fn append_rendered_tool_call(
             });
         }
     }
-    append_message_lines(lines, line_to_message, message_id, rendered.lines);
+    append_message_lines(lines, line_to_message, message_id, painted);
 }
 
 fn paint_block_lines(
@@ -1567,38 +1582,103 @@ fn tint_sidebar_overlay(background: Color, accent: Color) -> Color {
     }
 }
 
+/// FEAT-055: word-aware wrapping with a hard-break fallback.
+///
+/// Breaks at whitespace so whole words move to the next line, preserving span
+/// styles and explicit `\n`. A single token wider than `width` is hard-broken
+/// so over-width paths/flags still make progress (parity with markdown
+/// `Paragraph::wrap`).
 fn wrap_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Vec<Span<'static>>> {
     if width == 0 {
         return vec![spans];
     }
 
-    let mut out: Vec<Vec<Span<'static>>> = vec![Vec::new()];
-    let mut current_width = 0usize;
-
+    let mut tokens: Vec<(char, Style)> = Vec::new();
     for span in spans {
-        let style = span.style;
         for ch in span.content.chars() {
-            if ch == '\n' {
-                out.push(Vec::new());
-                current_width = 0;
-                continue;
-            }
-
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-            if current_width + ch_width > width && !out.last().is_some_and(|line| line.is_empty()) {
-                out.push(Vec::new());
-                current_width = 0;
-            }
-
-            push_merged_span(out.last_mut().expect("line exists"), ch, style);
-            current_width += ch_width;
+            tokens.push((ch, span.style));
         }
     }
 
-    if out.is_empty() {
-        out.push(Vec::new());
+    let mut lines: Vec<Vec<(char, Style)>> = Vec::new();
+    let mut current: Vec<(char, Style)> = Vec::new();
+    let mut current_width = 0usize;
+
+    let mut index = 0;
+    while index < tokens.len() {
+        let (ch, _style) = tokens[index];
+        if ch == '\n' {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            index += 1;
+            continue;
+        }
+
+        if ch == ' ' {
+            let mut end = index;
+            let mut run_width = 0usize;
+            while end < tokens.len() && tokens[end].0 == ' ' {
+                run_width += UnicodeWidthChar::width(' ').unwrap_or(0);
+                end += 1;
+            }
+            if current_width + run_width > width && !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            } else {
+                current.extend_from_slice(&tokens[index..end]);
+                current_width += run_width;
+            }
+            index = end;
+            continue;
+        }
+
+        let mut end = index;
+        let mut run_width = 0usize;
+        while end < tokens.len() && tokens[end].0 != ' ' && tokens[end].0 != '\n' {
+            run_width += UnicodeWidthChar::width(tokens[end].0).unwrap_or(0);
+            end += 1;
+        }
+
+        if run_width > width {
+            // Hard-break a word that cannot fit on any line.
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            let mut cursor = index;
+            while cursor < end {
+                let char_width = UnicodeWidthChar::width(tokens[cursor].0).unwrap_or(0);
+                if current_width + char_width > width && !current.is_empty() {
+                    lines.push(std::mem::take(&mut current));
+                    current_width = 0;
+                }
+                current.push(tokens[cursor]);
+                current_width += char_width;
+                cursor += 1;
+            }
+        } else {
+            if current_width + run_width > width && !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            current.extend_from_slice(&tokens[index..end]);
+            current_width += run_width;
+        }
+        index = end;
     }
-    out
+
+    lines.push(current);
+
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut merged: Vec<Span<'static>> = Vec::new();
+            for (ch, style) in line {
+                push_merged_span(&mut merged, ch, style);
+            }
+            merged
+        })
+        .collect()
 }
 
 fn push_merged_span(line: &mut Vec<Span<'static>>, ch: char, style: Style) {
@@ -1921,5 +2001,34 @@ mod tests {
 
         assert!(singular_text.contains("1 tool call"));
         assert!(plural_text.contains("2 tool calls"));
+    }
+
+    fn joined(lines: &[Vec<Span<'static>>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wrap_spans_moves_whole_words_to_the_next_line() {
+        let lines = wrap_spans(vec![Span::raw("hello world foo")], 11);
+        assert_eq!(joined(&lines), vec!["hello world", "foo"]);
+    }
+
+    #[test]
+    fn wrap_spans_hard_breaks_tokens_wider_than_the_line() {
+        let lines = wrap_spans(vec![Span::raw("abcdefghij")], 4);
+        assert_eq!(joined(&lines), vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn wrap_spans_preserves_explicit_newlines() {
+        let lines = wrap_spans(vec![Span::raw("one\ntwo")], 10);
+        assert_eq!(joined(&lines), vec!["one", "two"]);
     }
 }

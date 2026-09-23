@@ -74,15 +74,20 @@ pub fn tool_glyph(name: &str) -> &'static str {
     }
 }
 
-/// Returns true if this tool typically produces block-level output
+/// Returns true if this tool renders as a block.
+///
+/// FEAT-055: this is now the single inline-vs-block authority (the dead
+/// `ToolRenderMode` classification was folded in). Bash/shell plus the
+/// edit-style and todo tools always render blocks; everything else escalates
+/// to block mode once its output exceeds the preview threshold.
 fn is_block_tool(name: &str, result: Option<&(String, bool)>) -> bool {
-    let normalized = normalize_tool_name(name);
-    // Tools that always produce block output
-    match normalized.as_str() {
-        "bash" | "shell" | "apply_patch" => return true,
+    match normalize_tool_name(name).as_str() {
+        "bash" | "shell" | "write" | "writefile" | "write_file" | "edit" | "editfile"
+        | "edit_file" | "multiedit" | "apply_patch" | "applypatch" | "task" | "subagent"
+        | "todowrite" | "todo_write" | "question" | "glob" | "grep" | "search" | "ripgrep"
+        | "list" | "ls" | "listdir" | "list_dir" => return true,
         _ => {}
     }
-    // Otherwise, check result length
     if let Some((result_text, _)) = result {
         result_text.lines().count() > BLOCK_RESULT_THRESHOLD
     } else {
@@ -133,6 +138,7 @@ pub fn render_tool_call(
 
     if block_mode {
         let bg = theme.background_panel;
+        let parsed = serde_json::from_str::<Value>(arguments.trim()).ok();
         let preview_limit = if normalized == "bash" || normalized == "shell" {
             10usize
         } else {
@@ -170,11 +176,29 @@ pub fn render_tool_call(
         } else {
             main_spans.push(Span::styled(format!("{} ", glyph), icon_style.bg(bg)));
             main_spans.push(Span::styled(name.to_string(), name_style.bg(bg)));
-            if let Some(argument_preview) = tool_argument_preview(&normalized, arguments) {
+            let parsed = serde_json::from_str::<Value>(arguments.trim()).ok();
+            if let Some(argument_preview) =
+                tool_argument_preview(&normalized, parsed.as_ref(), arguments)
+            {
                 main_spans.push(Span::styled(
                     format!("  {}", argument_preview),
                     Style::default().fg(theme.text_muted).bg(bg),
                 ));
+            }
+            if matches!(
+                normalized.as_str(),
+                "glob" | "grep" | "search" | "ripgrep" | "list" | "ls"
+            ) {
+                if let Some((result_text, _)) = result {
+                    let count = result_text
+                        .lines()
+                        .filter(|line| !line.trim().is_empty())
+                        .count();
+                    main_spans.push(Span::styled(
+                        format!("  ({} matches)", count),
+                        Style::default().fg(theme.text_muted).bg(bg),
+                    ));
+                }
             }
         }
 
@@ -197,12 +221,18 @@ pub fn render_tool_call(
 
         lines.push(Line::from(main_spans));
 
+        // Purpose-built content derived from the call arguments, ported from the
+        // previously-unused per-tool views.
+        if show_tool_details {
+            lines.extend(tool_detail_lines(&normalized, parsed.as_ref(), theme, bg));
+        }
+
         if let Some((result_text, is_error)) = result {
             if *is_error {
                 let mut iter = result_text.lines();
                 if let Some(first_line) = iter.next() {
                     lines.push(block_content_line(
-                        format!("Error: {}", format_preview_line(first_line, 96)),
+                        format!("Error: {}", first_line.trim()),
                         Style::default().fg(theme.error),
                         theme,
                         bg,
@@ -212,7 +242,7 @@ pub fn render_tool_call(
                 if expanded {
                     for line in iter {
                         lines.push(block_content_line(
-                            format_preview_line(line, 96),
+                            line.to_string(),
                             Style::default().fg(theme.error),
                             theme,
                             bg,
@@ -221,7 +251,7 @@ pub fn render_tool_call(
                 } else if show_tool_details {
                     for line in iter.take(2) {
                         lines.push(block_content_line(
-                            format_preview_line(line, 96),
+                            line.to_string(),
                             Style::default().fg(theme.error),
                             theme,
                             bg,
@@ -246,7 +276,7 @@ pub fn render_tool_call(
                 };
                 for line in output_lines.iter().take(visible) {
                     lines.push(block_content_line(
-                        format_preview_line(line, 96),
+                        line.to_string(),
                         Style::default().fg(theme.text),
                         theme,
                         bg,
@@ -312,7 +342,10 @@ pub fn render_tool_call(
     lines.push(Line::from(main_spans));
 
     if show_tool_details {
-        if let Some(argument_preview) = tool_argument_preview(&normalized, arguments) {
+        let parsed = serde_json::from_str::<Value>(arguments.trim()).ok();
+        if let Some(argument_preview) =
+            tool_argument_preview(&normalized, parsed.as_ref(), arguments)
+        {
             lines.push(Line::from(Span::styled(
                 format!("    {}", argument_preview),
                 Style::default().fg(theme.text_muted),
@@ -399,30 +432,96 @@ fn normalize_tool_name(name: &str) -> String {
     name.trim().to_ascii_lowercase().replace('-', "_")
 }
 
-fn tool_argument_preview(normalized_name: &str, arguments: &str) -> Option<String> {
+fn tool_argument_preview(
+    normalized_name: &str,
+    parsed: Option<&Value>,
+    arguments: &str,
+) -> Option<String> {
     let raw = arguments.trim();
-    let parsed = serde_json::from_str::<Value>(raw).ok();
 
     if normalized_name == "bash" || normalized_name == "shell" {
         let command = parsed
-            .as_ref()
             .and_then(extract_shell_command)
             .or_else(|| (!raw.is_empty()).then_some(raw.to_string()))?;
         return Some(format!("$ {}", command.trim()));
     }
 
     if matches!(normalized_name, "read" | "readfile" | "read_file") {
-        if let Some(path) = parsed.as_ref().and_then(extract_path) {
-            return Some(format!("→ {}", path));
+        if let Some(path) = parsed.and_then(extract_path) {
+            return Some(match read_line_range(parsed) {
+                Some((start, end)) => format!("→ {} (lines {}-{})", path, start, end),
+                None => format!("→ {}", path),
+            });
         }
     }
 
     if matches!(
         normalized_name,
-        "write" | "writefile" | "write_file" | "edit" | "editfile" | "edit_file"
+        "write" | "writefile" | "write_file" | "edit" | "editfile" | "edit_file" | "multiedit"
     ) {
-        if let Some(path) = parsed.as_ref().and_then(extract_path) {
+        if let Some(path) = parsed.and_then(extract_path) {
             return Some(format!("← {}", path));
+        }
+    }
+
+    if matches!(normalized_name, "glob" | "grep" | "search" | "ripgrep") {
+        if let Some(pattern) = parsed
+            .and_then(|value| value.get("pattern"))
+            .and_then(Value::as_str)
+        {
+            return Some(
+                match parsed
+                    .and_then(|value| value.get("path"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                {
+                    Some(path) => format!("{} in {}", pattern, path),
+                    None => pattern.to_string(),
+                },
+            );
+        }
+    }
+
+    if matches!(normalized_name, "list" | "ls" | "listdir" | "list_dir") {
+        if let Some(path) = parsed.and_then(extract_path) {
+            return Some(path);
+        }
+    }
+
+    if matches!(normalized_name, "webfetch" | "web_fetch" | "fetch") {
+        if let Some(url) = parsed
+            .and_then(|value| value.get("url"))
+            .and_then(Value::as_str)
+        {
+            return Some(url.to_string());
+        }
+    }
+
+    if matches!(normalized_name, "websearch" | "web_search") {
+        if let Some(query) = parsed
+            .and_then(|value| value.get("query"))
+            .and_then(Value::as_str)
+        {
+            return Some(query.to_string());
+        }
+    }
+
+    if normalized_name == "skill" {
+        if let Some(skill) = parsed
+            .and_then(|value| value.get("name"))
+            .and_then(Value::as_str)
+        {
+            return Some(skill.to_string());
+        }
+    }
+
+    if matches!(normalized_name, "task" | "subagent") {
+        if let Some(description) = parsed
+            .and_then(|value| value.get("description").or_else(|| value.get("prompt")))
+            .and_then(Value::as_str)
+        {
+            return Some(collapse_whitespace(description));
         }
     }
 
@@ -434,8 +533,153 @@ fn tool_argument_preview(normalized_name: &str, arguments: &str) -> Option<Strin
     if first.is_empty() {
         None
     } else {
-        Some(format_preview_line(first, 84))
+        Some(first.to_string())
     }
+}
+
+/// Purpose-built content lines for tools whose dead views showed more than the
+/// generic argument preview (FEAT-055).
+fn tool_detail_lines(
+    normalized: &str,
+    parsed: Option<&Value>,
+    theme: &Theme,
+    bg: ratatui::style::Color,
+) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    match normalized {
+        "write" | "writefile" | "write_file" => {
+            if let Some(content) = parsed
+                .and_then(|value| value.get("content"))
+                .and_then(Value::as_str)
+            {
+                for line in content.lines().take(6) {
+                    out.push(block_content_line(
+                        format!("+ {}", line),
+                        Style::default().fg(theme.success),
+                        theme,
+                        bg,
+                    ));
+                }
+            }
+        }
+        "edit" | "editfile" | "edit_file" | "multiedit" => {
+            if let Some(old) = parsed
+                .and_then(|value| value.get("old_string"))
+                .and_then(Value::as_str)
+            {
+                for line in old.lines().take(4) {
+                    out.push(block_content_line(
+                        format!("- {}", line),
+                        Style::default().fg(theme.error),
+                        theme,
+                        bg,
+                    ));
+                }
+            }
+            if let Some(new) = parsed
+                .and_then(|value| value.get("new_string"))
+                .and_then(Value::as_str)
+            {
+                for line in new.lines().take(4) {
+                    out.push(block_content_line(
+                        format!("+ {}", line),
+                        Style::default().fg(theme.success),
+                        theme,
+                        bg,
+                    ));
+                }
+            }
+        }
+        "apply_patch" | "applypatch" => {
+            if let Some(patch) = parsed
+                .and_then(|value| value.get("patchText").or_else(|| value.get("patch")))
+                .and_then(Value::as_str)
+            {
+                let mut files: Vec<&str> = patch
+                    .lines()
+                    .filter_map(|line| {
+                        line.strip_prefix("+++ b/")
+                            .or_else(|| line.strip_prefix("+++ "))
+                            .map(str::trim)
+                    })
+                    .filter(|file| !file.is_empty() && *file != "/dev/null")
+                    .collect();
+                files.dedup();
+                if !files.is_empty() {
+                    out.push(block_content_line(
+                        format!("({} files)", files.len()),
+                        Style::default().fg(theme.text_muted),
+                        theme,
+                        bg,
+                    ));
+                    for file in files.iter().take(8) {
+                        out.push(block_content_line(
+                            (*file).to_string(),
+                            Style::default().fg(theme.info),
+                            theme,
+                            bg,
+                        ));
+                    }
+                }
+            }
+        }
+        "todowrite" | "todo_write" => {
+            if let Some(todos) = parsed
+                .and_then(|value| value.get("todos"))
+                .and_then(Value::as_array)
+            {
+                for item in todos {
+                    let content = item
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    if content.is_empty() {
+                        continue;
+                    }
+                    let status = item
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("pending");
+                    let (icon, color) = match status {
+                        "completed" => ("●", theme.success),
+                        "in_progress" => ("◐", theme.warning),
+                        _ => ("○", theme.text_muted),
+                    };
+                    out.push(Line::from(vec![
+                        block_prefix(theme, bg),
+                        Span::styled(format!("  {} ", icon), Style::default().fg(color).bg(bg)),
+                        Span::styled(content.to_string(), Style::default().fg(theme.text).bg(bg)),
+                    ]));
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn read_line_range(parsed: Option<&Value>) -> Option<(usize, usize)> {
+    let value = parsed?;
+    let offset = value.get("offset").and_then(Value::as_u64);
+    let limit = value.get("limit").and_then(Value::as_u64);
+    match (offset, limit) {
+        (None, None) => None,
+        (Some(offset), Some(limit)) => {
+            let start = offset.max(1);
+            let end = start.saturating_add(limit.saturating_sub(1));
+            Some((start as usize, end as usize))
+        }
+        (Some(offset), None) => {
+            let start = offset.max(1);
+            Some((start as usize, start as usize))
+        }
+        (None, Some(limit)) => Some((1, limit.max(1) as usize)),
+    }
+}
+
+fn collapse_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn extract_shell_command(value: &Value) -> Option<String> {
@@ -616,5 +860,81 @@ mod tests {
             &Theme::default(),
         );
         assert!(body(&expanded).contains("error 6"));
+    }
+
+    #[test]
+    fn todowrite_renders_status_icons_and_content() {
+        let args = r#"{"todos":[{"content":"first thing","status":"completed"},{"content":"second thing","status":"in_progress"}]}"#;
+        let render = render_tool_call(
+            "call-todo",
+            "todowrite",
+            args,
+            ToolState::Running,
+            &HashMap::new(),
+            true,
+            false,
+            &Theme::default(),
+        );
+        let body = body(&render);
+        assert!(body.contains("first thing"));
+        assert!(body.contains("second thing"));
+        assert!(body.contains('●'));
+        assert!(body.contains('◐'));
+    }
+
+    #[test]
+    fn edit_renders_old_and_new_lines() {
+        let args =
+            r#"{"file_path":"/tmp/a.rs","old_string":"let x = 1;","new_string":"let x = 2;"}"#;
+        let render = render_tool_call(
+            "call-edit",
+            "edit",
+            args,
+            ToolState::Completed,
+            &HashMap::new(),
+            true,
+            false,
+            &Theme::default(),
+        );
+        let body = body(&render);
+        assert!(body.contains("- let x = 1;"));
+        assert!(body.contains("+ let x = 2;"));
+    }
+
+    #[test]
+    fn glob_reports_match_count_and_pattern() {
+        let args = r#"{"pattern":"*.rs"}"#;
+        let results = result_map("call-glob", "a.rs\nb.rs\nc.rs", false);
+        let render = render_tool_call(
+            "call-glob",
+            "glob",
+            args,
+            ToolState::Completed,
+            &results,
+            true,
+            false,
+            &Theme::default(),
+        );
+        let body = body(&render);
+        assert!(body.contains("*.rs"));
+        assert!(body.contains("(3 matches)"));
+    }
+
+    #[test]
+    fn long_output_lines_are_not_truncated_at_96_columns() {
+        let id = "call-wide";
+        let long = "x".repeat(140);
+        let results = result_map(id, &format!("{long}\n{long}\n{long}\n{long}"), false);
+        let render = render_tool_call(
+            id,
+            "bash",
+            "{\"command\":\"echo\"}",
+            ToolState::Completed,
+            &results,
+            true,
+            true,
+            &Theme::default(),
+        );
+        assert!(body(&render).contains(&long));
     }
 }
