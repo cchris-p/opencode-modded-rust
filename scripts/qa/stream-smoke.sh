@@ -61,7 +61,7 @@ if ! curl -sf -o /dev/null "${BASE}/session"; then
   exit 3
 fi
 
-MODEL="${DEEPSEEK_MODEL:-deepseek/deepseek-v4-flash}"
+MODEL="${DEEPSEEK_MODEL:-deepseek/deepseek-flash}"
 
 # Create a fresh session.
 SID="$(curl -sf -X POST "${BASE}/session" -H 'Content-Type: application/json' \
