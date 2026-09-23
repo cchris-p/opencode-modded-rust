@@ -15,9 +15,11 @@ Behavior outside that screen is secondary:
 - environment variables can still override provider behavior
 - shell helpers such as local Ollama launch aliases are optional conveniences, not the primary setup flow
 
-The provider screen shows the effective provider, effective model, auth source, and Ollama host source so overrides are visible instead of implicit.
+The provider screen shows the effective provider, effective model, selection source, auth source, and Ollama host source so overrides are visible instead of implicit. The selection source distinguishes the product default from a persisted manual selection and from config or environment overrides.
 
-When you press `Enter` on a highlighted model in `Settings > Provider`, the selection is written back to the project config path and becomes the normal default for future runs.
+When you press `Enter` on a highlighted model in `Settings > Provider`, the selection is written to the project-local runtime config (`<workspace>/opencode.json`, which this repo gitignores) and becomes the default for new sessions and future runs. The same persistence applies when a model is chosen from the model-cycle dialog. Press `d` in `Settings > Provider` to clear the saved selection so the product default (`deepseek/deepseek-flash`) is effective again.
+
+Manual selection is **project-level**: it is stored in the workspace's own `opencode.json` and applies to that workspace, not to every workspace on the machine. The product default only applies while no manual selection exists, or after a reset.
 
 When Ollama is highlighted, press `u` to edit the Ollama host/base URL from the same screen.
 

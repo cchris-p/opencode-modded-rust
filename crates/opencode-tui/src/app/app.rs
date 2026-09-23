@@ -1456,7 +1456,7 @@ impl App {
                 KeyCode::Enter => {
                     if let Some(model) = self.model_select.selected_model() {
                         let model_ref = format!("{}/{}", model.provider, model.id);
-                        self.set_active_model_selection(model_ref, Some(model.provider.clone()));
+                        self.persist_model_selection(model_ref, Some(model.provider.clone()));
                     }
                     self.model_select.close();
                 }
@@ -2865,6 +2865,28 @@ impl App {
                 let _ = self.refresh_settings_auth_state();
                 true
             }
+            KeyCode::Char('d') if key.modifiers.is_empty() => {
+                if let Some(client) = self.context.get_api_client() {
+                    match client.reset_model_selection() {
+                        Ok(reset) => {
+                            self.refresh_model_dialog();
+                            let _ = self.refresh_settings_auth_state();
+                            let message = if reset {
+                                "Model selection reset to default"
+                            } else {
+                                "No saved model selection to reset"
+                            };
+                            self.toast.show(ToastVariant::Success, message, 2400);
+                        }
+                        Err(err) => self.toast.show(
+                            ToastVariant::Error,
+                            &format!("Failed to reset model selection: {}", err),
+                            3200,
+                        ),
+                    }
+                }
+                true
+            }
             KeyCode::Char('a') if key.modifiers.is_empty() => {
                 if self
                     .settings_view
@@ -2935,33 +2957,7 @@ impl App {
                 if let Some((model_ref, provider_id)) =
                     self.settings_view.selected_model_ref(&self.context)
                 {
-                    let Some(client) = self.context.get_api_client() else {
-                        self.toast
-                            .show(ToastVariant::Error, "No API client available", 2200);
-                        return true;
-                    };
-                    match client.patch_config(&crate::components::provider_selection_patch(
-                        model_ref.clone(),
-                    )) {
-                        Ok(_) => {
-                            self.set_active_model_selection(model_ref.clone(), Some(provider_id));
-                            self.refresh_model_dialog();
-                            let _ = self.refresh_settings_auth_state();
-                            self.toast.show(
-                                ToastVariant::Success,
-                                &format!(
-                                    "Provider setup saved to Settings > Provider: {}",
-                                    model_ref
-                                ),
-                                2400,
-                            );
-                        }
-                        Err(err) => self.toast.show(
-                            ToastVariant::Error,
-                            &format!("Failed to persist provider selection: {}", err),
-                            3200,
-                        ),
-                    }
+                    self.persist_model_selection(model_ref, Some(provider_id));
                 }
                 true
             }
@@ -3597,6 +3593,41 @@ impl App {
             .collect::<Vec<_>>();
         *self.context.mcp_servers.write() = statuses;
         Ok(())
+    }
+
+    /// Persist a manually selected provider/model to the project-local runtime
+    /// config so it becomes the default for new sessions and future runs, then
+    /// make it the active in-memory selection.
+    fn persist_model_selection(&mut self, model_ref: String, provider: Option<String>) {
+        let Some(client) = self.context.get_api_client() else {
+            self.set_active_model_selection(model_ref, provider);
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+
+        match client.patch_config(&crate::components::provider_selection_patch(
+            model_ref.clone(),
+        )) {
+            Ok(_) => {
+                self.set_active_model_selection(model_ref.clone(), provider);
+                self.refresh_model_dialog();
+                let _ = self.refresh_settings_auth_state();
+                self.toast.show(
+                    ToastVariant::Success,
+                    &format!("Model selection saved for new sessions: {}", model_ref),
+                    2400,
+                );
+            }
+            Err(err) => {
+                self.set_active_model_selection(model_ref, provider);
+                self.toast.show(
+                    ToastVariant::Error,
+                    &format!("Failed to persist provider selection: {}", err),
+                    3200,
+                );
+            }
+        }
     }
 
     fn set_active_model_selection(&mut self, model_ref: String, provider: Option<String>) {

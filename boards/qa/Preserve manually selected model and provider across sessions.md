@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "wiki/v1.md"
-status: "todo"
+status: "qa"
 created: "2026-09-11"
 ---
 
@@ -74,6 +74,71 @@ Suspected gaps to confirm during implementation:
 - Restart `ort-build`/`ort`, start another session, and confirm the same model is active.
 - Reset to the default and confirm the default becomes active again.
 - `cargo test -p opencode-config -p opencode-tui -p opencode-server`.
+
+## Implementation Notes
+
+### Behavior chosen
+
+Manual selection is **project-level**: it is persisted to the workspace-local
+runtime config `<workspace>/opencode.json` (gitignored in this repo), which the
+loader already loads after the shipped `opencode.jsonc` and therefore
+deterministically outranks it. The product default (`deepseek/deepseek-flash`)
+only applies while no manual selection exists, or after an explicit reset.
+Documented in `docs/provider-setup.md`.
+
+### What changed
+
+- `crates/opencode-config/src/loader.rs`
+  - `ConfigLoader` now records which load stage produced the effective `model`
+    (`MODEL_SOURCE_*` labels: product default, project config, custom config,
+    inline env, `.opencode`, managed).
+  - `load_config_with_source(project_dir) -> (Config, Option<String>)` exposes
+    that label.
+  - `reset_project_model_selection(project_dir)` clears `model` from
+    `<workspace>/opencode.json`, preserving sibling keys (for example permission
+    grants).
+- `crates/opencode-server/src/routes.rs`
+  - `GET /config/providers` reports the real `selection_source` instead of
+    always `Settings > Provider`; the product default now reports
+    `product default`.
+  - `DELETE /config/model` clears the persisted selection, reloads config,
+    refreshes providers, and broadcasts `config.updated`.
+- `crates/opencode-tui`
+  - Manual selection now persists from **both** the `Settings > Provider` path
+    and the model-cycle dialog via a shared `persist_model_selection` helper.
+  - `Settings > Provider` gained `d` to reset to the product default; the notes
+    line documents it.
+  - `ApiClient::reset_model_selection` calls the new route.
+
+### Suspected gaps resolved
+
+- **Stray/duplicate config file:** the manual selection is written to the
+  intended workspace-local runtime config (`opencode.json`, already gitignored
+  for permission grants). The shipped `opencode.jsonc` is untouched and is
+  outranked deterministically because `load_project` loads `json` after `jsonc`.
+- **New session reads persisted selection:** new sessions send the in-memory
+  `context.current_model`, which `refresh_model_dialog` seeds from
+  `setup.effective_model` on startup before any session exists.
+- **Existing-session staleness:** switching sessions does not overwrite
+  `context.current_model` (it is only seeded when `None`), so the persisted
+  selection stays active.
+- **Global vs project:** project-level, as recorded above.
+
+### Verification
+
+- `cargo fmt --all -- --check` clean.
+- `cargo check --workspace` clean.
+- `cargo test -p opencode-config` -> 62 + 5 passed.
+- `cargo test -p opencode-server` -> 38 (+3 integration) passed.
+- `cargo test -p opencode-tui` -> 102 passed.
+- New tests: model-source reporting, manual-selection round trip across a fresh
+  loader, reset restores the default while preserving permission grants, reset
+  no-op without a local config, and server source reporting for default vs
+  persisted selection.
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/86 (`development` base)
 
 ## Related Items
 

@@ -497,7 +497,7 @@ impl SettingsView {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "Press a for API key, l for login, x to clear auth, u for Ollama host, r to refresh.",
+                "Press a for API key, l for login, x to clear auth, u for Ollama host, r to refresh, d to reset to default.",
                 Style::default().fg(theme.warning),
             )),
             Line::from(Span::styled(
