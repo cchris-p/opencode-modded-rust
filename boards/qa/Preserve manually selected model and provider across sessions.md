@@ -136,6 +136,10 @@ Documented in `docs/provider-setup.md`.
   no-op without a local config, and server source reporting for default vs
   persisted selection.
 
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/86 (`development` base)
+
 ## Related Items
 
 - `BUG-010` Repo default model and provider ignored due to config precedence
