@@ -50,10 +50,11 @@ impl BuiltinAgent {
         }
     }
 
-    pub const fn all() -> [BuiltinAgent; 5] {
+    pub const fn all() -> [BuiltinAgent; 6] {
         [
             BuiltinAgent::Build,
             BuiltinAgent::Plan,
+            BuiltinAgent::General,
             BuiltinAgent::Explore,
             BuiltinAgent::Compaction,
             BuiltinAgent::Title,
@@ -235,19 +236,24 @@ impl AgentInfo {
     }
 
     pub fn general() -> Self {
+        // Reference `general` is a general-purpose subagent
+        // (`packages/opencode/src/agent/agent.ts:182-195`): `mode: subagent`,
+        // defaults plus a `todowrite` deny, and no dedicated prompt (so the
+        // model default prompt is used).
         Self {
             name: "general".to_string(),
-            description: Some("Default general-purpose agent.".to_string()),
-            mode: AgentMode::Primary,
+            description: Some(
+                "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."
+                    .to_string(),
+            ),
+            mode: AgentMode::Subagent,
             model: None,
             model_preference: None,
-            system_prompt: Some(
-                "You are a helpful assistant. Complete the task given to you.".to_string(),
-            ),
-            temperature: Some(0.7),
+            system_prompt: None,
+            temperature: None,
             top_p: None,
-            max_tokens: Some(8192),
-            max_steps: Some(20),
+            max_tokens: None,
+            max_steps: None,
             allowed_tools: Vec::new(),
             options: HashMap::new(),
             permission: build_agent_ruleset("general", &[]),
@@ -933,11 +939,43 @@ mod tests {
             registry.get("explore").map(|a| a.mode),
             Some(AgentMode::Subagent)
         ));
-        assert!(
-            registry.get("general").is_none(),
-            "general is disabled and must not be registered by default"
-        );
+        assert!(matches!(
+            registry.get("general").map(|a| a.mode),
+            Some(AgentMode::Subagent)
+        ));
         assert_eq!(registry.default_agent().name, "build");
+    }
+
+    #[test]
+    fn general_is_a_subagent_and_never_a_primary() {
+        let registry = AgentRegistry::new();
+
+        let general = registry
+            .get("general")
+            .expect("general must be registered by default");
+        assert!(matches!(general.mode, AgentMode::Subagent));
+        assert!(
+            general.is_subagent_capable(),
+            "general must be offered as a task subagent"
+        );
+        assert!(
+            registry.resolve_subagent("general").is_some(),
+            "general must resolve as a subagent"
+        );
+        assert!(
+            !registry
+                .list_primary()
+                .iter()
+                .any(|agent| agent.name == "general"),
+            "general must not appear in the primary picker"
+        );
+        assert!(
+            registry
+                .list_subagents()
+                .iter()
+                .any(|agent| agent.name == "general"),
+            "general must appear in the subagent list"
+        );
     }
 
     #[test]
@@ -1094,6 +1132,7 @@ mod tests {
     fn resolve_subagent_accepts_subagents_and_rejects_primaries_and_unknown() {
         let registry = AgentRegistry::new();
         assert!(registry.resolve_subagent("explore").is_some());
+        assert!(registry.resolve_subagent("general").is_some());
         assert!(
             registry.resolve_subagent("build").is_none(),
             "primary is not a subagent"

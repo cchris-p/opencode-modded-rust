@@ -353,6 +353,16 @@ pub fn build_agent_ruleset(agent_name: &str, user_ruleset: &[PermissionRule]) ->
             ];
             merge(&[explore_specific, user])
         }
+        "general" => {
+            // Reference `general` is a subagent whose permission is defaults
+            // plus a `todowrite` deny (`packages/opencode/src/agent/agent.ts`).
+            let general_specific = vec![PermissionRule {
+                permission: "todowrite".to_string(),
+                pattern: "*".to_string(),
+                action: PermissionAction::Deny,
+            }];
+            merge(&[defaults, general_specific, user])
+        }
         _ => merge(&[defaults, user]),
     }
 }
@@ -457,6 +467,21 @@ mod tests {
             )
             .action,
             PermissionAction::Deny
+        );
+    }
+
+    #[test]
+    fn general_ruleset_denies_todowrite_and_keeps_default_allows() {
+        let ruleset = build_agent_ruleset("general", &[]);
+
+        assert_eq!(
+            evaluate("todowrite", "*", &[ruleset.clone()]).action,
+            PermissionAction::Deny
+        );
+        // `default_ruleset` still allows ordinary tools for `general`.
+        assert_eq!(
+            evaluate("read", "*", &[ruleset]).action,
+            PermissionAction::Allow
         );
     }
 
