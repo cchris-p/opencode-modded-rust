@@ -539,6 +539,23 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - `FEAT-048` remains in `qa` pending a recorded post-merge QA report.
 - Gate check for PR 6: `FEAT-051` may start now that PR 5 is merged.
 
+### 2026-09-23 — PR 6 (`FEAT-051`) opened
+
+- Branch `feature/FEAT-051-subagent-parity-fixtures`; PR #100 targets `development`
+  (https://github.com/cchris-p/opencode-modded-rust/pull/100).
+- Consolidated the `FEAT-045`–`FEAT-049` fixture slices into a GATE-004 acceptance → fixture
+  coverage table and a side-by-side parity evidence runbook on the card. Added the missing fixtures:
+  config resolver (`experimental_background_subagents_defaults_off_and_honors_config`),
+  `abort_on_drop_cancels_unless_disarmed`, and
+  `cancelled_background_run_injects_nothing_into_the_parent`.
+- Verified no gate fixture asserts on a synthetic `task_*` id (only the in-memory fallback roundtrip
+  test does). Verification green: `cargo fmt --all`, `cargo check --workspace`,
+  `cargo test -p opencode-tool -p opencode-agent -p opencode-config -p opencode-permission
+  -p opencode-server --lib`, `opencode-session --lib` excluding the pre-existing environmental
+  `instruction::` failures, `opencode-tui --lib`.
+- `FEAT-051` moved `todo -> doing -> qa`; awaiting human test/merge on PR #100 before the final item
+  (`CLI-010`, PR 7/7) starts.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
