@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "CLI"
 spec: "wiki/cli-surface.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 ---
 
@@ -99,3 +99,10 @@ raw endpoint returns `{status: "active", idle: true, busy: false}`.
 - Verification passed: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo test -p opencode-cli`
   (5 passed). Headless re-QA against a live `opencode serve`: `task new` succeeds and persists the
   selected session; `task status` shows `idle`, `busy`, and `queued 1/1`; `--json` output unchanged.
+
+## Merge Closeout - 2026-09-23
+
+- PR #82 merged into `development` (merge commit `570eff8`).
+- Branch `bug/BUG-036-cli-task-surface-defects` deleted locally and remotely.
+- Code/task completeness confirmed: both defects fixed and re-verified on merged `development`.
+- Card moved from `qa` to `done`.

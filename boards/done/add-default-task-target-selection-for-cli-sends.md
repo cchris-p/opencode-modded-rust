@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-16"
 attention: "Needs post-merge QA; provides the target input for CLI-001 (reactivated 2026-09-22), so closeout can proceed against the merged target commands"
 ---
@@ -126,3 +126,9 @@ Headless QA on `development` (`54aa9c3`) against a live `opencode serve` in a th
 Observations (not blocking): `task target list` requires `--server` or an existing selection - it does
 not discover live servers on its own; and the server's `/session?roots=true` list is global, so candidate
 sessions are not scoped to the current workspace even though the selection is.
+
+## QA Closeout - 2026-09-23
+
+- QA passed (see above) on `development` (`54aa9c3`); no code change was required for this card.
+- The selected target is consumed by `CLI-001`/`BUG-036` `task new`, which re-verified successfully.
+- Card moved from `qa` to `done`.

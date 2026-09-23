@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-08"
 updated: "2026-09-22"
 ---
@@ -194,3 +194,14 @@ this card.
 
 Remediation: `BUG-036` fixes the 404 in PR #82
 (https://github.com/cchris-p/opencode-modded-rust/pull/82). Re-QA this card after that PR merges.
+
+## QA Re-Verification and Merge Closeout - 2026-09-23
+
+- `BUG-036` (PR #82, merge commit `570eff8`) fixed the `task new` 404 and merged into `development`.
+- Re-QA on the fixed binary: `opencode task new --server <url> "<prompt>"` now creates a session,
+  submits through `POST /session/{id}/prompt`, and persists the workspace-local selected session.
+- Previously passing paths remain passing: `task send` (explicit and selected default), `task view`
+  (plain and `--json`), stdin input, `--stream` (queued/busy/transcript), file-path text, and clear
+  unreachable-target errors.
+- Branch `bug/BUG-036-cli-task-surface-defects` deleted locally and remotely.
+- Card moved from `qa` to `done`.

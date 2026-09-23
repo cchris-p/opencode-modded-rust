@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-16"
 updated: "2026-09-22"
 ---
@@ -129,3 +129,12 @@ Recommend keeping in `qa` and logging the idle/active/complete labeling gap as a
 
 Remediation: `BUG-036` fixes the idle labeling in PR #82
 (https://github.com/cchris-p/opencode-modded-rust/pull/82). Re-QA this card after that PR merges.
+
+## QA Re-Verification and Merge Closeout - 2026-09-23
+
+- `BUG-036` (PR #82, merge commit `570eff8`) fixed the idle labeling and merged into `development`.
+- Re-QA on the fixed binary: `task status` now shows `idle` for an idle lifecycle-active session,
+  `busy` during a live turn, and `queued 1/1` from the server run status; lifecycle `completed`/
+  `archived`/`compacting` labels are preserved; `--json` output is unchanged.
+- Branch `bug/BUG-036-cli-task-surface-defects` deleted locally and remotely.
+- Card moved from `qa` to `done`.
