@@ -19,7 +19,6 @@ mod settings;
 mod sidebar;
 mod slash_command;
 mod spinner;
-mod thinking;
 mod toast;
 mod todo_item;
 mod tool_call;
@@ -48,7 +47,6 @@ pub use settings::{
 pub use sidebar::Sidebar;
 pub use slash_command::SlashCommandPopup;
 pub use spinner::{KnightRiderSpinner, Spinner, SpinnerMode, TaskKind};
-pub use thinking::ThinkingBlock;
 pub use toast::{Toast, ToastVariant};
 pub use todo_item::TodoItem;
 pub use tool_call::{

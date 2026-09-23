@@ -21,7 +21,6 @@ use crate::context::{AppContext, Message, MessagePart, MessageRole, SidebarMode}
 
 const SIDEBAR_WIDTH: u16 = 42;
 const HEADER_NARROW_THRESHOLD: u16 = 80;
-const THINKING_PREVIEW_LINES: usize = 2;
 const MOUSE_SCROLL_LINES: usize = 3;
 const MESSAGE_BLOCK_RIGHT_PADDING: usize = 1;
 const SIDEBAR_CLOSE_BUTTON_WIDTH: u16 = 3;
@@ -43,7 +42,7 @@ pub struct SessionView {
     scroll_offset: usize,
     rendered_line_count: usize,
     messages_viewport_height: usize,
-    expanded_reasoning: HashSet<String>,
+    collapsed_reasoning: HashSet<String>,
     thinking_toggle_hits: Vec<ThinkingToggleHit>,
     expanded_tool_calls: HashSet<String>,
     tool_toggle_hits: Vec<ToolToggleHit>,
@@ -63,7 +62,7 @@ impl SessionView {
             scroll_offset: 0,
             rendered_line_count: 0,
             messages_viewport_height: 0,
-            expanded_reasoning: HashSet::new(),
+            collapsed_reasoning: HashSet::new(),
             thinking_toggle_hits: Vec::new(),
             expanded_tool_calls: HashSet::new(),
             tool_toggle_hits: Vec::new(),
@@ -820,14 +819,13 @@ impl SessionView {
                                             );
                                         }
                                         let reasoning_id = format!("{}:{part_idx}", msg.id);
+                                        // BUG-022: expanded by default; collapse is an
+                                        // explicit per-block action stored in the set.
                                         let collapsed =
-                                            !self.expanded_reasoning.contains(&reasoning_id);
+                                            self.collapsed_reasoning.contains(&reasoning_id);
                                         let start_line = lines.len();
                                         let rendered = super::session_text::render_reasoning_part(
-                                            text,
-                                            &theme,
-                                            collapsed,
-                                            THINKING_PREVIEW_LINES,
+                                            text, &theme, collapsed,
                                         );
                                         if !rendered.lines.is_empty() {
                                             let painted = paint_block_lines(
@@ -1085,7 +1083,7 @@ impl SessionView {
             }
         }
 
-        self.expanded_reasoning
+        self.collapsed_reasoning
             .retain(|id| visible_reasoning_ids.contains(id));
         self.expanded_tool_calls
             .retain(|id| visible_tool_ids.contains(id));
@@ -1163,8 +1161,9 @@ impl SessionView {
             return false;
         };
 
-        if !self.expanded_reasoning.insert(reasoning_id.clone()) {
-            self.expanded_reasoning.remove(&reasoning_id);
+        // Toggle the explicit collapse membership for this block.
+        if !self.collapsed_reasoning.insert(reasoning_id.clone()) {
+            self.collapsed_reasoning.remove(&reasoning_id);
         }
         true
     }
