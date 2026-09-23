@@ -446,6 +446,26 @@ impl ApiClient {
         Ok(session)
     }
 
+    pub fn get_session_children(&self, session_id: &str) -> anyhow::Result<Vec<SessionInfo>> {
+        let url = format!("{}/session/{}/children", self.base_url, session_id);
+
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to get session children for `{}`: {} - {}",
+                session_id,
+                status,
+                text
+            );
+        }
+
+        let sessions: Vec<SessionInfo> = response.json()?;
+        Ok(sessions)
+    }
+
     pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionInfo>> {
         self.list_sessions_filtered(None, None, None)
     }

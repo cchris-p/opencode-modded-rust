@@ -55,6 +55,10 @@ pub enum CommandAction {
     Redo,
     CopySession,
     ExportSession,
+    SessionChildFirst,
+    SessionParent,
+    SessionChildCycle,
+    SessionChildCycleReverse,
     // Model/Agent
     SwitchModel,
     SwitchAgent,

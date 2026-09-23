@@ -15,7 +15,6 @@ mod session_list;
 mod session_rename;
 mod skill_list;
 mod status;
-mod subagent;
 mod tag;
 mod text_input;
 mod theme_list;
@@ -81,7 +80,6 @@ pub use session_list::{DeleteState as SessionDeleteState, SessionItem, SessionLi
 pub use session_rename::SessionRenameDialog;
 pub use skill_list::SkillListDialog;
 pub use status::{StatusDialog, StatusLine};
-pub use subagent::{SubagentDialog, SubagentInfo, SubagentMessage};
 pub use tag::{Tag, TagDialog};
 pub use text_input::DialogTextInput;
 pub use theme_list::{ThemeListDialog, ThemeOption};

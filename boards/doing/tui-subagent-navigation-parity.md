@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "doing"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -83,3 +83,51 @@ Reference `f54ce313b99a`:
 - `GATE-004` subagent feature parity.
 - `FEAT-045` child session persistence - required for real navigation targets.
 - `FEAT-048` background subagents - owns the `ctrl+b` background affordance shown in the same hint row.
+
+## Dev Notes
+
+Program: `GATE-004` (H-009), PR 3/7. Branch `feature/FEAT-047-tui-subagent-navigation`.
+
+### What changed
+
+- **Reference navigation bindings.** `session_child_first` = `<leader>down`, `session_parent` =
+  `up`, `session_child_cycle` = `right`, `session_child_cycle_reverse` = `left`
+  (`crates/opencode-tui/src/context/keybind.rs`). The dead `ctrl+o`/`ctrl+j`/`ctrl+k`
+  registrations were removed.
+- **Leader handling.** The leader branch in `app.rs` now dispatches `KeyCode::Down/Up/Left/Right`
+  to new `CommandAction::SessionChildFirst/SessionParent/SessionChildCycle`/`...Reverse` variants.
+- **Real navigation.** New `ApiClient::get_session_children`
+  (`GET /session/{id}/children`) and `App::navigate_session_child_first`,
+  `navigate_session_parent`, `navigate_session_child_cycle`. Child/sibling selection and cycle
+  order replicate the reference (`children()` sorted by id; `moveChild` uses `index - direction`).
+  Enablement falls out of the data: a session with no children/parent is a no-op.
+- **Family cache.** `App::refresh_session_family` caches a parent's children (and the session's own
+  children) so the footer needs no per-frame requests.
+- **Subagent footer.** `SessionView::render_subagent_footer` shows the agent label from the
+  `@<agent> subagent` title, `(index of total)` by creation order, and `Parent`/`Prev`/`Next`
+  shortcuts. It is shown only for child sessions; root sessions keep the footer disabled.
+- **View subagents hint.** Assistant messages containing a `task` tool part render
+  `ctrl+x down view subagents` under the parts, matching the reference.
+- **Dead dialog removed.** `SubagentDialog`/`SubagentInfo`/`SubagentMessage` were never opened or
+  constructed and are redundant now that navigation enters real child sessions; the module and all
+  wiring were deleted.
+
+### Decisions / deviations
+
+- Background (`ctrl+b`) is intentionally not rendered; `FEAT-048` owns it and the reference gates it
+  behind `experimentalBackgroundSubagents`.
+- `render_session_footer`'s general (directory/status) row remains disabled for root sessions; only
+  the new child-session footer is activated.
+
+### Verification
+
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo test -p opencode-tui --lib` (134 passed / 0 failed), including new tests:
+  `context::keybind::tests::subagent_navigation_defaults_follow_the_reference`,
+  `context::keybind::tests::leader_chord_renders_prefixed_shortcut`,
+  `app::app::tests::{first_child_is_the_lowest_id, first_sibling_skips_the_current_session,
+  cycle_sibling_matches_reference_direction_order, cycle_sibling_is_a_noop_without_siblings}`,
+  `components::session::tests::{subagent_label_reads_agent_name_from_title,
+  task_hint_uses_leader_chord_and_muted_suffix}`.
+- Manual side-by-side (`ort-build` + `ort`) with two subagents is pending human verification.
