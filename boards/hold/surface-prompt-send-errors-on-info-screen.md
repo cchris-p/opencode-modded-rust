@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "docs/opencode-session.md"
-status: "todo"
+status: "hold"
 created: "2026-09-23"
 ---
 
