@@ -477,10 +477,22 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - `FEAT-047` moved `todo -> doing -> qa`; awaiting human test/merge on PR #97 before PR 4
   (`FEAT-049`) starts. Manual TUI side-by-side is pending human verification.
 
+### 2026-09-23 — PR 3 (`FEAT-047`) merged
+
+- PR #97 merged into `development` at merge commit
+  `f48c4c51c956fe74bf571695703118eaddb93eeb` on explicit user direction.
+- Branch cleanup complete: remote and local `feature/FEAT-047-tui-subagent-navigation` deleted.
+- `FEAT-047` kept in `qa` by explicit user direction (not promoted to `done`); post-merge QA on
+  `development` is still outstanding.
+- Gate check for PR 4: `FEAT-049` may start now that PR 3 is merged; `development` is current at
+  `f48c4c5` in the local checkout.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
   2026-09-23). Card `FEAT-045` in `qa`.
 - PR 2 (`FEAT-046`) — PR #96 / merge commit `05752d9109ba3c12babd1963118618269aac4919` (merged
   2026-09-23). Card `FEAT-046` in `done`.
+- PR 3 (`FEAT-047`) — PR #97 / merge commit `f48c4c51c956fe74bf571695703118eaddb93eeb` (merged
+  2026-09-23). Card `FEAT-047` kept in `qa` pending post-merge QA.
 
