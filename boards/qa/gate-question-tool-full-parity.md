@@ -101,7 +101,7 @@ implemented or explicitly resolved as a documented deviation in this card.
 - `FEAT-038` Question schema and tool contract parity - `boards/qa/question-schema-and-tool-contract-parity.md` (merged PR #65, in `qa`)
 - `FEAT-039` Session-scoped question API parity - `boards/qa/session-scoped-question-api-parity.md` (merged PR #67, in `qa`)
 - `FEAT-040` Question runtime event and lifecycle parity - `boards/qa/question-runtime-event-and-lifecycle-parity.md` (merged `53b6e65`, in `qa`)
-- `FEAT-041` TUI question prompt UX parity - `boards/qa/tui-question-prompt-ux-parity.md` (merged `9c24c7b`, in `qa`)
+- `FEAT-041` TUI question prompt UX parity - `boards/qa/tui-question-prompt-ux-parity.md` (merged `9c24c7b`; multi-select space toggle QA-passed 2026-09-23, moved to `done`)
 - `CLI-009` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; deferred, preceded by `CLI-001`/`CLI-006` and `CLI-002`)
 - `FEAT-043` Question permission integration parity - `boards/qa/question-permission-integration-parity.md` (merged `b061656`, in `qa`)
 - `FEAT-044` Question parity verification fixtures - `boards/qa/question-parity-verification-fixtures.md` (merged `b061656`, in `qa`)
@@ -237,6 +237,15 @@ smoke (single select, multi select, custom answer, multi-question review, reject
   `CLI-002`; the gate's "unblock CLI-009" Done-When line stays open until that track lands. The
   `CLI-009` and `CLI-002` cards remain the source of truth for that scope.
 - Handoff `H-005` is archived; this card now carries the remaining closeout state.
+
+## Local QA Progress - 2026-09-23
+
+- Maintainer local TUI smoke (`ort-build` then `ort`): `Space` toggles multi-select options on the
+  question prompt and preserves the selected labels per question. Passed QA.
+- `FEAT-041` (TUI question prompt UX parity) is verified for the multi-select capability and moved to
+  `done`.
+- Remaining smoke before this gate moves to `done`: single select, custom answer, multi-question
+  review, reject, and confirmation of `FEAT-039` post-merge QA.
 
 ## Done When
 

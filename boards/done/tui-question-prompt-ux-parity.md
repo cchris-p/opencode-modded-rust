@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -96,8 +96,14 @@ navigation with a final confirm tab, digit option shortcuts, custom answers, mul
   vanilla's tabbed flow, and a compact bottom-of-session prompt rather than a modal.
 - Tests: `cargo test -p opencode-tui --lib` (83 passing), including digit shortcuts, custom answers,
   multi-select preservation, text input, review action selection, and cancel.
-- Manual smoke pending maintainer verification with `ort-build` then `ort`.
 - Committed directly to `development` per maintainer direction.
+
+## QA Verification - 2026-09-23
+
+- Maintainer local smoke (`ort-build` then `ort`): `Space` toggles multi-select options on the
+  question prompt and preserves the selected labels per question, matching vanilla behavior. Passed QA.
+- This confirms the multi-select acceptance criterion on a live server.
+- Card moved from `qa` to `done`.
 
 ## Related Items
 
