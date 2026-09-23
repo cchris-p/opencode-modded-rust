@@ -16,6 +16,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `reference-strategy.md` explains how the TypeScript repo is used as a reference line.
 - `agent-evaluation-strategy.md` defines how the Rust runtime is judged across V1 through V3.
 - `scopemux-integration-plan.md` defines the deferred retrieval boundary, how `scopemux-core` can help this project, and the guardrails for integrating it.
+- `scopemux-map-integration.md` defines the idealized `scopemux` map model: current/target state, delta views, observability and refactor nodes, incremental reconciliation, and the runtime integration phases.
 - `agent-debugging-without-tui.md` defines the preferred non-TUI QA/debug path for agent-session runtime work.
 - `cli-surface.md` is the canonical reference for CLI task-surface and TUI launch/detach/attach behavior, and maps the owning `CLI-*` board items.
 - `advanced-coding-session-polling.md` defines the low-context waits on coding-session state, including the agreed first agent-tool slice and its follow-up cards.

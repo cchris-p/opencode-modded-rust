@@ -1,5 +1,5 @@
 ---
-id: "SCOPE-001"
+id: "SCOPE-002"
 title: "Integrate scopemux-core behind the retrieval-provider boundary"
 priority: "P2"
 type: "feature"
@@ -15,7 +15,7 @@ created: "2026-09-21"
 
 Connect the external `scopemux-core` native engine to this product as one concrete retrieval provider behind the boundary defined in `START-025`, so task context assembly can draw on structural, symbol-aware, budgeted context instead of only direct file reads.
 
-This card is the actual integration step that `START-007` deliberately deferred. It does not change runtime authority over task state, lifecycle, verification, or review.
+This is Phase 0 of `SCOPE-001` ("Idealized scopemux map integration"). It is the near-term integration step that `START-007` deliberately deferred. It does not change runtime authority over task state, lifecycle, verification, or review, and it does not require the target-state/plan-node map layer described in `wiki/scopemux-map-integration.md`.
 
 ## Why this exists
 
@@ -49,7 +49,8 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 
 - Making `scopemux-core` a V1 hard dependency or a build requirement for the daily-driver path.
 - Porting `scopemux-core` to Rust or rewriting its parsers.
-- Adding Rust grammar support to `scopemux-core` (separate upstream work; name it and split it if needed).
+- Adding Rust grammar support to `scopemux-core` (separate upstream work; tracked as `WI-030` in `$HOME/apps/scopemux-notes`).
+- Target-state/plan nodes, delta views, observability blocks, or duplication analysis (those belong to `SCOPE-001` later phases).
 - Replacing direct file reads for small, obvious tasks.
 - Giving `scopemux-core` authority over task lifecycle, completion, verification, or review.
 - Changing the `START-025` boundary contract beyond what integration proves necessary.
@@ -80,15 +81,16 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 
 ## Related Items
 
-- `START-025` Add retrieval-provider boundary for task context assembly — prerequisite; this card plugs into that boundary.
-- `START-007` Plan ScopeMux integration — defined the deferred contract and responsibilities this card now implements.
-- `PHASE-003` V2 reliability — parent phase where early ScopeMux integration was scheduled.
-- `START-016` Define structured task state for V1 — source of task/stage intent the retrieval request is built from.
-- `PHASE-001` / `START-005` — V1 runtime loop that must remain generic and ScopeMux-free.
+- `SCOPE-001` Idealized scopemux map integration - the vision this card is the first phase of.
+- `START-025` Add retrieval-provider boundary for task context assembly - prerequisite; this card plugs into that boundary.
+- `START-007` Plan ScopeMux integration - defined the deferred contract and responsibilities this card now implements.
+- `PHASE-003` V2 reliability - parent phase where early ScopeMux integration was scheduled.
+- `START-016` Define structured task state for V1 - source of task/stage intent the retrieval request is built from.
+- `PHASE-001` / `START-005` - V1 runtime loop that must remain generic and ScopeMux-free.
 
 ## Notes
 
 - Depends on `START-025`; do not start implementation before the boundary exists.
 - Keep the integration one provider among peers, not a special case threaded through the runtime.
 - Treat `scopemux-core` maturity gaps (no Rust grammar, dev-oriented build, C-only project API) as first-class design inputs, not as footnotes.
-- The wiki companion is `wiki/scopemux-integration-plan.md` ("How ScopeMux Can Help This Project").
+- The wiki companions are `wiki/scopemux-integration-plan.md` (boundary and guardrails) and `wiki/scopemux-map-integration.md` (idealized target).

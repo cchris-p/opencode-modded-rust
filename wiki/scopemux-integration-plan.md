@@ -85,7 +85,9 @@ Honest limits to design around:
 - `scopemux-core` is development-oriented and not packaged for standard distribution, so it must be pinned and built reproducibly rather than assumed present.
 - its structural relationships are heuristic, so the confidence rules below still apply.
 
-This is the work tracked by `SCOPE-001` ("Integrate scopemux-core behind the retrieval-provider boundary"). It stays non-blocking for V1: the generic provider remains the default, and the `ScopeMux` provider is added as one peer behind the boundary.
+This near-term integration is tracked by `SCOPE-002` ("Integrate scopemux-core behind the retrieval-provider boundary"). It stays non-blocking for V1: the generic provider remains the default, and the `ScopeMux` provider is added as one peer behind the boundary.
+
+The larger idealized target is `SCOPE-001` ("Idealized scopemux map integration") and `wiki/scopemux-map-integration.md`, which extend this plan with current/target state, delta views, observability blocks, duplication detection, and incremental reconciliation. Those phases must not disturb the boundary or guardrails defined here.
 
 ## Required Abstraction Boundary
 
@@ -155,10 +157,11 @@ This keeps retrieval mistakes from silently reshaping the task.
 
 ## Follow-Up Work
 
-This plan requires two explicit follow-up items:
+This plan requires explicit follow-up items:
 
 - `START-025` Add retrieval-provider boundary for task context assembly — introduce the narrow abstraction that lets V1 keep generic retrieval while leaving a clean insertion point for future `ScopeMux` support.
-- `SCOPE-001` Integrate scopemux-core behind the retrieval-provider boundary — connect the concrete `scopemux-core` engine as one provider behind that boundary once it exists.
+- `SCOPE-002` Integrate scopemux-core behind the retrieval-provider boundary — connect the concrete `scopemux-core` engine as one provider behind that boundary (Phase 0, near-term).
+- `SCOPE-001` Idealized scopemux map integration — the target map model and phases (`SCOPE-003`, `SCOPE-004`) that extend this plan without changing its guardrails.
 
 ## Non-Goals
 
