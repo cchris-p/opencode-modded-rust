@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "docs/opencode-session.md"
-status: "doing"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -60,3 +60,7 @@ Likely trigger after the recent provider/model listing PR: `client.create_sessio
 - When `create_session` succeeds but `send_prompt` fails before prompt acceptance, the TUI now deletes the just-created server session, removes local session state, returns to Home, and still shows the failed send alert.
 - Existing-session send failures are unchanged and continue to remove only the optimistic user message.
 - Verification blocked locally: `cargo fmt --all --check` and `cargo check -p opencode-tui` both failed because `cargo` is not installed in this environment.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/77
