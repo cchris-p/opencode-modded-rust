@@ -143,6 +143,7 @@ pub struct SessionPrompt {
     ask_question_callback: Option<opencode_tool::QuestionCallback>,
     create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
     prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+    resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
     session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
 }
 
@@ -157,6 +158,7 @@ impl SessionPrompt {
             ask_question_callback: None,
             create_subsession_callback: None,
             prompt_subsession_callback: None,
+            resolve_subagent_callback: None,
             session_inspect_callback: None,
         }
     }
@@ -200,6 +202,17 @@ impl SessionPrompt {
         callback: opencode_tool::PromptSubsessionCallback,
     ) -> Self {
         self.prompt_subsession_callback = Some(callback);
+        self
+    }
+
+    /// Install the registry-backed subagent resolver paired with the child
+    /// session callbacks. When set, the `task` tool validates the requested
+    /// `subagent_type` (and enforces `subagent_depth`) before creating a child.
+    pub fn with_resolve_subagent_callback(
+        mut self,
+        callback: opencode_tool::ResolveSubagentCallback,
+    ) -> Self {
+        self.resolve_subagent_callback = Some(callback);
         self
     }
 
@@ -919,6 +932,7 @@ impl SessionPrompt {
             self.ask_question_callback.clone(),
             self.create_subsession_callback.clone(),
             self.prompt_subsession_callback.clone(),
+            self.resolve_subagent_callback.clone(),
             self.session_inspect_callback.clone(),
             update_hook,
         )
@@ -1004,6 +1018,7 @@ impl SessionPrompt {
             self.ask_question_callback.clone(),
             self.create_subsession_callback.clone(),
             self.prompt_subsession_callback.clone(),
+            self.resolve_subagent_callback.clone(),
             self.session_inspect_callback.clone(),
             None,
         )
@@ -1034,6 +1049,7 @@ impl SessionPrompt {
         ask_question_callback: Option<opencode_tool::QuestionCallback>,
         create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
         prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+        resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
         session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
         update_hook: Option<SessionUpdateHook>,
     ) -> anyhow::Result<()> {
@@ -1478,6 +1494,13 @@ impl SessionPrompt {
                     tool_context = tool_context.with_session_inspect(move |request| {
                         let session_inspect_callback = session_inspect_callback.clone();
                         async move { session_inspect_callback(request).await }
+                    });
+                }
+
+                if let Some(resolve_subagent_callback) = resolve_subagent_callback.clone() {
+                    tool_context = tool_context.with_resolve_subagent(move |name| {
+                        let resolve_subagent_callback = resolve_subagent_callback.clone();
+                        async move { resolve_subagent_callback(name).await }
                     });
                 }
 

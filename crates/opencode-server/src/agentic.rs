@@ -308,6 +308,31 @@ pub fn ruleset_from_session(session: &opencode_session::PermissionRuleset) -> Pe
     rules
 }
 
+/// Convert a `PermissionRuleset` into a session-level allow/deny overlay.
+///
+/// The session overlay only carries tool names, so per-pattern rules collapse
+/// to their permission name. `Ask` rules are intentionally dropped because the
+/// overlay cannot express them.
+pub fn session_from_ruleset(rules: &PermissionRuleset) -> opencode_session::PermissionRuleset {
+    let mut overlay = opencode_session::PermissionRuleset::default();
+    for rule in rules {
+        match rule.action {
+            PermissionAction::Allow => {
+                if !overlay.allow.contains(&rule.permission) {
+                    overlay.allow.push(rule.permission.clone());
+                }
+            }
+            PermissionAction::Deny => {
+                if !overlay.deny.contains(&rule.permission) {
+                    overlay.deny.push(rule.permission.clone());
+                }
+            }
+            PermissionAction::Ask => {}
+        }
+    }
+    overlay
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

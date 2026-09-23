@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "doing"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -87,3 +87,48 @@ Reference `f54ce313b99a`:
 - `FEAT-045` child session persistence - supplies the real session the tool writes to.
 - `FEAT-048` background subagents - owns `background`/`run_in_background`.
 - `CLI-002` Route `opencode run` through the canonical session runtime - overlapping dispatch path (gated by `CLI-001`/`CLI-006`).
+
+## Dev Notes
+
+Program: `GATE-004` (H-009), PR 2/7. Branch `feature/FEAT-046-task-tool-contract-parity`.
+
+### What changed
+
+- **Registry-driven subagent resolution.** New `ToolContext::resolve_subagent` capability
+  (`crates/opencode-tool/src/tool.rs`), wired server-side (`resolve_task_subagent`,
+  `crates/opencode-server/src/routes.rs`) and executor-side (`with_subsession_callbacks`,
+  `crates/opencode-agent/src/executor.rs`). `AgentRegistry::resolve_subagent` filters to non-hidden
+  `subagent`/`all` agents; unknown or non-subagent names fail with
+  `Unknown agent type: <x> is not a valid agent type` and no child session is created.
+- **`subagent_depth` config key** (top-level, snake_case, default `1`) added to
+  `crates/opencode-config/src/schema.rs`; the depth is computed by walking `parent_id` in both the
+  resolver and the server child-creation guard, with the reference error text.
+- **Parent-derived child permissions.** New `opencode_agent::derive_subagent_session_permission`
+  (Rust equivalent of `packages/opencode/src/agent/subagent-permissions.ts`): parent `deny` +
+  `external_directory` rules, plus default `todowrite`/`task` denies unless the subagent's own
+  ruleset already permits them. Child sessions record the derived ruleset in
+  `metadata.subagent_permission`, add the denies to the session permission overlay, and filter the
+  child tool set through it.
+- **Output + metadata.** `<task id="..." state="...">` wrapper with optional `<summary>` and
+  `<task_result>`/`<task_error>`; metadata now carries `parentSessionId`, `sessionId`, and `model`.
+  The subagent's configured model wins over the parent model.
+- **Parameters** match the reference field set (`description`, `prompt`, `subagent_type`, optional
+  `task_id`, optional `command`, `background`); `load_skills`/`run_in_background` removed.
+- **Background gate.** `background: true` requires
+  `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`, otherwise the reference error is returned.
+  Background execution itself stays owned by `FEAT-048` (gate-on currently returns a clear
+  not-implemented error).
+
+### Decisions / deviations
+
+- Primaries (`build`, `plan`) are rejected as `subagent_type` per Shared Decision 4 (mode filter).
+  Registering `general` as a subagent and `@agent-name` routing remain `FEAT-049`.
+- Foreground failures surface as a tool error, matching the reference; the
+  `<task state="error">`/`<task_error>` wrapper is implemented and unit-tested for the background
+  path.
+
+### Verification
+
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo test -p opencode-tool -p opencode-agent -p opencode-config -p opencode-server` (green)
