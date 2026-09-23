@@ -7,7 +7,7 @@
 - Start TUI
 - Start or attach to server
 - Run single tasks (`run`)
-- Start, continue, and inspect task sessions (`task new|send|view`)
+- Start, continue, inspect, and list status for task sessions (`task new|send|view|status`)
 - Manage explicit CLI task targets (`task target`)
 - Invoke session, model, MCP, debug, and other subcommands
 
@@ -60,7 +60,7 @@ As of `opencode --help` (2026-02-23):
 - `--thinking`
 - `--agent <AGENT>` / `--model <MODEL>`
 
-### `opencode task new|send|view`
+### `opencode task new|send|view|status`
 
 Task commands talk to an explicit server/session target. They do not discover, start, reuse, or attach to a server implicitly, and they do not change normal `opencode`/`ort` TUI launch behavior.
 
@@ -68,6 +68,7 @@ Task commands talk to an explicit server/session target. They do not discover, s
 - `task new [--server <URL>] < prompt.md` reads prompt text from stdin when available.
 - `task send [--server <URL>] [--session <SESSION_ID>] [--stream] <PROMPT...>` submits a follow-up prompt to the explicit session override or selected default session through the canonical session prompt path.
 - `task view [--server <URL>] [--session <SESSION_ID>] [--json]` prints the selected session transcript from the target server without opening the TUI.
+- `task status [--server <URL>] [--session <SESSION_ID>] [--json]` reads `GET /session/status` from the selected or provided server, lists server sessions by default, and narrows to one session when `--session` is provided.
 - `--server` and `--session` override the stored target for the current command only.
 - A stale or unreachable selected target fails visibly instead of falling back to a different server or session.
 
@@ -80,7 +81,7 @@ Task commands talk to an explicit server/session target. They do not discover, s
 - `show` prints the stored target and live-checks whether the server/session is still available.
 - `clear` removes only the stored task target pointer.
 
-Explicit task command options such as `--server` and `--session` override this selected target for `task new`, `task send`, and `task view`.
+Explicit task command options such as `--server` and `--session` override this selected target for `task new`, `task send`, `task view`, and `task status`.
 
 ## Source entrypoint
 
