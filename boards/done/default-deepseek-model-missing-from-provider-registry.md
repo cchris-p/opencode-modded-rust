@@ -131,3 +131,9 @@ This was not introduced by deleting the bundled DeepSeek model. The bundled fall
   (`crates/opencode-config/src/loader.rs:23`).
 - Remaining `deepseek-v4-flash` hits in the repo are intentional non-defaults: OpenRouter
   catalog entries in `crates/opencode-provider/src/bootstrap.rs` and test fixtures.
+
+## Merge Closeout - 2026-09-23 (follow-up)
+
+- PR #94 merged into `development` at `e20758f445cb20e9153d65e7839b43ccdf6954c5`.
+- Fix branch `bug/BUG-034-smoke-default-model` deleted remotely and locally; temporary
+  worktree removed. No worktree/branch left behind.
