@@ -530,7 +530,26 @@ impl AgentExecutor {
         let providers = self.providers.clone();
         let tools = self.tools.clone();
 
-        ctx.with_create_subsession({
+        ctx.with_resolve_subagent(|name| async move {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let registry = crate::AgentRegistry::from_project_dir(&cwd);
+            let subagent = registry.resolve_subagent(&name).ok_or_else(|| {
+                ToolError::ExecutionError(format!(
+                    "Unknown agent type: {} is not a valid agent type",
+                    name
+                ))
+            })?;
+            Ok(opencode_tool::ResolvedSubagent {
+                name: subagent.name.clone(),
+                model: subagent
+                    .model
+                    .as_ref()
+                    .map(|model| format!("{}:{}", model.provider_id, model.model_id)),
+                permits_task: subagent.permits_permission("task"),
+                permits_todowrite: subagent.permits_permission("todowrite"),
+            })
+        })
+        .with_create_subsession({
             let subsessions = subsessions.clone();
             move |agent_name, _title, model, disabled_tools| {
                 let subsessions = subsessions.clone();

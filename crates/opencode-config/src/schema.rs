@@ -64,6 +64,12 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_agent: Option<String>,
 
+    /// Maximum subagent nesting depth. A root session may spawn this many
+    /// levels of `task` subagents; the reference default is `1`. Snake_case to
+    /// match the reference config key (`cfg.subagent_depth`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_depth: Option<u32>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
 
@@ -1227,6 +1233,11 @@ impl DeepMerge for ExperimentalConfig {
 }
 
 impl Config {
+    /// Maximum subagent nesting depth, defaulting to the reference `1`.
+    pub fn subagent_depth_limit(&self) -> u32 {
+        self.subagent_depth.unwrap_or(1)
+    }
+
     pub fn merge(&mut self, other: Config) {
         merge_option_replace(&mut self.schema, other.schema);
         merge_option_replace(&mut self.theme, other.theme);
@@ -1244,6 +1255,7 @@ impl Config {
         merge_option_replace(&mut self.model, other.model);
         merge_option_replace(&mut self.small_model, other.small_model);
         merge_option_replace(&mut self.default_agent, other.default_agent);
+        merge_option_replace(&mut self.subagent_depth, other.subagent_depth);
         merge_option_replace(&mut self.username, other.username);
         merge_option_deep(&mut self.mode, other.mode);
         merge_option_deep(&mut self.agent, other.agent);
@@ -1520,5 +1532,17 @@ mod tests {
         assert_eq!(patterns.len(), 2);
         assert_eq!(patterns.get("git *"), Some(&PermissionAction::Allow));
         assert_eq!(patterns.get("cargo test"), Some(&PermissionAction::Allow));
+    }
+
+    #[test]
+    fn subagent_depth_defaults_to_one_and_merges_overlays() {
+        assert_eq!(Config::default().subagent_depth_limit(), 1);
+
+        let mut base = Config::default();
+        base.merge(Config {
+            subagent_depth: Some(3),
+            ..Default::default()
+        });
+        assert_eq!(base.subagent_depth_limit(), 3);
     }
 }

@@ -2611,11 +2611,73 @@ async fn apply_session_snapshot(
     }
 }
 
+/// FEAT-046: resolve a `task` subagent for the calling session.
+///
+/// Registry-driven: unknown (or non-subagent) names fail without creating a
+/// session. Enforces the configurable `subagent_depth` (reference default `1`)
+/// by walking the caller's `parent_id` chain. The subagent's configured model
+/// wins over the parent model.
+async fn resolve_task_subagent(
+    state: &Arc<ServerState>,
+    parent_id: &str,
+    directory: &str,
+    name: &str,
+) -> std::result::Result<opencode_tool::ResolvedSubagent, opencode_tool::ToolError> {
+    let config = load_config(std::path::Path::new(directory)).ok();
+    let registry = AgentRegistry::from_optional_config(config.as_ref());
+    let subagent = registry.resolve_subagent(name).ok_or_else(|| {
+        opencode_tool::ToolError::ExecutionError(format!(
+            "Unknown agent type: {} is not a valid agent type",
+            name
+        ))
+    })?;
+
+    let max_depth = config
+        .as_ref()
+        .map(|config| config.subagent_depth_limit())
+        .unwrap_or(1);
+    let depth = {
+        let sessions = state.sessions.lock().await;
+        let mut depth = 0u32;
+        let mut cursor = sessions
+            .get(parent_id)
+            .and_then(|session| session.parent_id.clone());
+        while let Some(id) = cursor {
+            depth += 1;
+            if depth > 64 {
+                break;
+            }
+            cursor = sessions
+                .get(&id)
+                .and_then(|session| session.parent_id.clone());
+        }
+        depth
+    };
+    if depth >= max_depth {
+        return Err(opencode_tool::ToolError::ExecutionError(format!(
+            "Subagent depth limit reached ({}). Increase \"subagent_depth\" to allow nested subagents.",
+            max_depth
+        )));
+    }
+
+    Ok(opencode_tool::ResolvedSubagent {
+        name: subagent.name.clone(),
+        model: subagent
+            .model
+            .as_ref()
+            .map(|model| format!("{}:{}", model.provider_id, model.model_id)),
+        permits_task: subagent.permits_permission("task"),
+        permits_todowrite: subagent.permits_permission("todowrite"),
+    })
+}
+
 /// FEAT-045: create the real, persisted child session a `task` call targets.
 /// Sets `parent_id` (via [`SessionManager::create_child`]), the reference title
 /// `"<description> (@<agent> subagent)"`, and records the agent/model so the
-/// child prompt and later surfacing can resolve them. Enforces the interim
-/// `subagent_depth` default of 1 (config-driven in FEAT-046).
+/// child prompt and later surfacing can resolve them. FEAT-046 makes the
+/// `subagent_depth` guard config-driven and derives the child session's
+/// permission overlay from the parent session plus default `todowrite`/`task`
+/// denies.
 async fn create_child_subagent_session(
     state: Arc<ServerState>,
     parent_id: String,
@@ -2626,25 +2688,50 @@ async fn create_child_subagent_session(
     default_provider_id: &str,
     default_model_id: &str,
 ) -> std::result::Result<String, opencode_tool::ToolError> {
+    let directory = {
+        let sessions = state.sessions.lock().await;
+        sessions
+            .get(&parent_id)
+            .map(|session| session.directory.clone())
+    };
+    let config = directory
+        .as_deref()
+        .and_then(|directory| load_config(std::path::Path::new(directory)).ok());
+    let max_depth = config
+        .as_ref()
+        .map(|config| config.subagent_depth_limit())
+        .unwrap_or(1);
+    let registry = AgentRegistry::from_optional_config(config.as_ref());
+
     let mut sessions = state.sessions.lock().await;
 
-    // Count the calling session's ancestors; a root session may spawn one
-    // level, matching the reference default `subagent_depth = 1`.
+    let parent_permission = sessions
+        .get(&parent_id)
+        .and_then(|session| session.permission.clone())
+        .map(|overlay| crate::agentic::ruleset_from_session(&overlay))
+        .unwrap_or_default();
+
+    // Count the calling session's ancestors; a root session may spawn
+    // `subagent_depth` levels, matching the reference default of 1.
     let mut depth = 0u32;
     let mut cursor = sessions.get(&parent_id).and_then(|s| s.parent_id.clone());
     while let Some(id) = cursor {
         depth += 1;
-        if depth > 16 {
+        if depth > 64 {
             break;
         }
         cursor = sessions.get(&id).and_then(|s| s.parent_id.clone());
     }
-    if depth >= 1 {
-        return Err(opencode_tool::ToolError::ExecutionError(
-            "Subagent depth limit reached (1). Increase \"subagent_depth\" to allow nested subagents."
-                .to_string(),
-        ));
+    if depth >= max_depth {
+        return Err(opencode_tool::ToolError::ExecutionError(format!(
+            "Subagent depth limit reached ({}). Increase \"subagent_depth\" to allow nested subagents.",
+            max_depth
+        )));
     }
+
+    let derived_permission = registry.resolve_subagent(&agent).map(|subagent| {
+        opencode_agent::derive_subagent_session_permission(&parent_permission, subagent)
+    });
 
     let Some(child) = sessions.create_child(&parent_id) else {
         return Err(opencode_tool::ToolError::ExecutionError(format!(
@@ -2676,6 +2763,22 @@ async fn create_child_subagent_session(
             "subagent_disabled_tools".to_string(),
             serde_json::json!(disabled_tools),
         );
+        if let Some(derived_permission) = &derived_permission {
+            child.metadata.insert(
+                "subagent_permission".to_string(),
+                serde_json::json!(derived_permission),
+            );
+            let mut overlay = child.permission.clone().unwrap_or_default();
+            for rule in derived_permission
+                .iter()
+                .filter(|rule| rule.action == opencode_permission::PermissionAction::Deny)
+            {
+                if !overlay.deny.contains(&rule.permission) {
+                    overlay.deny.push(rule.permission.clone());
+                }
+            }
+            child.permission = Some(overlay);
+        }
     }
     drop(sessions);
     persist_sessions_if_enabled(&state).await;
@@ -2736,6 +2839,22 @@ async fn prompt_child_subagent(
         supports_tools,
     )
     .await;
+
+    // FEAT-046: apply the parent-derived subagent permission ruleset to the
+    // child's tool set (default `todowrite`/`task` denies unless the subagent
+    // already permits them).
+    let mut resolved = resolved;
+    if let Some(rules) = child.metadata.get("subagent_permission").and_then(|value| {
+        serde_json::from_value::<opencode_permission::PermissionRuleset>(value.clone()).ok()
+    }) {
+        let tool_names: Vec<String> = resolved
+            .tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect();
+        let disabled = opencode_permission::disabled(&tool_names, &rules);
+        resolved.tools.retain(|tool| !disabled.contains(&tool.name));
+    }
 
     child
         .metadata
@@ -3471,6 +3590,24 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         })
     };
 
+    // FEAT-046: registry-driven subagent resolution. The server owns the agent
+    // registry, project config, and session chain, so it answers the `task`
+    // tool's subagent lookup, subagent-depth check, and model/capability
+    // resolution before any child session is created.
+    let resolve_subagent_callback: opencode_tool::ResolveSubagentCallback = {
+        let resolve_state = task_state.clone();
+        let resolve_parent_id = session_id.clone();
+        let resolve_directory = session.directory.clone();
+        Arc::new(move |name| {
+            let state = resolve_state.clone();
+            let parent_id = resolve_parent_id.clone();
+            let directory = resolve_directory.clone();
+            Box::pin(
+                async move { resolve_task_subagent(&state, &parent_id, &directory, &name).await },
+            )
+        })
+    };
+
     let prompt_runner = Arc::new(
         opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
             opencode_session::SessionStateManager::new(),
@@ -3479,6 +3616,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         .with_ask_question_callback(question_callback)
         .with_create_subsession_callback(create_subsession_callback)
         .with_prompt_subsession_callback(prompt_subsession_callback)
+        .with_resolve_subagent_callback(resolve_subagent_callback)
         .with_session_inspect_callback(session_inspect_callback),
     );
     ACTIVE_PROMPTS
@@ -7955,5 +8093,75 @@ mod subagent_child_session_tests {
             before, after,
             "no session should be created for an unknown task_id"
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_task_subagent_rejects_unknown_and_primary_agents() {
+        let (state, root_id, _session_repo) = state_and_root().await;
+
+        let error = resolve_task_subagent(&state, &root_id, ".", "nope")
+            .await
+            .expect_err("unknown agent must error");
+        assert!(error
+            .to_string()
+            .contains("Unknown agent type: nope is not a valid agent type"));
+
+        let error = resolve_task_subagent(&state, &root_id, ".", "build")
+            .await
+            .expect_err("primary agent is not a subagent");
+        assert!(error.to_string().contains("Unknown agent type: build"));
+    }
+
+    #[tokio::test]
+    async fn resolve_task_subagent_returns_explore_capabilities() {
+        let (state, root_id, _session_repo) = state_and_root().await;
+
+        let resolved = resolve_task_subagent(&state, &root_id, ".", "explore")
+            .await
+            .expect("explore should resolve");
+
+        assert_eq!(resolved.name, "explore");
+        assert!(resolved.model.is_none());
+        assert!(!resolved.permits_task);
+        assert!(!resolved.permits_todowrite);
+    }
+
+    #[tokio::test]
+    async fn child_session_receives_parent_derived_permission_denies() {
+        let (state, root_id, _session_repo) = state_and_root().await;
+
+        let child_id = create_child_subagent_session(
+            state.clone(),
+            root_id.clone(),
+            "explore".to_string(),
+            Some("Investigate".to_string()),
+            None,
+            vec!["todowrite".to_string(), "task".to_string()],
+            "provider-x",
+            "model-y",
+        )
+        .await
+        .expect("child session should be created");
+
+        let sessions = state.sessions.lock().await;
+        let child = sessions.get(&child_id).expect("child should exist");
+
+        let overlay = child
+            .permission
+            .clone()
+            .expect("child should receive a derived permission overlay");
+        assert!(overlay.deny.contains(&"todowrite".to_string()));
+        assert!(overlay.deny.contains(&"task".to_string()));
+
+        let derived = child
+            .metadata
+            .get("subagent_permission")
+            .expect("derived ruleset should be recorded");
+        let rules: opencode_permission::PermissionRuleset =
+            serde_json::from_value(derived.clone()).expect("derived ruleset should deserialize");
+        assert!(rules.iter().any(|rule| rule.permission == "todowrite"
+            && rule.action == opencode_permission::PermissionAction::Deny));
+        assert!(rules.iter().any(|rule| rule.permission == "task"
+            && rule.action == opencode_permission::PermissionAction::Deny));
     }
 }

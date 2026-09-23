@@ -111,6 +111,31 @@ pub type PromptSubsessionCallback = Arc<
         + Sync,
 >;
 
+/// A `task` subagent resolved from the owning agent registry.
+///
+/// The tool crate cannot depend on `opencode-agent` (that would be a cycle), so
+/// the owning runtime injects this resolved view through
+/// [`ToolContext::with_resolve_subagent`]. It carries exactly what the `task`
+/// contract needs: the canonical name, the subagent's configured model
+/// (`"provider:model"`), and whether the subagent's own ruleset already permits
+/// `task`/`todowrite`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSubagent {
+    pub name: String,
+    pub model: Option<String>,
+    pub permits_task: bool,
+    pub permits_todowrite: bool,
+}
+
+pub type ResolveSubagentCallback = Arc<
+    dyn (Fn(
+            String,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<ResolvedSubagent, ToolError>> + Send>,
+        >) + Send
+        + Sync,
+>;
+
 pub type FileTimeAssertCallback = Arc<
     dyn (Fn(
             String,
@@ -415,6 +440,7 @@ pub struct ToolContext {
     pub switch_agent: Option<SwitchAgentCallback>,
     pub create_subsession: Option<CreateSubsessionCallback>,
     pub prompt_subsession: Option<PromptSubsessionCallback>,
+    pub resolve_subagent: Option<ResolveSubagentCallback>,
     pub file_time_assert: Option<FileTimeAssertCallback>,
     pub file_time_read: Option<FileTimeReadCallback>,
     pub publish_bus: Option<PublishBusCallback>,
@@ -449,6 +475,7 @@ impl ToolContext {
             switch_agent: None,
             create_subsession: None,
             prompt_subsession: None,
+            resolve_subagent: None,
             file_time_assert: None,
             file_time_read: None,
             publish_bus: None,
@@ -605,6 +632,31 @@ impl ToolContext {
             Err(ToolError::ExecutionError(
                 "Subsession prompt callback not configured".to_string(),
             ))
+        }
+    }
+
+    /// Install the registry-backed subagent resolver used by the `task` tool.
+    /// When absent, the tool falls back to accepting the requested type as-is
+    /// (the legacy in-memory path).
+    pub fn with_resolve_subagent<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<ResolvedSubagent, ToolError>> + Send + 'static,
+    {
+        self.resolve_subagent = Some(Arc::new(move |name| Box::pin(callback(name))));
+        self
+    }
+
+    pub async fn do_resolve_subagent(&self, name: String) -> Result<ResolvedSubagent, ToolError> {
+        if let Some(ref callback) = self.resolve_subagent {
+            callback(name).await
+        } else {
+            Ok(ResolvedSubagent {
+                name,
+                model: None,
+                permits_task: false,
+                permits_todowrite: false,
+            })
         }
     }
 

@@ -440,6 +440,19 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - Gate check for PR 2: `FEAT-046` may start now that PR 1 is merged; `development` is current at
   `7510bf2` in the local checkout.
 
+### 2026-09-23 — PR 2 (`FEAT-046`) opened
+
+- Branch `feature/FEAT-046-task-tool-contract-parity`; PR #96 targets `development`
+  (https://github.com/cchris-p/opencode-modded-rust/pull/96).
+- Registry-driven subagent resolution (`ToolContext::resolve_subagent` + `resolve_task_subagent`),
+  configurable `subagent_depth` (default 1), parent-derived child permissions
+  (`derive_subagent_session_permission`), subagent-model precedence, and the reference `<task ...>`
+  wrapper. `background: true` is gated behind the experimental flag (execution stays `FEAT-048`).
+- Verification green: `cargo fmt --all`, `cargo check --workspace`,
+  `cargo test -p opencode-tool -p opencode-agent -p opencode-config -p opencode-server`.
+- `FEAT-046` moved `todo -> doing -> qa`; awaiting human test/merge on PR #96 before PR 3
+  (`FEAT-047`) starts.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
