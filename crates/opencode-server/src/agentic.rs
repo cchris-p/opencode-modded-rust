@@ -7,6 +7,7 @@ use opencode_provider::ToolDefinition;
 use opencode_session::system::{EnvironmentContext, SystemPrompt};
 use opencode_session::AgentParams;
 use opencode_tool::create_default_registry;
+use opencode_tool::skill::{list_skill_metadata_for_base, SkillMetadata};
 use std::path::Path;
 
 /// Resolution outcome for an agentic coding-session request.
@@ -101,6 +102,11 @@ pub fn resolve_agent_name(registry: &AgentRegistry, requested_agent: Option<Stri
 /// Assemble the system prompt in reference order: agent prompt (or the model
 /// default prompt when the agent defines none), then the environment/workspace
 /// block with the working directory, workspace root, git state, platform, and date.
+///
+/// The available-skills block is appended last, mirroring the reference where
+/// `SystemPrompt.skills(agent)` is appended to the `system` array after the
+/// environment and instruction blocks. Because the assembled prompt is re-sent
+/// on every model step, this reproduces vanilla's per-step skill reinjection.
 pub fn build_system_prompt(
     agent: &AgentInfo,
     model_api_id: &str,
@@ -115,7 +121,75 @@ pub fn build_system_prompt(
     let env_ctx = EnvironmentContext::from_current(model_api_id, provider_id, directory);
     let env_block = SystemPrompt::environment(&env_ctx);
 
-    format!("{}\n\n{}", base, env_block)
+    let mut system_prompt = format!("{}\n\n{}", base, env_block);
+
+    let skills = list_skill_metadata_for_base(Path::new(directory));
+    if let Some(skills_block) = skills_block_for(&skills, &agent.permission) {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(&skills_block);
+    }
+
+    system_prompt
+}
+
+/// Reference preamble from `SystemPrompt.skills(agent)`.
+const SKILLS_PREAMBLE: &str = "Skills provide specialized instructions and workflows for specific tasks.\nUse the skill tool to load a skill when a task matches its description.";
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// Render the reference-compatible available-skills system block.
+///
+/// Mirrors `SystemPrompt.skills(agent)`: returns `None` when the agent
+/// blanket-denies the `skill` permission, otherwise returns the 2-line preamble
+/// plus the verbose `<available_skills>` XML. Skills that carry no description
+/// are omitted, and individual skills denied by name are filtered out.
+fn skills_block_for(skills: &[SkillMetadata], permission: &PermissionRuleset) -> Option<String> {
+    let skill_permission = vec!["skill".to_string()];
+    if opencode_permission::disabled(&skill_permission, permission).contains("skill") {
+        return None;
+    }
+
+    let described: Vec<&SkillMetadata> = skills
+        .iter()
+        .filter(|skill| skill.description.is_some())
+        .filter(|skill| {
+            !matches!(
+                evaluate_permission("skill", &skill.name, std::slice::from_ref(permission)).action,
+                PermissionAction::Deny
+            )
+        })
+        .collect();
+
+    let body = if described.is_empty() {
+        "No skills are currently available.".to_string()
+    } else {
+        let mut lines = Vec::with_capacity(described.len() + 2);
+        lines.push("<available_skills>".to_string());
+        for skill in described {
+            lines.push("  <skill>".to_string());
+            lines.push(format!("    <name>{}</name>", escape_html(&skill.name)));
+            lines.push(format!(
+                "    <description>{}</description>",
+                escape_html(skill.description.as_deref().unwrap_or_default())
+            ));
+            lines.push(format!(
+                "    <location>{}</location>",
+                escape_html(&skill.location.to_string_lossy())
+            ));
+            lines.push("  </skill>".to_string());
+        }
+        lines.push("</available_skills>".to_string());
+        lines.join("\n")
+    };
+
+    Some(format!("{}\n{}", SKILLS_PREAMBLE, body))
 }
 
 /// Resolve the permission-filtered tool set from the default registry.
@@ -370,5 +444,133 @@ mod tests {
             classify_permission(&merged, "bash", &[]),
             PermissionDecision::Deny
         );
+    }
+
+    fn allow_all() -> PermissionRuleset {
+        vec![PermissionRule {
+            permission: "*".into(),
+            pattern: "*".into(),
+            action: PermissionAction::Allow,
+        }]
+    }
+
+    fn skill(name: &str, description: Option<&str>, location: &str) -> SkillMetadata {
+        SkillMetadata {
+            name: name.to_string(),
+            description: description.map(|value| value.to_string()),
+            location: std::path::PathBuf::from(location),
+        }
+    }
+
+    #[test]
+    fn skills_block_renders_reference_verbose_xml() {
+        let skills = vec![
+            skill(
+                "reviewer",
+                Some("Review code changes"),
+                "/skills/reviewer/SKILL.md",
+            ),
+            skill("planner", Some("Plan work"), "/skills/planner/SKILL.md"),
+        ];
+
+        let block = skills_block_for(&skills, &allow_all()).expect("block should render");
+
+        assert!(block
+            .contains("Skills provide specialized instructions and workflows for specific tasks."));
+        assert!(block
+            .contains("Use the skill tool to load a skill when a task matches its description."));
+        assert!(block.contains("<available_skills>"));
+        assert!(block.contains("  <skill>"));
+        assert!(block.contains("    <name>reviewer</name>"));
+        assert!(block.contains("    <description>Review code changes</description>"));
+        assert!(block.contains("    <location>/skills/reviewer/SKILL.md</location>"));
+        assert!(block.contains("</available_skills>"));
+    }
+
+    #[test]
+    fn skills_block_omits_descriptionless_and_denied_skills() {
+        let skills = vec![
+            skill("described", Some("Keep me"), "/skills/described/SKILL.md"),
+            skill("undescribed", None, "/skills/undescribed/SKILL.md"),
+            skill("blocked", Some("Drop me"), "/skills/blocked/SKILL.md"),
+        ];
+        let mut permission = allow_all();
+        permission.push(PermissionRule {
+            permission: "skill".into(),
+            pattern: "blocked".into(),
+            action: PermissionAction::Deny,
+        });
+
+        let block = skills_block_for(&skills, &permission).expect("block should render");
+
+        assert!(block.contains("<name>described</name>"));
+        assert!(!block.contains("undescribed"));
+        assert!(!block.contains("<name>blocked</name>"));
+    }
+
+    #[test]
+    fn skills_block_is_omitted_when_skill_permission_is_blanket_denied() {
+        let skills = vec![skill(
+            "reviewer",
+            Some("Review code changes"),
+            "/skills/reviewer/SKILL.md",
+        )];
+        let denied: PermissionRuleset = vec![PermissionRule {
+            permission: "skill".into(),
+            pattern: "*".into(),
+            action: PermissionAction::Deny,
+        }];
+
+        assert_eq!(skills_block_for(&skills, &denied), None);
+    }
+
+    #[test]
+    fn skills_block_escapes_xml_special_characters() {
+        let skills = vec![skill(
+            "a&b",
+            Some("<Review> \"code\" & 'more'"),
+            "/skills/a&b/SKILL.md",
+        )];
+
+        let block = skills_block_for(&skills, &allow_all()).expect("block should render");
+
+        assert!(block.contains("<name>a&amp;b</name>"));
+        assert!(block.contains("&lt;Review&gt; &quot;code&quot; &amp; &#39;more&#39;"));
+    }
+
+    #[test]
+    fn build_system_prompt_appends_workspace_skills() {
+        let root =
+            std::env::temp_dir().join(format!("opencode-agentic-skills-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("temp root should be created");
+        std::fs::write(root.join(".git"), "gitdir").expect("git marker should write");
+
+        let skill_path = root.join(".opencode/skills/agentic-workspace-skill/SKILL.md");
+        std::fs::create_dir_all(skill_path.parent().expect("skill parent should exist"))
+            .expect("skill directory should be created");
+        std::fs::write(
+            &skill_path,
+            r#"---
+name: agentic-workspace-skill
+description: Agentic workspace skill
+---
+body
+"#,
+        )
+        .expect("skill file should write");
+
+        let agent = AgentInfo::build();
+        let prompt = build_system_prompt(
+            &agent,
+            "claude-sonnet-4-20250514",
+            "anthropic",
+            root.to_str().expect("temp root should be utf-8"),
+        );
+
+        assert!(prompt.contains("<available_skills>"));
+        assert!(prompt.contains("<name>agentic-workspace-skill</name>"));
+        assert!(prompt.contains("<description>Agentic workspace skill</description>"));
+
+        std::fs::remove_dir_all(&root).expect("temp root should be cleaned up");
     }
 }
