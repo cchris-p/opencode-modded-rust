@@ -1,5 +1,5 @@
 ---
-id: "BUG-032"
+id: "BUG-037"
 title: "Slash menu freezes keyboard input until terminal resize"
 priority: "P1"
 type: "bug"
