@@ -16,15 +16,16 @@ updated: "2026-09-23"
 
 When the `question` tool asks a question and the user picks the **"Type your own answer"** row (or
 answers a free-text question), the inline question prompt renders with a broken layout. The
-custom-answer input line, the submit hint, and wrapping are all handled incorrectly, so the typed
-answer can be partly or completely invisible and long question/option text is truncated instead of
-wrapped.
+custom-answer input line, the submit hint, wrapping, and paste handling are all wrong, so the typed
+answer can be partly or completely invisible, long text is truncated instead of wrapped, and pasted
+content lands in the wrong place with the wrong background.
 
 Reported: "When prompted for a single question (and likely multiple questions) and when I use the
 type answer option, the layout looks so weird."
 
-This is a placeholder bug. It captures the reported symptom and the concrete layout defects found in
-the renderer; the exact intended design is left open for refinement (see "Refinement Options").
+This is a placeholder bug. It captures the reported symptom and the concrete layout/paste defects
+found in the renderer; the exact intended design is left open for refinement (see "Refinement
+Options").
 
 ## Reported behavior
 
@@ -33,6 +34,10 @@ the renderer; the exact intended design is left open for refinement (see "Refine
   terminal and there is no visible caret while typing.
 - Long question text and option descriptions are cut off at the right edge rather than wrapping.
 - Reported for both single-question and multi-question requests.
+- Pasting while the custom-answer field is active does not lay out correctly: the pasted text is
+  vertically contained but **not horizontally contained** (long content is clipped at the right
+  border instead of wrapping), and the pasted text renders with a **different background color** than
+  the question box.
 
 ## Reproduction
 
@@ -40,13 +45,15 @@ the renderer; the exact intended design is left open for refinement (see "Refine
    question with two options.
 2. Navigate to `Type your own answer` with `Up`/`Down` and press `Enter` (or press the number key for
    the custom row).
-3. Type an answer.
+3. Type or paste an answer.
 4. Observe:
    - On a short terminal the option list pushes the `>` input line and the
      `Enter to submit, Esc to cancel` hint below the box border, so they disappear.
    - Long question/description/answer lines are truncated at the right border, not wrapped.
    - There is no caret; the only feedback is the appended `>` line.
    - The custom row still shows `[ ]` even though the prompt is now in text-entry mode.
+   - Pasted text (native bracketed paste) does not appear in the answer field with the box's
+     background; it can appear on a different background instead.
 
 Renderer reproduced with a temporary `TestBackend` harness (removed); no code changes are included in
 this card.
@@ -91,26 +98,46 @@ Rendering lives in `crates/opencode-tui/src/components/question.rs`.
    question box floats on an otherwise empty screen; this is true for every question mode, but it
    amplifies how "off" the custom-answer state looks because there is no surrounding context.
 
+7. **Paste is never routed to the question prompt (background mismatch).** `Event::Paste` is handled
+   at the top level and unconditionally calls `self.prompt.insert_text(text)` — the session prompt —
+   with no check for `self.question_prompt.is_open` (`crates/opencode-tui/src/app/app.rs:801-805`).
+   The question-open key branch returns early for every key (`app.rs:406-427`), so `Ctrl+V`
+   (`input_paste`, `app.rs:557-558`) is also swallowed while the question is open. Native bracketed
+   paste therefore lands in the session prompt behind the modal instead of the custom-answer field.
+   The session prompt paints `theme.background_element` (`components/prompt.rs:369,397,455,459`) while
+   the question box paints `theme.background_panel` (`question.rs:501`); those are distinct theme
+   tokens (`theme/mod.rs:71-72`, built at `:325-328`), which is the "different background color" the
+   reporter sees. A paste handler that routes to the question input when it is open is required.
+
+8. **The question input line does not wrap and embedded newlines collapse.** Even when text reaches
+   the question input (e.g. delivered as character events), it is rendered as one `> {text}` span
+   (`question.rs:453-462`) inside a `Paragraph` with no `.wrap(...)` (`:494-503`). A pasted multi-line
+   string has its newlines dropped and is shown as one concatenated line that is clipped at the right
+   border. `TestBackend` reproduction: `line one ...\nline two\nline three` renders as
+   `> line one is long and wraps in a prompt but not hereline twoline three` on a single clipped row.
+   This is the "vertically contained but not horizontally contained" symptom.
+
 ## Why this matters
 
 The custom answer is the escape hatch when none of the provided options fit. In that exact moment the
-user may be unable to see what they are typing, and there is no caret or editing. That makes the
-question tool unreliable for its most flexible input path and violates the option-selection
-invariants for text-entry fields.
+user may be unable to see what they are typing, cannot edit it with a caret, and cannot paste into
+the field. That makes the question tool unreliable for its most flexible input path and violates the
+option-selection invariants for text-entry fields.
 
 ## Refinement options
 
 These are the decision points to resolve before implementation. Pick one or a combination.
 
-- **Option A — Wrap + guarantee input visibility (minimal, recommended).**
+- **Option A — Wrap + guarantee input visibility (required).**
   Add `.wrap(Wrap { trim: false })` to the prompt `Paragraph`; compute the box height from the
   *wrapped* line count; and when content still exceeds the area, reserve rows for the active input
   line and hint (scroll the option list) so the typed answer is never clipped. Reuse the wrapping
-  approach already in `components/prompt.rs`.
+  approach already in `components/prompt.rs`. This also fixes the collapsed-newline/horizontal
+  clipping symptom in item 8.
   - Pros: fixes both reported clipping symptoms without changing the interaction model. Localized.
   - Cons: needs a wrapped-height calculation; option-list scrolling adds a little complexity.
 
-- **Option B — Collapse the option list while typing the custom answer.**
+- **Option B — Collapse the option list while typing the custom answer (optional).**
   When text mode is entered, hide or dim the options and show a single, prominent, bordered input
   with a caret. Decide how the user gets back to the option list (`Esc` already cancels the edit).
   - Pros: the answer is always visible and obviously the active thing; shorter box; better on small
@@ -118,33 +145,62 @@ These are the decision points to resolve before implementation. Pick one or a co
   - Cons: larger UX change; another deviation to document in `GATE-002`; needs an explicit
     back-to-options affordance.
 
-- **Option C — Caret-aware custom input.**
+- **Option C — Caret-aware custom input (required).**
   Replace the append-only `String` with a cursor-aware buffer (reuse `DialogTextInput` from
   `BUG-031` or the prompt's cursor model) and render a `▏` caret at the cursor offset. Support
-  `Left`/`Right`/`Home`/`End`/`Delete`.
+  `Left`/`Right`/`Home`/`End`/`Delete`. The buffer also gives paste a correct insertion target and
+  caret position.
   - Pros: satisfies `invariants/option-selection.md`; consistent with dialogs and the main prompt.
   - Cons: more surface area; needs key routing in `app.rs:406-426` to reach the buffer.
 
-- **Option D — Box geometry cleanup.**
+- **Option D — Box geometry cleanup (optional).**
   Center the panel or let it span the available width (raise/remove the 80-column cap) and keep the
   bottom anchor.
   - Pros: addresses the "misaligned" feel on wide terminals.
   - Cons: cosmetic; does not fix clipping.
 
-- **Option E — Fix the custom-row marker.**
+- **Option E — Fix the custom-row marker (included).**
   Set `custom_selected = true` when `confirm()` enters text mode so the row shows `[x]`, matching the
   digit-selection path.
   - Pros: trivial, removes a confusing state inconsistency.
   - Cons: purely visual; depends on the Option B decision (if options collapse, this may be moot).
 
-Recommended default for refinement: **A + C + E**, keeping the current interaction model and the
+- **Option F — Route paste to the question input (required, newly added).**
+  Handle `Event::Paste` and any paste keybind so that when `question_prompt.is_open` the pasted text
+  is inserted into the question's active input (custom-answer or text question) using the Option C
+  buffer, instead of the session prompt. Keep the session prompt path unchanged when no question is
+  open.
+  - Pros: fixes the wrong-field and wrong-background symptoms directly; required for paste to work at
+    all in the question flow.
+  - Cons: small event-loop change; must not double-handle while a text question is active.
+
+Recommended default for refinement: **A + C + E + F**, keeping the current interaction model and the
 bottom-anchored compact prompt. Treat **B** as the alternative if the maintainer prefers a cleaner
 text-entry mode, and **D** as an optional polish item.
 
+## Refinement decisions (2026-09-23 follow-up)
+
+The new paste notes resolve part of the open refinement, but not all of it:
+
+- **Resolved — "different background color" is not a layout/theme choice.** It is caused by paste
+  being routed to the session prompt (`background_element`) instead of the question box
+  (`background_panel`). Fixed by Option F, not by a styling decision.
+- **Resolved — horizontal overflow is a wrapping defect.** Confirmed by the `TestBackend` render
+  (newlines collapse, the line is clipped). Option A is required; it is not a matter of preference.
+- **Still open — wrap vs. collapse (A vs. B).** Both contain the text; the choice changes how much
+  of the box the input occupies and whether the option list stays visible while typing.
+- **Still open — caret model (C).** Whether the one-shot custom answer must be fully caret-editable
+  per `invariants/option-selection.md` or append-only is acceptable.
+- **Optional — geometry (D) and marker (E).**
+
+So the options are narrowed, not fully resolved: F and A are mandatory, C is strongly recommended
+(and is the natural insertion target for F), and B/D remain design choices for the maintainer.
+
 ## Open questions
 
-- Does the "weird" impression come mainly from clipping, from the missing caret, or from the
-  un-centered box? A screenshot/terminal size from the reporter would confirm the primary trigger.
+- Does the "weird" impression come mainly from clipping, from the missing caret, from paste landing
+  in the wrong field, or from the un-centered box? A screenshot/terminal size from the reporter would
+  confirm the primary trigger.
 - Should the custom input keep the option list visible (current design) or collapse it (Option B)?
 - Is the custom-answer input covered by the `invariants/option-selection.md` caret rule, i.e. must it
   be caret-editable, or is append-only acceptable for a short one-shot answer?
@@ -156,7 +212,8 @@ text-entry mode, and **D** as an optional polish item.
 
 - `crates/opencode-tui/src/components/question.rs` — layout, wrapping, height/scroll, caret render,
   custom-row state.
-- `crates/opencode-tui/src/app/app.rs:406-426` — question key routing (needed for Option C).
+- `crates/opencode-tui/src/app/app.rs:406-426` — question key routing, and `:801-805` /
+  `:557-560` — paste routing (Options C and F).
 - `crates/opencode-tui/src/components/dialogs/text_input.rs` — reusable cursor buffer for Option C.
 - `crates/opencode-tui/src/components/prompt.rs` — existing wrapping/cursor patterns to mirror.
 - `invariants/option-selection.md` — rules this must satisfy.
@@ -173,13 +230,16 @@ text-entry mode, and **D** as an optional polish item.
 - The chosen refinement option(s) are recorded on this card (and any deviation in `GATE-002`).
 - The typed custom answer is always visible while typing, at every supported terminal size, and long
   question/description/answer text wraps instead of being silently truncated.
+- Pasting while the question prompt is open inserts into the active question input with the question
+  box background, not into the session prompt.
 - If the caret option is chosen, the custom input is caret-editable and shows a caret, per
   `invariants/option-selection.md`.
 - The custom-row selection marker is consistent regardless of how the row was selected.
-- Focused tests cover wrapped-height/scroll behavior and the custom-answer input path; `cargo test -p
-  opencode-tui` passes.
+- Focused tests cover wrapped-height/scroll behavior, paste routing, and the custom-answer input
+  path; `cargo test -p opencode-tui` passes.
 - Manual smoke: single question with custom answer, multi-select with custom answer, a free-text
-  question, and a long question/description, at both a tall and a short terminal size.
+  question, a long question/description, and a multi-line paste, at both a tall and a short terminal
+  size.
 
 ## Related items
 
