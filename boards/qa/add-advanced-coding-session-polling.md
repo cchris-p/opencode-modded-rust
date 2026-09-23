@@ -91,6 +91,12 @@ Split into follow-up cards, each linked from the spec:
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/87 (`development` base)
 
+## Completion
+
+- Merged into `development` via merge commit `8b9fdd2` (PR #87, 2026-09-23).
+- PR branch `feature/FEAT-007-advanced-polling-contract` deleted remotely and locally.
+- Closed out on explicit user request. This is a docs-only contract deliverable that matches the card Done-when; the follow-up cards `FEAT-057`..`FEAT-060` carry implementation. The item remains in `qa` until a QA report is recorded on `development` or the user explicitly marks it done.
+
 ## Related Items
 
 - `PHASE-003` (phase parent)
