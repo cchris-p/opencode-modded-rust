@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 ---
 
@@ -62,6 +62,9 @@ Implemented in `fix/tool: stop grep scans from stalling the session` (commit
 
 ## Verification
 
+- Merged: the fix is integrated into `development` (merge `b76bb78`, unifying the
+  BUG-027/028/029/038 stability cluster with this work); `cargo test -p
+  opencode-tool` passes on the merged tree.
 - Unit: `cargo test -p opencode-tool` (adds `skips_build_and_vendor_directories`
   and `reports_no_matches`).
 - Manual: run grep at the repo root and confirm the turn completes, `target/`
