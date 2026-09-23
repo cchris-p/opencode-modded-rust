@@ -74,3 +74,37 @@ Skills sometimes appear to be "called automatically" in a session. That is not a
 
 - Surfaced while investigating why skills appear to be called automatically in a session.
 - "Automatic" skill calls are the agent acting on instructional context; the convention that supplies that context differs between vanilla and Rust.
+
+## Investigation update - 2026-09-23
+
+### Verified mechanism (reference pin `f54ce313b`)
+
+- Vanilla `SystemPrompt.skills(agent)` (`packages/opencode/src/session/system.ts:105-116`) is permission-gated, filters to skills that carry a `description` (`Skill.fmt` drops descriptionless entries), and emits a 2-line preamble plus verbose `<available_skills>` XML.
+- `Skill.available(agent)` (`packages/opencode/src/skill/index.ts:310-315`) filters per **skill name** via `Permission.evaluate("skill", skill.name, agent.permission)`.
+- The block is produced inside the per-step model loop (`packages/opencode/src/session/prompt.ts:1258-1268`) and appended to the `system` array, so it is regenerated and re-sent on every model call.
+- The `skill` tool parameter is a static free-form `{ name: string }` ("The name of the skill from available_skills") with no enum, and `tool/skill.txt` directs the model to the skills listed in the system prompt. `execute` calls `skill.require(name)` and asks permission with pattern `[name]`.
+
+### Rust assembly-path correction
+
+- The main agentic server path is `crates/opencode-server/src/routes.rs` `run_prompt_turn` -> `crates/opencode-server/src/agentic.rs` `resolve_agentic_context` -> `agentic::build_system_prompt` (agent/model base prompt + environment block). That static string is passed to `crates/opencode-session/src/prompt.rs` `prompt_with_update_hook` -> `loop_inner`, where `build_chat_messages` and `apply_caching` run *inside* the step loop, so the same system prompt is re-sent every step.
+- The item's cited `crates/opencode-session/src/llm.rs:966 build_system_prompt` is real but only feeds the compaction path (`crates/opencode-session/src/compaction.rs` builds `StreamInput`); it is not the main agent-loop assembly point. `LlmAgent` carries no permission field.
+- Net: Rust already re-sends the system prompt every step; it simply never contains a skills block. Adoption does not require per-step regeneration in the current architecture.
+- `crates/opencode-tool/src/skill.rs` `parameters()` enumerates all discovered names as a JSON-schema `enum` built from `std::env::current_dir()`, while `execute` resolves skills from `ctx.directory`. That is a genuine source mismatch, and the enum also exposes descriptionless skills that vanilla hides from the model.
+- Caching: `crates/opencode-provider/src/transform.rs` `apply_caching` marks up to two system messages ephemeral only for Anthropic/OpenRouter/Bedrock/Gateway; `ProviderType::Other` (which includes the product default `deepseek`) receives no explicit cache markers.
+
+### Prompt-cost measurement (this machine)
+
+- 36 local skills, all with descriptions; average description 320 chars, max 577.
+- Vanilla verbose XML block: ~17.3k chars (~4.3k tokens) appended per call.
+- Compact `## Available Skills` markdown form: ~12.4k chars (~3.1k tokens).
+
+### Options considered
+
+- **A. Vanilla parity** - verbose `<available_skills>` reinjection with per-skill-name permission filter, session-workspace source, vanilla tool description, and free-form `name` (drop the enum). Exact parity and fixes the `current_dir`/`ctx.directory` mismatch. Cost ~4.3k tokens/call, largely offset by provider-side prefix caching.
+- **B. Lean enum-only** - no reinjection; keep schema exposure, fix the workspace source, and add descriptions to the schema property. Cheapest but retains under-discovery (JSON-schema enums cannot carry per-value descriptions) and is not parity.
+- **C. Hybrid compact** - inject a non-verbose `## Available Skills` markdown block plus free-form `name`. Keeps the mechanism at ~28% less prompt text but is not the exact vanilla form.
+
+### Recommendation
+
+- Adopt **Approach A (vanilla parity)**. It is the only option that closes the discovery gap and matches vanilla's deliberate design (its code comment notes models ingest the verbose system-prompt form better than the tool description); the token cost is the main tradeoff.
+- No code or invariant changes were made in this pass. Item stays in `todo`; implementation will be picked up later.
