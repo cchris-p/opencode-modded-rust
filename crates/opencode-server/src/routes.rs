@@ -620,6 +620,9 @@ async fn delete_session(
 
     SESSION_RUN_STATUS.write().await.remove(&id);
     SESSION_QUEUES.lock().await.remove(&id);
+    for deleted_id in &deleted_ids {
+        reject_pending_questions_for_session(&state, deleted_id).await;
+    }
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
@@ -2827,6 +2830,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
                     })
                     .collect(),
             };
+            let asked_questions = info.questions.clone();
             let (tx, rx) = oneshot::channel();
             QUESTION_REQUESTS
                 .write()
@@ -2836,6 +2840,16 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
                 .write()
                 .await
                 .insert(request_id.clone(), tx);
+            let mut pending_guard = PendingQuestionGuard::new(request_id.clone());
+            state.broadcast(
+                &serde_json::json!({
+                    "type": "question.asked",
+                    "requestID": request_id,
+                    "sessionID": session_id,
+                    "questions": asked_questions,
+                })
+                .to_string(),
+            );
             state.broadcast(
                 &serde_json::json!({
                     "type": "session.updated",
@@ -2845,15 +2859,9 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
                 .to_string(),
             );
 
-            match rx.await {
-                Ok(QuestionResolution::Answered(answers)) => Ok(answers),
-                Ok(QuestionResolution::Rejected) => Err(opencode_tool::ToolError::ExecutionError(
-                    "question rejected".to_string(),
-                )),
-                Err(_) => Err(opencode_tool::ToolError::ExecutionError(
-                    "Question request dropped before reply".to_string(),
-                )),
-            }
+            let result = question_resolution_result(rx.await);
+            pending_guard.disarm();
+            result
         })
     });
 
@@ -2971,6 +2979,11 @@ async fn abort_active_session_prompt(
     } else {
         false
     };
+
+    // A pending question blocks inside its tool call, where the prompt loop does
+    // not observe the cancel token. Resolve those waiters explicitly so abort
+    // unblocks the session instead of leaving it wedged on the question.
+    reject_pending_questions_for_session(&state, &id).await;
 
     // Abort cancels the active run only. Waiting queued prompts are preserved
     // (vanilla's interrupt does not clear admitted inputs); the drain loop owns
@@ -5088,9 +5101,111 @@ static QUESTION_REQUESTS: Lazy<RwLock<HashMap<String, QuestionInfo>>> =
 static QUESTION_WAITERS: Lazy<RwLock<HashMap<String, oneshot::Sender<QuestionResolution>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+#[derive(Debug)]
 enum QuestionResolution {
     Answered(Vec<Vec<String>>),
     Rejected,
+}
+
+/// Map a question waiter outcome to the tool-facing result. A user rejection is
+/// a distinct `QuestionRejected` error so the model and transcript can tell it
+/// apart from a dropped waiter or a tool failure.
+fn question_resolution_result(
+    resolution: std::result::Result<QuestionResolution, oneshot::error::RecvError>,
+) -> std::result::Result<Vec<Vec<String>>, opencode_tool::ToolError> {
+    match resolution {
+        Ok(QuestionResolution::Answered(answers)) => Ok(answers),
+        Ok(QuestionResolution::Rejected) => Err(opencode_tool::ToolError::QuestionRejected(
+            "The user dismissed this question".to_string(),
+        )),
+        Err(_) => Err(opencode_tool::ToolError::ExecutionError(
+            "Question request dropped before reply".to_string(),
+        )),
+    }
+}
+
+/// Removes a pending question request and its waiter when the ask callback is
+/// dropped without being resolved (for example an aborted task, a cancelled run,
+/// or server shutdown mid-question). Normal replies and rejects already remove
+/// both entries, so the guard is disarmed on those paths.
+struct PendingQuestionGuard {
+    request_id: String,
+    armed: bool,
+}
+
+impl PendingQuestionGuard {
+    fn new(request_id: String) -> Self {
+        Self {
+            request_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingQuestionGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let request_id = self.request_id.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                QUESTION_REQUESTS.write().await.remove(&request_id);
+                QUESTION_WAITERS.write().await.remove(&request_id);
+            });
+        }
+    }
+}
+
+/// Reject every outstanding question waiter for a session so an aborted or
+/// deleted session cannot hang forever on a stale question. Returns the number
+/// of pending requests resolved.
+async fn reject_pending_questions_for_session(state: &Arc<ServerState>, session_id: &str) -> usize {
+    let request_ids: Vec<String> = {
+        let pending = QUESTION_REQUESTS.read().await;
+        pending
+            .values()
+            .filter(|question| question.session_id == session_id)
+            .map(|question| question.id.clone())
+            .collect()
+    };
+
+    let mut resolved = 0;
+    for request_id in request_ids {
+        let Some(question) = QUESTION_REQUESTS.write().await.remove(&request_id) else {
+            continue;
+        };
+        if let Some(waiter) = QUESTION_WAITERS.write().await.remove(&request_id) {
+            let _ = waiter.send(QuestionResolution::Rejected);
+        }
+        state.broadcast(
+            &serde_json::json!({
+                "type": "question.rejected",
+                "requestID": request_id,
+                "sessionID": question.session_id,
+                "source": "session.abort",
+            })
+            .to_string(),
+        );
+        resolved += 1;
+    }
+
+    if resolved > 0 {
+        state.broadcast(
+            &serde_json::json!({
+                "type": "session.updated",
+                "sessionID": session_id,
+                "source": "question.reject",
+            })
+            .to_string(),
+        );
+    }
+
+    resolved
 }
 
 async fn list_questions() -> Json<Vec<QuestionInfo>> {
@@ -5362,6 +5477,96 @@ mod question_tests {
         assert!(rx.try_recv().is_err());
 
         remove_pending_question(request_id).await;
+    }
+
+    #[tokio::test]
+    async fn reject_pending_questions_for_session_resolves_only_that_session() {
+        let state = Arc::new(ServerState::new());
+        let request_id = "test-question-abort-a";
+        let other_request_id = "test-question-abort-b";
+        let rx = insert_pending_question(request_id, "abort-session").await;
+        let mut other_rx = insert_pending_question(other_request_id, "other-session").await;
+
+        let resolved = reject_pending_questions_for_session(&state, "abort-session").await;
+
+        assert_eq!(resolved, 1);
+        assert!(!QUESTION_REQUESTS.read().await.contains_key(request_id));
+        assert!(!QUESTION_WAITERS.read().await.contains_key(request_id));
+        assert!(matches!(
+            rx.await.expect("aborted waiter should be rejected"),
+            QuestionResolution::Rejected
+        ));
+
+        // A question owned by another session is untouched by the abort.
+        assert!(QUESTION_REQUESTS
+            .read()
+            .await
+            .contains_key(other_request_id));
+        assert!(QUESTION_WAITERS.read().await.contains_key(other_request_id));
+        assert!(other_rx.try_recv().is_err());
+
+        remove_pending_question(other_request_id).await;
+    }
+
+    #[tokio::test]
+    async fn dropped_pending_question_guard_cleans_up_entries() {
+        let request_id = "test-question-guard-drop";
+        let _rx = insert_pending_question(request_id, "owner-session").await;
+
+        {
+            let _guard = PendingQuestionGuard::new(request_id.to_string());
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        assert!(!QUESTION_REQUESTS.read().await.contains_key(request_id));
+        assert!(!QUESTION_WAITERS.read().await.contains_key(request_id));
+    }
+
+    #[tokio::test]
+    async fn disarmed_pending_question_guard_keeps_entries() {
+        let request_id = "test-question-guard-disarmed";
+        let _rx = insert_pending_question(request_id, "owner-session").await;
+
+        {
+            let mut guard = PendingQuestionGuard::new(request_id.to_string());
+            guard.disarm();
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        assert!(QUESTION_REQUESTS.read().await.contains_key(request_id));
+        assert!(QUESTION_WAITERS.read().await.contains_key(request_id));
+
+        remove_pending_question(request_id).await;
+    }
+
+    #[tokio::test]
+    async fn answered_resolution_returns_answers() {
+        let (tx, rx) = oneshot::channel();
+        tx.send(QuestionResolution::Answered(vec![vec!["A".to_string()]]))
+            .expect("send answer");
+
+        let answers = question_resolution_result(rx.await).expect("answer resolves");
+
+        assert_eq!(answers, vec![vec!["A".to_string()]]);
+    }
+
+    #[test]
+    fn rejected_resolution_maps_to_typed_question_rejected_error() {
+        let err = question_resolution_result(Ok(QuestionResolution::Rejected)).unwrap_err();
+
+        assert!(matches!(err, opencode_tool::ToolError::QuestionRejected(_)));
+    }
+
+    #[tokio::test]
+    async fn dropped_waiter_maps_to_execution_error_not_rejection() {
+        let (tx, rx) = oneshot::channel::<QuestionResolution>();
+        drop(tx);
+
+        let err = question_resolution_result(rx.await).unwrap_err();
+
+        assert!(matches!(err, opencode_tool::ToolError::ExecutionError(_)));
     }
 }
 
