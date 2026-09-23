@@ -49,7 +49,8 @@
 - `ort` launches the most recently built Rust TUI binary without rebuilding first.
 - `ort` runs the TUI in the directory it was activated from, so that directory is the workspace (config search root and displayed working directory).
 - `ort` always starts a fresh local TUI server for that workspace. It never reuses, rotates, or attaches to a previously recorded server, so a stale or other-workspace server can never serve the TUI. Use `opencode attach <url>` for intentional re-attachment.
-- The Rust product owns its default model (`deepseek/deepseek-v4-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
+- When stopping Rust `ort` runtimes, target only confirmed PIDs whose command is `$HOME/repos/opencode-modded-rust/target/debug/opencode tui` or `$HOME/repos/opencode-modded-rust/target/debug/opencode serve` for the specific port/workspace under test. Do not kill `$HOME/.opencode/bin/opencode`, plugin-host processes, vanilla/reference OpenCode, or broad `opencode` process patterns.
+- The Rust product owns its default model (`deepseek/deepseek-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
 - When testing code changes, run `ort-build` before `ort` so the freshly started server runs the latest binary.
 
 ## Git Hooks
