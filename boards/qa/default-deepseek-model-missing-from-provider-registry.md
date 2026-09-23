@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "doing"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -94,3 +94,5 @@ Verification performed:
 - `./target/debug/opencode config` reported `Default model: deepseek/deepseek-flash`.
 - Fresh `./target/debug/opencode serve --hostname 127.0.0.1 --port 3199` `/config/providers` check reported `effective_model=deepseek/deepseek-flash`, `present=True`, and DeepSeek models `deepseek-flash,deepseek-v4-pro`.
 - `./target/debug/opencode run "Reply with exactly OK"` returned `Assistant: OK`, confirming the first prompt no longer fails at model resolution.
+
+PR: https://github.com/cchris-p/opencode-modded-rust/pull/79
