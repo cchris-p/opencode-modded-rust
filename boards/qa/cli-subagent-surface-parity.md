@@ -5,10 +5,10 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "hold"
+status: "qa"
 predecessors: "CLI-001, CLI-006, GATE-004"
 created: "2026-09-21"
-updated: "2026-09-22"
+updated: "2026-09-23"
 ---
 
 # CLI subagent surface parity
@@ -64,6 +64,44 @@ Reference `f54ce313b99a`:
   surface.
 - Compare footer behavior against `footer.subagent.tsx` where applicable.
 - `cargo check -p opencode-cli`.
+
+## Documented Partial (CLI-010 resolution)
+
+Per GATE-004 Shared Decision 9 and the `GATE-001` precedent, `CLI-010` closes as an explicit
+documented partial:
+
+- **No interactive CLI run footer.** The reference subagent footer (`footer.subagent.tsx`,
+  `subagent-data.ts`) has no Rust host because the CLI has no interactive run surface: `CLI-002`
+  (route `opencode run` through the canonical session runtime) is still blocked by `GATE-002`, and
+  `CLI-001`/`CLI-006` only added task-send and status/list surfaces. Follow-up trigger: when
+  `CLI-002` lands, add the subagent tabs/details to the run footer.
+- **Child sessions are no longer silently dropped.** `session list` and `session find` now include
+  child (subagent) sessions with an explicit `parentId` (JSON) and a `Parent (subagent)` column
+  (table); `session show` prints the parent and lists child sessions. The only remaining
+  `parent_id.is_none()` reads (`resolve_requested_session`, `resolve_base_session`) select the most
+  recent *root* for `--continue`; that is root selection, not child filtering.
+- **Abort.** The server abort endpoint (`POST /session/{id}/abort`) already cancels a session's
+  active background subagents (FEAT-048, via the parent turn's abort token). The CLI has no
+  interactive interrupt command yet; wiring a CLI abort to that endpoint is deferred with `CLI-002`
+  as part of the interactive run surface.
+
+Status: accepted documented partial for `GATE-004` gap 6.
+
+## Dev Notes
+
+- `crates/opencode-cli/src/main.rs`: `session list` (JSON + table) and `session find` include child
+  sessions; JSON rows carry `parentId`; tables show a `Parent (subagent)` column; `session show`
+  prints `Parent (subagent)` and lists `Children`.
+- Added helpers `session_json_row`, `session_table_header`, `session_table_row` with tests
+  `session_json_row_includes_parent_id` and `session_table_row_surfaces_child_parentage`.
+- Verification: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo test -p opencode-cli`
+  (7 passed). Manual `session list`/`show` smoke against a workspace with a subagent child is
+  available via `cargo run -p opencode-cli -- session list`.
+
+### PR Link
+
+- PR #101 (https://github.com/cchris-p/opencode-modded-rust/pull/101) — `feature/CLI-010-cli-subagent-surface` → `development`.
+- Program: GATE-004 (H-009), PR 7/7 (documented partial). Awaiting human test/merge.
 
 ## Related Items
 

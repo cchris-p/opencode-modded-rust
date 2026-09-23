@@ -4031,6 +4031,38 @@ fn session_status_label(status: &SessionStatus) -> &'static str {
     }
 }
 
+/// CLI-010: serialize a session row, always carrying its `parentId` so child
+/// (subagent) sessions are visible rather than silently dropped from listings.
+fn session_json_row(session: &Session) -> serde_json::Value {
+    serde_json::json!({
+        "id": session.id,
+        "title": session.title,
+        "updated": session.time.updated,
+        "created": session.time.created,
+        "projectId": session.project_id,
+        "directory": session.directory,
+        "workspaceIdentity": session.workspace_identity,
+        "parentId": session.parent_id,
+    })
+}
+
+fn session_table_header() -> String {
+    format!(
+        "{:<30} {:<25} {:<30} {}",
+        "Session ID", "Title", "Parent (subagent)", "Updated"
+    )
+}
+
+fn session_table_row(id: &str, title: &str, parent_id: Option<&str>, updated: i64) -> String {
+    format!(
+        "{:<30} {:<25} {:<30} {}",
+        id,
+        truncate_text(title, 25),
+        parent_id.unwrap_or("-"),
+        updated
+    )
+}
+
 /// Resolve a session from an explicit id/slug or a human name (title). A name
 /// must match exactly one session; ambiguous names return an error listing the
 /// candidates instead of guessing.
@@ -4205,34 +4237,25 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
 
             match format {
                 SessionListFormat::Json => {
-                    let rows: Vec<_> = sessions
-                        .into_iter()
-                        .filter(|s| s.parent_id.is_none())
-                        .map(|s| {
-                            serde_json::json!({
-                                "id": s.id,
-                                "title": s.title,
-                                "updated": s.time.updated,
-                                "created": s.time.created,
-                                "projectId": s.project_id,
-                                "directory": s.directory,
-                                "workspaceIdentity": s.workspace_identity
-                            })
-                        })
-                        .collect();
+                    // CLI-010: child (subagent) sessions are included with an
+                    // explicit `parentId` instead of being silently dropped.
+                    let rows: Vec<_> = sessions.iter().map(session_json_row).collect();
                     println!("{}", serde_json::to_string_pretty(&rows)?);
                 }
                 SessionListFormat::Table => {
-                    println!("Session ID                      Title                      Updated");
+                    println!("{}", session_table_header());
                     println!(
-                        "-----------------------------------------------------------------------"
+                        "---------------------------------------------------------------------------------------------"
                     );
-                    for session in sessions.into_iter().filter(|s| s.parent_id.is_none()) {
+                    for session in sessions.iter() {
                         println!(
-                            "{:<30} {:<25} {}",
-                            session.id,
-                            truncate_text(&session.title, 25),
-                            session.time.updated
+                            "{}",
+                            session_table_row(
+                                &session.id,
+                                &session.title,
+                                session.parent_id.as_deref(),
+                                session.time.updated,
+                            )
                         );
                     }
                 }
@@ -4268,6 +4291,20 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
             println!("  Created: {}", session.time.created);
             println!("  Updated: {}", session.time.updated);
             println!("  Messages: {}", messages.len());
+            // CLI-010: surface subagent parentage and child sessions instead of
+            // hiding them.
+            match session.parent_id.as_deref() {
+                Some(parent_id) => println!("  Parent (subagent): {}", parent_id),
+                None => println!("  Parent (subagent): (root)"),
+            }
+            let children = session_repo
+                .list_children(&session_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to load child sessions: {}", e))?;
+            println!("  Children: {}", children.len());
+            for child in &children {
+                println!("    {}  {}", child.id, truncate_text(&child.title, 60));
+            }
         }
         SessionCommands::Find {
             name,
@@ -4281,9 +4318,10 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("Failed to list sessions: {}", e))?;
 
             let needle = name.to_lowercase();
+            // CLI-010: child (subagent) sessions are searchable too, not filtered
+            // out, so a child can be inspected by name/id/slug.
             let mut hits: Vec<Session> = sessions
                 .into_iter()
-                .filter(|s| s.parent_id.is_none())
                 .filter(|s| {
                     s.title.to_lowercase().contains(&needle)
                         || s.id.to_lowercase().contains(&needle)
@@ -4301,34 +4339,22 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
 
             match format {
                 SessionListFormat::Json => {
-                    let rows: Vec<_> = hits
-                        .iter()
-                        .map(|s| {
-                            serde_json::json!({
-                                "id": s.id,
-                                "slug": s.slug,
-                                "title": s.title,
-                                "status": session_status_label(&s.status),
-                                "created": s.time.created,
-                                "updated": s.time.updated,
-                                "directory": s.directory,
-                                "workspaceIdentity": s.workspace_identity,
-                            })
-                        })
-                        .collect();
+                    let rows: Vec<_> = hits.iter().map(session_json_row).collect();
                     println!("{}", serde_json::to_string_pretty(&rows)?);
                 }
                 SessionListFormat::Table => {
                     println!("Matched {} session(s) for '{}':", total, name);
                     println!(
-                        "Session ID                     Status      Updated             Title"
+                        "{:<30} {:<11} {:<30} {:<19} {}",
+                        "Session ID", "Status", "Parent (subagent)", "Updated", "Title"
                     );
-                    println!("--------------------------------------------------------------------------------------------");
+                    println!("-------------------------------------------------------------------------------------------------------------------------");
                     for session in &hits {
                         println!(
-                            "{:<30} {:<11} {:<19} {}",
+                            "{:<30} {:<11} {:<30} {:<19} {}",
                             session.id,
                             session_status_label(&session.status),
+                            session.parent_id.as_deref().unwrap_or("-"),
                             format_session_time(session.time.updated),
                             truncate_text(&session.title, 50)
                         );
@@ -7151,5 +7177,55 @@ mod tests {
             empty,
             vec!["Resume your most recent session:", "  opencode --continue"]
         );
+    }
+
+    fn test_session(id: &str, parent_id: Option<&str>) -> Session {
+        Session {
+            id: id.to_string(),
+            slug: id.to_string(),
+            project_id: "proj".to_string(),
+            directory: ".".to_string(),
+            workspace_identity: None,
+            parent_id: parent_id.map(str::to_string),
+            title: format!("Title {id}"),
+            version: "1".to_string(),
+            time: Default::default(),
+            messages: Vec::new(),
+            summary: None,
+            share: None,
+            revert: None,
+            permission: None,
+            usage: None,
+            status: Default::default(),
+            task: None,
+            metadata: Default::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn session_json_row_includes_parent_id() {
+        let root = session_json_row(&test_session("ses_root", None));
+        assert_eq!(root.get("parentId"), Some(&serde_json::Value::Null));
+
+        let child = session_json_row(&test_session("ses_child", Some("ses_root")));
+        assert_eq!(
+            child.get("parentId").and_then(|value| value.as_str()),
+            Some("ses_root")
+        );
+    }
+
+    #[test]
+    fn session_table_row_surfaces_child_parentage() {
+        let root = session_table_row("ses_root", "Root", None, 0);
+        assert!(root.contains("ses_root"));
+        assert!(root.contains('-'));
+
+        let child = session_table_row("ses_child", "Child", Some("ses_root"), 0);
+        assert!(child.contains("ses_child"));
+        assert!(child.contains("ses_root"));
+
+        assert!(session_table_header().contains("Parent"));
     }
 }
