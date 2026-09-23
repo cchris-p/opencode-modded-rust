@@ -11,8 +11,8 @@ use futures::StreamExt;
 use opencode_plugin::{HookContext, HookEvent};
 use opencode_provider::transform::{apply_caching, ProviderType};
 use opencode_provider::{
-    get_model_context_limit, ChatRequest, ChatResponse, Content, ContentPart, Message, Provider,
-    Role, StreamEvent, ToolDefinition,
+    get_model_context_limit, with_idle_timeout, ChatRequest, ChatResponse, Content, ContentPart,
+    Message, Provider, Role, StreamEvent, ToolDefinition, DEFAULT_STREAM_IDLE_TIMEOUT,
 };
 
 use crate::compaction::{
@@ -1126,13 +1126,19 @@ impl SessionPrompt {
             };
 
             // Stream the response (matching TS streamText approach).
-            let mut stream = match provider.chat_stream(request).await {
+            let stream = match provider.chat_stream(request).await {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Provider error for session {}: {}", session_id, e);
                     return Err(anyhow::anyhow!("{}", e));
                 }
             };
+
+            // Bound each wait for a stream event so a provider that stops
+            // sending without closing the connection cannot wedge the turn
+            // forever. Without this, a mid-turn stall never reaches a terminal
+            // state and the session stays `active` indefinitely (BUG-038).
+            let mut stream = with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT);
 
             // Create assistant message placeholder before consuming the stream so
             // callers can observe incremental output updates.
@@ -3964,6 +3970,84 @@ mod tests {
             .map(SessionMessage::get_text)
             .unwrap_or_default();
         assert_eq!(final_text, "Hello");
+    }
+
+    #[tokio::test]
+    async fn stalled_stream_error_fails_the_turn_visibly() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+        let provider = Arc::new(ScriptedStreamProvider {
+            model: ModelInfo {
+                id: "test-model".to_string(),
+                name: "Test Model".to_string(),
+                provider: "mock".to_string(),
+                context_window: 8192,
+                max_output_tokens: 1024,
+                supports_vision: false,
+                supports_tools: true,
+                cost_per_million_input: 0.0,
+                cost_per_million_output: 0.0,
+            },
+            // Reasoning then partial text, then the idle-timeout wrapper
+            // reports the stream stalled: the BUG-038 shape where no tool call,
+            // finish reason, or completion ever arrives.
+            events: vec![
+                StreamEvent::Start,
+                StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                },
+                StreamEvent::ReasoningDelta {
+                    id: "reasoning-0".to_string(),
+                    text: "Let me look for board files".to_string(),
+                },
+                StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                },
+                StreamEvent::TextDelta("I'll look".to_string()),
+                StreamEvent::Error(
+                    "Provider stream stalled: no events received for 90s".to_string(),
+                ),
+            ],
+        });
+
+        let input = PromptInput {
+            session_id: session.id.clone(),
+            message_id: None,
+            model: Some(ModelRef {
+                provider_id: "mock".to_string(),
+                model_id: "test-model".to_string(),
+            }),
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            tools: None,
+            parts: vec![PartInput::Text {
+                text: "find the board".to_string(),
+            }],
+        };
+
+        let result = prompt
+            .prompt_with_update_hook(
+                input,
+                &mut session,
+                provider,
+                None,
+                Vec::new(),
+                AgentParams::default(),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a stalled stream must fail the turn instead of hanging silently"
+        );
+        let error = result.err().expect("error checked above").to_string();
+        assert!(
+            error.contains("stalled"),
+            "the failure must name the stall: {error}"
+        );
     }
 
     #[tokio::test]
