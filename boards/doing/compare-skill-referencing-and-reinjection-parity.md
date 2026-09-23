@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "SKILLS"
 spec: "invariants/skills/runtime.md"
-status: "todo"
+status: "doing"
 created: "2026-09-21"
 ---
 
@@ -108,3 +108,33 @@ Skills sometimes appear to be "called automatically" in a session. That is not a
 
 - Adopt **Approach A (vanilla parity)**. It is the only option that closes the discovery gap and matches vanilla's deliberate design (its code comment notes models ingest the verbose system-prompt form better than the tool description); the token cost is the main tradeoff.
 - No code or invariant changes were made in this pass. Item stays in `todo`; implementation will be picked up later.
+
+## Decision - 2026-09-23
+
+- Adopted **Approach A (vanilla parity)**. Rust now reinjects an available-skills block into the system prompt, matching the reference `SystemPrompt.skills(agent)` shape, built from the session workspace and filtered by the agent's `skill` permission.
+
+## Implementation - 2026-09-23
+
+### Changes
+
+- `crates/opencode-tool/src/skill.rs`
+  - `SkillTool::description()` now uses the reference `tool/skill.txt` text and points the model at the skills listed in the system prompt.
+  - `SkillTool::parameters()` exposes a free-form `name` (plus the `skill_name` alias) with no discovered-name `enum`; the schema no longer reads `std::env::current_dir()`, removing the `current_dir` vs `ctx.directory` mismatch.
+  - Added `SkillMetadata` and `list_skill_metadata_for_base(base)`, which expose the discovered skill `location` in addition to name/description. The existing `/skill` endpoint shape is unchanged.
+- `crates/opencode-server/src/agentic.rs`
+  - `build_system_prompt` appends an available-skills block after the environment block. Because the assembled prompt is re-sent on every model step through the existing prompt loop, this reproduces vanilla's per-step reinjection without per-step regeneration.
+  - The block mirrors the reference: a 2-line preamble plus verbose `<available_skills>` XML with escaped `name`, `description`, and `location`.
+  - Permission filtering matches vanilla: the block is omitted when the agent blanket-denies `skill`; descriptionless skills and skills denied by name are excluded.
+- `invariants/skills/runtime.md` restates the new system-prompt and free-form-schema contract.
+
+### Verification
+
+- `cargo fmt --all`
+- `cargo test -p opencode-tool -p opencode-server` (all green; new unit tests cover block rendering, descriptionless/denied filtering, blanket-deny omission, XML escaping, and workspace-sourced discovery)
+- `cargo clippy -p opencode-tool -p opencode-server --all-targets` (no new warnings in the changed files)
+
+### Notes
+
+- The prompt-cost tradeoff measured above (~4.3k tokens/call for 36 skills) is accepted in exchange for parity and closing the under-discovery gap; provider-side prefix caching largely offsets it.
+- Caching interaction: the Rust path assembles a single system message and `apply_caching` already marks the leading system message ephemeral for cache-capable providers, so the skills block caches with the rest of the stable prompt prefix.
+- This pass covers local filesystem skills only; URL-backed skills remain tracked by `SKILLS-002`.
