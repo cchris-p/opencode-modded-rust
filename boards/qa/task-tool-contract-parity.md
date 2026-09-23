@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -91,6 +91,7 @@ Reference `f54ce313b99a`:
 ## Dev Notes
 
 Program: `GATE-004` (H-009), PR 2/7. Branch `feature/FEAT-046-task-tool-contract-parity`.
+PR: https://github.com/cchris-p/opencode-modded-rust/pull/96
 
 ### What changed
 
