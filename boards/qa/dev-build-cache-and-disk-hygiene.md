@@ -5,7 +5,7 @@ priority: "P2"
 type: "chore"
 area: "INFRA"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-23"
 ---
 
