@@ -138,3 +138,9 @@ Skills sometimes appear to be "called automatically" in a session. That is not a
 - The prompt-cost tradeoff measured above (~4.3k tokens/call for 36 skills) is accepted in exchange for parity and closing the under-discovery gap; provider-side prefix caching largely offsets it.
 - Caching interaction: the Rust path assembles a single system message and `apply_caching` already marks the leading system message ephemeral for cache-capable providers, so the skills block caches with the rest of the stable prompt prefix.
 - This pass covers local filesystem skills only; URL-backed skills remain tracked by `SKILLS-002`.
+
+## Completion
+
+- Merged into `development` via merge commit `86c9456` (PR #88, 2026-09-23).
+- Feature branch `feature/SKILLS-005-skill-referencing-reinjection-parity` deleted remotely and locally.
+- Item remains in `qa` until a QA report is recorded or completion is explicitly directed.
