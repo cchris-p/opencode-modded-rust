@@ -1193,6 +1193,23 @@ impl App {
             match key.code {
                 KeyCode::Esc => self.session_rename_dialog.close(),
                 KeyCode::Backspace => self.session_rename_dialog.handle_backspace(),
+                KeyCode::Delete => self.session_rename_dialog.handle_delete(),
+                KeyCode::Left => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        self.session_rename_dialog.move_word_left();
+                    } else {
+                        self.session_rename_dialog.move_left();
+                    }
+                }
+                KeyCode::Right => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        self.session_rename_dialog.move_word_right();
+                    } else {
+                        self.session_rename_dialog.move_right();
+                    }
+                }
+                KeyCode::Home => self.session_rename_dialog.move_home(),
+                KeyCode::End => self.session_rename_dialog.move_end(),
                 KeyCode::Enter => {
                     if let Some((session_id, title)) = self.session_rename_dialog.confirm() {
                         if let Some(client) = self.context.get_api_client() {
@@ -1212,11 +1229,16 @@ impl App {
                         }
                     }
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.session_rename_dialog.handle_input(c);
+                KeyCode::Char(c) => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        match c {
+                            'b' | 'B' => self.session_rename_dialog.move_word_left(),
+                            'f' | 'F' => self.session_rename_dialog.move_word_right(),
+                            _ => {}
+                        }
+                    } else if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                        self.session_rename_dialog.handle_input(c);
+                    }
                 }
                 _ => {}
             }
@@ -1226,6 +1248,21 @@ impl App {
             match key.code {
                 KeyCode::Esc => self.session_export_dialog.close(),
                 KeyCode::Backspace => self.session_export_dialog.handle_backspace(),
+                KeyCode::Delete => self.session_export_dialog.handle_delete(),
+                KeyCode::Left => {
+                    self.session_export_dialog
+                        .move_left(key.modifiers.contains(KeyModifiers::ALT));
+                }
+                KeyCode::Right => {
+                    self.session_export_dialog
+                        .move_right(key.modifiers.contains(KeyModifiers::ALT));
+                }
+                KeyCode::Home => self.session_export_dialog.move_home(),
+                KeyCode::End => self.session_export_dialog.move_end(),
+                KeyCode::Tab => self.session_export_dialog.focus_next(),
+                KeyCode::BackTab => self.session_export_dialog.focus_prev(),
+                KeyCode::Up => self.session_export_dialog.focus_prev(),
+                KeyCode::Down => self.session_export_dialog.focus_next(),
                 KeyCode::Enter => {
                     if let Some(session_id) = self.session_export_dialog.session_id() {
                         let filename = self.session_export_dialog.filename().trim();
@@ -1281,11 +1318,16 @@ impl App {
                         }
                     }
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.session_export_dialog.handle_input(c);
+                KeyCode::Char(c) => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        match c {
+                            'b' | 'B' => self.session_export_dialog.move_left(true),
+                            'f' | 'F' => self.session_export_dialog.move_right(true),
+                            _ => {}
+                        }
+                    } else if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                        self.session_export_dialog.handle_input(c);
+                    }
                 }
                 _ => {}
             }
@@ -1450,6 +1492,23 @@ impl App {
                 match key.code {
                     KeyCode::Esc => self.session_list_dialog.cancel_rename(),
                     KeyCode::Backspace => self.session_list_dialog.handle_rename_backspace(),
+                    KeyCode::Delete => self.session_list_dialog.handle_rename_delete(),
+                    KeyCode::Left => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            self.session_list_dialog.rename_move_word_left();
+                        } else {
+                            self.session_list_dialog.rename_move_left();
+                        }
+                    }
+                    KeyCode::Right => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            self.session_list_dialog.rename_move_word_right();
+                        } else {
+                            self.session_list_dialog.rename_move_right();
+                        }
+                    }
+                    KeyCode::Home => self.session_list_dialog.rename_move_home(),
+                    KeyCode::End => self.session_list_dialog.rename_move_end(),
                     KeyCode::Enter => {
                         if let Some((session_id, title)) = self.session_list_dialog.confirm_rename()
                         {
@@ -1474,11 +1533,16 @@ impl App {
                             }
                         }
                     }
-                    KeyCode::Char(c)
-                        if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT) =>
-                    {
-                        self.session_list_dialog.handle_rename_input(c);
+                    KeyCode::Char(c) => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            match c {
+                                'b' | 'B' => self.session_list_dialog.rename_move_word_left(),
+                                'f' | 'F' => self.session_list_dialog.rename_move_word_right(),
+                                _ => {}
+                            }
+                        } else if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                            self.session_list_dialog.handle_rename_input(c);
+                        }
                     }
                     _ => {}
                 }

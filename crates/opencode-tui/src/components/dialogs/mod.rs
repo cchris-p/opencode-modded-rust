@@ -17,6 +17,7 @@ mod skill_list;
 mod status;
 mod subagent;
 mod tag;
+mod text_input;
 mod theme_list;
 mod timeline;
 

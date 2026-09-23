@@ -8,10 +8,12 @@ use ratatui::{
 
 use crate::theme::Theme;
 
+use super::text_input::DialogTextInput;
+
 pub struct SessionRenameDialog {
     open: bool,
     session_id: Option<String>,
-    input: String,
+    input: DialogTextInput,
 }
 
 impl SessionRenameDialog {
@@ -19,14 +21,14 @@ impl SessionRenameDialog {
         Self {
             open: false,
             session_id: None,
-            input: String::new(),
+            input: DialogTextInput::new(),
         }
     }
 
     pub fn open(&mut self, session_id: String, title: String) {
         self.open = true;
         self.session_id = Some(session_id);
-        self.input = title;
+        self.input.set(title);
     }
 
     pub fn close(&mut self) {
@@ -40,16 +42,44 @@ impl SessionRenameDialog {
     }
 
     pub fn handle_input(&mut self, c: char) {
-        self.input.push(c);
+        self.input.insert_char(c);
     }
 
     pub fn handle_backspace(&mut self) {
-        self.input.pop();
+        self.input.backspace();
+    }
+
+    pub fn handle_delete(&mut self) {
+        self.input.delete();
+    }
+
+    pub fn move_left(&mut self) {
+        self.input.move_left();
+    }
+
+    pub fn move_right(&mut self) {
+        self.input.move_right();
+    }
+
+    pub fn move_word_left(&mut self) {
+        self.input.move_word_left();
+    }
+
+    pub fn move_word_right(&mut self) {
+        self.input.move_word_right();
+    }
+
+    pub fn move_home(&mut self) {
+        self.input.move_home();
+    }
+
+    pub fn move_end(&mut self) {
+        self.input.move_end();
     }
 
     pub fn confirm(&mut self) -> Option<(String, String)> {
         let session_id = self.session_id.clone()?;
-        let title = self.input.trim().to_string();
+        let title = self.input.value().trim().to_string();
         if title.is_empty() {
             return None;
         }
@@ -87,17 +117,20 @@ impl SessionRenameDialog {
             ])
             .split(inner);
 
+        let (before, after) = self.input.split_at_cursor();
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("> ", Style::default().fg(theme.primary)),
-                Span::styled(&self.input, Style::default().fg(theme.text)),
+                Span::styled(before.to_string(), Style::default().fg(theme.text)),
                 Span::styled("▏", Style::default().fg(theme.primary)),
+                Span::styled(after.to_string(), Style::default().fg(theme.text)),
             ])),
             layout[0],
         );
 
         frame.render_widget(
-            Paragraph::new("Enter save  Esc cancel").style(Style::default().fg(theme.text_muted)),
+            Paragraph::new("←/→ move  Enter save  Esc cancel")
+                .style(Style::default().fg(theme.text_muted)),
             layout[2],
         );
     }
