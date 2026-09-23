@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "wiki/advanced-coding-session-polling.md"
-status: "todo"
+status: "doing"
 created: "2026-09-08"
 ---
 
@@ -50,14 +50,26 @@ Multi-agent coding work often needs one session to pause until another session f
 - Initial observable state categories are listed with TBDs where implementation details are unresolved.
 - Follow-up implementation cards can be split from this item without redefining the core concept.
 
-## TBD
+## Resolved Decisions
 
-- Exact first polling surface: TUI command, runtime API, tool, skill, or all of these.
-- Exact first observable condition set.
-- Whether polling results should wake a paused session automatically or only notify the user.
-- How polling relates to durable structured task state.
-- How polling identifies another coding session safely.
-- Whether cross-repository polling is in scope for V1 or later.
+These resolve the item's original TBDs and are authoritative in `wiki/advanced-coding-session-polling.md`.
+
+- **First surface:** an agent tool (id `wait_for_state`) registered in `crates/opencode-tool`. Runtime and TUI surfaces are deferred.
+- **First observables:** local and remote git refs and branch state only.
+- **Wait model:** the tool call itself is the bounded wait. No durable runtime poll object and no background poller in the first slice.
+- **Wake model:** no auto-wake; the calling session resumes when the tool returns.
+- **Result:** compact, evidence-backed JSON with `status`, `condition`, `observed`, `evidence`, and `elapsed_ms`; no transcript import.
+- **Background sessions:** the tool is callable from any session, including background sessions. Observing a background session as a target is deferred.
+- **Cross-repository polling:** deferred.
+
+## Deferred Work
+
+Split into follow-up cards, each linked from the spec:
+
+- `FEAT-057` Implement the git ref/branch polling agent tool (first slice).
+- `FEAT-058` Add PR and CI check observables to polling.
+- `FEAT-059` Add board lane and background-session observables to polling.
+- `FEAT-060` Add a runtime poll registry and TUI surface for outstanding polls.
 
 ## Related Items
 
@@ -71,5 +83,5 @@ Multi-agent coding work often needs one session to pause until another session f
 
 ## Notes
 
-- Keep this item high level until the intended polling surfaces are clarified.
-- The implementation should prefer observable external state over transcript-derived guesses.
+- The design prefers observable external state over transcript-derived guesses.
+- Implementation work now lives in the `FEAT-057` through `FEAT-060` follow-up cards rather than in this planning item.
