@@ -143,6 +143,7 @@ decision or an open gate and must be composed later.
 ### 2026-09-22 - PR 1 / `CLI-001`
 
 - Branch: `feature/CLI-001-task-commands`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/80.
 - Implemented `opencode task new|send|view` against explicit/selected task targets and the canonical `POST /session/{id}/prompt` path.
 - `task new` creates a target-server session and stores it as the default only after server acknowledgement.
 - `task send` uses explicit `--server`/`--session` overrides or the selected default target.

@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-08"
 updated: "2026-09-22"
 ---
@@ -143,6 +143,7 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 ## Implementation Notes - 2026-09-22
 
 - Branch: `feature/CLI-001-task-commands`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/80.
 - Implemented `opencode task new|send|view` in `crates/opencode-cli/src/main.rs`.
 - `task new` creates a session on the explicit/selected target server, submits through `POST /session/{id}/prompt`, and stores the acknowledged session as the workspace-local default task session.
 - `task send` submits follow-up prompts to the explicit or selected default session through `POST /session/{id}/prompt`.
