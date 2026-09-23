@@ -21,7 +21,7 @@ from vanilla.
 
 ## Parent
 
-`GATE-002` question-tool full parity (`boards/todo/gate-question-tool-full-parity.md`), gap 6.
+`GATE-002` question-tool full parity (`boards/qa/gate-question-tool-full-parity.md`), gap 6.
 
 ## Resolved decision
 

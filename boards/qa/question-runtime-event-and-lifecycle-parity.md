@@ -20,7 +20,7 @@ question unblocks the waiting tool call with a clear error.
 
 ## Parent
 
-`GATE-002` question-tool full parity (`boards/todo/gate-question-tool-full-parity.md`), gap 3.
+`GATE-002` question-tool full parity (`boards/qa/gate-question-tool-full-parity.md`), gap 3.
 
 ## Problem
 

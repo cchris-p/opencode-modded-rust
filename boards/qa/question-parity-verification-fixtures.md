@@ -20,12 +20,12 @@ checks.
 
 ## Parent
 
-`GATE-002` question-tool full parity (`boards/todo/gate-question-tool-full-parity.md`), gap 7.
+`GATE-002` question-tool full parity (`boards/qa/gate-question-tool-full-parity.md`), gap 7.
 
 ## Problem
 
 There are currently no tests for the question feature in any crate. Verification today is manual
-smoke only (`boards/todo/gate-question-tool-full-parity.md:118-120`, `:157`).
+smoke only (`boards/qa/gate-question-tool-full-parity.md:118-120`, `:157`).
 
 ## Scope / deliverables
 

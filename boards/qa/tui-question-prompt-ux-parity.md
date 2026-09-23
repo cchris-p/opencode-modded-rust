@@ -20,7 +20,7 @@ review/confirm step, multi-select, custom answers, reject/dismiss, and submittin
 
 ## Parent
 
-`GATE-002` question-tool full parity (`boards/todo/gate-question-tool-full-parity.md`), gap 4.
+`GATE-002` question-tool full parity (`boards/qa/gate-question-tool-full-parity.md`), gap 4.
 
 ## Problem
 

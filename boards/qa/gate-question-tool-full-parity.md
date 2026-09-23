@@ -5,9 +5,10 @@ priority: "P2"
 type: "gate"
 area: "GATE"
 spec: ""
-status: "todo"
+status: "qa"
 predecessors: ""
 created: "2026-09-18"
+updated: "2026-09-23"
 ---
 
 # Gate: Question tool must match vanilla OpenCode exactly
@@ -97,13 +98,13 @@ Frozen TypeScript reference line: `$HOME/repos/opencode-modded` `dev` at commit 
 The parity gaps below are tracked as child cards. This gate passes only when every child is either
 implemented or explicitly resolved as a documented deviation in this card.
 
-- `FEAT-038` Question schema and tool contract parity - `boards/todo/question-schema-and-tool-contract-parity.md`
-- `FEAT-039` Session-scoped question API parity - `boards/todo/session-scoped-question-api-parity.md`
-- `FEAT-040` Question runtime event and lifecycle parity - `boards/todo/question-runtime-event-and-lifecycle-parity.md`
-- `FEAT-041` TUI question prompt UX parity - `boards/todo/tui-question-prompt-ux-parity.md`
-- `CLI-009` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; preceded by `CLI-001`/`CLI-006` and `CLI-002`)
-- `FEAT-043` Question permission integration parity - `boards/todo/question-permission-integration-parity.md`
-- `FEAT-044` Question parity verification fixtures - `boards/todo/question-parity-verification-fixtures.md`
+- `FEAT-038` Question schema and tool contract parity - `boards/qa/question-schema-and-tool-contract-parity.md` (merged PR #65, in `qa`)
+- `FEAT-039` Session-scoped question API parity - `boards/qa/session-scoped-question-api-parity.md` (merged PR #67, in `qa`)
+- `FEAT-040` Question runtime event and lifecycle parity - `boards/qa/question-runtime-event-and-lifecycle-parity.md` (merged `53b6e65`, in `qa`)
+- `FEAT-041` TUI question prompt UX parity - `boards/qa/tui-question-prompt-ux-parity.md` (merged `9c24c7b`, in `qa`)
+- `CLI-009` CLI and direct-run question parity - `boards/hold/cli-and-direct-run-question-parity.md` (hold; deferred, preceded by `CLI-001`/`CLI-006` and `CLI-002`)
+- `FEAT-043` Question permission integration parity - `boards/qa/question-permission-integration-parity.md` (merged `b061656`, in `qa`)
+- `FEAT-044` Question parity verification fixtures - `boards/qa/question-parity-verification-fixtures.md` (merged `b061656`, in `qa`)
 
 ## Parity Gaps To Split Into Child Items
 
@@ -184,7 +185,7 @@ implemented or explicitly resolved as a documented deviation in this card.
   question feature.
 - `PHASE-002` Transport/runtime parity foundation - phase parent for related parity work.
 - `H-005` GATE-002 question tool full parity handoff - follow-up implementation sequence
-  (`handoffs/2026-09-21-gate-002-question-parity-handoff.md`).
+  (`handoffs/archive/2026-09-21-gate-002-question-parity-handoff.md`, archived 2026-09-23).
 
 ## Refinement Questions (resolved 2026-09-21)
 
@@ -222,6 +223,20 @@ Reference: `$HOME/repos/opencode-modded` `dev` at `f54ce313b99a6661d7758ad042f7a
 Verification fixtures: `FEAT-044`. `GATE-002` closes after the maintainer completes the local TUI
 smoke (single select, multi select, custom answer, multi-question review, reject) and confirms
 `FEAT-039` post-merge QA.
+
+## QA Handoff - 2026-09-23
+
+- All TUI/server question-parity children are implemented, merged into `development`, and parked in
+  `qa`: `FEAT-038` (PR #65), `FEAT-039` (PR #67), `FEAT-040` (`53b6e65`), `FEAT-041` (`9c24c7b`),
+  `FEAT-043`/`FEAT-044` (`b061656`).
+- This gate moved from `todo` to `qa` to signal the implementation pass is complete and awaiting the
+  maintainer's local verification.
+- Outstanding verification before `done`: the local TUI smoke (single select, multi select, custom
+  answer, multi-question review, reject) and confirmation of `FEAT-039` post-merge QA.
+- `CLI-009` (CLI/direct-run question parity) remains deliberately deferred on `hold`, blocked by
+  `CLI-002`; the gate's "unblock CLI-009" Done-When line stays open until that track lands. The
+  `CLI-009` and `CLI-002` cards remain the source of truth for that scope.
+- Handoff `H-005` is archived; this card now carries the remaining closeout state.
 
 ## Done When
 

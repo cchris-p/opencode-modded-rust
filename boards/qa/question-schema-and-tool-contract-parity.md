@@ -20,7 +20,7 @@ the tool use the session question callback instead of blocking on stdin.
 
 ## Parent
 
-`GATE-002` question-tool full parity (`boards/todo/gate-question-tool-full-parity.md`), gap 1.
+`GATE-002` question-tool full parity (`boards/qa/gate-question-tool-full-parity.md`), gap 1.
 
 ## Problem
 

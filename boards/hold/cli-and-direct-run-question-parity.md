@@ -27,7 +27,7 @@ logic rather than a separate `AgentExecutor` implementation.
 
 ## Parent
 
-`GATE-002` question-tool full parity (`boards/todo/gate-question-tool-full-parity.md`), gap 5.
+`GATE-002` question-tool full parity (`boards/qa/gate-question-tool-full-parity.md`), gap 5.
 
 ## Blocked By
 

@@ -20,7 +20,7 @@ validate request ownership before accepting a reply or reject, matching vanilla'
 
 ## Parent
 
-`GATE-002` question-tool full parity (`boards/todo/gate-question-tool-full-parity.md`), gap 2.
+`GATE-002` question-tool full parity (`boards/qa/gate-question-tool-full-parity.md`), gap 2.
 
 ## Problem
 

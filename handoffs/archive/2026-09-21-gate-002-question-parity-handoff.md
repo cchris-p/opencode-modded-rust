@@ -1,9 +1,9 @@
 ---
 id: "H-005"
 title: "GATE-002 question tool full parity - Handoff"
-status: "in_progress"
+status: "closed"
 created: "2026-09-21"
-updated: "2026-09-22"
+updated: "2026-09-23"
 owner: ""
 target: "development"
 blocked_reason: ""
@@ -23,7 +23,7 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
 
 ## Binding Artifacts
 
-- `GATE-002` (`boards/todo/gate-question-tool-full-parity.md`) is the umbrella gate and binding acceptance
+- `GATE-002` (`boards/qa/gate-question-tool-full-parity.md`) is the umbrella gate and binding acceptance
   spec.
 - `FEAT-038` (`boards/qa/question-schema-and-tool-contract-parity.md`) is merged and in QA; use it as the
   completed baseline, not as evidence that the whole gate passed.
@@ -31,18 +31,19 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
   `f54ce313b99a6661d7758ad042f7a6e05c8e0972` unless re-pinned by a later gate. `GATE-002` now uses this
   pin (refreshed 2026-09-21 closeout), so side-by-side comparisons can proceed directly.
 
-## Current State
+## Current State (2026-09-23, archived)
 
-- `GATE-002` remains in `todo` and is open by design.
-- `FEAT-038` is merged into `development` at merge commit `405a6e1ad6651e77897b08da02d3ed886a8be77f`, then
-  kept in `qa` for local verification.
-- `FEAT-039` is in `qa` with PR #67 open for local verification; `FEAT-040`, `FEAT-041`, `FEAT-043`, and `FEAT-044` remain in `todo`.
-- `CLI-009` remains in `hold`, now blocked behind `CLI-001`/`CLI-006` in addition to `CLI-002` (all three
-  were gated on 2026-09-22). The reactivated `CLI-001`/`CLI-006` are owned by `H-004`
-  (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`), which consolidated the former `H-003`
-  (`handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`). This handoff does not restate that CLI
-  scope; track `CLI-001`/`CLI-006` progress in `H-004` and keep `CLI-009` blocked until they land.
-- Canonical CLI/lifecycle behavior now lives in `wiki/cli-surface.md`.
+- `FEAT-038` is merged into `development` at merge commit `405a6e1ad6651e77897b08da02d3ed886a8be77f`
+  (PR #65) and in `qa`.
+- `FEAT-039` is merged into `development` at merge commit `cf47328d6e384a4f079d1225f79d7d2011bb20c5`
+  (PR #67) and in `qa`.
+- `FEAT-040` (`53b6e65`), `FEAT-041` (`9c24c7b`), and `FEAT-043`/`FEAT-044` (`b061656`) were committed
+  directly to `development` and are in `qa`.
+- `GATE-002` moved from `todo` to `qa` on 2026-09-23; it is awaiting the maintainer's local TUI smoke
+  and `FEAT-039` post-merge QA confirmation before `done`.
+- `CLI-009` remains in `hold`, deferred behind `CLI-002` (both listed on the `GATE-002` card). Their
+  prerequisite `CLI-001`/`CLI-006` are now `done`, but this handoff never owned the CLI routing work.
+- This handoff is archived; the remaining closeout state lives on `GATE-002`.
 
 ## Included Board Items
 
@@ -237,3 +238,12 @@ State after these commits:
   smoke and `FEAT-039` post-merge QA pass.
 - `CLI-009`/`CLI-002` remain on `hold`; this handoff is now scoped to TUI/server question parity.
 - Handoff is **not** archive-ready yet; archive only after `GATE-002` closes.
+
+### 2026-09-23 - Handoff closeout and archive
+
+- Reconciled this handoff to reality: the TUI/server question-parity children (`FEAT-038` through
+  `FEAT-044`) are all merged into `development` and sitting in `qa`.
+- Moved `GATE-002` from `todo` to `qa`; it now owns the remaining verification closeout (maintainer
+  local TUI smoke plus `FEAT-039` post-merge QA).
+- `CLI-009` and `CLI-002` stay on `hold` as deferred scope, documented on the `GATE-002` card.
+- Handoff closed and archived per maintainer direction; no further work is planned from it.
