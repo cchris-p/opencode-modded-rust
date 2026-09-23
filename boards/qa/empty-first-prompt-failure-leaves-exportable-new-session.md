@@ -64,3 +64,9 @@ Likely trigger after the recent provider/model listing PR: `client.create_sessio
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/77
+
+## Merge Closeout - 2026-09-23
+
+- PR #77 merged into `development` with merge commit `2d18d32be1d242629bd810e12c459ddba12cd783`.
+- Remote branch `bug/BUG-033-empty-first-prompt-session-cleanup` deleted.
+- Item remains in `qa` pending a QA report or explicit completion direction.
