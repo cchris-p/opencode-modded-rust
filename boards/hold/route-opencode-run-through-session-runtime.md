@@ -21,7 +21,7 @@ updated: "2026-09-22"
   consolidation).
 
 Do not start until `CLI-001` and `CLI-006` land. Ask/approval parity for the CLI path was split out to
-`CLI-011`.
+`CLI-009`.
 
 ## Summary
 
@@ -31,7 +31,7 @@ path (`opencode task new`/`send`/`view` through `/session/{id}/prompt`). Once th
 should route through the same session runtime rather than maintaining a second CLI tool loop.
 
 This card owns that routing/consolidation decision and the resulting `opencode run` tool-loop behavior. It
-no longer owns the ask/approval question path; see `CLI-011`.
+no longer owns the ask/approval question path; see `CLI-009`.
 
 ## Why this exists
 
@@ -50,7 +50,7 @@ from it. With `CLI-001` providing the canonical CLI surface, a second CLI agent 
 
 - Full TUI feature parity in the CLI.
 - Provider/transport changes (tracked by `FEAT-010`).
-- Ask/approval question parity (split to `CLI-011`).
+- Ask/approval question parity is owned by `CLI-009` (CLI and direct-run question parity).
 
 ## Done when
 
@@ -67,7 +67,7 @@ from it. With `CLI-001` providing the canonical CLI surface, a second CLI agent 
 ## Related Items
 
 - `CLI-001` Copy Cline-style CLI task send conventions - prerequisite gate.
-- `CLI-011` CLI/AgentExecutor ask and approval parity - split-out sibling.
+- `CLI-009` CLI and direct-run question parity - owns the CLI ask/approval path.
 - `FEAT-011` Consolidate v1 and v2 session prompt loops.
 - `PHASE-002` (phase parent)
 - `BUG-003` Session stops completely after first prompt (uses `opencode run` in QA).
@@ -79,7 +79,7 @@ Split from the original `CLI-002` "CLI/AgentExecutor tool-loop parity" at user r
 
 - This card keeps the `opencode run` routing/consolidation decision and tool-loop behavior, now gated by
   `CLI-001`/`CLI-006`.
-- `CLI-011` owns ask/approval (question) parity on the CLI path and is blocked by `GATE-002`.
+- `CLI-009` owns ask/approval (question) parity on the CLI path and is blocked by `GATE-002`.
 
 ## History
 
@@ -100,7 +100,7 @@ Split from the original `CLI-002` "CLI/AgentExecutor tool-loop parity" at user r
 - Streamed tool-call argument deltas are accumulated before JSON parsing, avoiding partial-JSON tool
   arguments.
 - Ask-gated tools still return an explicit permission error on this direct executor path; they are no longer
-  silently absent from the request. That gap is now owned by `CLI-011`.
+  silently absent from the request. That gap is now owned by `CLI-009`.
 - Verification: `cargo test -p opencode-agent`; `cargo check -p opencode-agent -p opencode-cli`; `cargo build -p opencode-cli`.
 - Live smoke attempted with `./target/debug/opencode run "List the files in this workspace and summarize them"`
   and `./target/debug/opencode run "Say hello in one sentence."`; provider completion was blocked by
@@ -110,5 +110,5 @@ Split from the original `CLI-002` "CLI/AgentExecutor tool-loop parity" at user r
 
 - PR #36 merged into `development`: https://github.com/cchris-p/opencode-modded-rust/pull/36
 - Board item was initially left in `qa`, then moved to `hold` because full completion required an
-  ask/approval path that `GATE-002` now owns (via `CLI-011`). The merged loop is unverified in a real
+  ask/approval path that `GATE-002` now owns (via `CLI-009`). The merged loop is unverified in a real
   environment because the live smoke was blocked by provider auth.

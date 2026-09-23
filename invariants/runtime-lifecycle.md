@@ -1,5 +1,8 @@
 # Runtime Lifecycle Invariants
 
+Canonical current/target behavior for the CLI/TUI launch, detach, attach, and session lifecycle:
+`wiki/cli-surface.md`.
+
 - The runtime owns lifecycle state transitions.
 - The model may make bounded decisions inside the runtime, but it does not control the overall workflow.
 - Tasks move through explicit system-defined stages.

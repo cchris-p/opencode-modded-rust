@@ -20,6 +20,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `wiki/` explains the roadmap and architecture direction.
 - `docs/` explains the current implementation surface.
 - `boards/` track the work required to move implementation toward the invariants.
+- `wiki/cli-surface.md` is the canonical current/target behavior reference for the CLI task surface and TUI launch/detach/attach lifecycle.
 
 ## Current invariant set
 
@@ -32,6 +33,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `retrieval.md` defines retrieval expectations.
 - `coding-session-behavior.md` defines agentic coding-session request requirements (agent identity, system prompt, environment context, tool attachment).
 - `cli-task-targeting.md` defines CLI task target selection and queued cross-client send requirements.
+- `message-queuing.md` defines per-session prompt ordering, queue-aware status, abort/cancel, and durable ordering intent.
 - `coding-session-polling.md` defines low-context polling requirements for coding-session waits.
 - `verification.md` defines verification requirements.
 - `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.

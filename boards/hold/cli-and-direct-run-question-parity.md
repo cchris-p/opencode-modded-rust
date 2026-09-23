@@ -6,7 +6,7 @@ type: "feature"
 area: "CLI"
 spec: ""
 status: "hold"
-predecessors: "CLI-001, CLI-006, CLI-002"
+predecessors: "CLI-001, CLI-006, CLI-002, GATE-002"
 created: "2026-09-21"
 updated: "2026-09-22"
 ---
@@ -18,6 +18,12 @@ updated: "2026-09-22"
 Child of `GATE-002` (parity gap 5). When the Rust CLI/direct-run task surface exists, handle pending
 questions there without requiring the full TUI, reusing the shared prompt-state logic rather than
 duplicating divergent behavior.
+
+This card also absorbs the former `CLI-011` "CLI/AgentExecutor ask and approval parity" (split from
+`CLI-002` on 2026-09-22 and folded back here the same day): the CLI ask/approval path is the
+direct-run question path, so it needs one owner, not two. Because `CLI-002` routes `opencode run`
+through the canonical session runtime, ask handling is expected to reuse the shared session question
+logic rather than a separate `AgentExecutor` implementation.
 
 ## Parent
 
@@ -49,6 +55,8 @@ duplicating divergent behavior.
 
 - Once a CLI/direct-run surface exists, route pending questions through the same session question
   callback the TUI uses (no stdin).
+- Provide or reuse a real ask/approval path so `Ask`-gated tools on the CLI/run path are not silently
+  hard-denied or errored without a user surface (the former `CLI-011` scope).
 - Reuse shared prompt-state logic for single/multi/custom/reject where practical.
 - Match vanilla's direct-run question display/behavior at the frozen reference commit.
 
@@ -56,6 +64,8 @@ duplicating divergent behavior.
 
 - TUI prompt UX (`FEAT-041`).
 - Building the CLI tool loop itself (that is `CLI-002`).
+- An `AgentExecutor`-specific ask implementation: `CLI-002` routes `opencode run` through the canonical
+  session runtime, so this card reuses the shared question path instead.
 
 ## Acceptance criteria
 
@@ -75,4 +85,5 @@ duplicating divergent behavior.
 - `CLI-001` Copy Cline-style CLI task send conventions - prerequisite gate.
 - `CLI-006` Add CLI status visibility for tasks and background sessions - prerequisite gate.
 - `CLI-002` Route `opencode run` through the canonical session runtime - predecessor; on hold.
+- Former `CLI-011` "CLI/AgentExecutor ask and approval parity" - folded into this card on 2026-09-22.
 - `FEAT-041` TUI question prompt UX parity - shared prompt logic.

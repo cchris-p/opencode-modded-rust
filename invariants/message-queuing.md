@@ -1,8 +1,8 @@
 # Message Queuing Invariants
 
-Status: **DRAFT for approval** (2026-09-21). The "Target Invariants" section becomes binding
-only when approved. The "Current Implementation Snapshot" section is non-binding context and
-will be removed or moved to `docs/` once the target behavior is implemented.
+Status: **Approved / binding** (2026-09-21, via `GATE-001`). The invariants below are binding. The
+pre-implementation snapshot, proposed design, and decision list are retained as historical rationale;
+the current implemented behavior is summarized here and in `wiki/cli-surface.md`.
 
 This document owns the rules for ordering and serializing prompt/message delivery to a
 session. It is the authoritative queuing contract; `invariants/cli-task-targeting.md` keeps
@@ -26,17 +26,17 @@ Terminology:
 
 ---
 
-## Current Implementation Snapshot (non-binding)
+## Current Behavior (implemented by `GATE-001`)
 
 > **Implementation status (2026-09-21, `GATE-001` / PR `feature/GATE-001-session-prompt-queue`):**
-> The target invariants below are now implemented on the server and in the TUI: a shared per-session
-> FIFO queue with a single drain loop, accept-time materialization with single ownership, a `Queued`
-> run status, abort-active plus explicit queued cancel, `prompt_async` aliased to the queued path, and
-> the vanilla `QUEUED` TUI badge. The baseline below is retained as the pre-implementation snapshot
-> that motivated the change. The one deliberate partial is the CLI run-footer "Manage queued prompts"
-> surface, which is conditional on a CLI interactive run surface existing.
+> The invariants below are implemented on the server and in the TUI: a shared per-session FIFO queue
+> with a single drain loop, accept-time materialization with single ownership, a `Queued` run status,
+> abort-active plus explicit queued cancel, `prompt_async` aliased to the queued path, and the vanilla
+> `QUEUED` TUI badge. Beyond the invariants, the CLI task client rules stay target until `CLI-001`/
+> `CLI-006` land. The one deliberate partial is the CLI run-footer "Manage queued prompts" surface,
+> which is conditional on a CLI interactive run surface existing.
 
-### Pre-implementation baseline
+### Historical Pre-implementation Baseline
 
 ### Endpoints
 
@@ -119,7 +119,11 @@ because they are not represented anywhere.
 
 ---
 
-## Target Invariants (binding once approved)
+## Binding Invariants
+
+Approved 2026-09-21 via `GATE-001`. Implementation status: 1-9 and 11 are implemented; 10 is partially
+implemented (in-memory queue plus transcript persistence, no resume); 12 remains target for the CLI
+client pending `CLI-001`/`CLI-006`; 13 holds (no lifecycle changes).
 
 1. **One active run per session.** A session executes at most one agentic prompt at a time.
    Concurrency across different sessions is allowed and independent.
@@ -175,9 +179,9 @@ because they are not represented anywhere.
 
 ---
 
-## Proposed Design Shape (for implementation planning)
+## Implemented Design Shape (`GATE-001`)
 
-This shape satisfies the invariants above; exact types are implementation detail.
+This is the shape implemented by `GATE-001`; exact types are implementation detail.
 
 - **Per-session queue state.** Replace the last-writer-wins `ACTIVE_PROMPTS` slot with:
   - an active-runner handle (single slot, guarded), and
@@ -199,7 +203,9 @@ This shape satisfies the invariants above; exact types are implementation detail
 - **Bound.** A configurable per-session maximum (proposed default 32) rejects new sends with
   a clear "queue full" error once reached.
 
-## Client Behavior (proposed)
+## Client Behavior (target)
+
+The TUI behavior below is implemented; the CLI/API items remain target until `CLI-001`/`CLI-006`.
 
 - **TUI.** May keep its optimistic user message; a queued message renders as pending and is
   reconciled when `session.updated`/status shows it active or complete. The TUI may also
@@ -213,24 +219,17 @@ This shape satisfies the invariants above; exact types are implementation detail
 
 ---
 
-## Open Decisions Needed For Approval
+## Decisions (resolved by `GATE-001`)
 
-1. **Endpoint shape:** Should `/prompt` always route through the queue (returning `started`
-   when it runs immediately), or should `/prompt` stay synchronous-ish and `prompt_async`
-   become the queued endpoint? Proposed: `/prompt` always queue-aware; deprecate the stub.
-2. **`prompt_async` fate:** remove, alias, or implement as the explicit queued send.
-3. **Abort semantics:** does abort (a) cancel active only, (b) cancel active and clear queue,
-   or (c) cancel active only with a separate clear-queue endpoint? Proposed: (c).
-4. **Cancelled-turn representation:** append a cancelled user/assistant turn, mark metadata,
-   or omit from transcript? Proposed: keep the user message and mark it cancelled.
-5. **Restart policy:** resume queued-but-unstarted prompts, or mark them cancelled on
-   startup? Proposed: mark cancelled on startup for V1 (no silent loss, no surprise spend).
-6. **Queue bound and overflow:** proposed per-session default 32 with explicit rejection.
-7. **TUI queued-message rendering:** pending badge only, or allow remove/reorder? Proposed:
-   pending badge plus cancel, no reorder in V1.
-8. **`--stream` while queued:** block until start, or return queued and require a follow-up
-   view/stream? Proposed: return queued immediately; `--stream` follows once active.
-9. **Status vocabulary:** confirm `idle | busy | queued` names and whether `retry` stays.
+1. **Endpoint shape:** `/prompt` is queue-aware and returns `started` or `queued`; the stub is deprecated.
+2. **`prompt_async` fate:** aliased to the queue-aware path; it never reports `queued` without enqueuing execution.
+3. **Abort semantics:** abort cancels the active run only; a separate `POST /session/{id}/prompt/cancel` removes one waiting prompt.
+4. **Cancelled-turn representation:** an explicit cancel removes the queued prompt and its materialized user message; no cancelled turn is retained.
+5. **Restart policy:** the queue is in-memory; accepted-but-unstarted messages persist in the transcript and are never auto-executed or silently deleted. No resume in V1.
+6. **Queue bound and overflow:** per-session default 32 with an explicit `queue is full` rejection.
+7. **TUI queued-message rendering:** pending `QUEUED` badge plus explicit cancel; no reorder in V1.
+8. **`--stream` while queued:** return queued immediately (session, message id, position); `--stream` follows once active. Target for `CLI-001`.
+9. **Status vocabulary:** `idle | busy | queued` with position/depth; `retry` retained.
 
 ---
 
@@ -255,4 +254,4 @@ This shape satisfies the invariants above; exact types are implementation detail
 - **Existing invariants:** `invariants/cli-task-targeting.md` (targeting rules; its enqueue
   rule references this doc), `invariants/coding-session-behavior.md` (canonical session path),
   `invariants/runtime-lifecycle.md` (no lifecycle changes).
-- **Index:** add this file to `invariants/README.md` when approved.
+- **Index:** listed in `invariants/README.md`.

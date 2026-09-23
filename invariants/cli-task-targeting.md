@@ -2,6 +2,10 @@
 
 Canonical behavior reference: `wiki/cli-surface.md`.
 
+These are target invariants for the final system. The current CLI surface only implements
+`opencode task target list|select|show|clear` (`CLI-007`); `task new`/`send`/`view` and CLI status are
+target (`CLI-001`/`CLI-006`).
+
 - CLI task commands must send work only to an explicit target: a server/session provided on the command line or a user-selected default task target.
 - Selecting a default task target is a user-directed action that may be changed or cleared at any time.
 - The selected default task target is scoped to CLI task sends and views; it must not cause normal `ort` TUI launches to auto-attach to or reuse a server.

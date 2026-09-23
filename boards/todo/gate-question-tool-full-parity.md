@@ -42,11 +42,11 @@ and explicitly resolved in this card.
 
 ## Blocked Items
 
-- `CLI-011` CLI/AgentExecutor ask and approval parity (`boards/hold/cli-agentexecutor-ask-approval-parity.md`) -
+- `CLI-009` CLI and direct-run question parity (`boards/hold/cli-and-direct-run-question-parity.md`) -
   on hold until this gate passes; its CLI ask/approval path must use the parity question UX.
 - `CLI-002` Route `opencode run` through the canonical session runtime
   (`boards/hold/route-opencode-run-through-session-runtime.md`) - gated by `CLI-001`/`CLI-006`; predecessor for
-  `CLI-011`.
+  `CLI-009`.
 
 
 ## Vanilla Reference Evidence
@@ -175,10 +175,10 @@ implemented or explicitly resolved as a documented deviation in this card.
 
 ## Related Items
 
-- `CLI-011` CLI/AgentExecutor ask and approval parity - blocked by this gate; in `hold`
-  (`boards/hold/cli-agentexecutor-ask-approval-parity.md`).
+- `CLI-009` CLI and direct-run question parity - blocked by this gate; in `hold`
+  (`boards/hold/cli-and-direct-run-question-parity.md`).
 - `CLI-002` Route `opencode run` through the canonical session runtime - gated by `CLI-001`/`CLI-006` and the
-  predecessor for `CLI-011` (`boards/hold/route-opencode-run-through-session-runtime.md`).
+  predecessor for `CLI-009` (`boards/hold/route-opencode-run-through-session-runtime.md`).
 - `START-018` Complete TUI approval and question handling - completed first live integration path.
 - `START-008` Full parity deferred - product stance; this gate is the deliberate exception for the
   question feature.
@@ -208,4 +208,4 @@ implemented or explicitly resolved as a documented deviation in this card.
 - Every parity gap listed under "Parity Gaps To Split Into Child Items" is either implemented or
   explicitly resolved as a documented deviation in this card.
 - Any preferred UX deviations are documented as deliberate product choices, not accidental parity gaps.
-- `CLI-011` and any other blocked question-tool story is unblocked and may proceed from `development`.
+- `CLI-009` and any other blocked question-tool story is unblocked and may proceed from `development`.

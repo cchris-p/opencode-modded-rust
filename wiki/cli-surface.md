@@ -58,8 +58,7 @@ is driving toward.
 | `CLI-001` | `task new`/`send`/`view` on the canonical server/session prompt path; returns target session plus `started`/`queued`; `--stream` follows once active. Prerequisite gate for the rest of the series. |
 | `CLI-006` | CLI status visibility over `GET /session/status` (`idle|busy|queued|retry|error`), plain text plus `--json`. Co-gate. |
 | `CLI-002` | Route `opencode run` through the canonical session runtime; retire the parallel `AgentExecutor` loop. |
-| `CLI-011` | CLI ask/approval parity on that loop; blocked by `GATE-002`. |
-| `CLI-009` | Direct-run question parity; blocked by `CLI-001`/`CLI-006` and `CLI-002`. |
+| `CLI-009` | CLI/direct-run question and ask/approval parity; blocked by `CLI-001`/`CLI-006`, `CLI-002`, and `GATE-002`. |
 | `CLI-010` | Subagent/child-session surface on the CLI; blocked by `GATE-004`. |
 | `CLI-005` | Human decision on same-workspace attach/reuse; must not reintroduce implicit server discovery. |
 | `CLI-004` | Explicit `/detach` command (done). |
@@ -81,9 +80,8 @@ must be able to leave and revisit a running session).
 | CLI-006 | todo | CLI status visibility (co-gate) |
 | CLI-007 | qa | Default task target selection (prerequisite input) |
 | CLI-008 | archive | Queue CLI sends (delivered by `GATE-001`) |
-| CLI-009 | hold | Direct-run question parity (gated) |
+| CLI-009 | hold | Direct-run question and ask/approval parity (gated) |
 | CLI-010 | hold | CLI subagent surface (gated) |
-| CLI-011 | hold | CLI ask/approval parity (gated by `GATE-002`) |
 
 ## Lineage (history only)
 
