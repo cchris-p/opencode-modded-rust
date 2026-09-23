@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -86,7 +86,10 @@ Reference `f54ce313b99a`:
 
 ### 2026-09-23 - PR 1 of `H-009`
 
-- Branch: `feature/FEAT-045-subagent-child-sessions` (PR link added when opened).
+- Branch: `feature/FEAT-045-subagent-child-sessions`; PR:
+  https://github.com/cchris-p/opencode-modded-rust/pull/91 (targets `development`).
+- Card moved `todo -> doing -> qa`; awaiting the maintainer's local TUI smoke on the checked-out
+  branch. Do not merge until explicitly directed.
 - `SessionPrompt` now accepts optional server-owned `create_subsession`/`prompt_subsession`
   callbacks (`crates/opencode-session/src/prompt.rs`); `execute_tool_calls` only installs the
   in-memory `task_*` fallback when neither is provided, so the server's real path is no longer
