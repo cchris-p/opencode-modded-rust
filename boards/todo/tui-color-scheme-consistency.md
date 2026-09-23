@@ -26,6 +26,21 @@ the selected preset. Establish one source of truth for color and route the strag
 token set or ignore it, so the same semantic concept is drawn with different colors depending on the
 component.
 
+## Default color scheme
+
+The default look must match the palette used by popup menus and dialogs. The question prompt
+(`crates/opencode-tui/src/components/question.rs:501`) and the other dialogs paint their whole panel
+with a single `theme.background_panel` and draw every line on that one uniform background; no row is
+lighter or darker than its neighbors.
+
+The main surfaces drift from that: message rows use per-role tints (`user_message_bg` /
+`thinking_message_bg` in `crates/opencode-tui/src/components/message_palette.rs:5-12`, including a
+`background_menu`/`background_panel` blend) and other regions pick different background tokens, so
+adjacent lines visibly change lightness. As a default, the conversation surface should read as one
+uniform `background_panel`-style field exactly like an open menu, with no alternating or blended
+line shading. Intentional line-level distinction should be carried by borders, glyphs, or foreground
+color, not by varying the background lightness.
+
 ## Current behavior and evidence
 
 - Dead styling helper with hardcoded colors: `Styles` (`crates/opencode-tui/src/theme/mod.rs:691-717`)
@@ -64,6 +79,9 @@ component.
 - Choose the syntect theme from the active app theme (light/dark-aware) or replace syntect foreground
   colors with app tokens so code blocks match the preset.
 - Replace remaining `Color::White` / named-color fallbacks in markdown and dialogs with theme tokens.
+- Make the default render uniformly menu-like: message bodies, thinking, and tool rows share the
+  dialog `background_panel` treatment with no lighter/darker row tinting. Non-default presets may
+  still opt into per-role tints, but the default must not vary background lightness line to line.
 - Add a regression guard (test or lint-style assertion) that flags new hardcoded colors outside the
   theme module, if practical.
 
@@ -80,6 +98,8 @@ component.
   markdown fallbacks consistently with the rest of the UI.
 - The dead `Styles` struct is gone or delegates to `Theme`; there is a single color source of truth.
 - No component outside `theme/` hardcodes a UI color except for documented, intentional fallbacks.
+- With the default theme, the conversation surface is background-uniform the way menu/dialog popups
+  are: no adjacent lines differ in background lightness.
 - Light mode is legible on every surface listed above.
 - `cargo check -p opencode-tui` and `cargo test -p opencode-tui` pass, with at least one test asserting
   a component derives its color from the provided `Theme`.
@@ -88,6 +108,9 @@ component.
 
 - `ort-build`, then `ort`; cycle through `opencode`, a light preset, and a high-contrast preset, and
   confirm the spinner, toasts, todos, agent picker, and code blocks all recolor.
+- With the default theme, open a question prompt and compare it against the surrounding conversation:
+  the prompt body and the chat surface should sit on the same flat background, with no lighter/darker
+  rows in the transcript.
 - Force the spinner active and trigger an info/success/warning/error toast; confirm each matches theme
   tokens.
 - Render a fenced code block in several languages; confirm syntax colors track the active theme rather
