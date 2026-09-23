@@ -41,7 +41,7 @@ The first implementation should not automatically pull another session's full tr
 - Reuse the existing session persistence/store and transcript-building paths rather than inventing a second history store.
 - Keep inspection read-only: reading another session must not mutate it, resume it, or change its lifecycle state.
 - Make the amount of data returned explicit and bounded so a large transcript does not silently blow up the reading session's context; prefer pagination, ranges, or summaries over dumping everything.
-- Respect workspace scoping from `FEAT-022`/`FEAT-023` by default: a session should only see sessions that belong to its workspace unless an explicit cross-workspace override is provided (the override is defined by `FEAT-057`).
+- Respect workspace scoping from `FEAT-022`/`FEAT-023` by default: a session should only see sessions that belong to its workspace unless an explicit cross-workspace override is provided (the override is defined by `FEAT-062`).
 - Make the target session identity visible in the result so the reading session can trace and cite what it read.
 
 ## Non-goals
@@ -89,11 +89,11 @@ The first implementation should not automatically pull another session's full tr
 ## Remaining / deferred
 
 - Explicit cross-workspace override and CLI `session list`/`show`/resume
-  scoping: `FEAT-057` (hold).
+  scoping: `FEAT-062` (hold).
 - CLI direct-run (`opencode run`) wiring of the inspect callback; the tool is
   registered there but reports "not available" until wired.
 - Cursor-style pagination (the offset is positional today).
-- Legacy/unknown workspace handling: `FEAT-057`.
+- Legacy/unknown workspace handling: `FEAT-062`.
 
 ## Progress
 
@@ -114,7 +114,7 @@ The first implementation should not automatically pull another session's full tr
   returns a bounded, `offset`-paginated transcript (role, time, per-part
   previews) and never mutates or resumes the target. Workspace scoping is
   fail-closed: only sessions whose `workspace_identity` matches the caller's
-  are visible; the explicit cross-workspace override remains with `FEAT-057`.
+  are visible; the explicit cross-workspace override remains with `FEAT-062`.
 - The TUI-side diagnostics added in `FEAT-061` complement this.
 
 ## Related Items
@@ -127,7 +127,7 @@ The first implementation should not automatically pull another session's full tr
 - `FEAT-007` Add advanced coding-session polling
 - `FEAT-022` Persist session workspace identity
 - `FEAT-023` Filter session list by workspace (done; list filtering)
-- `FEAT-057` Restrict cross-workspace session load/view and CLI session surfaces (hold; defines the explicit cross-workspace override this card depends on)
+- `FEAT-062` Restrict cross-workspace session load/view and CLI session surfaces (hold; defines the explicit cross-workspace override this card depends on)
 - `SKILLS-004` Add session-summary cascade skill by session name
 
 ## Notes

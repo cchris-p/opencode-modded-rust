@@ -23,7 +23,7 @@ Without this boundary, unrelated work from other directories leaks into the curr
 
 ## Status Note
 
-This card was originally scoped to cover session **list** filtering and session **load/view** restrictions together. Investigation on 2026-09-21 (`docs/transcripts/feat-023-confirm-done-and-delete-duplicate.md`) confirmed the list-filtering half was implemented and verified as part of `FEAT-022` / `REFACTOR-001`, while the load/view + CLI half was not. On 2026-09-23 the card was narrowed to the completed list-filtering scope, marked done, and the remaining load/view + CLI work was split into `FEAT-057` (hold).
+This card was originally scoped to cover session **list** filtering and session **load/view** restrictions together. Investigation on 2026-09-21 (`docs/transcripts/feat-023-confirm-done-and-delete-duplicate.md`) confirmed the list-filtering half was implemented and verified as part of `FEAT-022` / `REFACTOR-001`, while the load/view + CLI half was not. On 2026-09-23 the card was narrowed to the completed list-filtering scope, marked done, and the remaining load/view + CLI work was split into `FEAT-062` (hold).
 
 ## Scope (completed)
 
@@ -33,7 +33,7 @@ This card was originally scoped to cover session **list** filtering and session 
 
 ## Non-goals
 
-- Direct load/view-by-ID restrictions and CLI session scoping; those are split into `FEAT-057`.
+- Direct load/view-by-ID restrictions and CLI session scoping; those are split into `FEAT-062`.
 - Reintroducing automatic attach/reuse of any previously started server.
 - Hiding sessions from the global persistence store permanently.
 
@@ -62,16 +62,16 @@ This card was originally scoped to cover session **list** filtering and session 
 ## Related Items
 
 - `FEAT-022` Persist session workspace identity (done)
-- `FEAT-057` Restrict cross-workspace session load/view and CLI session surfaces (hold; split from this card)
+- `FEAT-062` Restrict cross-workspace session load/view and CLI session surfaces (hold; split from this card)
 - `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `BUG-011` ort targets the rust repo workspace and inherits the vanilla openrouter default
 
 ## Merge Closeout
 
 - List-filtering implementation shipped via PR #42/#43 and on `development`; the `FEAT-022` QA and `REFACTOR-001` QA reports record the verification.
-- Card moved from `todo` to `done` on 2026-09-23 after confirming the user-visible behavior (only workspace-local sessions listed) and splitting the unimplemented load/view scope to `FEAT-057`.
+- Card moved from `todo` to `done` on 2026-09-23 after confirming the user-visible behavior (only workspace-local sessions listed) and splitting the unimplemented load/view scope to `FEAT-062`.
 
 ## Notes
 
 - Acceptance criterion from the user: if `project_dir_a` is the primary workspace because `ort` was run in `project_dir_a`, only sessions for that project should be viewable/loadable there.
-- The "viewable/loadable" wording spans both this card and `FEAT-057`; only the list/view-list half is delivered here.
+- The "viewable/loadable" wording spans both this card and `FEAT-062`; only the list/view-list half is delivered here.

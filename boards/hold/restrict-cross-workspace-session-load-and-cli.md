@@ -1,5 +1,5 @@
 ---
-id: "FEAT-057"
+id: "FEAT-062"
 title: "Restrict cross-workspace session load/view and CLI session surfaces"
 priority: "P1"
 type: "feature"
