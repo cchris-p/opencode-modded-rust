@@ -34,7 +34,7 @@ This item starts with coverage so the later refactor can safely simplify where w
 
 - Reworking global or cross-workspace browsing behavior.
 - Changing persistence semantics for legacy sessions.
-- Completing all remaining `FEAT-023` session load/view restrictions.
+- Completing the remaining session load/view restrictions, now tracked by `FEAT-057` (split from `FEAT-023`).
 - Large DTO consolidation unless it is necessary for the focused refactor.
 
 ## Done when
@@ -74,8 +74,10 @@ This item starts with coverage so the later refactor can safely simplify where w
 ## Related Items
 
 - `FEAT-022` Persist session workspace identity
-- `FEAT-023` Filter session list and load by workspace
+- `FEAT-023` Filter session list by workspace (done; this item covers and verifies its list-filtering scope)
+- `FEAT-057` Restrict cross-workspace session load/view and CLI session surfaces (hold; remaining split from `FEAT-023`)
 
 ## Notes
 
 - Created from the divergence discovered while fixing `FEAT-022`: the first implementation persisted workspace identity, but the TUI still listed global transcripts because the UI list path did not pass a workspace filter.
+- 2026-09-23: `FEAT-023` was split; the list-filtering scope this item covers is now marked done, and the remaining load/view + CLI restrictions were moved to `FEAT-057` (hold).

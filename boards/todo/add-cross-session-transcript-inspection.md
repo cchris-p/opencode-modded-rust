@@ -41,7 +41,7 @@ The first implementation should not automatically pull another session's full tr
 - Reuse the existing session persistence/store and transcript-building paths rather than inventing a second history store.
 - Keep inspection read-only: reading another session must not mutate it, resume it, or change its lifecycle state.
 - Make the amount of data returned explicit and bounded so a large transcript does not silently blow up the reading session's context; prefer pagination, ranges, or summaries over dumping everything.
-- Respect workspace scoping from `FEAT-022`/`FEAT-023` by default: a session should only see sessions that belong to its workspace unless an explicit cross-workspace override is provided.
+- Respect workspace scoping from `FEAT-022`/`FEAT-023` by default: a session should only see sessions that belong to its workspace unless an explicit cross-workspace override is provided (the override is defined by `FEAT-057`).
 - Make the target session identity visible in the result so the reading session can trace and cite what it read.
 
 ## Non-goals
@@ -91,7 +91,8 @@ The first implementation should not automatically pull another session's full tr
 - `FEAT-004` Add in-session send-to-fork commands
 - `FEAT-007` Add advanced coding-session polling
 - `FEAT-022` Persist session workspace identity
-- `FEAT-023` Filter session list and load by workspace
+- `FEAT-023` Filter session list by workspace (done; list filtering)
+- `FEAT-057` Restrict cross-workspace session load/view and CLI session surfaces (hold; defines the explicit cross-workspace override this card depends on)
 - `SKILLS-004` Add session-summary cascade skill by session name
 
 ## Notes
