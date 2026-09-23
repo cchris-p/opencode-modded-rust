@@ -48,6 +48,43 @@ impl DialogTextInput {
         self.cursor = self.cursor() + c.len_utf8();
     }
 
+    /// Insert `text` at the caret, flattening line breaks and tabs into single
+    /// spaces so a pasted multi-line blob becomes a valid single-line value.
+    pub fn insert_str(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        let mut normalized = String::with_capacity(text.len());
+        let mut pending_cr = false;
+        for c in text.chars() {
+            match c {
+                '\r' => {
+                    normalized.push(' ');
+                    pending_cr = true;
+                }
+                '\n' => {
+                    if !pending_cr {
+                        normalized.push(' ');
+                    }
+                    pending_cr = false;
+                }
+                '\t' => {
+                    normalized.push(' ');
+                    pending_cr = false;
+                }
+                _ => {
+                    normalized.push(c);
+                    pending_cr = false;
+                }
+            }
+        }
+
+        let cursor = self.cursor();
+        self.value.insert_str(cursor, &normalized);
+        self.cursor = cursor + normalized.len();
+    }
+
     pub fn backspace(&mut self) {
         if let Some(prev) = prev_char_boundary(&self.value, self.cursor()) {
             self.value.replace_range(prev..self.cursor(), "");
@@ -143,6 +180,25 @@ mod tests {
         assert_eq!(input.split_at_cursor(), ("alpha ", "beta-gamma"));
         input.move_word_left();
         assert_eq!(input.split_at_cursor(), ("", "alpha beta-gamma"));
+    }
+
+    #[test]
+    fn insert_str_flattens_newlines_and_tabs() {
+        let mut input = DialogTextInput::new();
+        input.insert_str("line one\r\nline two\nline three\ttail");
+        assert_eq!(input.value(), "line one line two line three tail");
+        assert_eq!(input.cursor(), input.value().len());
+    }
+
+    #[test]
+    fn insert_str_honors_caret_and_multibyte() {
+        let mut input = DialogTextInput::new();
+        input.set("你a好".to_string());
+        input.move_home();
+        input.move_right();
+        input.insert_str("X\r\nY");
+        assert_eq!(input.value(), "你X Ya好");
+        assert_eq!(input.cursor(), "你X Y".len());
     }
 
     #[test]
