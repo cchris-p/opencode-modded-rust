@@ -128,9 +128,27 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new() -> Self {
-        let ui_kv = UiKv::load();
+        Self::new_with_config(&opencode_config::Config::default())
+    }
+
+    /// FEAT-053: build the context, seeding display toggles from config.
+    ///
+    /// Precedence for every display flag is persisted `kv.json` override >
+    /// config startup default > built-in default, so an explicit in-session
+    /// toggle is never silently reverted on restart.
+    pub fn new_with_config(config: &opencode_config::Config) -> Self {
+        Self::from_ui_kv(UiKv::load(), config.tui.as_ref())
+    }
+
+    fn from_ui_kv(ui_kv: UiKv, tui: Option<&opencode_config::TuiConfig>) -> Self {
         let default_theme_name = format!("opencode@{}", detect_terminal_theme_mode());
         let default_theme = Theme::by_name(&default_theme_name).unwrap_or_else(Theme::dark);
+        let message_density = seed_string(
+            &ui_kv,
+            "message_density",
+            tui.and_then(|t| t.message_density.as_deref()),
+            "compact",
+        );
         Self {
             theme: RwLock::new(default_theme),
             theme_name: RwLock::new(default_theme_name),
@@ -147,20 +165,53 @@ impl AppContext {
             current_variant: RwLock::new(None),
             directory: RwLock::new(String::new()),
             show_sidebar: RwLock::new(false),
-            show_header: RwLock::new(ui_kv.get_bool("header_visible", true)),
-            show_scrollbar: RwLock::new(ui_kv.get_bool("scrollbar_visible", false)),
-            tips_hidden: RwLock::new(ui_kv.get_bool("tips_hidden", DEFAULT_TIPS_HIDDEN)),
+            show_header: RwLock::new(seed_bool(
+                &ui_kv,
+                "header_visible",
+                tui.and_then(|t| t.header),
+                true,
+            )),
+            show_scrollbar: RwLock::new(seed_bool(
+                &ui_kv,
+                "scrollbar_visible",
+                tui.and_then(|t| t.scrollbar),
+                false,
+            )),
+            tips_hidden: RwLock::new(seed_bool(
+                &ui_kv,
+                "tips_hidden",
+                tui.and_then(|t| t.tips_hidden),
+                DEFAULT_TIPS_HIDDEN,
+            )),
             sidebar_mode: RwLock::new(SidebarMode::Auto),
             animations_enabled: RwLock::new(true),
             pending_permissions: RwLock::new(0),
-            show_timestamps: RwLock::new(ui_kv.get_timestamps()),
-            show_thinking: RwLock::new(ui_kv.get_bool("thinking_visibility", true)),
-            show_tool_calls: RwLock::new(ui_kv.get_bool("tool_calls_visibility", true)),
-            show_tool_details: RwLock::new(ui_kv.get_bool("tool_details_visibility", true)),
-            message_density: RwLock::new(MessageDensity::from_str_lossy(
-                &ui_kv.get_string("message_density", "compact"),
+            show_timestamps: RwLock::new(seed_timestamps(&ui_kv, tui.and_then(|t| t.timestamps))),
+            show_thinking: RwLock::new(seed_bool(
+                &ui_kv,
+                "thinking_visibility",
+                tui.and_then(|t| t.thinking),
+                true,
             )),
-            semantic_highlight: RwLock::new(ui_kv.get_bool("semantic_highlight", true)),
+            show_tool_calls: RwLock::new(seed_bool(
+                &ui_kv,
+                "tool_calls_visibility",
+                tui.and_then(|t| t.tool_calls),
+                true,
+            )),
+            show_tool_details: RwLock::new(seed_bool(
+                &ui_kv,
+                "tool_details_visibility",
+                tui.and_then(|t| t.tool_details),
+                true,
+            )),
+            message_density: RwLock::new(MessageDensity::from_str_lossy(&message_density)),
+            semantic_highlight: RwLock::new(seed_bool(
+                &ui_kv,
+                "semantic_highlight",
+                tui.and_then(|t| t.semantic_highlight),
+                true,
+            )),
             has_connected_provider: RwLock::new(false),
             experimental_background_subagents: RwLock::new(false),
             ui_kv: RwLock::new(ui_kv),
@@ -382,6 +433,22 @@ fn split_theme_variant(name: &str) -> Option<(&str, &str)> {
     Some((base, variant))
 }
 
+/// FEAT-053 precedence: persisted `kv.json` override > config startup default >
+/// built-in default.
+fn seed_bool(kv: &UiKv, key: &str, config_value: Option<bool>, builtin: bool) -> bool {
+    kv.get_bool_opt(key).or(config_value).unwrap_or(builtin)
+}
+
+fn seed_string(kv: &UiKv, key: &str, config_value: Option<&str>, builtin: &str) -> String {
+    kv.get_string_opt(key)
+        .or_else(|| config_value.map(|value| value.to_string()))
+        .unwrap_or_else(|| builtin.to_string())
+}
+
+fn seed_timestamps(kv: &UiKv, config_value: Option<bool>) -> bool {
+    kv.get_timestamps_opt().or(config_value).unwrap_or(false)
+}
+
 #[derive(Default)]
 struct UiKv {
     path: Option<PathBuf>,
@@ -405,18 +472,19 @@ impl UiKv {
         }
     }
 
-    fn get_bool(&self, key: &str, default: bool) -> bool {
+    fn get_bool_opt(&self, key: &str) -> Option<bool> {
         match self.values.get(key) {
-            Some(Value::Bool(flag)) => *flag,
-            _ => default,
+            Some(Value::Bool(flag)) => Some(*flag),
+            _ => None,
         }
     }
 
-    fn get_timestamps(&self) -> bool {
+    fn get_timestamps_opt(&self) -> Option<bool> {
         match self.values.get("timestamps") {
-            Some(Value::String(value)) if value.eq_ignore_ascii_case("show") => true,
-            Some(Value::Bool(value)) => *value,
-            _ => false,
+            Some(Value::String(value)) if value.eq_ignore_ascii_case("show") => Some(true),
+            Some(Value::String(value)) if value.eq_ignore_ascii_case("hide") => Some(false),
+            Some(Value::Bool(value)) => Some(*value),
+            _ => None,
         }
     }
 
@@ -432,10 +500,10 @@ impl UiKv {
         self.persist();
     }
 
-    fn get_string(&self, key: &str, default: &str) -> String {
+    fn get_string_opt(&self, key: &str) -> Option<String> {
         match self.values.get(key) {
-            Some(Value::String(s)) => s.clone(),
-            _ => default.to_string(),
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
         }
     }
 
@@ -485,12 +553,70 @@ fn ui_kv_path() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{UiKv, DEFAULT_TIPS_HIDDEN};
+    use super::{AppContext, MessageDensity, UiKv, DEFAULT_TIPS_HIDDEN};
+    use serde_json::json;
+
+    fn tui_with<F: FnOnce(&mut opencode_config::TuiConfig)>(f: F) -> opencode_config::TuiConfig {
+        let mut tui = opencode_config::TuiConfig::default();
+        f(&mut tui);
+        tui
+    }
+
+    #[test]
+    fn config_seeds_display_flags_when_kv_is_absent() {
+        let tui = tui_with(|tui| {
+            tui.tool_calls = Some(false);
+            tui.thinking = Some(false);
+            tui.message_density = Some("cozy".to_string());
+        });
+
+        let context = AppContext::from_ui_kv(UiKv::default(), Some(&tui));
+
+        assert!(!*context.show_tool_calls.read());
+        assert!(!*context.show_thinking.read());
+        assert_eq!(*context.message_density.read(), MessageDensity::Cozy);
+    }
+
+    #[test]
+    fn persisted_kv_override_beats_config_startup_default() {
+        let mut kv = UiKv::default();
+        kv.values
+            .insert("tool_calls_visibility".to_string(), json!(true));
+        let tui = tui_with(|tui| tui.tool_calls = Some(false));
+
+        let context = AppContext::from_ui_kv(kv, Some(&tui));
+
+        assert!(*context.show_tool_calls.read());
+    }
+
+    #[test]
+    fn builtin_defaults_apply_when_kv_and_config_are_absent() {
+        let context = AppContext::from_ui_kv(UiKv::default(), None);
+
+        assert!(*context.show_tool_calls.read());
+        assert!(!*context.show_scrollbar.read());
+        assert_eq!(*context.message_density.read(), MessageDensity::Compact);
+    }
 
     #[test]
     fn tips_default_to_hidden_when_unset() {
         assert!(DEFAULT_TIPS_HIDDEN);
         let kv = UiKv::default();
-        assert!(kv.get_bool("tips_hidden", DEFAULT_TIPS_HIDDEN));
+        assert_eq!(kv.get_bool_opt("tips_hidden"), None);
+    }
+
+    #[test]
+    fn timestamps_opt_decodes_string_and_bool_encodings() {
+        let mut kv = UiKv::default();
+        assert_eq!(kv.get_timestamps_opt(), None);
+        kv.values
+            .insert("timestamps".to_string(), serde_json::json!("show"));
+        assert_eq!(kv.get_timestamps_opt(), Some(true));
+        kv.values
+            .insert("timestamps".to_string(), serde_json::json!("hide"));
+        assert_eq!(kv.get_timestamps_opt(), Some(false));
+        kv.values
+            .insert("timestamps".to_string(), serde_json::json!(true));
+        assert_eq!(kv.get_timestamps_opt(), Some(true));
     }
 }

@@ -345,6 +345,27 @@ pub struct TuiConfig {
     pub scroll_acceleration: Option<ScrollAccelerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_style: Option<String>,
+
+    // FEAT-053: display-toggle startup defaults. The persisted `kv.json` value
+    // always wins; these are consulted only when the runtime key is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_details: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamps: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_density: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_highlight: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollbar: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tips_hidden: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

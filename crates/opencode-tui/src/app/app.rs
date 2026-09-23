@@ -126,25 +126,23 @@ impl App {
     pub fn new() -> anyhow::Result<Self> {
         let (event_tx, event_rx) = mpsc::channel();
         let event_tx_input = event_tx.clone();
-        let context = Arc::new(AppContext::new());
+        let workspace_dir = std::env::current_dir()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
+        // FEAT-053: load workspace config once and seed display toggles from it.
+        // FEAT-048: the same config exposes the experimental background-subagent
+        // capability, resolved the same way the server does (env or project config).
+        let config =
+            opencode_config::load_config(std::path::Path::new(&workspace_dir)).unwrap_or_default();
+        let context = Arc::new(AppContext::new_with_config(&config));
+        *context.directory.write() = workspace_dir;
+        context.set_experimental_background_subagents(config.experimental_background_subagents());
         let terminal = terminal::init()?;
         let mut prompt = Prompt::new(context.clone())
             .with_placeholder("Ask anything... \"Fix a TODO in the codebase\"");
         let mut pending_initial_submit = false;
         let mut initial_session_id: Option<String> = None;
 
-        if let Ok(dir) = std::env::current_dir() {
-            *context.directory.write() = dir.display().to_string();
-        }
-        // FEAT-048: expose the experimental background-subagent capability to the
-        // TUI, resolved the same way the server does (env or project config).
-        {
-            let directory = context.directory.read().clone();
-            let enabled = opencode_config::load_config(std::path::Path::new(&directory))
-                .map(|config| config.experimental_background_subagents())
-                .unwrap_or(false);
-            context.set_experimental_background_subagents(enabled);
-        }
         let workspace_identity = context.directory.read().clone();
 
         let base_url = resolve_tui_base_url();
