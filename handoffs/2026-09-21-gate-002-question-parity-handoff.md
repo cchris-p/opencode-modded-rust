@@ -214,3 +214,26 @@ Before starting code, refresh `GATE-002`'s vanilla reference evidence to the cur
 - Refreshed `GATE-002`'s frozen reference commit from the superseded `e62912b...` pin to `f54ce313b99a6661d7758ad042f7a6e05c8e0972`.
 - Verification passed: `cargo fmt --all`; `cargo check -p opencode-server -p opencode-tui`; `cargo test -p opencode-server question`.
 - Completed with PR #67 merged into `development` at `cf47328d6e384a4f079d1225f79d7d2011bb20c5`; PR branch cleanup complete. `FEAT-039` remains in `qa` for post-merge verification.
+
+### 2026-09-22 - Direct-to-`development` follow-up (FEAT-040/041/043/044)
+
+Per maintainer direction the remaining children were implemented decoupled by layer and committed
+directly to `development` (no PR branches):
+
+- `53b6e65` `feat(question): runtime events, lifecycle cleanup, typed rejection (FEAT-040)` -
+  explicit `question.asked` event, typed `QuestionRejected` error, drop guard, and abort/delete
+  waiter rejection in `crates/opencode-server/src/routes.rs`.
+- `9c24c7b` `feat(question): TUI prompt descriptions, digit keys, custom answers, review (FEAT-041)` -
+  `crates/opencode-tui/src/components/question.rs` and `app.rs`; sequential multi-question flow with a
+  review/confirm screen (documented deviation from vanilla's tabbed flow).
+- `b061656` `test(question): permission gating and parity fixtures (FEAT-043, FEAT-044)` -
+  permission ruleset and `resolve_tools` tests, plus the side-by-side parity note on `GATE-002`.
+
+State after these commits:
+
+- `FEAT-040`, `FEAT-041`, `FEAT-043`, `FEAT-044` are in `qa` awaiting maintainer local verification.
+- `FEAT-039` remains in `qa`.
+- `GATE-002` stays in `todo` with the full parity/deviation note; it closes only after the local TUI
+  smoke and `FEAT-039` post-merge QA pass.
+- `CLI-009`/`CLI-002` remain on `hold`; this handoff is now scoped to TUI/server question parity.
+- Handoff is **not** archive-ready yet; archive only after `GATE-002` closes.
