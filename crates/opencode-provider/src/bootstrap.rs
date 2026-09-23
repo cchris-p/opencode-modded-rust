@@ -517,8 +517,8 @@ fn bundled_v1_models_data() -> ModelsData {
                     "https://api.deepseek.com/chat/completions",
                 ),
                 model(
-                    "deepseek-v4-flash",
-                    "DeepSeek V4 Flash",
+                    "deepseek-flash",
+                    "DeepSeek Flash",
                     "2026-08-01",
                     128_000,
                     32_768,
@@ -3532,6 +3532,7 @@ mod tests {
         assert!(data["openai"].models.contains_key("gpt-5.4-mini"));
         assert!(data["anthropic"].models.contains_key("claude-sonnet-5"));
         assert!(data["deepseek"].models.contains_key("deepseek-v4-pro"));
+        assert!(data["deepseek"].models.contains_key("deepseek-flash"));
         assert!(data["openrouter"]
             .models
             .contains_key("anthropic/claude-sonnet-5"));

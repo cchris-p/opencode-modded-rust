@@ -70,8 +70,8 @@ impl ModelSelectDialog {
                 context_window: 128000,
             },
             Model {
-                id: "deepseek-v4-flash".into(),
-                name: "DeepSeek V4 Flash".into(),
+                id: "deepseek-flash".into(),
+                name: "DeepSeek Flash".into(),
                 provider: "deepseek".into(),
                 context_window: 128000,
             },
