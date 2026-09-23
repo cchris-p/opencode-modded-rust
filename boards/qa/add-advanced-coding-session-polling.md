@@ -87,6 +87,10 @@ Split into follow-up cards, each linked from the spec:
 - Ran `bd -ca`; the new cards introduce no new human-intervention flags.
 - No `cargo test` target applies to this docs-only change; the implementation cards carry their own verification plans.
 
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/87 (`development` base)
+
 ## Related Items
 
 - `PHASE-003` (phase parent)
