@@ -3017,19 +3017,17 @@ impl App {
             return;
         }
 
-        let theme = self.context.theme.read().clone();
         let mut agent_names = Vec::new();
         let mapped = agents
             .into_iter()
-            .enumerate()
-            .map(|(idx, agent)| {
+            .map(|agent| {
                 agent_names.push(agent.id.clone());
                 Agent {
                     name: agent.id,
                     description: agent
                         .description
                         .unwrap_or_else(|| "No description".to_string()),
-                    color: theme.agent_color(idx),
+                    color: None,
                 }
             })
             .collect::<Vec<_>>();

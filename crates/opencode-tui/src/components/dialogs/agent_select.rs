@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState},
     Frame,
@@ -12,7 +12,10 @@ use crate::theme::Theme;
 pub struct Agent {
     pub name: String,
     pub description: String,
-    pub color: ratatui::style::Color,
+    /// Optional explicit marker color. When `None` the dialog derives the color
+    /// from the active `Theme` using the agent's index, keeping the picker in
+    /// sync with the selected preset.
+    pub color: Option<Color>,
 }
 
 pub struct AgentSelectDialog {
@@ -27,32 +30,32 @@ impl AgentSelectDialog {
             Agent {
                 name: "build".into(),
                 description: "Code generation and modification".into(),
-                color: ratatui::style::Color::Cyan,
+                color: None,
             },
             Agent {
                 name: "oracle".into(),
                 description: "Read-only consultation".into(),
-                color: ratatui::style::Color::Magenta,
+                color: None,
             },
             Agent {
                 name: "metis".into(),
                 description: "Pre-planning analysis".into(),
-                color: ratatui::style::Color::Yellow,
+                color: None,
             },
             Agent {
                 name: "momus".into(),
                 description: "Expert reviewer".into(),
-                color: ratatui::style::Color::Green,
+                color: None,
             },
             Agent {
                 name: "explore".into(),
                 description: "Codebase exploration".into(),
-                color: ratatui::style::Color::Blue,
+                color: None,
             },
             Agent {
                 name: "librarian".into(),
                 description: "Documentation lookup".into(),
-                color: ratatui::style::Color::Rgb(180, 100, 255),
+                color: None,
             },
         ];
 
@@ -144,8 +147,10 @@ impl AgentSelectDialog {
                     Style::default().fg(theme.text)
                 };
 
+                let marker_color = agent.color.unwrap_or_else(|| theme.agent_color(i));
+
                 ListItem::new(Line::from(vec![
-                    Span::styled("● ", Style::default().fg(agent.color)),
+                    Span::styled("● ", Style::default().fg(marker_color)),
                     Span::styled(&agent.name, style.add_modifier(Modifier::BOLD)),
                     Span::styled("  ", style),
                     Span::styled(&agent.description, Style::default().fg(theme.text_muted)),

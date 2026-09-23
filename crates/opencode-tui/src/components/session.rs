@@ -504,6 +504,7 @@ impl SessionView {
         let was_near_bottom = self.is_near_bottom(2);
         let theme = self.context.theme.read();
         let user_bg = message_palette::user_message_bg(&theme);
+        let assistant_bg = message_palette::assistant_message_bg(&theme);
         let thinking_bg = message_palette::thinking_message_bg(&theme);
         let assistant_border = message_palette::assistant_border_color(&theme);
         let thinking_border = message_palette::thinking_border_color(&theme);
@@ -619,7 +620,7 @@ impl SessionView {
                     );
                 }
                 MessageRole::Assistant => {
-                    let message_bg = theme.background;
+                    let message_bg = assistant_bg;
                     let message_border = assistant_border;
                     let message_thinking_bg = thinking_bg;
                     let message_thinking_border = thinking_border;
@@ -990,6 +991,7 @@ impl SessionView {
                     .borders(Borders::LEFT)
                     .border_style(Style::default().fg(theme.border)),
             )
+            .style(Style::default().bg(theme.background_panel))
             .scroll((self.scroll_offset as u16, 0));
 
         frame.render_widget(paragraph, messages_area);

@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -141,3 +141,55 @@ color, not by varying the background lightness.
   rather than the bundled syntect themes if strict consistency is the goal.
 - Coordinate with FEAT-055/FEAT-056 so tool/terminal blocks inherit the same theme tokens rather than
   re-hardcoding colors during their rework.
+
+## Dev Notes
+
+Implemented on branch `feature/FEAT-054-tui-color-scheme-consistency`.
+
+- Removed the dead `Styles` helper from `theme/mod.rs`; `Theme` is now the single color source of
+  truth for TUI surfaces. Its unused `Style`/`Modifier` imports were dropped with it.
+- Spinner: `KnightRiderSpinner::new()` no longer seeds a hardcoded red; it defaults to `Color::Reset`
+  (terminal default foreground). Callers continue to pass the active theme/agent color via
+  `with_color`/`set_color`, so the spinner still recolors per theme.
+- Todo items (`components/todo_item.rs`): status colors now come from `theme.text_muted`,
+  `theme.warning`, and `theme.success` via a testable `status_icon_and_color(&Theme)` helper.
+  (`tool_views.rs` and `sidebar.rs` already used theme tokens; this removes the last named-color
+  todo path.)
+- Agent picker (`dialogs/agent_select.rs`): `Agent.color` is now `Option<Color>` and defaults to
+  `None`; the dialog derives each marker color from `theme.agent_color(index)`. `app.rs` no longer
+  pre-bakes theme colors into agents.
+- Syntax highlighting (`markdown/syntax.rs`): replaced the bundled syntect `base16-ocean` /
+  `InspiredGitHub` theme selection with scope-to-token mapping driven by `CodeTheme`
+  (`from_app_theme`). Code block foregrounds now track the selected preset. `CodeTheme::default()`
+  derives from `Theme::default()` instead of a hardcoded palette.
+- Markdown fallback (`markdown/renderer.rs`): `current_style` falls back to `Color::Reset` rather
+  than literal white.
+- Uniform conversation surface: user, assistant, and thinking message blocks (and the messages
+  panel background) all use `theme.background_panel`, matching the question/dialog popup treatment.
+  The `background_menu`/`background_panel` thinking blend was removed; hierarchy is carried by
+  borders and foreground color instead of background lightness.
+
+### Verification
+
+- `cargo check -p opencode-tui` passes.
+- `cargo build -p opencode-cli` (`ort-build`) passes.
+- `cargo test -p opencode-tui` passes (86 tests single-threaded), including three new regression
+  tests asserting components derive colors from the supplied `Theme`:
+  `markdown::syntax::tests::highlight_code_derives_colors_from_code_theme`,
+  `components::todo_item::tests::status_colors_track_theme_tokens`, and
+  `components::message_palette::tests::conversation_surfaces_share_theme_panel_background`.
+- Note: `cargo test -p opencode-tui` in default parallel mode intermittently fails two pre-existing
+  `components::prompt::tests` that mutate process env/cwd (`tab_autocomplete_uses_first_candidate`,
+  `utf8_backspace_delete_and_cursor_are_char_safe`); they pass when run with `--test-threads=1` and
+  are unrelated to this change.
+- Remaining `Color::` uses outside `theme/` are color-space conversion tables and documented
+  fallbacks only: `spinner.rs`/`toast.rs` `color_to_rgb` helpers, and `app.rs` selection inversion
+  resolving `Color::Reset` to concrete white/black (commented inline).
+
+### Pending visual QA
+
+- `ort-build`, then `ort`; cycle through `opencode`, a light preset, and a high-contrast preset and
+  confirm spinner, toasts, todos, agent picker, and code blocks all recolor.
+- Compare an open question prompt against the surrounding transcript: both should sit on the same
+  flat `background_panel` field.
+- Light preset: confirm no white-on-white / black-on-black text.
