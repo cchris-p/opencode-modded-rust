@@ -293,5 +293,5 @@ existing prompt cursor model; do not re-litigate during implementation.
 
 ### PR Link
 
-- (pending)
+- https://github.com/cchris-p/opencode-modded-rust/pull/83
 
