@@ -262,3 +262,18 @@ every failure.
   report is recorded and the live TUI acceptance check (invalid-argument tool call -> abort ->
   follow-up prompt completes without the recurring `400`) has not been run. Promote to `done` only
   after that QA report is recorded or the user explicitly completes the card.
+
+## QA Notes (2026-09-23)
+
+- Re-confirmed the delivered request-boundary normalizer is present in `development`:
+  `openai_chat::convert_messages` ends by calling `normalize_tool_call_replies`, so every
+  OpenAI-compatible provider emits `role: "tool"` replies adjacent to the owning assistant
+  `tool_calls`.
+- `cargo test -p opencode-provider tool_call` -> 5 passed, including
+  `unresolved_tool_call_gets_synthetic_reply_before_user_message`,
+  `assistant_tool_use_becomes_tool_calls_and_tool_messages`, and
+  `resolved_tool_calls_keep_their_reply_content`.
+- `cargo test -p opencode-provider` -> 99 passed + 7 integration passed, 0 failed.
+- No regression from the BUG-038 stream-timeout change on the same request path.
+- The live TUI acceptance sequence (empty-argument tool call -> abort -> follow-up prompt) was **not**
+  run in this headless environment; that remains the only open live check.

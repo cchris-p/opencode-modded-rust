@@ -277,3 +277,33 @@ them, the fix confidence jumps and the incremental-update approach is the right 
   per-second counters (event-loop iterations, `session.updated` events, syncs, sync time, draws,
   draw time, keys) so the duty cycle is captured even while the main loop is frozen. Per-sync lines
   split `get_session` vs `get_messages` duration and record message count.
+
+## Dev Notes (implementation - 2026-09-23)
+
+Implemented the bounded-refetch fix for the streaming refetch storm (H1/H2).
+
+- Added `STREAM_SYNC_MIN_INTERVAL` (200ms) and `can_start_stream_sync` in
+  `crates/opencode-tui/src/app/app.rs`.
+- `CustomEvent::StateChanged(SessionUpdated(_))` no longer refetches on the first update after a 50ms
+  window. Streaming updates now coalesce: at most one refetch per 200ms, with the last update of a
+  burst deferred to `pending_session_sync` and applied on a later tick (trailing-edge coalescing).
+  This bounds streaming refetches from up to ~20/s to ~5/s and caps how fast the full transcript is
+  re-transferred.
+- The 2s periodic safety sync is unchanged. `SessionStatusIdle` now triggers one immediate final
+  refetch so the completed transcript is shown as soon as the turn ends.
+- Rationale: the server broadcast carries no payload and the TUI renders from local state, so a full
+  refetch is still required to show streamed text. Coalescing is the minimal in-place way to stop the
+  loop from being saturated for the whole thinking phase without redesigning the event path.
+- Follow-up (not in scope here): streaming incremental parts so no full refetch is needed, and/or
+  moving the refetch off the event-loop thread.
+
+## Verification (2026-09-23)
+
+- `cargo test -p opencode-tui stream_sync` -> 2 passed
+  (`stream_sync_is_deferred_inside_the_coalescing_window`,
+  `stream_sync_runs_once_the_coalescing_window_elapses`).
+- `cargo test -p opencode-tui` -> 104 passed, 0 failed.
+- `cargo check --workspace` clean; `cargo fmt --all -- --check` clean.
+- Live TUI duty-cycle measurement (`OPENCODE_TUI_TRACE`) and input-responsiveness check on the PR
+  branch were **not** run in this headless environment. The card stays in `qa` until that live
+  before/after check is recorded.
