@@ -3519,6 +3519,39 @@ impl App {
         Ok(())
     }
 
+    fn message_role_label(role: &MessageRole) -> &'static str {
+        match role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+        }
+    }
+
+    /// Short stall heuristic for the status dialog, mirroring `opencode session
+    /// inspect` using the TUI's in-memory session data.
+    fn session_diagnostic_verdict(running: bool, last: &Message) -> StatusLine {
+        if !running {
+            return StatusLine::muted("Verdict: session is not running");
+        }
+        match last.role {
+        MessageRole::User => StatusLine::warning(
+            "Verdict: last persisted message is a user prompt with no reply - turn may be stalled",
+        ),
+        MessageRole::Assistant => {
+            if let Some(error) = &last.error {
+                StatusLine::error(format!("Verdict: last assistant turn errored: {}", error))
+            } else if last.finish.is_some() || last.completed_at.is_some() {
+                StatusLine::success("Verdict: last assistant turn completed")
+            } else {
+                StatusLine::warning(
+                    "Verdict: last assistant turn has no completion record - possible stall",
+                )
+            }
+        }
+        MessageRole::System => StatusLine::muted("Verdict: last message is a system message"),
+    }
+    }
+
     fn refresh_status_dialog(&mut self) {
         let formatters = self
             .context
@@ -3556,12 +3589,75 @@ impl App {
             )),
             StatusLine::normal(format!("Loaded sessions: {}", session_ctx.sessions.len())),
             StatusLine::muted(""),
-            StatusLine::title(format!(
-                "MCP Servers ({}, connected: {})",
-                mcp_servers.len(),
-                connected_mcp
-            )),
         ];
+
+        lines.push(StatusLine::title("Session Diagnostics"));
+        let diagnostics_session_id = session_ctx
+            .current_session_id
+            .clone()
+            .or_else(|| self.active_session_id.clone());
+        match diagnostics_session_id {
+            None => lines.push(StatusLine::muted("- No active session")),
+            Some(session_id) => {
+                if let Some(session) = session_ctx.sessions.get(&session_id) {
+                    lines.push(StatusLine::normal(format!("Session: {}", session.id)));
+                    lines.push(StatusLine::normal(format!("Title: {}", session.title)));
+                }
+                let status = session_ctx.status(&session_id);
+                let status_text = match status {
+                    SessionStatus::Idle => "idle".to_string(),
+                    SessionStatus::Running => "running".to_string(),
+                    SessionStatus::Retrying { attempt, .. } => {
+                        format!("retrying (attempt {})", attempt)
+                    }
+                };
+                lines.push(StatusLine::normal(format!("Status: {}", status_text)));
+
+                if let Some(messages) = session_ctx.messages.get(&session_id) {
+                    let user = messages
+                        .iter()
+                        .filter(|m| m.role == MessageRole::User)
+                        .count();
+                    let assistant = messages
+                        .iter()
+                        .filter(|m| m.role == MessageRole::Assistant)
+                        .count();
+                    let parts: usize = messages.iter().map(|m| m.parts.len()).sum();
+                    let output_tokens: u64 = messages.iter().map(|m| m.tokens.output).sum();
+                    lines.push(StatusLine::normal(format!(
+                        "Messages: {} (user={}, assistant={}), parts={}, output_tokens={}",
+                        messages.len(),
+                        user,
+                        assistant,
+                        parts,
+                        output_tokens,
+                    )));
+                    match messages.last() {
+                        None => lines.push(StatusLine::muted("Last message: none")),
+                        Some(last) => {
+                            lines.push(StatusLine::normal(format!(
+                                "Last message: {} at {}",
+                                Self::message_role_label(&last.role),
+                                last.created_at.format("%Y-%m-%d %H:%M:%S"),
+                            )));
+                            lines.push(Self::session_diagnostic_verdict(
+                                matches!(status, SessionStatus::Running),
+                                last,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(trace_path) = trace::trace_path() {
+            lines.push(StatusLine::muted(format!("Trace: {}", trace_path)));
+        }
+        lines.push(StatusLine::muted(""));
+        lines.push(StatusLine::title(format!(
+            "MCP Servers ({}, connected: {})",
+            mcp_servers.len(),
+            connected_mcp
+        )));
         if mcp_servers.is_empty() {
             lines.push(StatusLine::muted("- No MCP servers"));
         } else {

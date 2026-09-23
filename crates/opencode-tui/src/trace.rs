@@ -291,4 +291,48 @@ mod tests {
             Some("/tmp/tui-trace.log".to_string())
         );
     }
+
+    #[test]
+    fn writes_header_session_and_samples() {
+        // Skip if another test already fixed the global trace path.
+        if PATH.get().is_some() {
+            return;
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "opencode-tui-trace-test-{}.log",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        std::env::set_var("OPENCODE_TUI_TRACE", &path);
+
+        init();
+        sync_session(Some("ses_test123"));
+        std::thread::sleep(Duration::from_millis(1300));
+
+        let contents = std::fs::read_to_string(&path).unwrap_or_default();
+        let _ = std::fs::remove_file(&path);
+        std::env::remove_var("OPENCODE_TUI_TRACE");
+
+        assert!(
+            contents.contains("=== trace start"),
+            "missing header:\n{}",
+            contents
+        );
+        assert!(
+            contents.contains("SESSION set id=ses_test123"),
+            "missing session marker:\n{}",
+            contents
+        );
+        assert!(
+            contents.contains("SAMPLE"),
+            "sampler never wrote:\n{}",
+            contents
+        );
+        assert!(
+            contents.contains("session=ses_test123"),
+            "samples are not session-tagged:\n{}",
+            contents
+        );
+    }
 }

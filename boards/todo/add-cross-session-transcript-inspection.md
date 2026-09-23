@@ -83,8 +83,20 @@ The first implementation should not automatically pull another session's full tr
 - Whether reading another session counts as an approval-gated action.
 - How this interacts with workspace identity for legacy sessions that predate `FEAT-022`.
 
+## Progress
+
+- The CLI now ships the enumerate + read surface for this workflow:
+  `opencode session find "<name>"` lists sessions by title/id/slug, and
+  `opencode session inspect "<name|id>"` reads a session's persisted transcript
+  (roles, timestamps, per-message part previews, tokens) read-only and bounded
+  (`--json`/`--full` for tooling and depth). Both reuse the existing session
+  store. Remaining scope: the agent/API access surface and workspace-scoping
+  enforcement (`FEAT-057`), plus cursor-style pagination.
+- The TUI-side diagnostics added in `FEAT-061` complement this.
+
 ## Related Items
 
+- `FEAT-061` On-demand session diagnostics and stack capture
 - `FEAT-001` Improve historical chat transcripts workflow
 - `FEAT-002` Keep sessions running after TUI exit
 - `FEAT-003` Add compact fork context for session branching

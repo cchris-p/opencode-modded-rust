@@ -470,6 +470,17 @@ enum DebugCommands {
     Scrap,
     #[command(about = "Wait indefinitely (for debugging)")]
     Wait,
+    #[command(about = "Capture native stacks from a running process (macOS `sample`)")]
+    Stacks {
+        #[arg(long, value_name = "PID", conflicts_with = "port")]
+        pid: Option<u32>,
+        #[arg(long, value_name = "PORT", conflicts_with = "pid")]
+        port: Option<u16>,
+        #[arg(long, default_value_t = 5)]
+        seconds: u32,
+        #[arg(long, value_name = "PATH")]
+        out: Option<String>,
+    },
     #[command(about = "Snapshot debugging utilities")]
     Snapshot {
         #[command(subcommand)]
@@ -4832,6 +4843,79 @@ async fn create_lsp_client(file_hint: Option<&Path>) -> anyhow::Result<LspClient
     .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
+fn resolve_pid_listening_on_port(port: u16) -> anyhow::Result<u32> {
+    let output = ProcessCommand::new("lsof")
+        .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run lsof: {}", e))?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.trim().parse::<u32>().ok())
+        .ok_or_else(|| anyhow::anyhow!("no process is listening on port {}", port))
+}
+
+fn default_stacks_path(pid: u32) -> PathBuf {
+    let dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("opencode")
+        .join("stacks");
+    let _ = fs::create_dir_all(&dir);
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    dir.join(format!("stacks-{}-{}.txt", pid, stamp))
+}
+
+/// Capture native stacks for a process. Uses `sample` on macOS and `gdb` on
+/// other unix platforms; writes the report to `out`.
+fn capture_process_stacks(pid: u32, seconds: u32, out: &Path) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = ProcessCommand::new("sample")
+            .arg(pid.to_string())
+            .arg(seconds.to_string())
+            .arg("-file")
+            .arg(out)
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to run sample: {}", e))?;
+        if !status.success() {
+            anyhow::bail!("sample exited with status {}", status);
+        }
+        Ok(())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = seconds;
+        let output = ProcessCommand::new("gdb")
+            .args([
+                "-p",
+                &pid.to_string(),
+                "-batch",
+                "-ex",
+                "thread apply all bt",
+                "-ex",
+                "detach",
+            ])
+            .output()
+            .map_err(|e| anyhow::anyhow!("failed to run gdb: {}", e))?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "gdb exited with status {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        fs::write(out, &output.stdout)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {}", out.display(), e))?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, seconds, out);
+        anyhow::bail!("stack capture is not supported on this platform")
+    }
+}
+
 async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
     match action {
         DebugCommands::Paths => {
@@ -4900,6 +4984,27 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
         DebugCommands::Wait => loop {
             tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
         },
+        DebugCommands::Stacks {
+            pid,
+            port,
+            seconds,
+            out,
+        } => {
+            let target_pid = match (pid, port) {
+                (Some(pid), None) => pid,
+                (None, Some(port)) => resolve_pid_listening_on_port(port)?,
+                _ => anyhow::bail!("provide exactly one of --pid or --port"),
+            };
+            let out_path = out
+                .map(PathBuf::from)
+                .unwrap_or_else(|| default_stacks_path(target_pid));
+            capture_process_stacks(target_pid, seconds, &out_path)?;
+            println!(
+                "Captured stacks for pid {} to {}",
+                target_pid,
+                out_path.display()
+            );
+        }
         DebugCommands::Snapshot { action } => {
             let cwd = std::env::current_dir()?;
             match action {
