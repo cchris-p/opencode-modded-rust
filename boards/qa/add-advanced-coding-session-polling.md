@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "wiki/advanced-coding-session-polling.md"
-status: "doing"
+status: "qa"
 created: "2026-09-08"
 ---
 
@@ -70,6 +70,22 @@ Split into follow-up cards, each linked from the spec:
 - `FEAT-058` Add PR and CI check observables to polling.
 - `FEAT-059` Add board lane and background-session observables to polling.
 - `FEAT-060` Add a runtime poll registry and TUI surface for outstanding polls.
+
+## Dev Notes
+
+- Finalized the polling contract in `wiki/advanced-coding-session-polling.md`: first surface is the `wait_for_state` agent tool, first observables are local/remote git refs and branch state, the tool call is the bounded wait, results are compact and evidence-backed, and there is no auto-wake or durable runtime object in the first slice.
+- Recorded the durable rules those decisions rest on in `invariants/coding-session-polling.md`: every wait terminates with an explicit status, and polling must be invocable from any coding session including background sessions.
+- Split the remaining design into follow-up cards `FEAT-057` (git ref tool), `FEAT-058` (PR/CI), `FEAT-059` (board + background-session targets), and `FEAT-060` (runtime registry + TUI), so the core concept is not redefined per slice.
+- Updated the `wiki/README.md` index entry to describe the slice and its follow-ups.
+- No runtime code changed in this item; it is a design/contract deliverable.
+
+## Verification
+
+- Reviewed the updated spec against this card's Done-when: every original TBD is either resolved in "Resolved Decisions" or explicitly deferred to a linked follow-up card.
+- Confirmed the chosen surface and observables match the user's refinement answers: agent tool first, local/remote git refs and branch state first.
+- Ran `bd -cd`; the new `FEAT-057`..`FEAT-060` cards introduce no duplicate IDs (the pre-existing `BUG-032` duplicate is unrelated).
+- Ran `bd -ca`; the new cards introduce no new human-intervention flags.
+- No `cargo test` target applies to this docs-only change; the implementation cards carry their own verification plans.
 
 ## Related Items
 
