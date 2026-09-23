@@ -102,6 +102,13 @@ the main checkout's `target/` untouched.
 - Removing the 2.0 GB vanilla `~/.local/share/opencode/opencode.db` is a human
   decision and was not performed.
 
+## Closeout
+
+- Merged into `development` as PR #102 (merge commit `bc5fcc1`) on 2026-09-23.
+- Feature branch `feature/INFRA-001-worktree-build-cache` deleted remotely and
+  locally; temporary worktrees removed.
+- Remains in `qa` pending a recorded QA report or explicit completion.
+
 ## Related Items
 
 - `GATE-004` reference pin (worktree conventions).
