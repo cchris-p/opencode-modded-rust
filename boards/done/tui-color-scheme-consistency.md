@@ -202,3 +202,12 @@ Implemented on branch `feature/FEAT-054-tui-color-scheme-consistency`.
 - QA approved by the user on explicit direction; promoted from `qa` to `done` with the uniform
   default-scheme requirement satisfied by the merged change (message panels share `background_panel`;
   no lighter/darker line tinting).
+
+## Follow-up - 2026-09-23
+
+- Removed the remaining `│` gutter from tool-call blocks: `block_prefix`
+  (`crates/opencode-tui/src/components/session_tool.rs:340`) now emits two spaces, matching the
+  user/assistant message gutter. Tool blocks share the flat `background_panel` field with no vertical
+  rule, consistent with the uniform default scheme described above.
+- Verified working in `ort`; `cargo build -p opencode-cli` passes and the `session_tool` unit tests
+  pass.

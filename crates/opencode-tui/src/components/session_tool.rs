@@ -339,7 +339,7 @@ fn shell_command_text(arguments: &str) -> Option<String> {
 
 fn block_prefix(theme: &Theme, background: ratatui::style::Color) -> Span<'static> {
     Span::styled(
-        "│ ",
+        "  ",
         Style::default().fg(theme.border_subtle).bg(background),
     )
 }
