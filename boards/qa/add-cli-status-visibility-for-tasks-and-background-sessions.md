@@ -102,3 +102,30 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 - PR #81 merged into `development` (merge commit `22e114d`), after #80.
 - Branch `feature/CLI-006-cli-status` deleted locally and remotely.
 - Remains in `qa` pending a recorded post-merge QA report (`H-006` QA notes) or explicit user completion.
+
+## QA Verification - 2026-09-23 (PARTIAL / FAIL on status labeling)
+
+Headless QA on `development` (`54aa9c3`) against a live `opencode serve`.
+
+PASS:
+
+- `opencode task status --server <url>` lists root sessions with `Session`/`Status`/`Queue`/`Title`.
+- `--session <id>` narrows to one session.
+- `--json` emits a parseable array with `id`, `title`, `directory`, `workspaceIdentity`, and the raw
+  `status` object.
+- `queued` is read from `GET /session/status` (not synthesized): while a second prompt was queued the
+  CLI printed `queued  1/1`, matching the raw server `{status: queued, position: 1, depth: 1}`.
+- Unreachable target fails clearly with exit code 1.
+
+FAIL / gap: idle sessions are labeled `active`. `print_task_statuses` prints the lifecycle status when
+the run status is idle (`crates/opencode-cli/src/main.rs:2940-2942`), so a session whose turn has
+completed still shows `active`. This contradicts the product decision on this card
+(`idle|busy|queued|retry|error`, with completed derived from assistant message completion) and fails the
+recommended check "confirm completed sessions do not look active." The server already exposes
+`idle: true` and lifecycle `completed`; the CLI just does not surface them.
+
+Verdict: listing/JSON/queue all verified; status labeling needs a fix before this card can close.
+Recommend keeping in `qa` and logging the idle/active/complete labeling gap as a bug item.
+
+Remediation: `BUG-036` fixes the idle labeling in PR #82
+(https://github.com/cchris-p/opencode-modded-rust/pull/82). Re-QA this card after that PR merges.
