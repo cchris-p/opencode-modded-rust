@@ -192,6 +192,8 @@ impl KeybindRegistry {
         self.register("session_rename", Keybind::ctrl(KeyCode::Char('r')));
         self.register("session_delete", Keybind::ctrl(KeyCode::Char('d')));
         self.register("session_interrupt", Keybind::key(KeyCode::Esc));
+        // FEAT-048: background a running foreground subagent (reference ctrl+b).
+        self.register("session_background", Keybind::ctrl(KeyCode::Char('b')));
 
         self.register("sidebar_toggle", Keybind::ctrl(KeyCode::Char('s')));
         self.register("help_toggle", Keybind::ctrl(KeyCode::Char('h')));

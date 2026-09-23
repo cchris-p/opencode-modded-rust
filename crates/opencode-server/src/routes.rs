@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::path::{Path as FsPath, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify, OnceCell, RwLock};
@@ -112,6 +113,7 @@ fn session_routes() -> Router<Arc<ServerState>> {
         .route("/{id}/todo", get(get_session_todos))
         .route("/{id}/fork", post(fork_session))
         .route("/{id}/abort", post(abort_session))
+        .route("/{id}/background", post(promote_session_background))
         .route("/{id}/share", post(share_session).delete(unshare_session))
         .route("/{id}/archive", post(archive_session))
         .route("/{id}/title", patch(set_session_title))
@@ -414,6 +416,17 @@ struct SessionQueue {
 
 static SESSION_QUEUES: Lazy<Mutex<HashMap<String, SessionQueue>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// FEAT-048: a running `task` subagent run, keyed by child session id. Foreground
+/// runs register a `promote_tx` so `ctrl+b` can promote them to background;
+/// explicit background runs register with `promoted = true` and no sender.
+struct TaskRun {
+    parent_id: String,
+    promoted: Arc<AtomicBool>,
+    promote_tx: Option<oneshot::Sender<()>>,
+}
+
+static TASK_RUNS: Lazy<Mutex<HashMap<String, TaskRun>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 async fn set_session_run_status(
     state: &Arc<ServerState>,
@@ -2753,6 +2766,10 @@ async fn create_child_subagent_session(
             .metadata
             .insert("agent".to_string(), serde_json::json!(&agent));
         child.metadata.insert(
+            "subagent_description".to_string(),
+            serde_json::json!(title.as_deref().unwrap_or("Task")),
+        );
+        child.metadata.insert(
             "subagent_parent_id".to_string(),
             serde_json::json!(&parent_id),
         );
@@ -2910,6 +2927,161 @@ async fn prompt_child_subagent(
         .unwrap_or_default();
 
     Ok(output)
+}
+
+/// Cancels a [`CancellationToken`] when dropped unless disarmed. Used to stop a
+/// detached foreground child run when the awaiting tool future is dropped (e.g.
+/// the parent turn is aborted), while leaving a promoted run alive.
+struct AbortOnDrop {
+    token: opencode_tool::CancellationToken,
+    armed: bool,
+}
+
+impl AbortOnDrop {
+    fn new(token: opencode_tool::CancellationToken) -> Self {
+        Self { token, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.token.cancel();
+        }
+    }
+}
+
+/// Render the reference `<task ...>` wrapper for a synthetic background result
+/// injected into the parent session.
+fn render_background_task_message(
+    session_id: &str,
+    state: &str,
+    summary: &str,
+    text: &str,
+) -> String {
+    let tag = if state == "error" {
+        "task_error"
+    } else {
+        "task_result"
+    };
+    format!(
+        "<task id=\"{}\" state=\"{}\">\n<summary>{}</summary>\n<{}>\n{}\n</{}>\n</task>",
+        session_id, state, summary, tag, text, tag
+    )
+}
+
+/// Append a synthetic completion/error message to the parent session so the
+/// parent agent sees the background task result on its next turn (FEAT-048).
+async fn inject_background_result(
+    state: &Arc<ServerState>,
+    parent_id: &str,
+    child_id: &str,
+    state_label: &str,
+    summary: &str,
+    text: &str,
+) {
+    let rendered = render_background_task_message(child_id, state_label, summary, text);
+    {
+        let mut sessions = state.sessions.lock().await;
+        let Some(parent) = sessions.get_mut(parent_id) else {
+            return;
+        };
+        let mut message = opencode_session::SessionMessage::user(parent_id.to_string(), rendered);
+        if let Some(part) = message.parts.first_mut() {
+            if let opencode_session::PartType::Text { synthetic, .. } = &mut part.part_type {
+                *synthetic = Some(true);
+            }
+        }
+        message
+            .metadata
+            .insert("synthetic".to_string(), serde_json::json!(true));
+        message
+            .metadata
+            .insert("task_id".to_string(), serde_json::json!(child_id));
+        message.metadata.insert(
+            "background_task_state".to_string(),
+            serde_json::json!(state_label),
+        );
+        parent.messages.push(message);
+        parent.touch();
+    }
+    state.broadcast(
+        &serde_json::json!({
+            "type": "session.updated",
+            "sessionID": parent_id,
+            "source": "task.background_result",
+        })
+        .to_string(),
+    );
+    persist_sessions_if_enabled(state).await;
+}
+
+/// FEAT-048: run a `task` subagent in a detached task. When `promoted` is set
+/// (explicit background, or `ctrl+b` on a foreground run), inject the result into
+/// the parent on completion/failure. Foreground waiters receive the raw result
+/// over `result_tx`; promoted/abandoned waiters simply drop the receiver.
+#[allow(clippy::too_many_arguments)]
+async fn run_child_task(
+    state: Arc<ServerState>,
+    parent_id: String,
+    child_id: String,
+    description: String,
+    prompt: String,
+    provider: Arc<dyn opencode_provider::Provider>,
+    default_provider_id: String,
+    default_model_id: String,
+    abort: opencode_tool::CancellationToken,
+    result_tx: oneshot::Sender<std::result::Result<String, opencode_tool::ToolError>>,
+    promoted: Arc<AtomicBool>,
+) {
+    let outcome = tokio::select! {
+        _ = abort.cancelled() => {
+            TASK_RUNS.lock().await.remove(&child_id);
+            return;
+        }
+        result = prompt_child_subagent(
+            state.clone(),
+            child_id.clone(),
+            prompt,
+            provider,
+            &default_provider_id,
+            &default_model_id,
+        ) => result,
+    };
+
+    if promoted.load(Ordering::SeqCst) {
+        match &outcome {
+            Ok(text) => {
+                inject_background_result(
+                    &state,
+                    &parent_id,
+                    &child_id,
+                    "completed",
+                    &format!("Background task completed: {}", description),
+                    text,
+                )
+                .await;
+            }
+            Err(error) => {
+                inject_background_result(
+                    &state,
+                    &parent_id,
+                    &child_id,
+                    "error",
+                    &format!("Background task failed: {}", description),
+                    &error.to_string(),
+                )
+                .await;
+            }
+        }
+    }
+
+    let _ = result_tx.send(outcome);
+    TASK_RUNS.lock().await.remove(&child_id);
 }
 
 fn inspect_session_status_label(status: &opencode_session::SessionStatus) -> &'static str {
@@ -3579,6 +3751,10 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
     let child_prompt_provider = provider.clone();
     let child_prompt_provider_id = task_provider.clone();
     let child_prompt_model_id = task_model.clone();
+    // FEAT-048: foreground `task` runs execute in a detached task so `ctrl+b` can
+    // promote them to the background. The awaiting tool call receives the result
+    // when the run finishes normally, or `Backgrounded` when promoted; a promoted
+    // run injects its completion into the parent itself.
     let prompt_subsession_callback: opencode_tool::PromptSubsessionCallback =
         Arc::new(move |child_id, prompt| {
             let state = child_prompt_state.clone();
@@ -3586,17 +3762,148 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
             let default_provider_id = child_prompt_provider_id.clone();
             let default_model_id = child_prompt_model_id.clone();
             Box::pin(async move {
-                prompt_child_subagent(
-                    state,
-                    child_id,
-                    prompt,
-                    provider,
-                    &default_provider_id,
-                    &default_model_id,
-                )
-                .await
+                let (parent_id, description) = {
+                    let sessions = state.sessions.lock().await;
+                    let Some(child) = sessions.get(&child_id) else {
+                        return Err(opencode_tool::ToolError::ExecutionError(format!(
+                            "Unknown subagent session: {}. Start without task_id first.",
+                            child_id
+                        )));
+                    };
+                    let parent_id = child.parent_id.clone().unwrap_or_default();
+                    let description = child
+                        .metadata
+                        .get("subagent_description")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("Task")
+                        .to_string();
+                    (parent_id, description)
+                };
+                if parent_id.is_empty() {
+                    return Err(opencode_tool::ToolError::ExecutionError(format!(
+                        "Subagent session {} has no parent session",
+                        child_id
+                    )));
+                }
+
+                let promoted = Arc::new(AtomicBool::new(false));
+                let (result_tx, result_rx) = oneshot::channel();
+                let (promote_tx, promote_rx) = oneshot::channel();
+                TASK_RUNS.lock().await.insert(
+                    child_id.clone(),
+                    TaskRun {
+                        parent_id: parent_id.clone(),
+                        promoted: promoted.clone(),
+                        promote_tx: Some(promote_tx),
+                    },
+                );
+
+                let abort = opencode_tool::CancellationToken::new();
+                let mut abort_guard = AbortOnDrop::new(abort.clone());
+
+                let run_state = state.clone();
+                let run_child_id = child_id.clone();
+                let run_parent_id = parent_id.clone();
+                let run_provider = provider.clone();
+                let run_default_provider_id = default_provider_id.clone();
+                let run_default_model_id = default_model_id.clone();
+                let run_promoted = promoted.clone();
+                tokio::spawn(async move {
+                    run_child_task(
+                        run_state,
+                        run_parent_id,
+                        run_child_id,
+                        description,
+                        prompt,
+                        run_provider,
+                        run_default_provider_id,
+                        run_default_model_id,
+                        abort,
+                        result_tx,
+                        run_promoted,
+                    )
+                    .await;
+                });
+
+                tokio::select! {
+                    _ = promote_rx => {
+                        abort_guard.disarm();
+                        promoted.store(true, Ordering::SeqCst);
+                        Ok(opencode_tool::SubsessionPromptOutcome::Backgrounded)
+                    }
+                    result = result_rx => match result {
+                        Ok(Ok(text)) => Ok(opencode_tool::SubsessionPromptOutcome::Completed(text)),
+                        Ok(Err(error)) => Err(error),
+                        Err(_) => Err(opencode_tool::ToolError::ExecutionError(format!(
+                            "Subagent run ended before producing a result: {}",
+                            child_id
+                        ))),
+                    },
+                }
             })
         });
+
+    // FEAT-048: explicit `background: true` runner. Always injects the result
+    // into the parent when the child finishes.
+    let background_subsession_callback: opencode_tool::BackgroundSubsessionCallback = {
+        let background_state = task_state.clone();
+        let background_provider = provider.clone();
+        let background_provider_id = task_provider.clone();
+        let background_model_id = task_model.clone();
+        Arc::new(move |request| {
+            let state = background_state.clone();
+            let provider = background_provider.clone();
+            let default_provider_id = background_provider_id.clone();
+            let default_model_id = background_model_id.clone();
+            Box::pin(async move {
+                let opencode_tool::BackgroundSubsessionRequest {
+                    parent_session_id,
+                    child_session_id,
+                    agent: _,
+                    description,
+                    prompt,
+                    abort,
+                } = request;
+
+                let promoted = Arc::new(AtomicBool::new(true));
+                let (result_tx, _result_rx) = oneshot::channel();
+                TASK_RUNS.lock().await.insert(
+                    child_session_id.clone(),
+                    TaskRun {
+                        parent_id: parent_session_id.clone(),
+                        promoted: promoted.clone(),
+                        promote_tx: None,
+                    },
+                );
+
+                let run_state = state.clone();
+                let run_child_id = child_session_id.clone();
+                let run_parent_id = parent_session_id.clone();
+                let run_provider = provider.clone();
+                let run_default_provider_id = default_provider_id.clone();
+                let run_default_model_id = default_model_id.clone();
+                let run_promoted = promoted.clone();
+                tokio::spawn(async move {
+                    run_child_task(
+                        run_state,
+                        run_parent_id,
+                        run_child_id,
+                        description,
+                        prompt,
+                        run_provider,
+                        run_default_provider_id,
+                        run_default_model_id,
+                        abort,
+                        result_tx,
+                        run_promoted,
+                    )
+                    .await;
+                });
+
+                Ok(())
+            })
+        })
+    };
 
     let session_inspect_callback: opencode_tool::SessionInspectCallback = {
         let inspect_state = task_state.clone();
@@ -3628,6 +3935,13 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         })
     };
 
+    // FEAT-048: background subagents are experimental; default off. Enabled by
+    // `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` or
+    // `experimental.background_subagents` in config.
+    let experimental_background_subagents = load_config(FsPath::new(&session.directory))
+        .map(|config| config.experimental_background_subagents())
+        .unwrap_or(false);
+
     let prompt_runner = Arc::new(
         opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
             opencode_session::SessionStateManager::new(),
@@ -3636,6 +3950,8 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         .with_ask_question_callback(question_callback)
         .with_create_subsession_callback(create_subsession_callback)
         .with_prompt_subsession_callback(prompt_subsession_callback)
+        .with_background_subsession_callback(background_subsession_callback)
+        .with_experimental_background_subagents(experimental_background_subagents)
         .with_resolve_subagent_callback(resolve_subagent_callback)
         .with_session_inspect_callback(session_inspect_callback),
     );
@@ -3762,6 +4078,52 @@ async fn abort_prompt(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     abort_active_session_prompt(state, id).await
+}
+
+/// FEAT-048: promote a running foreground `task` subagent of `id` to the
+/// background (`ctrl+b`). Returns `{ "promoted": bool }`; `false` when no
+/// promotable foreground task is running for that session.
+async fn promote_session_background(
+    State(state): State<Arc<ServerState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    {
+        let sessions = state.sessions.lock().await;
+        if sessions.get(&id).is_none() {
+            return Err(ApiError::SessionNotFound(id));
+        }
+    }
+
+    let promoted = {
+        let mut runs = TASK_RUNS.lock().await;
+        let target = runs
+            .iter_mut()
+            .find(|(_, run)| run.parent_id == id && run.promote_tx.is_some());
+        match target {
+            Some((_, run)) => {
+                if let Some(sender) = run.promote_tx.take() {
+                    run.promoted.store(true, Ordering::SeqCst);
+                    let _ = sender.send(());
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        }
+    };
+
+    if promoted {
+        state.broadcast(
+            &serde_json::json!({
+                "type": "task.background",
+                "sessionID": id,
+            })
+            .to_string(),
+        );
+    }
+
+    Ok(Json(serde_json::json!({ "promoted": promoted })))
 }
 
 async fn abort_active_session_prompt(
@@ -8282,5 +8644,50 @@ mod subagent_child_session_tests {
         .await
         .expect_err("@build must not silently fall through");
         assert!(error.to_string().contains("@build"));
+    }
+
+    #[test]
+    fn render_background_task_message_matches_reference() {
+        assert_eq!(
+            render_background_task_message("ses_1", "completed", "done it", "all good"),
+            "<task id=\"ses_1\" state=\"completed\">\n<summary>done it</summary>\n<task_result>\nall good\n</task_result>\n</task>"
+        );
+        assert_eq!(
+            render_background_task_message("ses_1", "error", "failed", "boom"),
+            "<task id=\"ses_1\" state=\"error\">\n<summary>failed</summary>\n<task_error>\nboom\n</task_error>\n</task>"
+        );
+    }
+
+    #[tokio::test]
+    async fn inject_background_result_appends_synthetic_parent_message() {
+        let (state, root_id, _session_repo) = state_and_root().await;
+
+        inject_background_result(
+            &state,
+            &root_id,
+            "ses_child_9",
+            "completed",
+            "Background task completed: Investigate",
+            "the result",
+        )
+        .await;
+
+        let sessions = state.sessions.lock().await;
+        let parent = sessions.get(&root_id).expect("root should exist");
+        let message = parent
+            .messages
+            .last()
+            .expect("injected message should exist");
+        assert!(matches!(message.role, opencode_session::MessageRole::User));
+        let text = message.get_text();
+        assert!(text.contains("<task id=\"ses_child_9\" state=\"completed\">"));
+        assert!(text.contains("the result"));
+        assert!(message.parts.iter().any(|part| matches!(
+            &part.part_type,
+            opencode_session::PartType::Text {
+                synthetic: Some(true),
+                ..
+            }
+        )));
     }
 }

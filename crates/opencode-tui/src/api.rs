@@ -633,6 +633,21 @@ impl ApiClient {
         Ok(response.json::<serde_json::Value>()?)
     }
 
+    /// FEAT-048: promote a running foreground `task` subagent of this session to
+    /// the background (`ctrl+b`).
+    pub fn background_session(&self, session_id: &str) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}/session/{}/background", self.base_url, session_id);
+        let response = self.client.post(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to background session task: {} - {}", status, text);
+        }
+
+        Ok(response.json::<serde_json::Value>()?)
+    }
+
     pub fn get_config_providers(&self) -> anyhow::Result<ProviderListResponse> {
         let url = format!("{}/config/providers", self.base_url);
 

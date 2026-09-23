@@ -707,6 +707,11 @@ pub struct ExperimentalConfig {
     pub open_telemetry: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub primary_tools: Vec<String>,
+    /// Experimental background subagents (reference
+    /// `experimentalBackgroundSubagents` / `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS`).
+    /// Off by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_subagents: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continue_loop_on_deny: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1227,6 +1232,7 @@ impl DeepMerge for ExperimentalConfig {
         if !other.primary_tools.is_empty() {
             self.primary_tools = other.primary_tools;
         }
+        merge_option_replace(&mut self.background_subagents, other.background_subagents);
         merge_option_replace(&mut self.continue_loop_on_deny, other.continue_loop_on_deny);
         merge_option_replace(&mut self.mcp_timeout, other.mcp_timeout);
     }
@@ -1236,6 +1242,21 @@ impl Config {
     /// Maximum subagent nesting depth, defaulting to the reference `1`.
     pub fn subagent_depth_limit(&self) -> u32 {
         self.subagent_depth.unwrap_or(1)
+    }
+
+    /// Whether experimental background subagents are enabled. Matches the
+    /// reference: the `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` env var
+    /// or `experimental.background_subagents` in config. Off by default.
+    pub fn experimental_background_subagents(&self) -> bool {
+        let from_env = std::env::var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS")
+            .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
+            .unwrap_or(false);
+        let from_config = self
+            .experimental
+            .as_ref()
+            .and_then(|experimental| experimental.background_subagents)
+            .unwrap_or(false);
+        from_env || from_config
     }
 
     pub fn merge(&mut self, other: Config) {

@@ -513,6 +513,23 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - Gate check for PR 5: `FEAT-048` may start now that PR 4 is merged; `development` is current at
   `24207e0` in the local checkout.
 
+### 2026-09-23 — PR 5 (`FEAT-048`) opened
+
+- Branch `feature/FEAT-048-background-subagents`; PR #99 targets `development`
+  (https://github.com/cchris-p/opencode-modded-rust/pull/99).
+- Experimental gate via `experimental.background_subagents` / `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS`;
+  `background: true` returns a running-state `<task ...>` immediately and runs the child detached.
+  Completion/error injects a synthetic `<task ... state="completed|error">` message into the parent.
+  New `POST /session/{id}/background` + TUI `ctrl+b` (`session_background`) promote a running
+  foreground task; the task hint row adds `ctrl+b background` when the capability is on.
+- Verification green: `cargo fmt --all`, `cargo check --workspace`,
+  `cargo test -p opencode-tool -p opencode-agent -p opencode-config -p opencode-server --lib`,
+  `cargo test -p opencode-tui --lib` (135 passed), and `opencode-session` excluding the pre-existing
+  environmental `instruction::` failures.
+- `FEAT-048` moved `todo -> doing -> qa`; awaiting human test/merge on PR #99 before PR 6
+  (`FEAT-051`) starts. Documented deviation: the parent observes the injected result on its next
+  turn rather than auto-resuming.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
