@@ -174,3 +174,9 @@ Tests: `crates/opencode-tui/src/components/settings.rs` covers method-list propa
 - Run a Codex request with `OPENAI_API_KEY` unset and confirm the saved OAuth credential is used.
 - Smoke-test manual API key entry and confirm `GET /auth/openai` reports `auth_type: "api"`.
 - Browser login is implemented but only verify it if convenient; the headless path is the primary workflow.
+
+## Merge Closeout - 2026-09-23
+
+- Merged into `development` via PR #84 (merge commit `0382393`).
+- Feature branch `feature/START-032-codex-auth-parity` deleted remotely and locally; local checkout is back on `development`.
+- Remains in `qa`: no QA report is recorded yet. Promote to the completed lane only after live headless/browser login verification (per the QA Handoff section) or explicit user direction.
