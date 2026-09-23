@@ -141,6 +141,8 @@ pub struct SessionPrompt {
     lsp_registry: Option<Arc<opencode_lsp::LspClientRegistry>>,
     ask_callback: Option<opencode_tool::AskCallback>,
     ask_question_callback: Option<opencode_tool::QuestionCallback>,
+    create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
+    prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
 }
 
 impl SessionPrompt {
@@ -152,6 +154,8 @@ impl SessionPrompt {
             lsp_registry: None,
             ask_callback: None,
             ask_question_callback: None,
+            create_subsession_callback: None,
+            prompt_subsession_callback: None,
         }
     }
 
@@ -172,6 +176,28 @@ impl SessionPrompt {
 
     pub fn with_ask_question_callback(mut self, callback: opencode_tool::QuestionCallback) -> Self {
         self.ask_question_callback = Some(callback);
+        self
+    }
+
+    /// Install a server-owned child-session factory. When set, the `task` tool
+    /// creates a real, persisted child session instead of an in-memory
+    /// `task_*` subsession. The in-memory callbacks remain the fallback for
+    /// callers that do not provide these (e.g. direct `AgentExecutor` use).
+    pub fn with_create_subsession_callback(
+        mut self,
+        callback: opencode_tool::CreateSubsessionCallback,
+    ) -> Self {
+        self.create_subsession_callback = Some(callback);
+        self
+    }
+
+    /// Install a server-owned child-session prompt runner paired with
+    /// [`Self::with_create_subsession_callback`].
+    pub fn with_prompt_subsession_callback(
+        mut self,
+        callback: opencode_tool::PromptSubsessionCallback,
+    ) -> Self {
+        self.prompt_subsession_callback = Some(callback);
         self
     }
 
@@ -881,6 +907,8 @@ impl SessionPrompt {
             &agent_params,
             self.ask_callback.clone(),
             self.ask_question_callback.clone(),
+            self.create_subsession_callback.clone(),
+            self.prompt_subsession_callback.clone(),
             update_hook,
         )
         .await;
@@ -963,6 +991,8 @@ impl SessionPrompt {
             &agent_params,
             self.ask_callback.clone(),
             self.ask_question_callback.clone(),
+            self.create_subsession_callback.clone(),
+            self.prompt_subsession_callback.clone(),
             None,
         )
         .await;
@@ -990,6 +1020,8 @@ impl SessionPrompt {
         agent_params: &AgentParams,
         ask_callback: Option<opencode_tool::AskCallback>,
         ask_question_callback: Option<opencode_tool::QuestionCallback>,
+        create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
+        prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
         update_hook: Option<SessionUpdateHook>,
     ) -> anyhow::Result<()> {
         let mut step = 0u32;
@@ -1409,6 +1441,26 @@ impl SessionPrompt {
                     });
                 }
 
+                if let Some(create_subsession_callback) = create_subsession_callback.clone() {
+                    tool_context = tool_context.with_create_subsession(
+                        move |agent, title, model, disabled_tools| {
+                            let create_subsession_callback = create_subsession_callback.clone();
+                            async move {
+                                create_subsession_callback(agent, title, model, disabled_tools)
+                                    .await
+                            }
+                        },
+                    );
+                }
+
+                if let Some(prompt_subsession_callback) = prompt_subsession_callback.clone() {
+                    tool_context =
+                        tool_context.with_prompt_subsession(move |session_id, prompt| {
+                            let prompt_subsession_callback = prompt_subsession_callback.clone();
+                            async move { prompt_subsession_callback(session_id, prompt).await }
+                        });
+                }
+
                 let registry = Arc::new(opencode_tool::create_default_registry().await);
                 if let Err(e) = Self::execute_tool_calls(
                     session,
@@ -1664,13 +1716,21 @@ impl SessionPrompt {
 
         let subsessions = Arc::new(Mutex::new(Self::load_persisted_subsessions(session)));
         let default_model = format!("{}:{}", provider_id, model_id);
-        let ctx = Self::with_persistent_subsession_callbacks(
-            ctx,
-            subsessions.clone(),
-            provider,
-            tool_registry.clone(),
-            default_model,
-        );
+        // Prefer server-owned real child-session callbacks when the caller
+        // installed them; only fall back to the in-memory `task_*` subsession
+        // map otherwise. Without this guard the fallback would silently shadow
+        // the server's real child sessions (FEAT-045).
+        let ctx = if ctx.create_subsession.is_none() && ctx.prompt_subsession.is_none() {
+            Self::with_persistent_subsession_callbacks(
+                ctx,
+                subsessions.clone(),
+                provider,
+                tool_registry.clone(),
+                default_model,
+            )
+        } else {
+            ctx
+        };
 
         let tool_results_msg = {
             let mut msg = SessionMessage::assistant(ctx.session_id.clone());
