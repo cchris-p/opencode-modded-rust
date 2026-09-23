@@ -5,7 +5,7 @@ priority: "P1"
 type: "gate"
 area: "GATE"
 spec: ""
-status: "todo"
+status: "done"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -254,3 +254,7 @@ reused are reference-only and must be called out explicitly.
   show` lists children; the interactive run footer and CLI abort command are deferred to `CLI-002`
   (blocked by `GATE-002`). All other non-deferred children (`FEAT-045`–`FEAT-049`, `FEAT-051`) are
   implemented and merged; closing this gate is the final step once `CLI-010` lands.
+- 2026-09-23: **GATE-004 closed.** All seven program PRs merged (`FEAT-045` #91, `FEAT-046` #96,
+  `FEAT-047` #97, `FEAT-049` #98, `FEAT-048` #99, `FEAT-051` #100, `CLI-010` #101). `FEAT-046` is
+  `done`; the remaining child cards are in `qa` pending recorded post-merge QA reports. Program
+  handoff `H-009` archived.

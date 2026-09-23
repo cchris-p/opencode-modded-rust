@@ -1,7 +1,7 @@
 ---
 id: "H-009"
 title: "GATE-004 subagent feature parity — Program Handoff"
-status: "open"
+status: "complete"
 created: "2026-09-23"
 updated: "2026-09-23"
 owner: ""
@@ -579,6 +579,16 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
   non-deferred children are `done` or explicitly partial, so `GATE-004` can be closed and this
   handoff archived.
 
+### 2026-09-23 — PR 7 (`CLI-010`) merged; GATE-004 closed
+
+- PR #101 merged into `development` at merge commit `3233ccc` on explicit user approval; the
+  documented-partial resolution was accepted.
+- Branch cleanup complete: remote and local `feature/CLI-010-cli-subagent-surface` deleted.
+- All seven program PRs are merged. `GATE-004` closed; this handoff archived to
+  `handoffs/archive/2026-09-23-gate-004-subagent-feature-parity-program-handoff.md`.
+- Child cards: `FEAT-046` is `done`; `FEAT-045`, `FEAT-047`, `FEAT-048`, `FEAT-049`, `FEAT-051`, and
+  `CLI-010` remain in `qa` pending their recorded post-merge QA reports.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
@@ -593,4 +603,7 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
   2026-09-23). Card `FEAT-048` in `qa` pending post-merge QA.
 - PR 6 (`FEAT-051`) — PR #100 / merge commit `5ada12291c49d27157254f18f3fa528bbf100bff` (merged
   2026-09-23). Card `FEAT-051` in `qa` pending post-merge QA.
+- PR 7 (`CLI-010`) — PR #101 / merge commit `3233ccc` (merged 2026-09-23). Card `CLI-010` in `qa`
+  pending post-merge QA; accepted as a documented partial (interactive footer + CLI abort deferred
+  to `CLI-002`).
 

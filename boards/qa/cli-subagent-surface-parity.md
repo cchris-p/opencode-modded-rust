@@ -103,6 +103,13 @@ Status: accepted documented partial for `GATE-004` gap 6.
 - PR #101 (https://github.com/cchris-p/opencode-modded-rust/pull/101) — `feature/CLI-010-cli-subagent-surface` → `development`.
 - Program: GATE-004 (H-009), PR 7/7 (documented partial). Awaiting human test/merge.
 
+### 2026-09-23 - Merged into `development`
+
+- Merged via PR #101 (merge commit `3233ccc`) on explicit user approval; the documented-partial
+  resolution was accepted.
+- Branch cleanup complete: remote and local `feature/CLI-010-cli-subagent-surface` deleted.
+- Card remains in `qa` pending a recorded QA report.
+
 ## Related Items
 
 - `GATE-004` subagent feature parity.
