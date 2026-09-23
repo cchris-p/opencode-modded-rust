@@ -26,8 +26,21 @@ pub struct ReasoningRender {
 
 #[cfg(test)]
 mod tests {
-    use super::render_text_part;
+    use super::{render_reasoning_part, render_text_part};
     use crate::theme::Theme;
+
+    fn text_of(lines: &[ratatui::text::Line<'static>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
     #[test]
     fn text_part_uses_padding_without_selectable_marker() {
@@ -42,14 +55,39 @@ mod tests {
         assert_eq!(first_span.content.as_ref(), "  ");
         assert!(!first_span.content.contains('▸'));
     }
+
+    #[test]
+    fn shown_reasoning_emits_content_not_only_a_count() {
+        let theme = Theme::default();
+
+        let rendered = render_reasoning_part("First line\nSecond line", &theme, false);
+
+        let body = text_of(&rendered.lines);
+        assert!(rendered.collapsible);
+        assert!(body.contains("First line"));
+        assert!(body.contains("Second line"));
+        assert!(!body.contains("lines)"));
+    }
+
+    #[test]
+    fn collapsed_reasoning_shows_only_the_count_header() {
+        let theme = Theme::default();
+
+        let rendered = render_reasoning_part("First line\nSecond line", &theme, true);
+
+        let body = text_of(&rendered.lines);
+        assert!(body.contains("Thinking (2 lines)"));
+        assert!(!body.contains("First line"));
+    }
 }
 
-pub fn render_reasoning_part(
-    text: &str,
-    theme: &Theme,
-    collapsed: bool,
-    preview_lines: usize,
-) -> ReasoningRender {
+/// Render a reasoning part.
+///
+/// BUG-022: collapse is now an explicit, per-block user action. When
+/// `collapsed` is false (the default whenever `/thinking` is on) the actual
+/// reasoning content is emitted, including the in-progress streamed part.
+/// `collapsed` renders only the `▶ Thinking (N lines)` header.
+pub fn render_reasoning_part(text: &str, theme: &Theme, collapsed: bool) -> ReasoningRender {
     let cleaned = text.replace("[REDACTED]", "").trim().to_string();
     if cleaned.is_empty() {
         return ReasoningRender {
@@ -62,9 +100,9 @@ pub fn render_reasoning_part(
     let renderer = MarkdownRenderer::new(theme.clone()).with_concealed(true);
     let content_lines = renderer.to_lines(&cleaned);
     let total_content_lines = content_lines.len();
-    let collapsible = total_content_lines > preview_lines;
+    let collapsible = !content_lines.is_empty();
 
-    if collapsible && collapsed {
+    if collapsed {
         lines.push(Line::from(Span::styled(
             format!("▶ Thinking ({} lines)", total_content_lines),
             Style::default()
@@ -85,14 +123,8 @@ pub fn render_reasoning_part(
             .add_modifier(Modifier::ITALIC),
     )));
 
-    let visible_count = if collapsible && collapsed {
-        preview_lines
-    } else {
-        total_content_lines
-    };
-
     // Render reasoning with concealed style and muted color.
-    for line in content_lines.into_iter().take(visible_count) {
+    for line in content_lines {
         let mut spans = vec![Span::styled("  ", Style::default().fg(theme.text_muted))];
         spans.extend(
             line.spans

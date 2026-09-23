@@ -136,3 +136,18 @@ the collapsed count line rather than content.
 - Refinement settled 2026-09-23 (handoff `H-007`): default is expanded whenever `/thinking` is on,
   tracked by an explicit per-block `collapsed_reasoning` set (replacing `expanded_reasoning`);
   in-progress reasoning is always visible; hidden still hides.
+
+## Dev Notes - 2026-09-23
+
+- Replaced `expanded_reasoning` with `collapsed_reasoning` in `session.rs`; a block is collapsed
+  only when its `{msg.id}:{part_idx}` id is a member, so reasoning is expanded by default.
+- `session_text::render_reasoning_part` now takes `(text, theme, collapsed)`; the shown state emits
+  the actual content, the collapsed state emits `▶ Thinking (N lines)`. Removed the unreachable
+  preview behavior and `THINKING_PREVIEW_LINES`.
+- Removed the unused `components/thinking.rs` (`ThinkingBlock`) path and its `mod.rs` re-export.
+- `handle_click` toggles membership in `collapsed_reasoning`, preserving manual collapse/expand.
+- Tests: `shown_reasoning_emits_content_not_only_a_count`,
+  `collapsed_reasoning_shows_only_the_count_header`.
+- Verification: `cargo test -p opencode-tui` green (148 passed; two pre-existing flaky prompt tests
+  fail identically on clean `development`).
+- Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.

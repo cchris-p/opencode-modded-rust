@@ -33,6 +33,22 @@ Defined in: `crates/opencode-tui/src/branding.rs`
 - Refined message block layout and status line
 - Syntect code highlighting and path-aware completion
 
+## Display state and toggles
+
+- Display toggles (thinking, tool calls, tool details, timestamps, message
+  density, semantic highlight, header, scrollbar, tips) persist in a runtime
+  key-value file: `dirs::state_dir()/opencode/kv.json` (for example
+  `~/.local/state/opencode/kv.json`).
+- Startup precedence: persisted `kv.json` value > `opencode.json` `tui` default
+  > built-in default. See
+  `crates/opencode-tui/src/context/app_context.rs` (`new_with_config`).
+- `/thinking` surfaces live reasoning content by default; any block can be
+  manually collapsed to the `▶ Thinking (N lines)` header.
+- Tool calls render through the shared block pipeline (gutter, background,
+  padding, word-aware wrapping). Bash/shell uses a distinct terminal block: a
+  `$`-prefixed command wrapped to width, output in an inset `│` region, and a
+  trailing running/exit-status line.
+
 ## Development notes
 
 - UI changes should preserve scroll stability and low CPU usage
