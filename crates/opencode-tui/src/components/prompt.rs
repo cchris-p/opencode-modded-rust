@@ -1593,7 +1593,7 @@ fn spinner_mode_from_env() -> SpinnerMode {
     }
 }
 
-fn prev_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
+pub(crate) fn prev_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
     if cursor_position == 0 || cursor_position > input.len() {
         return None;
     }
@@ -1603,7 +1603,7 @@ fn prev_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
         .map(|(idx, _)| idx)
 }
 
-fn next_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
+pub(crate) fn next_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
     if cursor_position >= input.len() {
         return None;
     }
@@ -1614,7 +1614,7 @@ fn next_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
         .map(|ch| cursor_position + ch.len_utf8())
 }
 
-fn prev_word_boundary(input: &str, cursor_position: usize) -> usize {
+pub(crate) fn prev_word_boundary(input: &str, cursor_position: usize) -> usize {
     let mut position = cursor_position.min(input.len());
     while let Some((prev, ch)) = prev_char(input, position) {
         if is_word_char(ch) {
@@ -1631,7 +1631,7 @@ fn prev_word_boundary(input: &str, cursor_position: usize) -> usize {
     position
 }
 
-fn next_word_boundary(input: &str, cursor_position: usize) -> usize {
+pub(crate) fn next_word_boundary(input: &str, cursor_position: usize) -> usize {
     let mut position = cursor_position.min(input.len());
     while let Some((next, ch)) = next_char(input, position) {
         if is_word_char(ch) {

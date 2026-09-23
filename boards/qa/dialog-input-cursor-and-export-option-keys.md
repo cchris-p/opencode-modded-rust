@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 updated: "2026-09-23"
 ---
@@ -119,8 +119,9 @@ existing prompt cursor model; do not re-litigate during implementation.
   like plain `Left`/`Right`.
 - **`Enter` exports unconditionally** in the export dialog, regardless of which row has focus.
   `Enter` is the submit action; `Space` is the option activation key.
-- **Export options reset on each open** (current `SessionExportDialog::new` behavior is kept).
-  Persisting last-used options is an explicit non-goal of this card.
+- **Export option persistence is unchanged.** The dialog is created once in `App::new` and
+  `open()` does not touch the option flags, so options already persist across opens today; this card
+  keeps that behavior and neither adds nor removes persistence.
 - **Export focus selection method (locked).** The options move to focus selection, chosen over
   modified numeric mnemonics.
   - `Tab`/`Shift+Tab` cycles focus across the filename field and the three option rows (wrapping).
@@ -261,3 +262,36 @@ existing prompt cursor model; do not re-litigate during implementation.
 - Match the prompt's word-skip semantics exactly by importing `prev_word_boundary` /
   `next_word_boundary` / `is_word_char` rather than reimplementing them; differing word rules between
   the prompt and dialogs would be a new inconsistency.
+
+## Implementation Notes
+
+- Added a shared cursor-aware single-line buffer, `DialogTextInput`
+  (`crates/opencode-tui/src/components/dialogs/text_input.rs`): caret-aware insert/backspace/delete,
+  character and word movement, `Home`/`End`, and `split_at_cursor` for caret rendering.
+- Reused the prompt's boundary helpers instead of reimplementing them: `prev_char_boundary`,
+  `next_char_boundary`, `prev_word_boundary`, and `next_word_boundary` were promoted to `pub(crate)`
+  in `crates/opencode-tui/src/components/prompt.rs` and imported by the buffer.
+- Adopted the buffer in all three fields: `SessionRenameDialog::input`,
+  `SessionListDialog::rename_input`, and `SessionExportDialog::filename`. Each now renders the `▏`
+  caret at the caret offset (splitting the value around the cursor) instead of always at the end.
+- Wired caret keys in `App::handle_dialog_key` for the session rename dialog, sessions-list inline
+  rename, and export filename: `Left`/`Right` by character, `Alt+Left`/`Alt+Right` (and `Alt+b`/
+  `Alt+f`) by word, `Home`/`End`, and forward `Delete`, matching the main prompt.
+- Export options moved off bare-digit mnemonics to focus selection: `Tab`/`Shift+Tab` cycle focus
+  across the filename field and the three option rows, `Space` toggles the focused option (and types
+  a space in the filename field), `Up`/`Down` move focus, and `Enter` exports from any focus
+  position. Digits `1`/`2`/`3` now type into the filename. The option rows render a `>` focus marker
+  instead of the old `1`/`2`/`3` labels, and the hint line was updated.
+- Option persistence across opens was left exactly as it was (the dialog is created once in
+  `App::new`, so options persist; `open()` does not reset them). The card's earlier wording about
+  resetting options was corrected to match the real behavior.
+- Added unit tests: buffer editing (character/word movement, backspace/delete around the caret,
+  multibyte safety) and export behavior (digits type, caret edit, Alt word skip, `Space` toggle vs.
+  space typing, `Tab`/arrow focus movement, chars returning focus to the filename).
+- Verification run: `cargo check -p opencode-tui` (no warnings) and `cargo test -p opencode-tui`
+  (94 passed, 0 failed).
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/83
+
