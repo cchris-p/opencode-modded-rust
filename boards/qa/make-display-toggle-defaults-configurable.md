@@ -141,3 +141,9 @@ expressible in config.
   `kv.json` runtime store and precedence.
 - Verification: `cargo test -p opencode-config` (64 passed) and `cargo test -p opencode-tui` green.
 - Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.
+
+### Merge Closeout - 2026-09-23
+
+- Merged into `development` via PR #103 (merge commit `21d7d55`).
+- Feature branch `feature/tui-display-cluster` deleted (remote and local); local checkout returned to `development`.
+- Remains in `qa` pending a QA report or explicit completion.

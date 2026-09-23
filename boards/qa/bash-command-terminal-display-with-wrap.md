@@ -125,3 +125,9 @@ read long commands or their output.
   `failed_bash_lifts_exit_code_into_a_status_line`.
 - Verification: `cargo test -p opencode-tui` green.
 - Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.
+
+### Merge Closeout - 2026-09-23
+
+- Merged into `development` via PR #103 (merge commit `21d7d55`).
+- Feature branch `feature/tui-display-cluster` deleted (remote and local); local checkout returned to `development`.
+- Remains in `qa` pending a QA report or explicit completion.

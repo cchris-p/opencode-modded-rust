@@ -141,3 +141,9 @@ break alignment and hide most of the output.
 - Verification: `cargo test -p opencode-tui` green; `grep` confirms no `ToolCallView`/`BashToolView`/
   `tool_views` references remain.
 - Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.
+
+### Merge Closeout - 2026-09-23
+
+- Merged into `development` via PR #103 (merge commit `21d7d55`).
+- Feature branch `feature/tui-display-cluster` deleted (remote and local); local checkout returned to `development`.
+- Remains in `qa` pending a QA report or explicit completion.
