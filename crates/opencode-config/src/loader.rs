@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 /// config, or managed config still overrides it. Model-only inline content from
 /// the shared vanilla global config path is treated as another global default
 /// and ignored.
-pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4-flash";
+pub const DEFAULT_MODEL: &str = "deepseek/deepseek-flash";
 
 pub struct ConfigLoader {
     config: Config,
