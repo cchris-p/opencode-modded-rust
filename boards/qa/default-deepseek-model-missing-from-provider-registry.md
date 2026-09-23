@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "doing"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -81,3 +81,13 @@ This was not introduced by deleting the bundled DeepSeek model. The bundled fall
 - Updated the product-owned default to `deepseek/deepseek-flash`, an active DeepSeek model present in the runtime provider registry.
 - Updated the bundled fallback catalog and TUI fallback model picker entry to use the same DeepSeek model ID.
 - Updated repo docs/invariants that explicitly name the product-owned default model.
+
+## PR
+
+- PR #78: https://github.com/cchris-p/opencode-modded-rust/pull/78
+
+## QA Notes
+
+- `git diff --check` passed.
+- Static search confirmed the deprecated default is gone from config/TUI fallback paths; the remaining `deepseek-v4-flash` config hit is an unrelated OpenRouter override test fixture.
+- Rust tooling was unavailable in this environment: `cargo fmt --all`, `cargo test -p opencode-config default_model`, and `cargo test -p opencode-provider bundled_v1_models_data_contains_expected_models` all failed with `cargo: command not found`.
