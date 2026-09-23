@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -49,15 +49,32 @@ from vanilla.
 
 ## Acceptance criteria
 
-- [ ] The resolved decision above is recorded and consistent with `GATE-002`.
-- [ ] A focused test verifies tool-list availability for allowed vs denied agents.
-- [ ] The deviation from vanilla's execution-time assert is documented.
+- [x] The resolved decision above is recorded and consistent with `GATE-002`.
+- [x] A focused test verifies tool-list availability for allowed vs denied agents.
+- [x] The deviation from vanilla's execution-time assert is documented.
 
 ## Verification
 
 - `cargo fmt --all`
 - `cargo check -p opencode-permission -p opencode-server`
 - `cargo test -p opencode-permission question` and the agentic tool-resolution test.
+
+## Dev Notes - 2026-09-22
+
+- Confirmed the existing ruleset/tool-filtering behavior is the intended gate: `question` defaults to
+  `Deny` and `build`/`plan` override to `Allow` in `crates/opencode-permission/src/ruleset.rs`, with
+  tool-list filtering in `crates/opencode-server/src/agentic.rs`.
+- Added `crates/opencode-permission/src/ruleset.rs` tests:
+  `question_permission_is_denied_by_default_and_allowed_for_build_and_plan` and
+  `user_ruleset_can_revoke_question_from_build`.
+- Added `crates/opencode-server/src/agentic.rs` test
+  `resolve_tools_gates_question_by_agent_permission`, asserting `question` is offered to `build` and
+  `plan` and withheld from `explore`.
+- Documented deviation from vanilla's execution-time `action: "question"` assert; the Rust product
+  relies on tool-availability filtering instead and deliberately adds no second assert inside
+  `QuestionTool::execute`.
+- Tests: `cargo test -p opencode-permission` (11 passing) and `cargo test -p opencode-server agentic`.
+- Committed directly to `development` per maintainer direction.
 
 ## Related Items
 

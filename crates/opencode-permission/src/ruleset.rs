@@ -420,6 +420,47 @@ mod tests {
     }
 
     #[test]
+    fn question_permission_is_denied_by_default_and_allowed_for_build_and_plan() {
+        // The default ruleset denies the question permission, so agents that do
+        // not opt in lose access to the tool.
+        assert_eq!(
+            evaluate("question", "*", &[default_ruleset()]).action,
+            PermissionAction::Deny
+        );
+
+        // The Rust product grants `question` through the agent ruleset rather
+        // than an execution-time permission assert (documented deviation from
+        // vanilla), so build and plan must resolve to Allow.
+        assert_eq!(
+            evaluate("question", "*", &[build_agent_ruleset("build", &[])]).action,
+            PermissionAction::Allow
+        );
+        assert_eq!(
+            evaluate("question", "*", &[build_agent_ruleset("plan", &[])]).action,
+            PermissionAction::Allow
+        );
+    }
+
+    #[test]
+    fn user_ruleset_can_revoke_question_from_build() {
+        let deny_question = vec![PermissionRule {
+            permission: "question".to_string(),
+            pattern: "*".to_string(),
+            action: PermissionAction::Deny,
+        }];
+
+        assert_eq!(
+            evaluate(
+                "question",
+                "*",
+                &[build_agent_ruleset("build", &deny_question)]
+            )
+            .action,
+            PermissionAction::Deny
+        );
+    }
+
+    #[test]
     fn external_directory_patterns_normalize_to_directory_boundary() {
         assert_eq!(
             normalize_permission_pattern("external_directory", "/tmp/demo"),

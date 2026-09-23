@@ -199,6 +199,30 @@ implemented or explicitly resolved as a documented deviation in this card.
 - CLI/direct-run: deferred to `CLI-009` once the CLI surface (`CLI-001`/`CLI-006`) and the routed loop
   (`CLI-002`) exist.
 
+## Side-by-Side Parity Note - 2026-09-22
+
+Reference: `$HOME/repos/opencode-modded` `dev` at `f54ce313b99a6661d7758ad042f7a6e05c8e0972`.
+
+| Capability | Vanilla | Rust product | Status |
+| --- | --- | --- | --- |
+| Schema: required header, required option description, `custom` default true, `multiple` default false | `packages/schema/src/question.ts` | `crates/opencode-tool/src/question.rs` | Parity (`FEAT-038`) |
+| Per-question answer arrays preserved to model output | `QuestionV2.toModelOutput` | `to_model_output` | Parity (`FEAT-038`) |
+| Callback-only ask (no stdin fallback) | `packages/core/src/tool/question.ts` | `ToolContext::question` | Parity (`FEAT-038`) |
+| Session-scoped list/reply/reject with ownership checks | `/api/session/:sessionID/question...` | `/session/{id}/question...` | Parity (`FEAT-039`) |
+| Ask/reply/reject events | `question.v2.asked/replied/rejected` | `question.asked/replied/rejected` (+ `session.updated` poll trigger) | Parity (`FEAT-040`) |
+| Rejection error distinguishable from tool failure/drop | `RejectedError` | `ToolError::QuestionRejected`; drop stays `ExecutionError` | Parity (`FEAT-040`) |
+| Pending cleanup on reply/reject/drop/abort/shutdown | finalizer rejects outstanding waiters | reply/reject remove; drop guard clears; abort/delete reject waiters | Parity (`FEAT-040`) |
+| Option descriptions + digit shortcuts + custom answers + multi-select | `question.tsx` | `components/question.rs` | Parity (`FEAT-041`) |
+| Multi-question flow | tab navigation + final confirm tab | sequential flow + explicit review/confirm screen | Deliberate deviation (`FEAT-041`) |
+| Prompt placement | modal overlay | compact bottom-of-session prompt | Deliberate deviation (`FEAT-041`/gate) |
+| `question` permission | execution-time `action: "question"` assert | agent ruleset + tool-list filtering, no execution-time assert | Deliberate deviation (`FEAT-043`) |
+| CLI/direct-run question handling | `run/footer.question.tsx` | not implemented | Deferred to `CLI-009` |
+| Web/app question dock | `session-question-dock.tsx` | no app surface | Out of scope |
+
+Verification fixtures: `FEAT-044`. `GATE-002` closes after the maintainer completes the local TUI
+smoke (single select, multi select, custom answer, multi-question review, reject) and confirms
+`FEAT-039` post-merge QA.
+
 ## Done When
 
 - The question tool and every question surface match how the question feature works in vanilla OpenCode

@@ -300,6 +300,25 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn resolve_tools_gates_question_by_agent_permission() {
+        for agent in [AgentInfo::build(), AgentInfo::plan()] {
+            let tools = resolve_tools(&agent).await;
+            assert!(
+                tools.iter().any(|tool| tool.name == "question"),
+                "{} agent should be offered the question tool",
+                agent.name
+            );
+        }
+
+        let explore = AgentInfo::explore();
+        let explore_tools = resolve_tools(&explore).await;
+        assert!(
+            !explore_tools.iter().any(|tool| tool.name == "question"),
+            "question tool must be withheld when the agent denies the question permission"
+        );
+    }
+
     #[test]
     fn classify_permission_respects_allow_and_deny() {
         let allow: PermissionRuleset = vec![PermissionRule {

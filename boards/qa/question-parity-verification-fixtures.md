@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -45,14 +45,31 @@ Focused tests or smoke fixtures for:
 
 ## Acceptance criteria
 
-- [ ] Each fixture above exists and passes in CI.
-- [ ] The suite fails if the tool regresses to stdin or if ownership checks are removed.
-- [ ] A short side-by-side parity note against the frozen reference commit is recorded in the gate.
+- [x] Each fixture above exists and passes in CI.
+- [x] The suite fails if the tool regresses to stdin or if ownership checks are removed.
+- [x] A short side-by-side parity note against the frozen reference commit is recorded in the gate.
 
 ## Verification
 
 - `cargo fmt --all`
 - `cargo test -p opencode-tool -p opencode-server -p opencode-tui`
+
+## Dev Notes - 2026-09-22
+
+- Consolidated coverage across the child cards:
+  - Schema, model output, callback contract, and no-stdin behavior:
+    `cargo test -p opencode-tool question` (`crates/opencode-tool/src/question.rs`).
+  - Session ownership, abort cleanup, guard drop, and resolution-to-error mapping:
+    `cargo test -p opencode-server question` (`crates/opencode-server/src/routes.rs`).
+  - Permission tool-availability: `cargo test -p opencode-permission` and
+    `cargo test -p opencode-server agentic`.
+  - TUI state transitions for single/multi/custom/review/cancel:
+    `cargo test -p opencode-tui --lib` (`crates/opencode-tui/src/components/question.rs`).
+- Removed the final manual-only gap by extracting `question_resolution_result` so rejection vs.
+  dropped-waiter behavior is asserted directly.
+- Recorded the side-by-side parity note against the frozen reference commit
+  `f54ce313b99a6661d7758ad042f7a6e05c8e0972` in `GATE-002` "Side-by-Side Parity Note".
+- Committed directly to `development` per maintainer direction.
 
 ## Related Items
 
