@@ -193,3 +193,11 @@ Implemented on branch `feature/FEAT-054-tui-color-scheme-consistency`.
 - Compare an open question prompt against the surrounding transcript: both should sit on the same
   flat `background_panel` field.
 - Light preset: confirm no white-on-white / black-on-black text.
+
+## Merge Closeout - 2026-09-23
+
+- Merged into `development` via PR #85 (merge commit `65e4e10`).
+- Feature branch `feature/FEAT-054-tui-color-scheme-consistency` deleted remotely and locally; local
+  checkout is back on `development` and fast-forwarded to the merge.
+- Remains in `qa`: no QA report is recorded yet. Promote to the completed lane only after the visual
+  QA in the pending section above is run and recorded, or on explicit user direction.
