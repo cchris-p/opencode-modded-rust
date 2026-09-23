@@ -113,8 +113,9 @@ break alignment and hide most of the output.
   `crates/opencode-tui/src/components/tool_call.rs`,
   `crates/opencode-tui/src/components/tool_views.rs`,
   `crates/opencode-tui/src/components/mod.rs`.
-- Confirm whether `MessageView`/`tool_views` are referenced by any non-test/demo path before deleting;
-  they are exported from `components/mod.rs` but no live caller was found.
-- `wrap_block_line`/`wrap_spans` currently wrap greedily per character
-  (`crates/opencode-tui/src/components/session.rs:1453-1485`); decide whether tool output should use
-  word-aware wrapping for parity with the markdown `Paragraph::wrap`.
+- Confirmed 2026-09-23: `MessageView`/`ToolCallView`/`BashToolView`/`tool_views` have no non-test
+  caller (only definitions and `components/mod.rs` re-exports; none of the modules have tests), so the
+  stack is deleted and its per-tool semantics ported into the live `session_tool.rs` renderer.
+- `wrap_block_line`/`wrap_spans` (`crates/opencode-tui/src/components/session.rs:1453-1485`) is
+  upgraded to word-aware wrapping with a hard-break fallback for parity with the markdown
+  `Paragraph::wrap`.

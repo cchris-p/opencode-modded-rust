@@ -130,5 +130,9 @@ the collapsed count line rather than content.
   `crates/opencode-tui/src/components/session.rs`,
   `crates/opencode-tui/src/components/session_text.rs`.
 - `crates/opencode-tui/src/components/thinking.rs` (`ThinkingBlock`) is a separate rendering path
-  (collapsed defaults to true as well) and may need the same treatment for consistency; confirm which
-  path is actually used by the session transcript before changing it.
+  (collapsed defaults to true as well). Confirmed 2026-09-23: the session transcript uses
+  `session_text::render_reasoning_part`, not `ThinkingBlock`, so `ThinkingBlock` is unreferenced and
+  is removed as part of this item.
+- Refinement settled 2026-09-23 (handoff `H-007`): default is expanded whenever `/thinking` is on,
+  tracked by an explicit per-block `collapsed_reasoning` set (replacing `expanded_reasoning`);
+  in-progress reasoning is always visible; hidden still hides.
