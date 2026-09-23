@@ -121,11 +121,24 @@ terminal state, so the failure is most likely in the stream/agent loop rather th
 - `BUG-019` Escape does not interrupt the running session.
 - `deepseek-tool-loop-reasoning-passback-and-split-toolcall` (done) - prior deepseek reasoning
   passback/tool-call fix.
+- `BUG-040` Grep tool blocks the async runtime and wedges the server and TUI - a distinct freeze
+  (runtime starvation, not a silent non-completion).
 
 ## Notes
 
 - Captured export: `docs/transcripts/why-was-bug-035-moved-to-hold.md`.
+- Additional captured session (`ses_2d2c826f00c44632b69924e444ce534a`, "Board item to PR and closeout
+  on BUG-039 worktree"): the assistant emitted reasoning + text + two bash tool calls, then a bash
+  tool result and a grep tool result, and no further assistant message was persisted; the last
+  message is a user "Continue". This is the same shape as this card (turn stops after tool results
+  with no terminal record), reproduced under the new session diagnostics.
+- Inspect a session by name without opening the TUI:
+  `opencode session inspect "<name>"` prints status/timings, message and part counts, tokens,
+  bounded per-message part previews, and a stall verdict. `opencode session find "<name>"`
+  resolves the id.
 - The stalled prompt is trivial and read-only, so the wedge is not caused by a slow or large tool.
+  (For the BUG-039 session specifically, a separate grep runtime-starvation freeze is tracked as
+  `BUG-040`.)
 - Relevant files: `crates/opencode-provider/src/stream.rs`,
   `crates/opencode-provider/src/deepseek.rs`, `crates/opencode-session/src/prompt.rs`,
   `crates/opencode-server/src/routes.rs`, `crates/opencode-tui/src/app/app.rs`.
