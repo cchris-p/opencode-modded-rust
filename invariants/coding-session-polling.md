@@ -2,6 +2,8 @@
 
 - Coding-session polling waits on explicit observable state, not on vague transcript interpretation.
 - Polling must be bounded by a declared condition and timeout or cancellation path.
+- Every polling wait must terminate with an explicit status such as `met`, `timeout`, `cancelled`, or `error`.
+- Polling must be invocable from any coding session, including background sessions, without depending on the currently visible TUI session.
 - Polling must support background coding sessions as explicit targets.
 - Polling results must be compact and evidence-backed.
 - A polling result must not import another session's full transcript unless explicitly requested.
