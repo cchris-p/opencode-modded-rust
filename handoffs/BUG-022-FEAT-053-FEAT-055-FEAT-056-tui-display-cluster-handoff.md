@@ -323,5 +323,6 @@ of the Execution Sequence.
   `utf8_backspace_delete_and_cursor_are_char_safe`) fail identically on clean `development` and are
   unrelated to this change set.
 - All four cards moved to `qa` with Dev Notes.
-- PR: [pending]; open the PR against `development`, then leave it open for local QA. Do not merge
-  until the user has tested locally and explicitly says to merge.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/103 (open, targeting `development`).
+  Leave it open for local QA. Do not merge until the user has tested locally and explicitly says to
+  merge.
