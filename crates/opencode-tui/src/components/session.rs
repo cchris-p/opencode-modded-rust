@@ -196,7 +196,16 @@ impl SessionView {
         } else {
             0u16
         };
-        let session_footer_height = 0u16;
+        // Child sessions get a subagent footer (label, position, Parent/Prev/Next).
+        // Root sessions keep the general footer disabled, matching current behavior.
+        let is_subagent_session = {
+            let session_ctx = self.context.session.read();
+            session_ctx
+                .sessions
+                .get(&self.session_id)
+                .is_some_and(|session| session.parent_id.is_some())
+        };
+        let session_footer_height = if is_subagent_session { 1u16 } else { 0u16 };
         let desired_prompt_height = prompt.desired_height(area.width).max(3);
         let total_height = area.height;
         let available_after_header = total_height.saturating_sub(header_height);
@@ -388,8 +397,91 @@ impl SessionView {
         frame.render_widget(paragraph, area);
     }
 
+    /// Footer for child (subagent) sessions: agent label, sibling position, and
+    /// Parent/Prev/Next affordances. Returns false for root sessions so the
+    /// caller can fall back to the general footer.
+    fn render_subagent_footer(&self, frame: &mut Frame, area: Rect) -> bool {
+        let theme = self.context.theme.read().clone();
+        let session_ctx = self.context.session.read();
+        let Some(session) = session_ctx.sessions.get(&self.session_id) else {
+            return false;
+        };
+        let Some(parent_id) = session.parent_id.clone() else {
+            return false;
+        };
+
+        // Siblings sorted by creation time ascending, matching the reference
+        // `SubagentFooter` position calculation.
+        let mut siblings: Vec<&crate::context::Session> = session_ctx
+            .sessions
+            .values()
+            .filter(|candidate| candidate.parent_id.as_deref() == Some(parent_id.as_str()))
+            .collect();
+        siblings.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        let total = siblings.len();
+        let index = siblings
+            .iter()
+            .position(|candidate| candidate.id == self.session_id)
+            .map(|position| position + 1)
+            .unwrap_or(1);
+
+        let label = subagent_label(&session.title);
+        let keybind = self.context.keybind.read();
+
+        let mut left = vec![Span::styled(
+            label,
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        )];
+        if total > 0 {
+            left.push(Span::styled(
+                format!(" ({} of {})", index, total),
+                Style::default().fg(theme.text_muted),
+            ));
+        }
+
+        let right = vec![
+            Span::styled("Parent ", Style::default().fg(theme.text)),
+            Span::styled(
+                keybind.print("session_parent"),
+                Style::default().fg(theme.text_muted),
+            ),
+            Span::raw("  "),
+            Span::styled("Prev ", Style::default().fg(theme.text)),
+            Span::styled(
+                keybind.print("session_child_cycle_reverse"),
+                Style::default().fg(theme.text_muted),
+            ),
+            Span::raw("  "),
+            Span::styled("Next ", Style::default().fg(theme.text)),
+            Span::styled(
+                keybind.print("session_child_cycle"),
+                Style::default().fg(theme.text_muted),
+            ),
+        ];
+
+        let left_len: usize = left.iter().map(|span| span.content.len()).sum();
+        let right_len: usize = right.iter().map(|span| span.content.len()).sum();
+        let available = area.width as usize;
+        let mut spans = left;
+        if available > left_len + right_len + 1 {
+            spans.push(Span::raw(" ".repeat(available - left_len - right_len)));
+        } else {
+            spans.push(Span::raw(" "));
+        }
+        spans.extend(right);
+
+        let paragraph =
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.background_panel));
+        frame.render_widget(paragraph, area);
+        true
+    }
+
     fn render_session_footer(&self, frame: &mut Frame, area: Rect) {
         if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        if self.render_subagent_footer(frame, area) {
             return;
         }
 
@@ -946,6 +1038,26 @@ impl SessionView {
                             &msg.id,
                             paint_block_lines(
                                 vec![footer],
+                                message_bg,
+                                message_border,
+                                content_width,
+                            ),
+                        );
+                    }
+
+                    // Reference parity: surface the "view subagents" hint once
+                    // per assistant message that contains a `task` tool part.
+                    let has_task_part = msg.parts.iter().any(
+                        |part| matches!(part, MessagePart::ToolCall { name, .. } if name == "task"),
+                    );
+                    if has_task_part {
+                        let hint = task_view_subagents_line(&theme, &self.context.keybind.read());
+                        append_message_lines(
+                            &mut lines,
+                            &mut line_to_message,
+                            &msg.id,
+                            paint_block_lines(
+                                vec![Line::from(""), hint],
                                 message_bg,
                                 message_border,
                                 content_width,
@@ -1637,6 +1749,39 @@ fn titlecase(value: &str) -> String {
     }
 }
 
+/// Extract the agent label from a subagent child session title of the form
+/// `"<description> (@<agent> subagent)"`, matching the reference
+/// `SubagentFooter` regex `/@(\w+) subagent/`. Falls back to `"Subagent"`.
+fn subagent_label(title: &str) -> String {
+    if let Some(at) = title.rfind('@') {
+        let rest = &title[at + 1..];
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_' || *ch == '-')
+            .collect();
+        let after = rest[name.len()..].trim_start();
+        if !name.is_empty() && after.starts_with("subagent") {
+            return titlecase(&name);
+        }
+    }
+    "Subagent".to_string()
+}
+
+/// The `ctrl+x down view subagents` hint rendered on assistant messages that
+/// contain a `task` tool part, mirroring the reference `AssistantMessage`.
+fn task_view_subagents_line(
+    theme: &crate::theme::Theme,
+    keybind: &crate::context::KeybindRegistry,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            keybind.leader_chord("session_child_first"),
+            Style::default().fg(theme.text),
+        ),
+        Span::styled(" view subagents", Style::default().fg(theme.text_muted)),
+    ])
+}
+
 fn format_number(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + (digits.len() / 3));
@@ -1659,6 +1804,30 @@ mod tests {
             name: "read".to_string(),
             arguments: "{}".to_string(),
         }
+    }
+
+    #[test]
+    fn subagent_label_reads_agent_name_from_title() {
+        assert_eq!(
+            subagent_label("Research the API (@explore subagent)"),
+            "Explore"
+        );
+        assert_eq!(subagent_label("Do a thing (@general subagent)"), "General");
+        assert_eq!(subagent_label("A normal session"), "Subagent");
+        assert_eq!(subagent_label(""), "Subagent");
+    }
+
+    #[test]
+    fn task_hint_uses_leader_chord_and_muted_suffix() {
+        let theme = crate::theme::Theme::dark();
+        let keybind = crate::context::KeybindRegistry::new();
+        let line = task_view_subagents_line(&theme, &keybind);
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(text, "ctrl+x down view subagents");
     }
 
     #[test]

@@ -4,6 +4,11 @@ use std::time::{Duration, Instant};
 
 const LEADER_TIMEOUT_MS: u64 = 2000;
 
+/// Display label for the leader key. The leader is handled directly in
+/// `app.rs` (Ctrl+X); bindings below `session_child_first` are the leader's
+/// sub-key, so their display chord is rendered as `<leader> <key>`.
+pub const LEADER_LABEL: &str = "ctrl+x";
+
 pub struct LeaderKeyState {
     pub active: bool,
     pub start_time: Option<Instant>,
@@ -176,12 +181,14 @@ impl KeybindRegistry {
         self.register("model_cycle", Keybind::ctrl(KeyCode::Char('m')));
         self.register("variant_cycle", Keybind::ctrl(KeyCode::Char('v')));
 
-        self.register("session_parent", Keybind::ctrl(KeyCode::Char('o')));
-        self.register("session_child_cycle", Keybind::ctrl(KeyCode::Char('j')));
-        self.register(
-            "session_child_cycle_reverse",
-            Keybind::ctrl(KeyCode::Char('k')),
-        );
+        // Subagent session navigation. `session_child_first` is the leader's
+        // Down sub-key (`<leader>down`); parent/cycle follow the reference's
+        // direct Up/Right/Left bindings. The old Ctrl+O/Ctrl+J/Ctrl+K
+        // registrations were dead (never dispatched) and are removed.
+        self.register("session_child_first", Keybind::key(KeyCode::Down));
+        self.register("session_parent", Keybind::key(KeyCode::Up));
+        self.register("session_child_cycle", Keybind::key(KeyCode::Right));
+        self.register("session_child_cycle_reverse", Keybind::key(KeyCode::Left));
         self.register("session_rename", Keybind::ctrl(KeyCode::Char('r')));
         self.register("session_delete", Keybind::ctrl(KeyCode::Char('d')));
         self.register("session_interrupt", Keybind::key(KeyCode::Esc));
@@ -244,6 +251,12 @@ impl KeybindRegistry {
             .unwrap_or_else(|| "?".to_string())
     }
 
+    /// Render a leader-chord shortcut label, e.g. `ctrl+x down` for
+    /// `session_child_first`.
+    pub fn leader_chord(&self, name: &str) -> String {
+        format!("{} {}", LEADER_LABEL, self.print(name))
+    }
+
     pub fn all(&self) -> &HashMap<String, Keybind> {
         &self.bindings
     }
@@ -269,5 +282,33 @@ mod tests {
         assert!(!registry.match_key("input_newline", KeyCode::Char('j'), KeyModifiers::NONE));
         assert!(registry.match_key("input_newline_alt", KeyCode::Enter, KeyModifiers::ALT,));
         assert!(!registry.match_key("input_newline_alt", KeyCode::Enter, KeyModifiers::NONE,));
+    }
+
+    #[test]
+    fn subagent_navigation_defaults_follow_the_reference() {
+        let registry = KeybindRegistry::new();
+
+        assert!(registry.match_key("session_child_first", KeyCode::Down, KeyModifiers::NONE));
+        assert!(registry.match_key("session_parent", KeyCode::Up, KeyModifiers::NONE));
+        assert!(registry.match_key("session_child_cycle", KeyCode::Right, KeyModifiers::NONE));
+        assert!(registry.match_key(
+            "session_child_cycle_reverse",
+            KeyCode::Left,
+            KeyModifiers::NONE,
+        ));
+
+        // The legacy dead bindings must be gone.
+        assert!(!registry.match_key("session_parent", KeyCode::Char('o'), KeyModifiers::CONTROL));
+        assert!(!registry.match_key(
+            "session_child_cycle",
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL,
+        ));
+    }
+
+    #[test]
+    fn leader_chord_renders_prefixed_shortcut() {
+        let registry = KeybindRegistry::new();
+        assert_eq!(registry.leader_chord("session_child_first"), "ctrl+x down");
     }
 }

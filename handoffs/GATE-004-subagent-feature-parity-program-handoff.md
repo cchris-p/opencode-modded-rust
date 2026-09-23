@@ -464,6 +464,19 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - Gate check for PR 3: `FEAT-047` may start now that PR 2 is merged; `development` is current at
   `05752d9` in the local checkout.
 
+### 2026-09-23 — PR 3 (`FEAT-047`) opened
+
+- Branch `feature/FEAT-047-tui-subagent-navigation`; PR #97 targets `development`
+  (https://github.com/cchris-p/opencode-modded-rust/pull/97).
+- Reference leader bindings (`<leader>down`, `up`, `left`, `right`) with dead `ctrl+o`/`ctrl+j`/
+  `ctrl+k` removed; new `ApiClient::get_session_children`; child/sibling navigation and cycle order
+  mirrored from `index.tsx`; subagent footer (label, `(index of total)`, Parent/Prev/Next); the
+  `ctrl+x down view subagents` hint on `task` messages; dead `SubagentDialog` removed.
+- Verification green: `cargo fmt --all`, `cargo check --workspace`,
+  `cargo test -p opencode-tui --lib` (134 passed), including new navigation/footer tests.
+- `FEAT-047` moved `todo -> doing -> qa`; awaiting human test/merge on PR #97 before PR 4
+  (`FEAT-049`) starts. Manual TUI side-by-side is pending human verification.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged

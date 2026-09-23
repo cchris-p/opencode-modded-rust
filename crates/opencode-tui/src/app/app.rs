@@ -25,8 +25,8 @@ use crate::components::{
     Prompt, PromptStashDialog, ProviderDialog, QuestionOption, QuestionPrompt, QuestionRequest,
     QuestionType, SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog,
     SessionRenameDialog, SessionView, SettingsInputMode, SettingsView, SkillListDialog,
-    SlashCommandPopup, StashItem, StatusDialog, StatusLine, SubagentDialog, TagDialog, TaskKind,
-    ThemeListDialog, ThemeOption, TimelineDialog, TimelineEntry, Toast, ToastVariant,
+    SlashCommandPopup, StashItem, StatusDialog, StatusLine, TagDialog, TaskKind, ThemeListDialog,
+    ThemeOption, TimelineDialog, TimelineEntry, Toast, ToastVariant,
 };
 use crate::context::keybind::LeaderKeyState;
 use crate::context::{
@@ -105,7 +105,6 @@ pub struct App {
     timeline_dialog: TimelineDialog,
     fork_dialog: ForkDialog,
     provider_dialog: ProviderDialog,
-    subagent_dialog: SubagentDialog,
     tag_dialog: TagDialog,
     permission_prompt: PermissionPrompt,
     question_prompt: QuestionPrompt,
@@ -247,7 +246,6 @@ impl App {
             timeline_dialog: TimelineDialog::new(),
             fork_dialog: ForkDialog::new(),
             provider_dialog: ProviderDialog::new(),
-            subagent_dialog: SubagentDialog::new(),
             tag_dialog: TagDialog::new(),
             permission_prompt: PermissionPrompt::new(),
             question_prompt: QuestionPrompt::new(),
@@ -490,6 +488,10 @@ impl App {
                             KeyCode::Char('q') => Some(CommandAction::Exit),
                             KeyCode::Char('u') => Some(CommandAction::Undo),
                             KeyCode::Char('r') => Some(CommandAction::Redo),
+                            KeyCode::Down => Some(CommandAction::SessionChildFirst),
+                            KeyCode::Up => Some(CommandAction::SessionParent),
+                            KeyCode::Left => Some(CommandAction::SessionChildCycleReverse),
+                            KeyCode::Right => Some(CommandAction::SessionChildCycle),
                             _ => None,
                         };
                         self.leader_state.reset();
@@ -967,7 +969,6 @@ impl App {
             || self.timeline_dialog.is_open()
             || self.fork_dialog.is_open()
             || self.provider_dialog.is_open()
-            || self.subagent_dialog.is_open()
             || self.tag_dialog.is_open()
     }
 
@@ -1040,10 +1041,6 @@ impl App {
         }
         if self.provider_dialog.is_open() {
             self.provider_dialog.close();
-            return true;
-        }
-        if self.subagent_dialog.is_open() {
-            self.subagent_dialog.close();
             return true;
         }
         if self.tag_dialog.is_open() {
@@ -1153,14 +1150,6 @@ impl App {
                 self.provider_dialog.move_up();
             } else {
                 self.provider_dialog.move_down();
-            }
-            return;
-        }
-        if self.subagent_dialog.is_open() {
-            if up {
-                self.subagent_dialog.scroll_up();
-            } else {
-                self.subagent_dialog.scroll_down(50);
             }
             return;
         }
@@ -1857,16 +1846,6 @@ impl App {
             return Ok(true);
         }
 
-        if self.subagent_dialog.is_open() {
-            match key.code {
-                KeyCode::Esc => self.subagent_dialog.close(),
-                KeyCode::Up => self.subagent_dialog.scroll_up(),
-                KeyCode::Down => self.subagent_dialog.scroll_down(50),
-                _ => {}
-            }
-            return Ok(true);
-        }
-
         if self.tag_dialog.is_open() {
             match key.code {
                 KeyCode::Esc => self.tag_dialog.close(),
@@ -1904,6 +1883,18 @@ impl App {
             }
             CommandAction::ExportSession => {
                 self.open_session_export_dialog();
+            }
+            CommandAction::SessionChildFirst => {
+                self.navigate_session_child_first();
+            }
+            CommandAction::SessionParent => {
+                self.navigate_session_parent();
+            }
+            CommandAction::SessionChildCycle => {
+                self.navigate_session_child_cycle(1);
+            }
+            CommandAction::SessionChildCycleReverse => {
+                self.navigate_session_child_cycle(-1);
             }
             CommandAction::PromptStashPush => {
                 if self.prompt.stash_current() {
@@ -2129,6 +2120,125 @@ impl App {
         match self.context.current_route() {
             Route::Session { session_id } => Some(session_id),
             _ => self.active_session_id.clone(),
+        }
+    }
+
+    /// Navigate to a session route and load it, matching the session-list
+    /// Enter path. Used by subagent child navigation.
+    fn navigate_to_session(&mut self, session_id: &str) {
+        self.context.navigate(Route::Session {
+            session_id: session_id.to_string(),
+        });
+        self.ensure_session_view(session_id);
+        let _ = self.sync_session_from_server(session_id);
+        self.refresh_session_family(session_id);
+    }
+
+    fn session_parent_id(&self, session_id: &str) -> Option<String> {
+        self.context
+            .session
+            .read()
+            .sessions
+            .get(session_id)
+            .and_then(|session| session.parent_id.clone())
+    }
+
+    /// Enter the first child of the current session. Mirrors the reference
+    /// `moveFirstChild`: from a childless session it is a no-op, and from a
+    /// child session it falls back to the first sibling.
+    fn navigate_session_child_first(&mut self) {
+        let Some(current) = self.current_session_id() else {
+            return;
+        };
+        let Some(client) = self.context.get_api_client() else {
+            return;
+        };
+
+        let children = client.get_session_children(&current).unwrap_or_default();
+        let direct: Vec<String> = children.into_iter().map(|session| session.id).collect();
+        let target = if !direct.is_empty() {
+            select_first_child(&direct)
+        } else {
+            self.session_parent_id(&current).and_then(|parent| {
+                client
+                    .get_session_children(&parent)
+                    .ok()
+                    .map(|siblings| {
+                        let ids: Vec<String> =
+                            siblings.into_iter().map(|session| session.id).collect();
+                        select_first_sibling(&ids, &current)
+                    })
+                    .flatten()
+            })
+        };
+
+        if let Some(target) = target {
+            if target != current {
+                self.navigate_to_session(&target);
+            }
+        }
+    }
+
+    fn navigate_session_parent(&mut self) {
+        let Some(current) = self.current_session_id() else {
+            return;
+        };
+        if let Some(parent) = self.session_parent_id(&current) {
+            self.navigate_to_session(&parent);
+        }
+    }
+
+    /// Cycle sibling child sessions. `direction` is +1 for the reference's
+    /// "next child" (right) and -1 for "previous child" (left); it matches the
+    /// reference's `findIndex(current) - direction` order.
+    fn navigate_session_child_cycle(&mut self, direction: i32) {
+        let Some(current) = self.current_session_id() else {
+            return;
+        };
+        let Some(parent) = self.session_parent_id(&current) else {
+            return;
+        };
+        let Some(client) = self.context.get_api_client() else {
+            return;
+        };
+        let siblings: Vec<String> = client
+            .get_session_children(&parent)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|session| session.id)
+            .collect();
+        if let Some(target) = cycle_sibling(&siblings, &current, direction) {
+            if target != current {
+                self.navigate_to_session(&target);
+            }
+        }
+    }
+
+    /// Cache the parent's children and the session's own children so the
+    /// subagent footer can show label and position without per-frame requests.
+    fn refresh_session_family(&mut self, session_id: &str) {
+        let Some(client) = self.context.get_api_client() else {
+            return;
+        };
+        let parent_id = self.session_parent_id(session_id);
+        let mut session_ctx = self.context.session.write();
+        if let Some(parent_id) = parent_id {
+            if let Ok(siblings) = client.get_session_children(&parent_id) {
+                for sibling in siblings {
+                    session_ctx
+                        .sessions
+                        .entry(sibling.id.clone())
+                        .or_insert_with(|| map_api_session(&sibling));
+                }
+            }
+        }
+        if let Ok(children) = client.get_session_children(session_id) {
+            for child in children {
+                session_ctx
+                    .sessions
+                    .entry(child.id.clone())
+                    .or_insert_with(|| map_api_session(&child));
+            }
         }
     }
 
@@ -4241,7 +4351,6 @@ impl App {
         let timeline_dialog = &self.timeline_dialog;
         let fork_dialog = &self.fork_dialog;
         let provider_dialog = &self.provider_dialog;
-        let subagent_dialog = &self.subagent_dialog;
         let tag_dialog = &self.tag_dialog;
         let permission_prompt = &self.permission_prompt;
         let question_prompt = &self.question_prompt;
@@ -4303,7 +4412,6 @@ impl App {
             timeline_dialog.render(frame, area, &theme);
             fork_dialog.render(frame, area, &theme);
             provider_dialog.render(frame, area, &theme);
-            subagent_dialog.render(frame, area, &theme);
             tag_dialog.render(frame, area, &theme);
             permission_prompt.render(frame, area, &theme);
             question_prompt.render(frame, area, &theme);
@@ -4627,6 +4735,42 @@ fn title_case(input: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// First direct child by ascending id, matching the reference `children()`
+/// sort. Returns `None` for an empty child list.
+fn select_first_child(children: &[String]) -> Option<String> {
+    let mut sorted: Vec<&String> = children.iter().collect();
+    sorted.sort();
+    sorted.first().map(|id| id.to_string())
+}
+
+/// First sibling by ascending id that is not the current session. Used when
+/// `session_child_first` is invoked from within a child session, mirroring the
+/// reference's `children().find((x) => !!x.parentID)` common case.
+fn select_first_sibling(siblings: &[String], current: &str) -> Option<String> {
+    let mut sorted: Vec<&String> = siblings.iter().collect();
+    sorted.sort();
+    sorted
+        .into_iter()
+        .find(|id| id.as_str() != current)
+        .map(|id| id.to_string())
+}
+
+/// Cycle siblings by ascending id. `direction` is +1 for the reference's
+/// "next child" and -1 for "previous child". The reference computes
+/// `index - direction`, so "next" moves toward the lower index; this matches
+/// that ordering exactly.
+fn cycle_sibling(siblings: &[String], current: &str, direction: i32) -> Option<String> {
+    if siblings.len() <= 1 {
+        return None;
+    }
+    let mut sorted: Vec<&String> = siblings.iter().collect();
+    sorted.sort();
+    let index = sorted.iter().position(|id| id.as_str() == current)?;
+    let len = sorted.len() as i32;
+    let next = ((index as i32 - direction) % len + len) % len;
+    sorted.get(next as usize).map(|id| id.to_string())
 }
 
 fn map_api_session(session: &SessionInfo) -> Session {
@@ -5245,6 +5389,39 @@ fn open_initial_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_child_is_the_lowest_id() {
+        let children = vec!["c".to_string(), "a".to_string(), "b".to_string()];
+        assert_eq!(select_first_child(&children).as_deref(), Some("a"));
+        assert_eq!(select_first_child(&[]), None);
+    }
+
+    #[test]
+    fn first_sibling_skips_the_current_session() {
+        let siblings = vec!["b".to_string(), "a".to_string(), "c".to_string()];
+        assert_eq!(select_first_sibling(&siblings, "a").as_deref(), Some("b"));
+        assert_eq!(select_first_sibling(&siblings, "b").as_deref(), Some("a"));
+        assert_eq!(select_first_sibling(&["a".to_string()], "a"), None);
+    }
+
+    #[test]
+    fn cycle_sibling_matches_reference_direction_order() {
+        let siblings = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        // "next" (direction = 1) moves toward the lower index, wrapping.
+        assert_eq!(cycle_sibling(&siblings, "b", 1).as_deref(), Some("a"));
+        assert_eq!(cycle_sibling(&siblings, "a", 1).as_deref(), Some("c"));
+        // "previous" (direction = -1) moves toward the higher index.
+        assert_eq!(cycle_sibling(&siblings, "b", -1).as_deref(), Some("c"));
+        assert_eq!(cycle_sibling(&siblings, "c", -1).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn cycle_sibling_is_a_noop_without_siblings() {
+        let only = vec!["a".to_string()];
+        assert_eq!(cycle_sibling(&only, "a", 1), None);
+        assert_eq!(cycle_sibling(&[], "a", 1), None);
+    }
 
     #[test]
     fn initial_session_sync_failure_does_not_open_view() {
