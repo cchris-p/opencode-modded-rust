@@ -213,3 +213,18 @@ plus a "send the cursor to the boundary first" step.
   recorded under BUG-030.
 - `cargo test -p opencode-tui --lib -- --test-threads=1` - 125 passed / 0 failed with the same skip.
 - Live TUI acceptance (`ort-build` + `ort`) is still pending human verification.
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/95
+
+## Merge Closeout
+
+- 2026-09-23: PR #95 merged into `development` at
+  `69d92bdd72baa3c895e8b506430aa7724ff01047` (fix commit `976d78c`
+  `fix(tui): move prompt caret by wrapped visual row (FEAT-037)`).
+- Remote branch `feature/FEAT-037-gate-prompt-history-cursor-boundaries` was deleted after merge;
+  local branch deleted with `git branch -d`. No handoff doc covers this card, so none was updated or
+  archived.
+- Card remains in `qa` until a QA report is recorded or a human explicitly marks it complete. Live
+  TUI acceptance (`ort-build` + `ort`) has not been run.
