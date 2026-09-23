@@ -245,3 +245,7 @@ reused are reference-only and must be called out explicitly.
   across the drift.
 - `bd` does not parse dependency metadata; the block relationship is expressed in each child's
   `## Parent` section plus this gate's child list.
+- 2026-09-23: execution program composed as `H-009`
+  (`handoffs/GATE-004-subagent-feature-parity-program-handoff.md`). It fixes the strict child order
+  `FEAT-045 -> FEAT-046 -> FEAT-047 -> FEAT-049 -> FEAT-048 -> FEAT-051 -> CLI-010`, corrects the
+  stale line references in this card, and runs one PR at a time with human-gated merges.
