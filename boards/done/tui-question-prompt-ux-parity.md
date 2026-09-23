@@ -8,6 +8,7 @@ spec: ""
 status: "done"
 predecessors: ""
 created: "2026-09-21"
+updated: "2026-09-23"
 ---
 
 # TUI question prompt UX parity
@@ -102,7 +103,11 @@ navigation with a final confirm tab, digit option shortcuts, custom answers, mul
 
 - Maintainer local smoke (`ort-build` then `ort`): `Space` toggles multi-select options on the
   question prompt and preserves the selected labels per question, matching vanilla behavior. Passed QA.
-- This confirms the multi-select acceptance criterion on a live server.
+- Maintainer-verified: the multi-question review/confirm screen and its final `Submit answers`
+  submission work end-to-end in the live TUI; all questions are submitted together from the review
+  screen.
+- This confirms the multi-select and multi-question final-submission acceptance criteria on a live
+  server.
 - Card moved from `qa` to `done`.
 
 ## Related Items

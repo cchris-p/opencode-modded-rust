@@ -242,10 +242,12 @@ smoke (single select, multi select, custom answer, multi-question review, reject
 
 - Maintainer local TUI smoke (`ort-build` then `ort`): `Space` toggles multi-select options on the
   question prompt and preserves the selected labels per question. Passed QA.
-- `FEAT-041` (TUI question prompt UX parity) is verified for the multi-select capability and moved to
-  `done`.
-- Remaining smoke before this gate moves to `done`: single select, custom answer, multi-question
-  review, reject, and confirmation of `FEAT-039` post-merge QA.
+- Maintainer-verified: the multi-question flow's final submission (`Submit answers` after the review
+  screen) works in the live TUI; all questions are submitted together from the review screen.
+- `FEAT-041` (TUI question prompt UX parity) is verified for the multi-select and multi-question
+  final-submission capabilities and moved to `done`.
+- Remaining smoke before this gate moves to `done`: single select, custom answer, reject, and
+  confirmation of `FEAT-039` post-merge QA.
 
 ## Done When
 
