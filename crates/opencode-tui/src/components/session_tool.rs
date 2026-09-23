@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
+use unicode_width::UnicodeWidthChar;
 
 use crate::theme::Theme;
 
@@ -107,6 +108,7 @@ pub struct ToolCallRender {
 /// `expanded` only affects block-style calls with output beyond the collapsed
 /// preview. Collapsed output keeps the historical preview behavior; expanded
 /// output shows every captured result line.
+#[allow(clippy::too_many_arguments)]
 pub fn render_tool_call(
     id: &str,
     name: &str,
@@ -115,6 +117,7 @@ pub fn render_tool_call(
     tool_results: &HashMap<String, (String, bool)>,
     show_tool_details: bool,
     expanded: bool,
+    width: usize,
     theme: &Theme,
 ) -> ToolCallRender {
     if matches!(state, ToolState::Completed) && !show_tool_details {
@@ -127,6 +130,21 @@ pub fn render_tool_call(
     let result = tool_results.get(id);
     let block_mode = is_block_tool(name, result);
     let normalized = normalize_tool_name(name);
+
+    // FEAT-056: bash/shell renders as a terminal block with a `$` prompt and an
+    // inset output region. The command is pre-wrapped to the content width so
+    // every wrapped line keeps the `$` prompt.
+    if block_mode && (normalized == "bash" || normalized == "shell") {
+        return render_bash_block(
+            arguments,
+            state,
+            result,
+            show_tool_details,
+            expanded,
+            width,
+            theme,
+        );
+    }
 
     let glyph = tool_glyph(name);
     let is_denied =
@@ -368,6 +386,263 @@ fn shell_command_text(arguments: &str) -> Option<String> {
         .as_ref()
         .and_then(extract_shell_command)
         .or_else(|| (!raw.is_empty()).then_some(raw.to_string()))
+}
+
+/// FEAT-056: render a bash/shell call as a terminal-style block.
+///
+/// Layout: every command line is `$ `-prefixed and wrapped to the content
+/// width; output lines sit in an inset `│ ` region; a trailing status line
+/// shows running/failed/exit state. The `Command exited with code:` line the
+/// tool appends to failed output is lifted into that status line.
+fn render_bash_block(
+    arguments: &str,
+    state: ToolState,
+    result: Option<&(String, bool)>,
+    show_tool_details: bool,
+    expanded: bool,
+    width: usize,
+    theme: &Theme,
+) -> ToolCallRender {
+    let bg = theme.background_panel;
+    let is_denied =
+        result.is_some_and(|(result_text, is_error)| *is_error && is_denied_result(result_text));
+    let (state_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let command = shell_command_text(arguments).unwrap_or_default();
+
+    let mut lines = Vec::new();
+
+    let show_icon = !matches!(state, ToolState::Completed);
+    let icon_width = if show_icon { 2usize } else { 0usize };
+    let command_width = width
+        .saturating_sub(2 /* block prefix */ + icon_width + 2 /* "$ " */)
+        .max(8);
+    let segments = wrap_text(&command, command_width);
+    let segments = if segments.is_empty() {
+        vec![String::new()]
+    } else {
+        segments
+    };
+    for (idx, segment) in segments.iter().enumerate() {
+        let mut spans = vec![block_prefix(theme, bg)];
+        if show_icon {
+            if idx == 0 {
+                spans.push(Span::styled(format!("{} ", state_icon), icon_style.bg(bg)));
+            } else {
+                spans.push(Span::styled("  ".to_string(), icon_style.bg(bg)));
+            }
+        }
+        spans.push(Span::styled(
+            "$ ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD)
+                .bg(bg),
+        ));
+        spans.push(Span::styled(segment.clone(), name_style.bg(bg)));
+        lines.push(Line::from(spans));
+    }
+
+    let (output_text, is_error) = match result {
+        Some((text, is_error)) => (strip_exit_line(text), *is_error),
+        None => (String::new(), false),
+    };
+    let output_lines: Vec<&str> = if output_text.is_empty() {
+        Vec::new()
+    } else {
+        output_text.lines().collect()
+    };
+    let total_output_lines = output_lines.len();
+    let collapsed_limit = if is_error {
+        if show_tool_details {
+            3
+        } else {
+            1
+        }
+    } else {
+        10
+    };
+    let collapsible = if is_error {
+        total_output_lines > collapsed_limit
+    } else {
+        show_tool_details && total_output_lines > collapsed_limit
+    };
+    let hidden_lines = total_output_lines.saturating_sub(collapsed_limit);
+
+    if show_tool_details && !output_lines.is_empty() {
+        if is_error {
+            let mut iter = output_lines.iter();
+            if let Some(first_line) = iter.next() {
+                lines.push(bash_output_line(
+                    format!("Error: {}", first_line.trim()),
+                    Style::default().fg(theme.error),
+                    theme,
+                    bg,
+                ));
+            }
+            if expanded {
+                for line in iter {
+                    lines.push(bash_output_line(
+                        line.to_string(),
+                        Style::default().fg(theme.error),
+                        theme,
+                        bg,
+                    ));
+                }
+            } else {
+                for line in iter.take(2) {
+                    lines.push(bash_output_line(
+                        line.to_string(),
+                        Style::default().fg(theme.error),
+                        theme,
+                        bg,
+                    ));
+                }
+            }
+        } else {
+            lines.push(block_content_line(
+                format!("({} lines of output)", total_output_lines),
+                Style::default().fg(theme.text_muted),
+                theme,
+                bg,
+            ));
+            let visible = if expanded {
+                total_output_lines
+            } else {
+                collapsed_limit.min(total_output_lines)
+            };
+            for line in output_lines.iter().take(visible) {
+                lines.push(bash_output_line(
+                    line.to_string(),
+                    Style::default().fg(theme.text),
+                    theme,
+                    bg,
+                ));
+            }
+        }
+    }
+
+    if let Some((label, status_error)) = bash_status(state, result) {
+        let color = if status_error {
+            theme.error
+        } else if matches!(state, ToolState::Running) {
+            theme.warning
+        } else {
+            theme.text_muted
+        };
+        lines.push(block_content_line(
+            label,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+            theme,
+            bg,
+        ));
+    }
+
+    if collapsible {
+        let affordance = if expanded {
+            "▾ click to collapse".to_string()
+        } else {
+            format!("▸ {} more lines — click to expand", hidden_lines)
+        };
+        lines.push(block_content_line(
+            affordance,
+            Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
+            theme,
+            bg,
+        ));
+    }
+
+    ToolCallRender { lines, collapsible }
+}
+
+fn bash_output_line(
+    content: impl Into<String>,
+    style: Style,
+    theme: &Theme,
+    background: ratatui::style::Color,
+) -> Line<'static> {
+    Line::from(vec![
+        block_prefix(theme, background),
+        Span::styled(format!("│ {}", content.into()), style.bg(background)),
+    ])
+}
+
+fn strip_exit_line(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with("Command exited with code:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn bash_status(state: ToolState, result: Option<&(String, bool)>) -> Option<(String, bool)> {
+    match state {
+        ToolState::Pending => None,
+        ToolState::Running => Some(("running…".to_string(), false)),
+        ToolState::Completed => Some(("exit 0".to_string(), false)),
+        ToolState::Failed => {
+            let code = result.and_then(|(text, _)| parse_exit_code(text));
+            Some((
+                code.map(|code| format!("exit {}", code))
+                    .unwrap_or_else(|| "failed".to_string()),
+                true,
+            ))
+        }
+    }
+}
+
+fn parse_exit_code(text: &str) -> Option<i32> {
+    text.lines().rev().find_map(|line| {
+        line.trim()
+            .strip_prefix("Command exited with code:")
+            .and_then(|rest| rest.trim().parse::<i32>().ok())
+    })
+}
+
+/// Word-aware wrap of a plain string with a hard-break fallback.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for word in text.split(' ') {
+        let word_width: usize = word
+            .chars()
+            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+            .sum();
+        if word_width > width {
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            for ch in word.chars() {
+                let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if current_width + ch_width > width && !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                    current_width = 0;
+                }
+                current.push(ch);
+                current_width += ch_width;
+            }
+            continue;
+        }
+        if current_width + word_width > width && !current.is_empty() {
+            out.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        if !current.is_empty() {
+            current.push(' ');
+            current_width += 1;
+        }
+        current.push_str(word);
+        current_width += word_width;
+    }
+
+    if !current.is_empty() || out.is_empty() {
+        out.push(current);
+    }
+    out
 }
 
 fn block_prefix(theme: &Theme, background: ratatui::style::Color) -> Span<'static> {
@@ -773,6 +1048,7 @@ mod tests {
             results,
             show_tool_details,
             expanded,
+            120,
             &Theme::default(),
         )
     }
@@ -842,6 +1118,7 @@ mod tests {
             &results,
             true,
             false,
+            120,
             &Theme::default(),
         );
         assert!(collapsed.collapsible);
@@ -857,6 +1134,7 @@ mod tests {
             &results,
             true,
             true,
+            120,
             &Theme::default(),
         );
         assert!(body(&expanded).contains("error 6"));
@@ -873,6 +1151,7 @@ mod tests {
             &HashMap::new(),
             true,
             false,
+            120,
             &Theme::default(),
         );
         let body = body(&render);
@@ -894,6 +1173,7 @@ mod tests {
             &HashMap::new(),
             true,
             false,
+            120,
             &Theme::default(),
         );
         let body = body(&render);
@@ -913,6 +1193,7 @@ mod tests {
             &results,
             true,
             false,
+            120,
             &Theme::default(),
         );
         let body = body(&render);
@@ -933,8 +1214,54 @@ mod tests {
             &results,
             true,
             true,
+            120,
             &Theme::default(),
         );
         assert!(body(&render).contains(&long));
+    }
+
+    #[test]
+    fn long_bash_command_wraps_onto_multiple_prompt_lines() {
+        let args = r#"{"command":"echo aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd"}"#;
+        let render = render_tool_call(
+            "call-wrap",
+            "bash",
+            args,
+            ToolState::Completed,
+            &HashMap::new(),
+            true,
+            false,
+            20,
+            &Theme::default(),
+        );
+        let prompt_lines = render
+            .lines
+            .iter()
+            .filter(|line| line.spans.iter().any(|span| span.content.contains("$ ")))
+            .count();
+        assert!(
+            prompt_lines >= 2,
+            "expected wrapped prompt lines: {prompt_lines}"
+        );
+    }
+
+    #[test]
+    fn failed_bash_lifts_exit_code_into_a_status_line() {
+        let id = "call-fail";
+        let results = result_map(id, "boom\nCommand exited with code: 3", true);
+        let render = render_tool_call(
+            id,
+            "bash",
+            "{\"command\":\"false\"}",
+            ToolState::Failed,
+            &results,
+            true,
+            false,
+            120,
+            &Theme::default(),
+        );
+        let body = body(&render);
+        assert!(body.contains("exit 3"));
+        assert!(!body.contains("Command exited with code:"));
     }
 }

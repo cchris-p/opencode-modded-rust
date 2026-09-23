@@ -928,6 +928,7 @@ impl SessionView {
                                                         running_tool_call,
                                                         self.expanded_tool_calls.contains(id),
                                                         show_tool_details,
+                                                        content_width,
                                                         &theme,
                                                     );
                                                     append_rendered_tool_call(
@@ -958,6 +959,7 @@ impl SessionView {
                                             running_tool_call,
                                             self.expanded_tool_calls.contains(id),
                                             show_tool_details,
+                                            content_width,
                                             &theme,
                                         );
                                         append_rendered_tool_call(
@@ -1380,6 +1382,7 @@ fn tool_call_state(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_tool_call_part(
     id: &str,
     name: &str,
@@ -1388,6 +1391,7 @@ fn render_tool_call_part(
     running_tool_call: Option<&str>,
     expanded: bool,
     show_tool_details: bool,
+    width: usize,
     theme: &crate::theme::Theme,
 ) -> super::session_tool::ToolCallRender {
     super::session_tool::render_tool_call(
@@ -1398,6 +1402,7 @@ fn render_tool_call_part(
         tool_results,
         show_tool_details,
         expanded,
+        width,
         theme,
     )
 }
