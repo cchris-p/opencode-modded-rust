@@ -68,6 +68,35 @@ Binding rules: `invariants/cli-task-targeting.md`, `invariants/message-queuing.m
 `invariants/runtime-lifecycle.md` (leaving a session view must not cancel active execution; a user
 must be able to leave and revisit a running session).
 
+## Intended Headless (Cline-like) Workflow
+
+The target is to drive the same agentic session runtime as the TUI without a TUI, and to keep a server
+alive independently of any TUI. Detached + headless together are what make the CLI Cline-like.
+
+Available today (partial):
+
+- `opencode serve` starts a headless server (no TUI); alternatively `ort` + `/detach` leaves a
+  TUI-launched server alive.
+- `opencode task target select --server <url>` records the server/session to use (`CLI-007`).
+- Direct HTTP `POST /session/{id}/prompt` already runs agentic work headlessly.
+- `opencode run` / `run --attach` exists but uses the interim `AgentExecutor` path, not the canonical
+  session runtime.
+
+Target shape (the Cline-like workflow):
+
+```sh
+opencode serve                                     # or: ort, then /detach
+opencode task target select --server <url>
+opencode task new "Fix the failing test"           # CLI-001
+opencode task send "Now run the focused tests"     # CLI-001
+opencode task view                                 # CLI-001
+opencode task status                               # CLI-006 (name TBD)
+opencode attach <url>                              # optional: back to the TUI
+```
+
+This is gated by `CLI-001` (task `new`/`send`/`view` on the canonical session runtime) and `CLI-006`
+(status); `CLI-002` retires the parallel `opencode run` engine so headless runs use the same path.
+
 ## Canonical Card Map
 
 | ID | Lane | Role |
