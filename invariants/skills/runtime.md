@@ -11,3 +11,7 @@
 - The server `/skill` endpoint is an authoritative discovery surface for local skills and returns the same discovered skill names and descriptions the runtime can load.
 - TUI skill browsing and prompt autocomplete must refresh from the server `/skill` endpoint so user-facing selection surfaces match runtime-discoverable skills.
 - The `skill` tool accepts both `skill_name` and the reference-compatible `name` input key for selecting a discovered skill.
+- The `skill` tool exposes the skill name as a free-form string rather than enumerating discovered names in its JSON schema.
+- The `skill` tool description directs the model to the skills listed in the system prompt.
+- The runtime appends an available-skills block to the system prompt on every model call, matching the reference `SystemPrompt.skills(agent)` shape: a two-line preamble followed by verbose `<available_skills>` XML carrying `name`, `description`, and `location` per skill.
+- The available-skills block is built from the session workspace and filtered by the agent `skill` permission: skills without a description and skills denied by name are omitted, and the block is omitted entirely when the agent blanket-denies the `skill` permission.

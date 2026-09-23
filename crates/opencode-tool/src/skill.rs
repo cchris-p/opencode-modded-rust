@@ -10,6 +10,8 @@ use opencode_config::load_config;
 
 pub struct SkillTool;
 
+const SKILL_TOOL_DESCRIPTION: &str = "Load a specialized skill when the task at hand matches one of the skills listed in the system prompt.\n\nUse this tool to inject the skill's instructions and resources into current conversation. The output may contain detailed workflow guidance as well as references to scripts, files, etc in the same directory as the skill.\n\nThe skill name must match one of the skills listed in your system prompt.";
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SkillInput {
     #[serde(default)]
@@ -28,6 +30,13 @@ pub struct AvailableSkill {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SkillMetadata {
+    pub name: String,
+    pub description: Option<String>,
+    pub location: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -311,26 +320,20 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        "Load and execute a skill (predefined expertise module). Skills provide specialized knowledge for specific tasks."
+        SKILL_TOOL_DESCRIPTION
     }
 
     fn parameters(&self) -> serde_json::Value {
-        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let skills = discover_skills(&base);
-        let skill_names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
-
         serde_json::json!({
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the skill to load",
-                    "enum": skill_names
+                    "description": "The name of the skill from available_skills"
                 },
                 "skill_name": {
                     "type": "string",
-                    "description": "Name of the skill to load",
-                    "enum": skill_names
+                    "description": "Alias of 'name': the name of the skill from available_skills"
                 },
                 "arguments": {
                     "type": "object",
@@ -462,6 +465,27 @@ pub fn list_available_skills_for_base(base: &Path) -> Vec<AvailableSkill> {
         .map(|s| AvailableSkill {
             name: s.name,
             description: s.description,
+        })
+        .collect()
+}
+
+/// Full discovered-skill metadata, including the source `SKILL.md` location.
+///
+/// This backs the runtime's available-skills system-prompt block, which needs the
+/// skill location in addition to the name and description surfaced by
+/// [`list_available_skills_for_base`].
+pub fn list_skill_metadata() -> Vec<SkillMetadata> {
+    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    list_skill_metadata_for_base(&base)
+}
+
+pub fn list_skill_metadata_for_base(base: &Path) -> Vec<SkillMetadata> {
+    discover_skills(base)
+        .into_iter()
+        .map(|s| SkillMetadata {
+            name: s.name,
+            description: s.description,
+            location: s.location,
         })
         .collect()
 }
@@ -709,5 +733,58 @@ flat content
         .unwrap();
 
         assert_eq!(resolved.skill_name, "reviewer");
+    }
+
+    #[test]
+    fn parameters_use_free_form_name_without_discovered_enum() {
+        let params = SkillTool.parameters();
+
+        let name = &params["properties"]["name"];
+        assert_eq!(
+            name["description"].as_str(),
+            Some("The name of the skill from available_skills")
+        );
+        assert!(
+            name.get("enum").is_none(),
+            "skill name must be free-form rather than an enumerated list"
+        );
+        assert!(
+            params["properties"]["skill_name"].get("enum").is_none(),
+            "skill_name alias must also be free-form"
+        );
+    }
+
+    #[test]
+    fn description_points_at_skills_listed_in_system_prompt() {
+        assert!(SkillTool
+            .description()
+            .contains("listed in the system prompt"));
+    }
+
+    #[test]
+    fn list_skill_metadata_includes_source_location() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let skill_path = root.join(".opencode/skills/located/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            r#"---
+name: located
+description: has location
+---
+body
+"#,
+        )
+        .unwrap();
+
+        let metadata = list_skill_metadata_for_base(root);
+        let skill = metadata
+            .iter()
+            .find(|skill| skill.name == "located")
+            .unwrap();
+
+        assert_eq!(skill.description.as_deref(), Some("has location"));
+        assert_eq!(skill.location, fs::canonicalize(&skill_path).unwrap());
     }
 }
