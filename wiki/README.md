@@ -18,7 +18,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `scopemux-integration-plan.md` defines the deferred retrieval boundary, how `scopemux-core` can help this project, and the guardrails for integrating it.
 - `agent-debugging-without-tui.md` defines the preferred non-TUI QA/debug path for agent-session runtime work.
 - `cli-surface.md` is the canonical reference for CLI task-surface and TUI launch/detach/attach behavior, and maps the owning `CLI-*` board items.
-- `advanced-coding-session-polling.md` defines the high-level direction for low-context waits on coding-session state.
+- `advanced-coding-session-polling.md` defines the low-context waits on coding-session state, including the agreed first agent-tool slice and its follow-up cards.
 - `coding-session-parity-audit.md` audits the Rust coding-session agentic path against the reference behavior (`BUG-004` evidence).
 - `agent-modes-and-custom-agents.md` defines the agent/mode model, builtin agents, default resolution, custom-agent config, permission rulesets, and the disabled `general` builtin.
 - `provider-side-visibility.md` inventories what a coding-session provider receives, classifies it by sensitivity, and documents exposure-limiting controls and per-provider payload differences.
