@@ -1,6 +1,6 @@
 # Agent Modes and Custom Agents
 
-This document explains how agents (a.k.a. "modes") are defined, registered, selected, and permissioned in the Rust product, and records the decision to disable the builtin `general` agent. It is the authoritative reference for the agent-registry surface until superseded.
+This document explains how agents (a.k.a. "modes") are defined, registered, selected, and permissioned in the Rust product, and records how the builtin `general` agent was reconciled to the reference as a subagent. It is the authoritative reference for the agent-registry surface until superseded.
 
 ## Purpose
 
@@ -9,7 +9,8 @@ This document explains how agents (a.k.a. "modes") are defined, registered, sele
 - Explain how the effective agent is resolved for a coding-session prompt.
 - Explain how to define custom primary modes and subagents through config.
 - Document the permission ruleset an agent receives and the special-cased names.
-- Record why the builtin `general` agent was disabled and how to bring it back.
+- Record how the builtin `general` agent became a reference-matching subagent.
+- Explain how `@agent-name` mentions in a prompt route to a subagent.
 
 ## Where agents live
 
@@ -67,7 +68,7 @@ Enum at `crates/opencode-agent/src/agent.rs:30-63`; constructors are `AgentInfo:
 | --- | --- | --- | --- | --- |
 | `build` | Primary | yes | yes | Default agent. No system prompt, so the model default prompt is used; `max_steps = 100` |
 | `plan` | Primary | yes | yes | Plan mode; `edit` denied, `plan_exit` allowed |
-| `general` | Primary | yes | **disabled** | Removed from `BuiltinAgent::all()`; see below |
+| `general` | Subagent | yes | yes | General-purpose multi-step research; defaults plus `todowrite` deny; no dedicated prompt (uses the model default) |
 | `explore` | Subagent | yes | yes | Read/search/bash allowlist |
 | `compaction` | Subagent | yes | yes | Internal |
 | `title` | Subagent | yes | yes | Internal title generator |
@@ -92,43 +93,27 @@ The per-request resolution then assembles the agentic context (`crates/opencode-
 
 ## Selection surfaces
 
-- **Server**: `GET /agent` (`list_agents` in `crates/opencode-server/src/routes.rs`) returns every non-hidden agent whose mode is not `Subagent` — i.e. `Primary` and `All`. This is what the mode picker consumes.
+- **Server**: `GET /agent` (`list_agents` in `crates/opencode-server/src/routes.rs`) returns every non-hidden agent whose mode is not `Subagent` — i.e. `Primary` and `All`. This is what the mode picker consumes, so `general` and `explore` are excluded from it.
 - **TUI picker**: `refresh_agent_dialog` calls `list_agents` (`crates/opencode-tui/src/api.rs:763`, `crates/opencode-tui/src/app/app.rs:2830`). If the current agent is not in the returned set, the first entry becomes current.
-- **Prompt suggestions**: the prompt keeps a hardcoded `known_agents` list (`crates/opencode-tui/src/components/prompt.rs:168-174`). `general` was removed from it when the builtin was disabled.
-- **Task tool**: `get_available_agents` (`crates/opencode-tool/src/task.rs:176-209`) is a separate static catalog used to derive disabled tools and a preferred model for a subagent; an unknown `subagent_type` still creates a subsession. `general` was removed from this list and the metadata fallbacks now default to `build`.
+- **Task tool**: registry-driven. `resolve_subagent` (`crates/opencode-agent/src/agent.rs`) filters to subagent-capable agents (`mode` `Subagent`/`All`, not hidden); unknown, primary, and hidden names fail without creating a session. The server supplies the resolver, including the `subagent_depth` guard and the subagent's configured model (`crates/opencode-server/src/routes.rs`, `resolve_task_subagent`). The former static `get_available_agents` catalog no longer exists.
+- **Prompt `@agent-name` mentions**: `resolve_prompt_parts` (`crates/opencode-session/src/prompt.rs`) resolves a prompt token file-first, then falls back to a registered subagent name, producing a `PartInput::Agent` that instructs the model to call the `task` tool for that subagent. A mention of a registered non-subagent agent (e.g. `@build`) fails with a clear error; a token that is neither a file nor a registered agent stays plain text. The server wires this in `run_prompt_turn`. TUI `@` autocomplete (`crates/opencode-tui/src/components/prompt.rs`) still sources its agent suggestions from the primary-only `GET /agent` list, so subagent names must currently be typed; unifying that list with the mentionable subagents is an open follow-up.
 
-## The `general` finding
+## The `general` agent
 
-### What it was
+### Previous divergence
 
-`AgentInfo::general()` (`crates/opencode-agent/src/agent.rs:237-259`) defined:
+The product once modeled `general` as an unrestricted primary and made it the registry default (`AgentInfo::default_agent()`). That diverged from the reference in two ways: vanilla has no primary `general` (its `general` is a **subagent**, `packages/opencode/src/agent/agent.ts:182-195`), and because `general` fell into `build_agent_ruleset`'s default arm it could not ask questions or enter plan mode. It was never the live default anyway, because `resolve_agent_name` prefers `build`.
 
-- `mode: Primary`
-- `system_prompt: "You are a helpful assistant. Complete the task given to you."`
-- `temperature: 0.7`, `max_tokens: 8192`, `max_steps: 20`
-- permission via `build_agent_ruleset("general", &[])`
+### Current state (FEAT-049)
 
-It was made the default by `AgentInfo::default_agent()` and preferred by `AgentRegistry::default_agent()`.
+`general` is now registered as a reference-matching **subagent** (`crates/opencode-agent/src/agent.rs`):
 
-### Why it was disabled
+- `BuiltinAgent::General` is back in `BuiltinAgent::all()` (6 builtins), so `AgentRegistry::new()` registers it.
+- `AgentInfo::general()` sets `mode: Subagent`, the reference description ("General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."), and no dedicated prompt (the model default prompt is used, as in the reference).
+- `build_agent_ruleset("general", &[])` merges `default_ruleset()` with an explicit `todowrite` deny (`crates/opencode-permission/src/ruleset.rs`), matching the reference's `todowrite: "deny"`.
+- `AgentRegistry::default_agent()` still returns `build`; `general` is never the default and never appears in the primary picker.
 
-- **Redundant with `build`.** Both were unrestricted, general-purpose primaries. Nothing a user needed was unique to `general`.
-- **Strictly worse than `build`.** Because `build_agent_ruleset` only special-cases `build`, `plan`, and `explore`, `general` fell into the default arm and received `default_ruleset()` (`crates/opencode-permission/src/ruleset.rs:266-358`, `:356`). That default denies `question` and `plan_enter` (`ruleset.rs:227-243`), so `general` could not ask clarifying questions or enter plan mode, while `build` explicitly allows both (`ruleset.rs:271-285`). `general` also replaced the model-specific default system prompt with a generic one.
-- **Never actually the default on the live path.** `resolve_agent_name` prefers `build`, so `general` was advertised as a mode and as the registry default while being unreachable as the default in practice — an inconsistency flagged in `wiki/coding-session-parity-audit.md`.
-- **Wrong reference role.** Vanilla OpenCode has no primary `general`; its `general` is a **subagent** for parallel multi-step work (`$HOME/repos/opencode-modded/packages/core/src/plugin/agent.ts:120-157`), while `build` is the default primary. This product modeled `general` as a primary, which is not parity and not a capability the reference's subagent semantics provide here anyway.
-
-### How it is disabled
-
-- `BuiltinAgent::General` is omitted from `BuiltinAgent::all()` (`crates/opencode-agent/src/agent.rs:53-61`), so `AgentRegistry::new()` never registers it by default.
-- `AgentInfo::default_agent()` returns `build()`.
-- `AgentRegistry::default_agent()` no longer special-cases `general`.
-- The TUI `known_agents`, the task-tool catalog, and the session agent-metadata fallbacks no longer reference `general`.
-
-The `General` enum variant and `AgentInfo::general()` are intentionally retained so re-enabling is a one-line change (see below).
-
-### Re-enabling `general` (for now)
-
-To restore it, add `BuiltinAgent::General` back to `BuiltinAgent::all()` and set `AgentInfo::default_agent()` back to `Self::general()` if it should also be the default. No other wiring is required for it to appear in the mode picker. A workspace can also re-add it without code changes by defining an agent named `general` in config, since config-defined agents with that key are created via `AgentInfo::custom`.
+`general` is not a selectable primary, but it is subagent-capable and mentionable: `@general` (or `subagent_type: "general"`) routes through the `task` tool like `explore`.
 
 ## Defining custom agents
 
@@ -191,32 +176,32 @@ Subagents are hidden from the primary picker and are intended to be invoked thro
 Every agent's permission is a `PermissionRuleset` (`crates/opencode-permission/src/ruleset.rs`).
 
 - `default_ruleset()` (`:206-264`) allows everything except: `doom_loop` = ask, `external_directory` = ask, `question` = deny, `plan_enter` = deny, `plan_exit` = deny, and `.env` reads = ask (`.env.example` = allow).
-- `build_agent_ruleset(name, user_rules)` (`:266-358`) special-cases exactly three names:
+- `build_agent_ruleset(name, user_rules)` special-cases these names:
   - `build` → defaults + `question` allow + `plan_enter` allow.
   - `plan` → defaults + `question` allow + `plan_exit` allow + `edit` deny.
   - `explore` → a read/search/bash allowlist with everything else denied.
-  - **Everything else, including custom agents and the former `general`, gets defaults only.**
+  - `general` → defaults + `todowrite` deny (reference `general` parity).
+  - **Everything else, including custom agents, gets defaults only.**
 
-Practical consequence: if you define a custom agent and want it to ask questions or enter plan mode, you must grant it explicitly via `permission` or `tools`; the name alone does not confer it. Note also that `AgentInfo::custom` seeds `permission` with `build_agent_ruleset(&name, &[])` (`agent.rs:381`), so a custom agent without config permission starts from the default arm.
+Practical consequence: if you define a custom agent and want it to ask questions or enter plan mode, you must grant it explicitly via `permission` or `tools`; the name alone does not confer it. Note also that `AgentInfo::custom` seeds `permission` with `build_agent_ruleset(&name, &[])`, so a custom agent without config permission starts from the default arm.
 
 ## Reference comparison
 
 Reference line `$HOME/repos/opencode-modded` (`dev`, pinned at `f54ce313b99a6661d7758ad042f7a6e05c8e0972`, re-pinned by `GATE-004`; line references re-verified at this pin):
 
-- `build` is the default primary agent; `plan` is the other primary; `general` and `explore` are subagents (`packages/core/src/plugin/agent.ts:120-178`).
+- `build` is the default primary agent; `plan` is the other primary; `general` and `explore` are subagents (`packages/opencode/src/agent/agent.ts:141-216`).
 - There is no primary `general` mode in the reference.
-- The reference's `general` subagent is described as general-purpose for researching complex questions and running multiple units of work in parallel — a capability this product does not implement.
+- The reference's `general` subagent is described as general-purpose for researching complex questions and running multiple units of work in parallel.
+- `@agent-name` mentions in a prompt invoke a specialized subagent; the reference resolves a token file-first and then falls back to an agent name (`packages/opencode/src/session/prompt.ts:160-186`).
 
-This product therefore diverges by having `general` as a primary; disabling it reduces that divergence. If parallel general-purpose subagents are wanted later, they should be introduced as a `Subagent`-mode agent with that role, not as a selectable primary.
+The product now matches this shape: `general` is a subagent, primaries are not offered as subagents, and a prompt mention routes to the matching subagent.
 
 ## Open questions / follow-ups
 
-- Should the `general` builtin be removed permanently, or reintroduced as a `Subagent` matching the reference semantics?
 - Should `build` become the explicit `default_agent` config value shipped in the repo config?
 - Should `AgentInfo::default_agent()` (the unused associated function) be deleted, or kept as the documented fallback affordance?
 - Should custom agents with mode `All` appear in the primary picker, or should `All` be reserved for something else?
-
-These are tracked by `FEAT-031`.
+- Should TUI `@` autocomplete surface subagent-capable agents (not just primaries) so mentions are discoverable without typing the full name?
 
 ## File map
 
@@ -225,5 +210,6 @@ These are tracked by `FEAT-031`.
 - `crates/opencode-server/src/routes.rs` — `/agent` listing and prompt handling.
 - `crates/opencode-config/src/schema.rs` — `AgentConfigs`, `AgentConfig`, `AgentMode`, `default_agent`.
 - `crates/opencode-permission/src/ruleset.rs` — `default_ruleset`, `build_agent_ruleset`.
-- `crates/opencode-tool/src/task.rs` — subagent catalog and task dispatch.
+- `crates/opencode-session/src/prompt.rs` — `PartInput`, `Agent` parts, and `resolve_prompt_parts` `@agent` mention resolution.
+- `crates/opencode-tool/src/task.rs` — registry-driven `task` dispatch and subagent output.
 - `crates/opencode-tui/src/app/app.rs`, `api.rs`, `components/prompt.rs`, `context/app_context.rs` — mode picker, client, prompt suggestions, default agent.

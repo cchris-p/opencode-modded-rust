@@ -3271,6 +3271,26 @@ mod session_inspect_tests {
     }
 }
 
+/// Names of registered agents, split into `task`-capable subagents and the
+/// rest (primaries and hidden agents). FEAT-049 uses this to resolve
+/// `@agent-name` mentions in a prompt: subagent names route through the task
+/// path, other registered names are rejected with a clear error, and unknown
+/// tokens stay plain text.
+fn agent_mention_names(directory: &str) -> (Vec<String>, Vec<String>) {
+    let config = load_config(FsPath::new(directory)).ok();
+    let registry = AgentRegistry::from_optional_config(config.as_ref());
+    let mut subagents = Vec::new();
+    let mut non_subagents = Vec::new();
+    for agent in registry.list_all() {
+        if agent.is_subagent_capable() {
+            subagents.push(agent.name.clone());
+        } else {
+            non_subagents.push(agent.name.clone());
+        }
+    }
+    (subagents, non_subagents)
+}
+
 async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: PendingPrompt) {
     set_session_run_status(&state, &session_id, SessionRunStatus::Busy).await;
 
@@ -3623,6 +3643,42 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         .write()
         .await
         .insert(session_id.clone(), prompt_runner.clone());
+    // FEAT-049: resolve `@agent-name` mentions. `@explore`/`@general` become an
+    // `Agent` part that routes the turn to that subagent; mentioning a
+    // non-subagent agent fails clearly; other `@` tokens stay as prompt text.
+    let (subagent_mentions, non_subagent_mentions) = agent_mention_names(&session.directory);
+    let parts = match opencode_session::resolve_prompt_parts(
+        &prompt_text,
+        FsPath::new(&session.directory),
+        &subagent_mentions,
+        &non_subagent_mentions,
+    )
+    .await
+    {
+        Ok(parts) => parts,
+        Err(error) => {
+            let assistant = session.add_assistant_message();
+            assistant
+                .metadata
+                .insert("error".to_string(), serde_json::json!(error.to_string()));
+            assistant
+                .metadata
+                .insert("finish_reason".to_string(), serde_json::json!("error"));
+            assistant.add_text(error.to_string());
+            apply_session_snapshot(&task_state, &session_id, session.clone()).await;
+            task_state.broadcast(
+                &serde_json::json!({
+                    "type": "session.updated",
+                    "sessionID": session_id,
+                    "source": "prompt.mention_error",
+                })
+                .to_string(),
+            );
+            persist_sessions_if_enabled(&task_state).await;
+            return;
+        }
+    };
+
     let input = opencode_session::PromptInput {
         session_id: session_id.clone(),
         message_id: Some(pending_message_id.clone()),
@@ -3634,7 +3690,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         no_reply: false,
         system: None,
         variant: task_variant.clone(),
-        parts: vec![opencode_session::PartInput::Text { text: prompt_text }],
+        parts,
         tools: None,
     };
 
@@ -8163,5 +8219,68 @@ mod subagent_child_session_tests {
             && rule.action == opencode_permission::PermissionAction::Deny));
         assert!(rules.iter().any(|rule| rule.permission == "task"
             && rule.action == opencode_permission::PermissionAction::Deny));
+    }
+
+    #[tokio::test]
+    async fn resolve_task_subagent_accepts_general_as_subagent() {
+        let (state, root_id, _session_repo) = state_and_root().await;
+
+        let resolved = resolve_task_subagent(&state, &root_id, ".", "general")
+            .await
+            .expect("general should resolve as a subagent");
+        assert_eq!(resolved.name, "general");
+        // `general`'s ruleset declares an explicit `todowrite` deny, which
+        // mirrors the reference's "has a rule" existence check.
+        assert!(resolved.permits_todowrite);
+        assert!(!resolved.permits_task);
+    }
+
+    #[tokio::test]
+    async fn agent_mention_names_separates_subagents_from_primaries() {
+        let (subagents, non_subagents) = agent_mention_names(".");
+
+        assert!(
+            subagents.iter().any(|name| name == "explore"),
+            "explore must be mentionable as a subagent"
+        );
+        assert!(
+            subagents.iter().any(|name| name == "general"),
+            "general must be mentionable as a subagent"
+        );
+        assert!(
+            non_subagents.iter().any(|name| name == "build"),
+            "build must not be mentionable as a subagent"
+        );
+        assert!(
+            non_subagents.iter().any(|name| name == "plan"),
+            "plan must not be mentionable as a subagent"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_parts_routes_subagent_and_rejects_primary_mention() {
+        let (subagents, non_subagents) = agent_mention_names(".");
+
+        let parts = opencode_session::resolve_prompt_parts(
+            "ask @general about this",
+            FsPath::new("."),
+            &subagents,
+            &non_subagents,
+        )
+        .await
+        .expect("@general must route");
+        assert!(parts.iter().any(
+            |part| matches!(part, opencode_session::PartInput::Agent { name } if name == "general")
+        ));
+
+        let error = opencode_session::resolve_prompt_parts(
+            "ask @build about this",
+            FsPath::new("."),
+            &subagents,
+            &non_subagents,
+        )
+        .await
+        .expect_err("@build must not silently fall through");
+        assert!(error.to_string().contains("@build"));
     }
 }

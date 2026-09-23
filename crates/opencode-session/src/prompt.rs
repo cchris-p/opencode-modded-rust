@@ -2893,6 +2893,8 @@ pub enum PromptError {
     Provider(String),
     #[error("Cancelled")]
     Cancelled,
+    #[error("{0}")]
+    InvalidAgentMention(String),
 }
 
 /// Regex that matches `@reference` patterns. We use a capturing group for the
@@ -2900,11 +2902,20 @@ pub enum PromptError {
 /// Group 1 = preceding char (or empty at start of string), Group 2 = the reference name.
 const FILE_REFERENCE_REGEX: &str = r"(?:^|([^\w`]))@(\.?[^\s`,.]*(?:\.[^\s`,.]+)*)";
 
+/// Resolve `@`-references in a prompt template into [`PartInput`]s.
+///
+/// Mirrors the reference `resolvePromptParts` file-first fallback: a token that
+/// resolves to a real path becomes a [`PartInput::File`]; otherwise, if it names
+/// a registered `@agent`, it becomes a [`PartInput::Agent`] that routes the turn
+/// to that subagent. `subagent_agents` holds the names that are valid task
+/// subagents; `non_subagent_agents` holds the other registered names, whose
+/// mention is rejected with a clear error instead of silently falling through.
 pub async fn resolve_prompt_parts(
     template: &str,
     worktree: &std::path::Path,
-    known_agents: &[String],
-) -> Vec<PartInput> {
+    subagent_agents: &[String],
+    non_subagent_agents: &[String],
+) -> Result<Vec<PartInput>, PromptError> {
     let mut parts = vec![PartInput::Text {
         text: template.to_string(),
     }];
@@ -2949,16 +2960,23 @@ pub async fn resolve_prompt_parts(
                         mime: Some("text/plain".to_string()),
                     });
                 }
-            } else if known_agents.iter().any(|a| a == name) {
-                // Not a file — check if it's a known agent name
+            } else if subagent_agents.iter().any(|a| a == name) {
+                // Not a file — route to a subagent-capable agent.
                 parts.push(PartInput::Agent {
                     name: name.to_string(),
                 });
+            } else if non_subagent_agents.iter().any(|a| a == name) {
+                // A registered agent that cannot be a subagent (e.g. a primary
+                // or hidden agent). Fail clearly instead of silently ignoring.
+                return Err(PromptError::InvalidAgentMention(format!(
+                    "Agent '@{}' is not a subagent-capable agent and cannot be mentioned as a subagent",
+                    name
+                )));
             }
         }
     }
 
-    parts
+    Ok(parts)
 }
 
 pub fn extract_file_references(template: &str) -> Vec<String> {
@@ -4828,25 +4846,45 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_prompt_parts_plain_text() {
-        let parts =
-            resolve_prompt_parts("just plain text", std::path::Path::new("/tmp"), &[]).await;
+        let parts = resolve_prompt_parts("just plain text", std::path::Path::new("/tmp"), &[], &[])
+            .await
+            .unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], PartInput::Text { text } if text == "just plain text"));
     }
 
     #[tokio::test]
     async fn resolve_prompt_parts_agent_fallback() {
-        // @explore doesn't exist as a file, but is a known agent
-        let agents = vec!["explore".to_string(), "build".to_string()];
+        // @explore doesn't exist as a file, but is a known subagent.
+        let subagents = vec!["explore".to_string(), "general".to_string()];
+        let primaries = vec!["build".to_string(), "plan".to_string()];
         let parts = resolve_prompt_parts(
             "check @explore for details",
             std::path::Path::new("/tmp"),
-            &agents,
+            &subagents,
+            &primaries,
         )
-        .await;
+        .await
+        .unwrap();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], PartInput::Text { .. }));
         assert!(matches!(&parts[1], PartInput::Agent { name } if name == "explore"));
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_parts_routes_each_subagent_once() {
+        let subagents = vec!["explore".to_string(), "general".to_string()];
+        let parts = resolve_prompt_parts(
+            "see @general then @explore",
+            std::path::Path::new("/tmp"),
+            &subagents,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[1], PartInput::Agent { name } if name == "general"));
+        assert!(matches!(&parts[2], PartInput::Agent { name } if name == "explore"));
     }
 
     #[tokio::test]
@@ -4855,10 +4893,44 @@ mod tests {
             "see @explore and @explore again",
             std::path::Path::new("/tmp"),
             &["explore".to_string()],
+            &[],
         )
-        .await;
+        .await
+        .unwrap();
         // text + one agent (deduplicated)
         assert_eq!(parts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_parts_rejects_non_subagent_mention() {
+        let error = resolve_prompt_parts(
+            "please @build this",
+            std::path::Path::new("/tmp"),
+            &["explore".to_string()],
+            &["build".to_string()],
+        )
+        .await
+        .expect_err("primary mention must not silently fall through");
+        assert!(
+            matches!(error, PromptError::InvalidAgentMention(ref message)
+            if message.contains("@build") && message.contains("not a subagent-capable agent"))
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_parts_leaves_unknown_mentions_as_text() {
+        // A token that is neither a file nor a registered agent is not an agent
+        // mention; it stays as plain prompt text.
+        let parts = resolve_prompt_parts(
+            "ping @nobody about it",
+            std::path::Path::new("/tmp"),
+            &["explore".to_string()],
+            &["build".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(parts.len(), 1);
+        assert!(matches!(&parts[0], PartInput::Text { .. }));
     }
 
     #[tokio::test]
@@ -4867,7 +4939,9 @@ mod tests {
         let file = dir.path().join("test.rs");
         tokio::fs::write(&file, "fn main() {}").await.unwrap();
 
-        let parts = resolve_prompt_parts("look at @test.rs", dir.path(), &[]).await;
+        let parts = resolve_prompt_parts("look at @test.rs", dir.path(), &[], &[])
+            .await
+            .unwrap();
         assert_eq!(parts.len(), 2);
         assert!(
             matches!(&parts[1], PartInput::File { mime, .. } if mime.as_deref() == Some("text/plain"))
@@ -4880,7 +4954,9 @@ mod tests {
         let sub = dir.path().join("src");
         tokio::fs::create_dir(&sub).await.unwrap();
 
-        let parts = resolve_prompt_parts("look at @src", dir.path(), &[]).await;
+        let parts = resolve_prompt_parts("look at @src", dir.path(), &[], &[])
+            .await
+            .unwrap();
         assert_eq!(parts.len(), 2);
         assert!(
             matches!(&parts[1], PartInput::File { mime, .. } if mime.as_deref() == Some("application/x-directory"))
