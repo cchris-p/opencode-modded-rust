@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -81,3 +81,41 @@ Reference `f54ce313b99a`:
 - `GATE-004` subagent feature parity.
 - `FEAT-046` task tool contract parity - shares the task-tool wiring.
 - `FEAT-047` TUI subagent navigation - needs real child sessions to navigate to.
+
+## Implementation Notes
+
+### 2026-09-23 - PR 1 of `H-009`
+
+- Branch: `feature/FEAT-045-subagent-child-sessions`; PR:
+  https://github.com/cchris-p/opencode-modded-rust/pull/91 (targets `development`).
+- Card moved `todo -> doing -> qa`; awaiting the maintainer's local TUI smoke on the checked-out
+  branch. Do not merge until explicitly directed.
+- `SessionPrompt` now accepts optional server-owned `create_subsession`/`prompt_subsession`
+  callbacks (`crates/opencode-session/src/prompt.rs`); `execute_tool_calls` only installs the
+  in-memory `task_*` fallback when neither is provided, so the server's real path is no longer
+  shadowed.
+- The server (`crates/opencode-server/src/routes.rs`) now supplies those callbacks from
+  `run_prompt_turn`:
+  - `create_child_subagent_session` creates a real child via
+    `SessionManager::create_child`, sets `parent_id`, the reference title
+    `"<description> (@<agent> subagent)"`, records `agent`/`model`/`subagent_disabled_tools`
+    metadata, and persists. It enforces the reference default `subagent_depth = 1` as an interim
+    guard (config key lands in `FEAT-046`).
+  - `prompt_child_subagent` resolves the child agent/model, runs the canonical
+    `SessionPrompt` loop on the child, writes it back, and persists, returning the child's final
+    assistant text for the `task` tool's output wrapper.
+- Unknown/invalid `task_id` now errors (`Unknown subagent session: ...`) without creating a
+  session; a missing parent errors.
+- In-memory subsession maps remain only as a fallback for callers that do not install server
+  callbacks (direct `AgentExecutor` use and unit tests), documented in `prompt.rs`.
+- Fixture slice added in `crates/opencode-server/src/routes.rs`:
+  `task_child_is_real_parent_linked_and_persisted`, `nested_task_beyond_depth_is_rejected`,
+  `unknown_task_id_errors_instead_of_creating_a_session`.
+- Verification: `cargo fmt --all`; `cargo check --workspace`; `cargo test -p opencode-tool
+  -p opencode-session`; `cargo test -p opencode-server` (46 + 3 integration tests pass).
+- Known follow-ups owned by later cards: registry-driven lookup, configurable `subagent_depth`,
+  parent-derived subagent permissions, and the `<task ...>` output wrapper (`FEAT-046`); TUI child
+  navigation (`FEAT-047`); manual restart/resume QA.
+- Note: the two existing `opencode-tool` task unit tests exercise the tool contract with mock
+  callbacks and still pass; the child-session contract is covered by the new server fixtures.
+

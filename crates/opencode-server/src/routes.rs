@@ -2611,6 +2611,188 @@ async fn apply_session_snapshot(
     }
 }
 
+/// FEAT-045: create the real, persisted child session a `task` call targets.
+/// Sets `parent_id` (via [`SessionManager::create_child`]), the reference title
+/// `"<description> (@<agent> subagent)"`, and records the agent/model so the
+/// child prompt and later surfacing can resolve them. Enforces the interim
+/// `subagent_depth` default of 1 (config-driven in FEAT-046).
+async fn create_child_subagent_session(
+    state: Arc<ServerState>,
+    parent_id: String,
+    agent: String,
+    title: Option<String>,
+    model: Option<String>,
+    disabled_tools: Vec<String>,
+    default_provider_id: &str,
+    default_model_id: &str,
+) -> std::result::Result<String, opencode_tool::ToolError> {
+    let mut sessions = state.sessions.lock().await;
+
+    // Count the calling session's ancestors; a root session may spawn one
+    // level, matching the reference default `subagent_depth = 1`.
+    let mut depth = 0u32;
+    let mut cursor = sessions.get(&parent_id).and_then(|s| s.parent_id.clone());
+    while let Some(id) = cursor {
+        depth += 1;
+        if depth > 16 {
+            break;
+        }
+        cursor = sessions.get(&id).and_then(|s| s.parent_id.clone());
+    }
+    if depth >= 1 {
+        return Err(opencode_tool::ToolError::ExecutionError(
+            "Subagent depth limit reached (1). Increase \"subagent_depth\" to allow nested subagents."
+                .to_string(),
+        ));
+    }
+
+    let Some(child) = sessions.create_child(&parent_id) else {
+        return Err(opencode_tool::ToolError::ExecutionError(format!(
+            "Parent session not found: {}",
+            parent_id
+        )));
+    };
+    let child_id = child.id.clone();
+    let reference_title = format!(
+        "{} (@{} subagent)",
+        title.as_deref().unwrap_or("Task"),
+        agent
+    );
+    let model_ref =
+        model.unwrap_or_else(|| format!("{}:{}", default_provider_id, default_model_id));
+    if let Some(child) = sessions.get_mut(&child_id) {
+        child.title = reference_title;
+        child
+            .metadata
+            .insert("agent".to_string(), serde_json::json!(&agent));
+        child.metadata.insert(
+            "subagent_parent_id".to_string(),
+            serde_json::json!(&parent_id),
+        );
+        child
+            .metadata
+            .insert("model".to_string(), serde_json::json!(&model_ref));
+        child.metadata.insert(
+            "subagent_disabled_tools".to_string(),
+            serde_json::json!(disabled_tools),
+        );
+    }
+    drop(sessions);
+    persist_sessions_if_enabled(&state).await;
+    Ok(child_id)
+}
+
+/// FEAT-045: run one prompt turn against a real child (`task`) session and
+/// return the child's final assistant text. The child is prompted through the
+/// canonical [`opencode_session::SessionPrompt`] path so its messages are
+/// persisted like any other session; the caller's `task` tool then wraps the
+/// returned text in the `<task ...>` output.
+async fn prompt_child_subagent(
+    state: Arc<ServerState>,
+    child_id: String,
+    prompt: String,
+    provider: Arc<dyn opencode_provider::Provider>,
+    default_provider_id: &str,
+    default_model_id: &str,
+) -> std::result::Result<String, opencode_tool::ToolError> {
+    let mut child = {
+        let sessions = state.sessions.lock().await;
+        sessions.get(&child_id).cloned().ok_or_else(|| {
+            opencode_tool::ToolError::ExecutionError(format!(
+                "Unknown subagent session: {}. Start without task_id first.",
+                child_id
+            ))
+        })?
+    };
+
+    let agent_name = child
+        .metadata
+        .get("agent")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+
+    let (provider_id, model_id) = child
+        .metadata
+        .get("model")
+        .and_then(|value| value.as_str())
+        .and_then(|raw| raw.split_once(':').or_else(|| raw.split_once('/')))
+        .map(|(provider, model)| (provider.to_string(), model.to_string()))
+        .unwrap_or_else(|| {
+            (
+                default_provider_id.to_string(),
+                default_model_id.to_string(),
+            )
+        });
+
+    let supports_tools = provider
+        .get_model(&model_id)
+        .map(|model| model.supports_tools)
+        .unwrap_or(true);
+    let resolved = crate::agentic::resolve_agentic_context(
+        &child.directory,
+        agent_name,
+        &model_id,
+        &provider_id,
+        supports_tools,
+    )
+    .await;
+
+    child
+        .metadata
+        .insert("agent".to_string(), serde_json::json!(&resolved.agent_name));
+    child.metadata.insert(
+        "model_provider".to_string(),
+        serde_json::json!(&provider_id),
+    );
+    child
+        .metadata
+        .insert("model_id".to_string(), serde_json::json!(&model_id));
+
+    let runner = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
+        opencode_session::SessionStateManager::new(),
+    )));
+    let input = opencode_session::PromptInput {
+        session_id: child_id.clone(),
+        message_id: None,
+        model: Some(opencode_session::prompt::ModelRef {
+            provider_id: provider_id.clone(),
+            model_id: model_id.clone(),
+        }),
+        agent: Some(resolved.agent_name.clone()),
+        no_reply: false,
+        system: None,
+        variant: None,
+        parts: vec![opencode_session::PartInput::Text { text: prompt }],
+        tools: None,
+    };
+
+    runner
+        .prompt_with_update_hook(
+            input,
+            &mut child,
+            provider,
+            Some(resolved.system_prompt.clone()),
+            resolved.tools.clone(),
+            resolved.params.clone(),
+            None,
+        )
+        .await
+        .map_err(|error| opencode_tool::ToolError::ExecutionError(error.to_string()))?;
+
+    apply_session_snapshot(&state, &child_id, child.clone()).await;
+    persist_sessions_if_enabled(&state).await;
+
+    let output = child
+        .messages
+        .iter()
+        .rev()
+        .find(|message| matches!(message.role, opencode_session::MessageRole::Assistant))
+        .map(|message| message.get_text())
+        .unwrap_or_default();
+
+    Ok(output)
+}
+
 async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: PendingPrompt) {
     set_session_run_status(&state, &session_id, SessionRunStatus::Busy).await;
 
@@ -2866,12 +3048,66 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         })
     });
 
+    // FEAT-045: real, persisted child sessions for the `task` tool. The server
+    // owns the session manager and provider, so it supplies the create/prompt
+    // callbacks here; `SessionPrompt` otherwise falls back to the in-memory
+    // `task_*` subsession map.
+    let child_create_state = task_state.clone();
+    let child_parent_id = session_id.clone();
+    let child_create_provider_id = task_provider.clone();
+    let child_create_model_id = task_model.clone();
+    let create_subsession_callback: opencode_tool::CreateSubsessionCallback =
+        Arc::new(move |agent, title, model, disabled_tools| {
+            let state = child_create_state.clone();
+            let parent_id = child_parent_id.clone();
+            let default_provider_id = child_create_provider_id.clone();
+            let default_model_id = child_create_model_id.clone();
+            Box::pin(async move {
+                create_child_subagent_session(
+                    state,
+                    parent_id,
+                    agent,
+                    title,
+                    model,
+                    disabled_tools,
+                    &default_provider_id,
+                    &default_model_id,
+                )
+                .await
+            })
+        });
+
+    let child_prompt_state = task_state.clone();
+    let child_prompt_provider = provider.clone();
+    let child_prompt_provider_id = task_provider.clone();
+    let child_prompt_model_id = task_model.clone();
+    let prompt_subsession_callback: opencode_tool::PromptSubsessionCallback =
+        Arc::new(move |child_id, prompt| {
+            let state = child_prompt_state.clone();
+            let provider = child_prompt_provider.clone();
+            let default_provider_id = child_prompt_provider_id.clone();
+            let default_model_id = child_prompt_model_id.clone();
+            Box::pin(async move {
+                prompt_child_subagent(
+                    state,
+                    child_id,
+                    prompt,
+                    provider,
+                    &default_provider_id,
+                    &default_model_id,
+                )
+                .await
+            })
+        });
+
     let prompt_runner = Arc::new(
         opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
             opencode_session::SessionStateManager::new(),
         )))
         .with_ask_callback(permission_callback)
-        .with_ask_question_callback(question_callback),
+        .with_ask_question_callback(question_callback)
+        .with_create_subsession_callback(create_subsession_callback)
+        .with_prompt_subsession_callback(prompt_subsession_callback),
     );
     ACTIVE_PROMPTS
         .write()
@@ -7181,5 +7417,171 @@ mod session_title_tests {
         let session = manager.get(&session_id).expect("session should exist");
         assert_eq!(session.title, "User chosen title");
         assert!(!session.is_auto_title_pending());
+    }
+}
+
+#[cfg(test)]
+mod subagent_child_session_tests {
+    use super::*;
+    use crate::server::test_state_with_repos;
+    use opencode_provider::{ChatRequest, ChatResponse, ModelInfo, ProviderError, StreamResult};
+    use opencode_storage::{Database, MessageRepository, SessionRepository};
+
+    struct NoopProvider;
+
+    #[async_trait::async_trait]
+    impl opencode_provider::Provider for NoopProvider {
+        fn id(&self) -> &str {
+            "test"
+        }
+
+        fn name(&self) -> &str {
+            "Test"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            Vec::new()
+        }
+
+        fn get_model(&self, _id: &str) -> Option<&ModelInfo> {
+            None
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest("unused".to_string()))
+        }
+
+        async fn chat_stream(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<StreamResult, ProviderError> {
+            Err(ProviderError::InvalidRequest("unused".to_string()))
+        }
+    }
+
+    async fn state_and_root() -> (Arc<ServerState>, String, SessionRepository) {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let state = Arc::new(test_state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        ));
+        let root_id = {
+            let mut manager = state.sessions.lock().await;
+            manager.create("default", ".").id.clone()
+        };
+        (state, root_id, SessionRepository::new(pool))
+    }
+
+    #[tokio::test]
+    async fn task_child_is_real_parent_linked_and_persisted() {
+        let (state, root_id, session_repo) = state_and_root().await;
+
+        let child_id = create_child_subagent_session(
+            state.clone(),
+            root_id.clone(),
+            "explore".to_string(),
+            Some("Investigate issue".to_string()),
+            Some("provider-x:model-y".to_string()),
+            vec!["todowrite".to_string()],
+            "provider-x",
+            "model-y",
+        )
+        .await
+        .expect("child session should be created");
+
+        assert!(
+            !child_id.starts_with("task_"),
+            "must not expose a synthetic id"
+        );
+
+        {
+            let sessions = state.sessions.lock().await;
+            let child = sessions.get(&child_id).expect("child should be in manager");
+            assert_eq!(child.parent_id.as_deref(), Some(root_id.as_str()));
+            assert_eq!(child.title, "Investigate issue (@explore subagent)");
+            assert_eq!(
+                child.metadata.get("agent").and_then(|v| v.as_str()),
+                Some("explore")
+            );
+        }
+
+        let stored = session_repo
+            .get(&child_id)
+            .await
+            .expect("get child from storage")
+            .expect("child must be persisted");
+        assert_eq!(stored.parent_id.as_deref(), Some(root_id.as_str()));
+
+        let children = session_repo
+            .list_children(&root_id)
+            .await
+            .expect("list children");
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].id, child_id);
+    }
+
+    #[tokio::test]
+    async fn nested_task_beyond_depth_is_rejected() {
+        let (state, root_id, _session_repo) = state_and_root().await;
+
+        let child_id = create_child_subagent_session(
+            state.clone(),
+            root_id.clone(),
+            "explore".to_string(),
+            Some("First".to_string()),
+            None,
+            Vec::new(),
+            "provider-x",
+            "model-y",
+        )
+        .await
+        .expect("first child should be created");
+
+        let result = create_child_subagent_session(
+            state.clone(),
+            child_id,
+            "explore".to_string(),
+            Some("Nested".to_string()),
+            None,
+            Vec::new(),
+            "provider-x",
+            "model-y",
+        )
+        .await;
+
+        let error = result.expect_err("nested subagent must be rejected at depth 1");
+        assert!(error.to_string().contains("Subagent depth limit reached"));
+    }
+
+    #[tokio::test]
+    async fn unknown_task_id_errors_instead_of_creating_a_session() {
+        let (state, _root_id, _session_repo) = state_and_root().await;
+
+        let before = state.sessions.lock().await.list().len();
+
+        let result = prompt_child_subagent(
+            state.clone(),
+            "ses_does_not_exist".to_string(),
+            "continue".to_string(),
+            Arc::new(NoopProvider),
+            "provider-x",
+            "model-y",
+        )
+        .await;
+
+        let error = result.expect_err("unknown task_id must error");
+        assert!(error.to_string().contains("Unknown subagent session"));
+
+        let after = state.sessions.lock().await.list().len();
+        assert_eq!(
+            before, after,
+            "no session should be created for an unknown task_id"
+        );
     }
 }
