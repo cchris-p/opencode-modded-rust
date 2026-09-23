@@ -52,6 +52,9 @@
 - When stopping Rust `ort` runtimes, target only confirmed PIDs whose command is `$HOME/repos/opencode-modded-rust/target/debug/opencode tui` or `$HOME/repos/opencode-modded-rust/target/debug/opencode serve` for the specific port/workspace under test. Do not kill `$HOME/.opencode/bin/opencode`, plugin-host processes, vanilla/reference OpenCode, or broad `opencode` process patterns.
 - The Rust product owns its default model (`deepseek/deepseek-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
 - When testing code changes, run `ort-build` before `ort` so the freshly started server runs the latest binary.
+- Worktree builds share one Cargo target directory. `scripts/setup-worktree-build-cache.sh` writes a managed `.cargo/config.toml` at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.cargo/config.toml` that points every git worktree beneath it at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.shared-target`, so worktrees no longer each duplicate a full `target/`. The main checkout at `$HOME/repos/opencode-modded-rust` keeps its own `target/`.
+- Reclaim disk with `scripts/clean-build-caches.sh` (dry run by default; add `--yes` to delete). It removes duplicated per-worktree `target/` dirs; `--shared` also clears the shared cache and `--include-main` also clears the main checkout's `target/`.
+- `ort-build` warns when free disk on the build volume is below `OPENCODE_RUST_MIN_FREE_GB` (default 15) and points at `scripts/clean-build-caches.sh`.
 
 ## Git Hooks
 
