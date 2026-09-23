@@ -104,3 +104,25 @@ lands, but it is now the prerequisite that `CLI-001` consumes rather than an orp
 proceed against the merged target commands.
 
 Canonical behavior reference: `wiki/cli-surface.md`.
+
+## QA Verification - 2026-09-23 (PASS)
+
+Headless QA on `development` (`54aa9c3`) against a live `opencode serve` in a throwaway workspace.
+
+- `task target show` with no selection -> `No default task target selected.`
+- `task target list` with no candidates -> clear guidance to pass `--server` or select first.
+- `task target list --server <live>` -> lists server as available with its root sessions.
+- `task target list --server <dead>` -> marks the server unavailable with the health error.
+- `task target select --server <live> --session <id>` -> persists workspace-local
+  `.opencode/task-target.json` and prints server + session.
+- `task target select --server <dead>` -> refused, exit code 1.
+- `task target select --server <live> --session <bogus>` -> refused, exit code 1.
+- `task target show` -> reflects server/session/workspace and `Status: available`.
+- `task target list` after selection -> marks the selected server and session with `*`.
+- `task target clear` -> removes the file; a second clear reports none.
+- Stale selected target (server stopped) -> `show`/`list` mark it unavailable and `task send`/`view`/
+  `status` all fail clearly with exit code 1 and no silent fallback.
+
+Observations (not blocking): `task target list` requires `--server` or an existing selection - it does
+not discover live servers on its own; and the server's `/session?roots=true` list is global, so candidate
+sessions are not scoped to the current workspace even though the selection is.

@@ -156,3 +156,38 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - PR #80 merged into `development` (merge commit `5b71d14`).
 - Branch `feature/CLI-001-task-commands` deleted locally and remotely.
 - Remains in `qa` pending a recorded post-merge QA report (`H-006` QA notes) or explicit user completion.
+
+## QA Verification - 2026-09-23 (FAIL)
+
+Headless QA on `development` (`54aa9c3`), binary rebuilt with `cargo build -p opencode-cli`. Ran a
+throwaway `opencode serve` workspace and drove real turns with `deepseek/deepseek-flash`.
+
+FAIL - `opencode task new` returns HTTP 404 and cannot create a session:
+
+```
+$ opencode task new --server http://127.0.0.1:<port> "Reply with exactly the single token PONG"
+Error: Request failed (404 Not Found):
+```
+
+Root cause: `create_task_session` posts to `/session/` (trailing slash) at
+`crates/opencode-cli/src/main.rs:2788`, but the server registers `POST /session` with no trailing
+slash (`crates/opencode-server/src/routes.rs:68`) and `server_url` preserves the trailing slash.
+Raw evidence: `POST /session/` -> `404`, `POST /session` -> `200`.
+
+PASS - the rest of the surface, verified against a session created directly on the API:
+
+- `task send` with `--server/--session`, and with no flags via the workspace-local selected target,
+  accepted and returned `Session`/`Message`/`Status`.
+- `task view` (with no flags, and `--json`) printed the transcript.
+- stdin prompt input preserved text.
+- `--stream` reported `queued` queue position/depth, then `busy` -> `active`, then printed the transcript.
+- File-path text (e.g. `./README.md`) was preserved verbatim in the message.
+- Missing target and unreachable target both failed clearly with exit code 1 and no silent fallback.
+
+Verified model turns used `deepseek/deepseek-flash`; the CLI's own default model resolved to
+`ollama/qwen3:30b` (from `OPENCODE_MODEL_OLLAMA_LOCAL`) and returned a provider network error, which is
+an environment/default-model concern outside this card.
+
+Verdict: not done. `task new` is a hard blocker; fix the URL and re-QA. `task send`/`task view`/`--stream`
+are QA-verified. Recommend logging the 404 as a separate bug item so the fix is tracked independently of
+this card.
