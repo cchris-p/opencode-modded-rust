@@ -191,3 +191,6 @@ an environment/default-model concern outside this card.
 Verdict: not done. `task new` is a hard blocker; fix the URL and re-QA. `task send`/`task view`/`--stream`
 are QA-verified. Recommend logging the 404 as a separate bug item so the fix is tracked independently of
 this card.
+
+Remediation: `BUG-036` fixes the 404 in PR #82
+(https://github.com/cchris-p/opencode-modded-rust/pull/82). Re-QA this card after that PR merges.

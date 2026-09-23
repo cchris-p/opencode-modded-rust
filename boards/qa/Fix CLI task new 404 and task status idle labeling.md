@@ -90,6 +90,7 @@ raw endpoint returns `{status: "active", idle: true, busy: false}`.
 ## Implementation Notes - 2026-09-23
 
 - Branch: `bug/BUG-036-cli-task-surface-defects`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/82.
 - Defect 1: `create_task_session` now posts to `/session` (no trailing slash) in
   `crates/opencode-cli/src/main.rs:2788`.
 - Defect 2: `print_task_statuses` now prints `idle` when the run is idle and the lifecycle is `active`,

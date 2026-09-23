@@ -126,3 +126,6 @@ recommended check "confirm completed sessions do not look active." The server al
 
 Verdict: listing/JSON/queue all verified; status labeling needs a fix before this card can close.
 Recommend keeping in `qa` and logging the idle/active/complete labeling gap as a bug item.
+
+Remediation: `BUG-036` fixes the idle labeling in PR #82
+(https://github.com/cchris-p/opencode-modded-rust/pull/82). Re-QA this card after that PR merges.
