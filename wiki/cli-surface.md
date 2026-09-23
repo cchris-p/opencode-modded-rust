@@ -96,6 +96,7 @@ opencode attach <url>                              # optional: back to the TUI
 
 This is gated by `CLI-001` (task `new`/`send`/`view` on the canonical session runtime) and `CLI-006`
 (status); `CLI-002` retires the parallel `opencode run` engine so headless runs use the same path.
+The immediate work is composed in `handoffs/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
 
 ## Canonical Card Map
 

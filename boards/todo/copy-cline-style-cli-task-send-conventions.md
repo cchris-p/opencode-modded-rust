@@ -27,6 +27,8 @@ Prerequisites are already in place:
 
 Canonical behavior reference: `wiki/cli-surface.md`.
 
+Handoff: `handoffs/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
+
 ## Summary
 
 Add a CLI-first task interaction surface inspired by Cline's `task` flow, focused on starting tasks, sending follow-up messages, and viewing task conversation state outside the TUI.

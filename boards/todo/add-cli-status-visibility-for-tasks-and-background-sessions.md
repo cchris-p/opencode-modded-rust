@@ -24,6 +24,8 @@ Prerequisite already in place: `GATE-001` (done) exposes `status` (`idle|busy|qu
 
 Canonical behavior reference: `wiki/cli-surface.md`.
 
+Handoff: `handoffs/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
+
 ## Summary
 
 Add a CLI-visible status surface for tasks/sessions so command-line workflows can see what is running, waiting, completed, errored, or otherwise actionable without opening the TUI.
