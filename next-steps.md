@@ -6,7 +6,7 @@
   │  3. CLI-006 CLI status visibility — closes out H-003.
   │  4. FEAT-015 Preserve model/provider across sessions (P1) — dependency-free backlog.
   │  5. FEAT-023 Filter session list by workspace (P1) — dependency-free backlog.
-  │  6. Quick wins: FEAT-028 hide-tool-calls toggle, BUG-022 thinking toggle line-count.
+  │  6. Quick win: BUG-022 thinking toggle line-count.
   │  7. FEAT-032 rebrand constants — once you answer the open short-name/logo question; needs attention clea
   │red.
   │

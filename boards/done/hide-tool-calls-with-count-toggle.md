@@ -5,8 +5,9 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-21"
+updated: "2026-09-23"
 ---
 
 # Add a hide-tool-calls toggle that compacts runs to a tool-call count
@@ -101,3 +102,14 @@ This is distinct from the existing `show_tool_details` state (`crates/opencode-t
 - PR #72 merged into `development` at `15201ae0edcf175c0cb4caf4567eabf79375ec91`.
 - Remote PR branch `feature/feat-028-hide-tool-calls` was deleted by `gh pr merge --delete-branch`; the local PR branch is no longer present in the worktree used for implementation.
 - Code/task completeness checked against this card before merge; item remains in `qa` pending post-merge QA report or explicit completion direction.
+
+## QA Verification and Closeout - 2026-09-23
+
+- Post-merge QA passed on `development`: the toggle is reachable from `/tool-calls`, its `/tools` and
+  `/toggle-tools` aliases, the command palette, and the optional `tool_calls` keybind.
+- Hidden mode collapses each contiguous tool-call run to a single `N tool calls` line (singular
+  `1 tool call`); running, failed, and denied state stays visible, and clicking a summary expands that
+  run inline. Toggling back restores the existing per-call rendering.
+- The `tool_calls_visibility` ui key persists across TUI restarts, and `show_tool_details` continues to
+  control arguments/output independently.
+- Card moved from `qa` to `done`.
