@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "done"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -105,8 +105,10 @@ plus a "send the cursor to the boundary first" step.
 ## Done when
 
 - Bare `Up` only recalls history when the cursor is at offset `0`; bare `Down` only recalls when the
-  cursor is at the end of the draft.
+  cursor is at the end of the draft (`input.len()`), including for wrapped input.
 - `Up`/`Down` at a non-boundary position never mutate history and keep the draft intact.
+- In a wrapped (no-`\n`) draft, a single `Up`/`Down` moves the caret exactly one visual row and never
+  changes the input.
 - Multi-line drafts can be navigated with the arrows without losing the draft to a history load.
 - `Alt+Up`/`Alt+Down` still recall unconditionally.
 - Unit tests cover the gate and the snap-then-recall sequence.
@@ -163,3 +165,51 @@ plus a "send the cursor to the boundary first" step.
   behaviors are present. Live TUI acceptance was not independently run; behavior is covered by the
   unit tests above.
 
+## Reopened
+
+- 2026-09-23: Reopened from `done` (`done` -> `qa` -> `doing`). Reported regression: in a multi-line
+  or wrapped prompt box, pressing `Up`/`Down` to move between lines switches to the previous/next
+  sent message instead of moving the caret, losing the draft. This is bad UX for multi-line prompts.
+- Strong invariant restated: bare `Up`/`Down` may load a history entry **only** when the caret is on
+  the very first character (`Up`) or the very last character (`Down`) of the whole input. Everywhere
+  else the arrows move the caret one *visual* line inside the prompt and must not touch history.
+- Root cause / gap: the shipped implementation gates on the logical first/last byte
+  (`crates/opencode-tui/src/components/prompt.rs:609-622`) and moves the caret with
+  `move_cursor_vertical` (`prompt.rs:845-869`), which only understands `\n` logical lines. The prompt
+  actually renders wrapped visual rows via `wrap_prompt_input` (`prompt.rs:1387`) /
+  `WrappedPromptInput::cursor_visual_position` (`prompt.rs:1320`). On a wrapped (no-`\n`) draft,
+  non-boundary `Up`/`Down` collapses the caret to offset `0` / `len` in one press, so the *next*
+  press immediately traverses history - the reported "switches message when moving a line".
+- Fix direction: drive vertical movement off the same wrapped visual-row model used for rendering
+  (preserve the visual column across rows), and keep history traversal gated strictly on the true
+  buffer first/last character. `Alt+Up`/`Alt+Down` remain the ungated recall path.
+- The original open question ("visual wrapped line vs logical newline line") is resolved: visual.
+
+### Fix implemented (2026-09-23)
+
+- `Prompt` now records the current prompt input width each render in `last_input_width: AtomicU16`
+  (`crates/opencode-tui/src/components/prompt.rs`), set in `Prompt::render` from
+  `prompt_input_width(area.width)`.
+- `move_cursor_vertical` now wraps the draft with the same `wrap_prompt_input` used by rendering,
+  resolves the caret's visual `(row, col)` via `WrappedPromptInput::cursor_visual_position`, and moves
+  to the adjacent visual row preserving the visual column through the new
+  `offset_at_visual_position` helper. It clamps to offset `0` / `input.len()` at the true top/bottom.
+- Removed the logical-`\n`-only `line_bounds` / `byte_offset_for_column` helpers.
+- The history gate is unchanged: bare `Up`/`Down` only call `history_previous` / `history_next` at
+  offset `0` / `input.len()`; `Alt+Up`/`Alt+Down` stay ungated.
+- New tests: `bare_arrows_move_by_wrapped_visual_row_without_recall`,
+  `bare_down_moves_by_wrapped_visual_row_without_recall`. Existing
+  `bare_arrows_navigate_multiline_draft_without_recall`,
+  `bare_up_recalls_history_only_at_cursor_start`,
+  `bare_down_recalls_history_only_at_cursor_end`, and
+  `explicit_history_navigation_is_ungated` still pass.
+
+### Verification (2026-09-23)
+
+- `cargo fmt --all --check` - OK.
+- `cargo test -p opencode-tui --lib prompt -- --test-threads=1` - 32 passed / 0 failed when skipping
+  `tab_autocomplete_uses_first_candidate`. That test is a pre-existing environment-dependent flake:
+  it fails identically at the baseline (changes stashed) and is unrelated to this card, as already
+  recorded under BUG-030.
+- `cargo test -p opencode-tui --lib -- --test-threads=1` - 125 passed / 0 failed with the same skip.
+- Live TUI acceptance (`ort-build` + `ort`) is still pending human verification.

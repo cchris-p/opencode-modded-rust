@@ -10,6 +10,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;
@@ -172,6 +173,7 @@ pub struct Prompt {
     spinner: KnightRiderSpinner,
     mode: PromptMode,
     interrupt: InterruptConfirmation,
+    last_input_width: AtomicU16,
 }
 
 impl Prompt {
@@ -260,6 +262,7 @@ impl Prompt {
             spinner,
             mode: PromptMode::Normal,
             interrupt: InterruptConfirmation::default(),
+            last_input_width: AtomicU16::new(u16::MAX),
         };
         prompt.recompute_suggestions();
         prompt
@@ -309,6 +312,7 @@ impl Prompt {
             .saturating_sub(PROMPT_BLOCK_PAD_BOTTOM)
             .max(PROMPT_MIN_INPUT_LINES);
         let input_width = prompt_input_width(area.width);
+        self.last_input_width.store(input_width, Ordering::Relaxed);
         let wrapped_input = wrap_prompt_input(&self.input, input_width);
         let cursor_visual_position = wrapped_input.cursor_visual_position(
             self.input.len(),
@@ -844,27 +848,21 @@ impl Prompt {
 
     fn move_cursor_vertical(&mut self, up: bool) {
         let cursor = self.cursor_position.min(self.input.len());
-        let (line_start, line_end) = line_bounds(&self.input, cursor);
-        let column = self.input[line_start..cursor].chars().count();
+        let width = self.last_input_width.load(Ordering::Relaxed).max(1);
+        let wrapped = wrap_prompt_input(&self.input, width);
+        let position = wrapped.cursor_visual_position(self.input.len(), cursor, width);
+        let row = position.row;
+        let col = usize::from(position.col);
 
         if up {
-            if line_start == 0 {
+            if row == 0 {
                 self.cursor_position = 0;
                 return;
             }
-            let prev_end = line_start - 1;
-            let (prev_start, _) = line_bounds(&self.input, prev_end);
-            let target = byte_offset_for_column(&self.input[prev_start..prev_end], column);
-            self.cursor_position = prev_start + target;
+            self.cursor_position = offset_at_visual_position(&wrapped, row - 1, col).unwrap_or(0);
         } else {
-            if line_end >= self.input.len() {
-                self.cursor_position = self.input.len();
-                return;
-            }
-            let next_start = line_end + 1;
-            let (_, next_end) = line_bounds(&self.input, next_start);
-            let target = byte_offset_for_column(&self.input[next_start..next_end], column);
-            self.cursor_position = next_start + target;
+            self.cursor_position =
+                offset_at_visual_position(&wrapped, row + 1, col).unwrap_or(self.input.len());
         }
     }
 
@@ -1667,21 +1665,30 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
-fn line_bounds(input: &str, offset: usize) -> (usize, usize) {
-    let offset = offset.min(input.len());
-    let start = input[..offset].rfind('\n').map(|idx| idx + 1).unwrap_or(0);
-    let end = input[offset..]
-        .find('\n')
-        .map(|idx| offset + idx)
-        .unwrap_or(input.len());
-    (start, end)
-}
-
-fn byte_offset_for_column(line: &str, column: usize) -> usize {
-    line.char_indices()
-        .nth(column)
-        .map(|(idx, _)| idx)
-        .unwrap_or(line.len())
+fn offset_at_visual_position(
+    wrapped: &WrappedPromptInput,
+    target_row: usize,
+    target_col: usize,
+) -> Option<usize> {
+    let mut best: Option<(usize, usize)> = None;
+    for (offset, (row, col)) in &wrapped.positions {
+        if *row != target_row {
+            continue;
+        }
+        let col = usize::from(*col);
+        if col > target_col {
+            continue;
+        }
+        match best {
+            Some((best_col, best_offset)) => {
+                if col > best_col || (col == best_col && *offset > best_offset) {
+                    best = Some((col, *offset));
+                }
+            }
+            None => best = Some((col, *offset)),
+        }
+    }
+    best.map(|(_, offset)| offset)
 }
 
 #[cfg(test)]
@@ -1880,6 +1887,50 @@ mod tests {
             prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
             assert_eq!(prompt.get_input(), "ab\ncd");
             assert_eq!(prompt.cursor_position(), "ab\ncd".len());
+        });
+    }
+
+    #[test]
+    fn bare_arrows_move_by_wrapped_visual_row_without_recall() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("old".to_string());
+            let _ = prompt.take_input();
+
+            // Width 4 wraps this single logical line into rows "abcd", "efgh", "ij".
+            prompt.set_input("abcdefghij".to_string());
+            prompt.last_input_width.store(4, Ordering::Relaxed);
+            assert_eq!(prompt.cursor_position(), "abcdefghij".len());
+
+            // Up moves one visual row at a time and preserves the column, without
+            // recalling history until the very first character is reached.
+            for expected in [6usize, 2, 0] {
+                prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+                assert_eq!(prompt.get_input(), "abcdefghij");
+                assert_eq!(prompt.cursor_position(), expected);
+            }
+
+            // Only at offset 0 does a further Up recall.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "old");
+            assert_eq!(prompt.cursor_position(), 0);
+        });
+    }
+
+    #[test]
+    fn bare_down_moves_by_wrapped_visual_row_without_recall() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("old".to_string());
+            let _ = prompt.take_input();
+
+            prompt.set_input("abcdefghij".to_string());
+            prompt.last_input_width.store(4, Ordering::Relaxed);
+            prompt.cursor_position = 0;
+
+            for expected in [4usize, 8, "abcdefghij".len()] {
+                prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+                assert_eq!(prompt.get_input(), "abcdefghij");
+                assert_eq!(prompt.cursor_position(), expected);
+            }
         });
     }
 
