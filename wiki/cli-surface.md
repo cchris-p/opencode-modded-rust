@@ -9,7 +9,7 @@ touched the same behavior are history and are cited only as lineage.
 This document states (1) what the product does today and (2) the target behavior the `CLI-*` series
 is driving toward.
 
-## Current Behavior (as of 2026-09-22)
+## Current Behavior (as of 2026-09-23)
 
 ### TUI launch
 
@@ -45,9 +45,12 @@ is driving toward.
 ### CLI task surface
 
 - `opencode task target list|select|show|clear` exists and stores a workspace-local
-  `.opencode/task-target.json` (`CLI-007`, merged PR #37, in `qa`).
-- `opencode task new`, `opencode task send`, `opencode task view`, and a CLI status surface do
-  **not** exist yet (`CLI-001`/`CLI-006` in `todo`).
+  `.opencode/task-target.json` with live `/health` + `/session` validation (`CLI-007`, PR #37; done
+  2026-09-23).
+- `opencode task new`, `opencode task send`, `opencode task view`, and `opencode task status` exist.
+  `new`/`send` submit through the canonical `POST /session/{id}/prompt` path; `view` reads
+  `/session/{id}/message`; `status` reads `GET /session/status` with plain-text and `--json` output
+  (`CLI-001`/`CLI-006`, PR #80/#81; defects fixed by `BUG-036` PR #82; done 2026-09-23).
 - `opencode run` currently uses the interim `AgentExecutor` tool loop, not the canonical
   session/server runtime (`CLI-002`, `hold`).
 
@@ -55,8 +58,8 @@ is driving toward.
 
 | Owner | Target |
 |---|---|
-| `CLI-001` | `task new`/`send`/`view` on the canonical server/session prompt path; returns target session plus `started`/`queued`; `--stream` follows once active. Prerequisite gate for the rest of the series. |
-| `CLI-006` | CLI status visibility over `GET /session/status` (`idle|busy|queued|retry|error`), plain text plus `--json`. Co-gate. |
+| `CLI-001` | `task new`/`send`/`view` on the canonical server/session prompt path; returns target session plus `started`/`queued`; `--stream` follows once active. Delivered 2026-09-23 (PR #80, fix `BUG-036` PR #82). |
+| `CLI-006` | CLI status visibility over `GET /session/status` (`idle|busy|queued|retry|error`), plain text plus `--json`. Delivered 2026-09-23 (PR #81, fix `BUG-036` PR #82). |
 | `CLI-002` | Route `opencode run` through the canonical session runtime; retire the parallel `AgentExecutor` loop. |
 | `CLI-009` | CLI/direct-run question and ask/approval parity; blocked by `CLI-001`/`CLI-006`, `CLI-002`, and `GATE-002`. |
 | `CLI-010` | Subagent/child-session surface on the CLI; blocked by `GATE-004`. |
@@ -73,14 +76,16 @@ must be able to leave and revisit a running session).
 The target is to drive the same agentic session runtime as the TUI without a TUI, and to keep a server
 alive independently of any TUI. Detached + headless together are what make the CLI Cline-like.
 
-Available today (partial):
+Available today:
 
 - `opencode serve` starts a headless server (no TUI); alternatively `ort` + `/detach` leaves a
   TUI-launched server alive.
 - `opencode task target select --server <url>` records the server/session to use (`CLI-007`).
+- `opencode task new|send|view|status` drive the canonical session runtime headlessly
+  (`CLI-001`/`CLI-006`).
 - Direct HTTP `POST /session/{id}/prompt` already runs agentic work headlessly.
 - `opencode run` / `run --attach` exists but uses the interim `AgentExecutor` path, not the canonical
-  session runtime.
+  session runtime (`CLI-002`, `hold`).
 
 Target shape (the Cline-like workflow):
 
@@ -90,26 +95,27 @@ opencode task target select --server <url>
 opencode task new "Fix the failing test"           # CLI-001
 opencode task send "Now run the focused tests"     # CLI-001
 opencode task view                                 # CLI-001
-opencode task status                               # CLI-006 (name TBD)
+opencode task status                               # CLI-006
 opencode attach <url>                              # optional: back to the TUI
 ```
 
-This is gated by `CLI-001` (task `new`/`send`/`view` on the canonical session runtime) and `CLI-006`
-(status); `CLI-002` retires the parallel `opencode run` engine so headless runs use the same path.
-`CLI-001` and `CLI-006` are delivered and merged into `development` (PR #80, PR #81), pending post-merge QA;
-the composition is recorded in `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
+`CLI-001` and `CLI-006` are delivered, merged into `development` (PR #80, PR #81), and QA-verified
+(2026-09-23); `BUG-036` (PR #82) fixed the `task new` 404 and the `idle` status label. The composition
+is recorded in `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
+`CLI-002` remains on `hold` and retires the parallel `opencode run` engine so headless runs use the
+same canonical path.
 
 ## Canonical Card Map
 
 | ID | Lane | Role |
 |---|---|---|
-| CLI-001 | qa | Cline-style task send (delivered, PR #80) |
+| CLI-001 | done | Cline-style task send (PR #80; QA done 2026-09-23) |
 | CLI-002 | hold | Route `opencode run` through session runtime (gated) |
 | CLI-003 | done | Removed server reuse / fresh server per launch |
 | CLI-004 | done | Explicit `/detach` command |
 | CLI-005 | hold | Same-workspace attach/reuse decision (human gate) |
-| CLI-006 | qa | CLI status visibility (delivered, PR #81) |
-| CLI-007 | qa | Default task target selection (prerequisite input) |
+| CLI-006 | done | CLI status visibility (PR #81; QA done 2026-09-23) |
+| CLI-007 | done | Default task target selection (PR #37; QA done 2026-09-23) |
 | CLI-008 | archive | Queue CLI sends (delivered by `GATE-001`) |
 | CLI-009 | hold | Direct-run question and ask/approval parity (gated) |
 | CLI-010 | hold | CLI subagent surface (gated) |
@@ -124,6 +130,8 @@ the composition is recorded in `handoffs/archive/2026-09-22-cli-task-surface-and
 - `CLI-004` Explicit `/detach` (done) - re-added deliberate, user-directed detach on the
   fresh-server model (PR #35, PR #62).
 - `FEAT-033` Print a resume command on normal TUI exit (done) - adjacent exit UX.
+- `BUG-036` Fix CLI `task new` 404 and `task status` idle labeling (done 2026-09-23, PR #82) -
+  post-merge QA fix for `CLI-001` (`/session` trailing-slash URL) and `CLI-006` (idle label).
 
 ## Boundaries / Non-Goals
 
