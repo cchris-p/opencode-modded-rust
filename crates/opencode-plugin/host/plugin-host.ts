@@ -61,7 +61,7 @@ interface AuthHook {
   provider: string;
   methods: AuthMethod[];
   authorize?: (method: AuthMethod, inputs?: Record<string, string>) => Promise<AuthorizeResult>;
-  loader?: () => Promise<{
+  loader?: (getAuth?: () => Promise<unknown>) => Promise<{
     apiKey?: string;
     fetch?: typeof globalThis.fetch;
     [key: string]: unknown;
@@ -532,14 +532,18 @@ async function handleAuthCallback(
   }
 }
 
-async function handleAuthLoad(id: number): Promise<void> {
+async function handleAuthLoad(
+  id: number,
+  params: { provider?: string; auth?: unknown } = {},
+): Promise<void> {
   if (!authHook?.loader) {
     sendError(id, -32601, "No auth.loader handler");
     return;
   }
 
   try {
-    const loaded = await authHook.loader();
+    const storedAuth = params.auth ?? undefined;
+    const loaded = await authHook.loader(async () => storedAuth);
     const hasCustomFetch = typeof loaded.fetch === "function";
     if (hasCustomFetch) {
       customFetch = loaded.fetch!;
@@ -689,7 +693,7 @@ async function main(): Promise<void> {
         await handleAuthCallback(id, params as Parameters<typeof handleAuthCallback>[1]);
         break;
       case "auth.load":
-        await handleAuthLoad(id);
+        await handleAuthLoad(id, params as Parameters<typeof handleAuthLoad>[1]);
         break;
       case "auth.fetch":
         await handleAuthFetch(id, params as Parameters<typeof handleAuthFetch>[1]);

@@ -3578,6 +3578,9 @@ async fn list_providers(State(state): State<Arc<ServerState>>) -> Json<ProviderL
 
 #[derive(Debug, Serialize)]
 pub struct AuthMethodInfo {
+    pub index: usize,
+    #[serde(rename = "type")]
+    pub method_type: String,
     pub name: String,
     pub description: String,
 }
@@ -3594,7 +3597,10 @@ async fn get_provider_auth(
         .map(|(provider, values)| {
             let mapped = values
                 .into_iter()
-                .map(|method| AuthMethodInfo {
+                .enumerate()
+                .map(|(index, method)| AuthMethodInfo {
+                    index,
+                    method_type: method.method_type.clone(),
                     name: method.label,
                     description: method.method_type,
                 })
@@ -3659,7 +3665,12 @@ async fn oauth_callback(
 
     // Refresh auth loader state after callback and apply custom-fetch proxy changes immediately.
     if let Some(bridge) = loader.auth_bridge(&id).await {
-        match bridge.load().await {
+        let stored_auth = state
+            .auth_manager
+            .get(&id)
+            .await
+            .and_then(|auth| serde_json::to_value(auth).ok());
+        match bridge.load(stored_auth).await {
             Ok(load_result) => {
                 crate::server::sync_custom_fetch_proxy(&id, bridge, load_result.has_custom_fetch);
             }
@@ -6816,13 +6827,18 @@ struct PluginAuthLoadResponse {
 }
 
 async fn plugin_auth_load(
-    _state: State<Arc<ServerState>>,
+    State(state): State<Arc<ServerState>>,
     Path(name): Path<String>,
 ) -> Result<Json<PluginAuthLoadResponse>> {
     let bridge = get_auth_bridge(&name).await?;
 
+    let stored_auth = state
+        .auth_manager
+        .get(&name)
+        .await
+        .and_then(|auth| serde_json::to_value(auth).ok());
     let result = bridge
-        .load()
+        .load(stored_auth)
         .await
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 

@@ -13,8 +13,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::api::{
     ApiClient, McpStatusInfo, MessageInfo, PermissionRequestInfo as ApiPermissionRequestInfo,
-    QuestionInfo as ApiQuestionInfo, QuestionPromptInfo as ApiQuestionPromptInfo, SessionInfo,
-    SessionRevertInfo, SkillSummary,
+    ProviderAuthMethodInfo, QuestionInfo as ApiQuestionInfo,
+    QuestionPromptInfo as ApiQuestionPromptInfo, SessionInfo, SessionRevertInfo, SkillSummary,
 };
 use crate::app::state::AppState;
 use crate::app::terminal;
@@ -2761,7 +2761,11 @@ impl App {
                         return true;
                     };
                     let input = self.settings_view.input_value();
-                    if input.is_empty() {
+                    let requires_input = match mode {
+                        SettingsInputMode::OAuthCode => self.settings_view.oauth_requires_code(),
+                        _ => true,
+                    };
+                    if requires_input && input.is_empty() {
                         self.toast
                             .show(ToastVariant::Warning, "Input cannot be empty", 2200);
                         return true;
@@ -2771,13 +2775,16 @@ impl App {
                         SettingsInputMode::ApiKey => client
                             .set_provider_api_key("openai", input)
                             .map(|_| "OpenAI API key saved".to_string()),
-                        SettingsInputMode::OAuthCode => client
-                            .complete_provider_oauth(
-                                "openai",
-                                self.settings_view.oauth_method().unwrap_or(0),
-                                Some(input),
-                            )
-                            .map(|_| "OpenAI login saved".to_string()),
+                        SettingsInputMode::OAuthCode => {
+                            let code = if input.is_empty() { None } else { Some(input) };
+                            client
+                                .complete_provider_oauth(
+                                    "openai",
+                                    self.settings_view.oauth_method().unwrap_or(0),
+                                    code,
+                                )
+                                .map(|_| "OpenAI login saved".to_string())
+                        }
                         SettingsInputMode::OllamaBaseUrl => client
                             .patch_config(&crate::components::ollama_base_url_patch(input))
                             .map(|_| "Ollama host saved".to_string()),
@@ -2809,6 +2816,27 @@ impl App {
                 }
                 _ => return true,
             }
+        }
+
+        if self.settings_view.auth_method_selection().is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.settings_view.cancel_auth_method_select();
+                }
+                KeyCode::Up => {
+                    self.settings_view.move_auth_method_up();
+                }
+                KeyCode::Down => {
+                    self.settings_view.move_auth_method_down();
+                }
+                KeyCode::Enter if key.modifiers.is_empty() => {
+                    if let Some(method) = self.settings_view.selected_auth_method() {
+                        self.begin_openai_auth_method(&method);
+                    }
+                }
+                _ => {}
+            }
+            return true;
         }
 
         match key.code {
@@ -2866,15 +2894,13 @@ impl App {
                     .as_deref()
                     == Some("openai")
                 {
-                    if let Some(client) = self.context.get_api_client() {
-                        match client.start_provider_oauth("openai", 0) {
-                            Ok(prompt) => self.settings_view.begin_oauth_input(0, prompt),
-                            Err(err) => self.toast.show(
-                                ToastVariant::Error,
-                                &format!("Failed to start OpenAI login: {}", err),
-                                3200,
-                            ),
-                        }
+                    let methods = self.settings_view.openai_auth_methods().to_vec();
+                    if methods.len() > 1 {
+                        self.settings_view.begin_auth_method_select();
+                    } else if methods.len() == 1 {
+                        self.begin_openai_auth_method(&methods[0]);
+                    } else {
+                        self.start_openai_oauth(0);
                     }
                 }
                 true
@@ -2940,6 +2966,30 @@ impl App {
                 true
             }
             _ => false,
+        }
+    }
+
+    fn begin_openai_auth_method(&mut self, method: &ProviderAuthMethodInfo) {
+        if method.is_api() {
+            self.settings_view.begin_api_key_input();
+            return;
+        }
+        self.start_openai_oauth(method.index);
+    }
+
+    fn start_openai_oauth(&mut self, method_index: usize) {
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+        match client.start_provider_oauth("openai", method_index) {
+            Ok(prompt) => self.settings_view.begin_oauth_input(method_index, prompt),
+            Err(err) => self.toast.show(
+                ToastVariant::Error,
+                &format!("Failed to start OpenAI login: {}", err),
+                3200,
+            ),
         }
     }
 

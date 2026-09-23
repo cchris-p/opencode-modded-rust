@@ -20,3 +20,21 @@ The provider screen shows the effective provider, effective model, auth source, 
 When you press `Enter` on a highlighted model in `Settings > Provider`, the selection is written back to the project config path and becomes the normal default for future runs.
 
 When Ollama is highlighted, press `u` to edit the Ollama host/base URL from the same screen.
+
+## OpenAI / Codex authentication
+
+Selecting the `openai` provider and pressing `l` opens an auth-method chooser when the plugin reports more than one method. The Rust product mirrors vanilla OpenCode's OpenAI/Codex auth surface:
+
+- `ChatGPT Pro/Plus (browser)` — PKCE browser login. The TUI shows the authorization URL, the plugin starts a localhost callback server on port `1455`, and the login completes without pasting a code.
+- `ChatGPT Pro/Plus (headless)` — OpenAI device authorization. The TUI shows the device URL plus the user code; complete it in the browser and press `Enter` to finish polling.
+- `Manually enter API Key` — the existing API key input path. Press `a` as a shortcut.
+
+OAuth methods report `method: "auto"`, so completing them does not require a pasted code. When a saved OAuth credential exists, OpenAI/Codex requests are routed through the plugin custom fetch, which rewrites responses/chat-completions traffic to the Codex backend and injects the ChatGPT access token and account id. This path does not require `OPENAI_API_KEY`.
+
+Intentional deviations from vanilla OpenCode:
+
+- The Rust product keeps its existing internal `/provider/{id}/oauth/authorize` and `/provider/{id}/oauth/callback` routes instead of vanilla's newer `/api/integration/*` endpoints. User-facing behavior and persisted auth semantics are equivalent.
+- Refreshed OAuth access tokens are refreshed in the plugin host for the lifetime of the session; the refreshed token is not written back to the stored credential. The stored refresh token remains valid and is used on the next session.
+
+Verify auth state with `GET /auth/openai`: an OAuth login reports `auth_type: "oauth"`, and an API key reports `auth_type: "api"`.
+
