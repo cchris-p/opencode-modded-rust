@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -133,3 +133,13 @@ PR: https://github.com/cchris-p/opencode-modded-rust/pull/96
 - `cargo fmt --all`
 - `cargo check --workspace`
 - `cargo test -p opencode-tool -p opencode-agent -p opencode-config -p opencode-server` (green)
+
+## Merge Closeout - 2026-09-23
+
+- Merged into `development` via PR #96 (merge commit `05752d9109ba3c12babd1963118618269aac4919`).
+- Feature branch `feature/FEAT-046-task-tool-contract-parity` deleted remotely and locally; local
+  checkout is back on `development` and fast-forwarded to the merge.
+- Post-merge QA on `development` passed: `cargo fmt --all`, `cargo check --workspace`, and
+  `cargo test -p opencode-tool -p opencode-agent -p opencode-config -p opencode-server` (green).
+- Promoted `qa -> done` on explicit user direction after the human test/merge gate.
+- Program `GATE-004` (H-009) PR 2/7 complete; PR 3 (`FEAT-047`) is next.

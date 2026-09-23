@@ -453,8 +453,21 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - `FEAT-046` moved `todo -> doing -> qa`; awaiting human test/merge on PR #96 before PR 3
   (`FEAT-047`) starts.
 
+### 2026-09-23 — PR 2 (`FEAT-046`) merged
+
+- PR #96 merged into `development` at merge commit
+  `05752d9109ba3c12babd1963118618269aac4919` on explicit user direction.
+- Branch cleanup complete: remote and local `feature/FEAT-046-task-tool-contract-parity` deleted.
+- Post-merge QA on `development` passed: `cargo fmt --all`, `cargo check --workspace`,
+  `cargo test -p opencode-tool -p opencode-agent -p opencode-config -p opencode-server`.
+- `FEAT-046` promoted `qa -> done` after post-merge QA (explicit user completion).
+- Gate check for PR 3: `FEAT-047` may start now that PR 2 is merged; `development` is current at
+  `05752d9` in the local checkout.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
   2026-09-23). Card `FEAT-045` in `qa`.
+- PR 2 (`FEAT-046`) — PR #96 / merge commit `05752d9109ba3c12babd1963118618269aac4919` (merged
+  2026-09-23). Card `FEAT-046` in `done`.
 
