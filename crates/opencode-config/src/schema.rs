@@ -1566,4 +1566,26 @@ mod tests {
         });
         assert_eq!(base.subagent_depth_limit(), 3);
     }
+
+    #[test]
+    fn experimental_background_subagents_defaults_off_and_honors_config() {
+        let previous = std::env::var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS").ok();
+        std::env::remove_var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS");
+
+        assert!(!Config::default().experimental_background_subagents());
+
+        let mut base = Config::default();
+        base.merge(Config {
+            experimental: Some(ExperimentalConfig {
+                background_subagents: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert!(base.experimental_background_subagents());
+
+        if let Some(previous) = previous {
+            std::env::set_var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS", previous);
+        }
+    }
 }

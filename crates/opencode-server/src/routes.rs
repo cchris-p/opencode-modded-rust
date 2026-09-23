@@ -8690,4 +8690,113 @@ mod subagent_child_session_tests {
             }
         )));
     }
+
+    #[test]
+    fn abort_on_drop_cancels_unless_disarmed() {
+        let token = opencode_tool::CancellationToken::new();
+        drop(AbortOnDrop::new(token.clone()));
+        assert!(token.is_cancelled(), "dropping an armed guard cancels");
+
+        let token = opencode_tool::CancellationToken::new();
+        let mut guard = AbortOnDrop::new(token.clone());
+        guard.disarm();
+        drop(guard);
+        assert!(!token.is_cancelled(), "a disarmed guard must not cancel");
+    }
+
+    /// A provider that never answers, so a background run can only end via the
+    /// abort token.
+    struct PendingProvider;
+
+    #[async_trait::async_trait]
+    impl opencode_provider::Provider for PendingProvider {
+        fn id(&self) -> &str {
+            "pending"
+        }
+
+        fn name(&self) -> &str {
+            "Pending"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            Vec::new()
+        }
+
+        fn get_model(&self, _id: &str) -> Option<&ModelInfo> {
+            None
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<ChatResponse, ProviderError> {
+            std::future::pending().await
+        }
+
+        async fn chat_stream(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<StreamResult, ProviderError> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_background_run_injects_nothing_into_the_parent() {
+        let (state, root_id, _session_repo) = state_and_root().await;
+        let child_id = create_child_subagent_session(
+            state.clone(),
+            root_id.clone(),
+            "explore".to_string(),
+            Some("Background".to_string()),
+            None,
+            Vec::new(),
+            "provider-x",
+            "model-y",
+        )
+        .await
+        .expect("child session should be created");
+
+        let before = {
+            let sessions = state.sessions.lock().await;
+            sessions
+                .get(&root_id)
+                .map(|session| session.messages.len())
+                .unwrap_or_default()
+        };
+
+        let abort = opencode_tool::CancellationToken::new();
+        abort.cancel();
+        let (result_tx, _result_rx) = oneshot::channel();
+        run_child_task(
+            state.clone(),
+            root_id.clone(),
+            child_id.clone(),
+            "Background".to_string(),
+            "go".to_string(),
+            Arc::new(PendingProvider),
+            "provider-x".to_string(),
+            "model-y".to_string(),
+            abort,
+            result_tx,
+            Arc::new(AtomicBool::new(true)),
+        )
+        .await;
+
+        let after = {
+            let sessions = state.sessions.lock().await;
+            sessions
+                .get(&root_id)
+                .map(|session| session.messages.len())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            before, after,
+            "cancelled run must not inject a parent message"
+        );
+        assert!(
+            TASK_RUNS.lock().await.get(&child_id).is_none(),
+            "cancelled run must clean up its registry entry"
+        );
+    }
 }
