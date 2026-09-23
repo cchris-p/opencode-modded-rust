@@ -416,3 +416,16 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
   `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (no drift); re-mapped current Rust touchpoints at
   `60e701d` (card line numbers corrected).
 - Started PR 1 (`FEAT-045`) per user direction.
+
+### 2026-09-23 — PR 1 (`FEAT-045`) opened
+
+- Branch `feature/FEAT-045-subagent-child-sessions`; PR #91 targets `development`
+  (https://github.com/cchris-p/opencode-modded-rust/pull/91).
+- Server now supplies real `create_subsession`/`prompt_subsession` callbacks so `task` creates a real
+  persisted child session; in-memory callbacks remain only as a documented fallback. Interim
+  `subagent_depth = 1` guard added (config key deferred to `FEAT-046`).
+- Fixture slice: `subagent_child_session_tests` in `opencode-server`. Verification green:
+  `cargo fmt --all`, `cargo check --workspace`, `cargo test -p opencode-tool -p opencode-session
+  -p opencode-server`.
+- `FEAT-045` moved `todo -> doing -> qa`; awaiting human test/merge on PR #91 before PR 2 (`FEAT-046`)
+  starts.
