@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-16"
 updated: "2026-09-22"
 ---
@@ -87,3 +87,11 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 ## Notes
 
 - Split out from the original broad `CLI-001` Cline-workflow placeholder on 2026-09-16.
+
+## Implementation Notes - 2026-09-22
+
+- Branch: `feature/CLI-006-cli-status` stacked on PR #80 (`feature/CLI-001-task-commands`) because it extends the same `task` subcommand surface.
+- Implemented `opencode task status [--server <URL>] [--session <SESSION_ID>] [--json]` in `crates/opencode-cli/src/main.rs`.
+- Status reads come from `GET /session/status`; queued position/depth is displayed only from that server response.
+- Default output lists root sessions for the selected/provided server; `--session` narrows to one session; `--json` emits parseable session/status objects.
+- Verification passed: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task status --help`.

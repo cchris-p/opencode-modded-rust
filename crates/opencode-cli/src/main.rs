@@ -320,6 +320,15 @@ enum TaskCommands {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    #[command(about = "Show task session status from the selected server")]
+    Status {
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     #[command(about = "Manage the default CLI task target")]
     Target {
         #[command(subcommand)]
@@ -1351,10 +1360,14 @@ struct RemoteMessagePart {
     text: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct RemoteSessionStatusInfo {
     status: String,
     idle: bool,
+    busy: bool,
+    attempt: Option<u32>,
+    message: Option<String>,
+    next: Option<i64>,
     position: Option<usize>,
     depth: Option<usize>,
 }
@@ -2890,6 +2903,60 @@ async fn follow_task_until_idle(
     }
 }
 
+async fn fetch_task_statuses(
+    client: &reqwest::Client,
+    server: &str,
+) -> anyhow::Result<HashMap<String, RemoteSessionStatusInfo>> {
+    let endpoint = server_url(server, "/session/status");
+    parse_http_json(client.get(endpoint).send().await?).await
+}
+
+fn print_task_statuses(
+    server: &str,
+    sessions: &[RemoteSessionInfo],
+    statuses: &HashMap<String, RemoteSessionStatusInfo>,
+    selected_session: Option<&str>,
+) {
+    println!("Server: {}", server);
+    let mut rows: Vec<_> = sessions
+        .iter()
+        .filter(|session| {
+            selected_session
+                .map(|selected| selected == session.id)
+                .unwrap_or(true)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    if rows.is_empty() {
+        println!("No sessions reported.");
+        return;
+    }
+    println!(
+        "{:<30} {:<12} {:<8} {}",
+        "Session", "Status", "Queue", "Title"
+    );
+    for session in rows {
+        let status = statuses.get(&session.id);
+        let status_label = status
+            .map(|entry| entry.status.as_str())
+            .unwrap_or("unknown");
+        let queue = status
+            .and_then(|entry| match (entry.position, entry.depth) {
+                (Some(position), Some(depth)) => Some(format!("{}/{}", position, depth)),
+                (_, Some(depth)) => Some(format!("-/{}", depth)),
+                _ => None,
+            })
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "{:<30} {:<12} {:<8} {}",
+            session.id,
+            status_label,
+            queue,
+            truncate_text(session.title.as_deref().unwrap_or("untitled"), 40)
+        );
+    }
+}
+
 async fn handle_task_command(action: TaskCommands) -> anyhow::Result<()> {
     match action {
         TaskCommands::New {
@@ -2908,6 +2975,11 @@ async fn handle_task_command(action: TaskCommands) -> anyhow::Result<()> {
             session,
             json,
         } => handle_task_view(server, session, json).await,
+        TaskCommands::Status {
+            server,
+            session,
+            json,
+        } => handle_task_status(server, session, json).await,
         TaskCommands::Target { action } => handle_task_target_command(action).await,
     }
 }
@@ -2985,6 +3057,65 @@ async fn handle_task_view(
         println!("{}", serde_json::to_string_pretty(&messages)?);
     } else {
         print_task_messages(session_id, &messages);
+    }
+    Ok(())
+}
+
+async fn handle_task_status(
+    server: Option<String>,
+    session: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let explicit_session = session.clone();
+    let mut target = selected_task_target(server, session, false)?;
+    if explicit_session.is_none() {
+        target.session = None;
+    }
+    ensure_task_target_available(&client, &target).await?;
+    let sessions_endpoint = server_url(&target.server, "/session?roots=true&limit=100");
+    let sessions: Vec<RemoteSessionInfo> =
+        parse_http_json(client.get(sessions_endpoint).send().await?).await?;
+    let statuses = fetch_task_statuses(&client, &target.server).await?;
+    if let Some(session_id) = target.session.as_deref() {
+        if !sessions.iter().any(|session| session.id == session_id) {
+            anyhow::bail!(
+                "Task session {} was not reported by target {}",
+                session_id,
+                target.server
+            );
+        }
+    }
+    if json {
+        let rows: Vec<_> = sessions
+            .iter()
+            .filter(|session| {
+                target
+                    .session
+                    .as_deref()
+                    .map(|selected| selected == session.id)
+                    .unwrap_or(true)
+            })
+            .map(|session| {
+                serde_json::json!({
+                    "id": session.id,
+                    "title": session.title,
+                    "directory": session.directory,
+                    "workspaceIdentity": session.workspace_identity,
+                    "status": statuses.get(&session.id),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        print_task_statuses(
+            &target.server,
+            &sessions,
+            &statuses,
+            target.session.as_deref(),
+        );
     }
     Ok(())
 }
