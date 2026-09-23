@@ -1755,6 +1755,10 @@ impl App {
                 KeyCode::Esc => self.timeline_dialog.close(),
                 KeyCode::Up => self.timeline_dialog.move_up(),
                 KeyCode::Down => self.timeline_dialog.move_down(),
+                KeyCode::Home => self.timeline_dialog.select_first(),
+                KeyCode::End => self.timeline_dialog.select_last(),
+                KeyCode::PageUp => self.timeline_dialog.page_up(),
+                KeyCode::PageDown => self.timeline_dialog.page_down(),
                 KeyCode::Enter => {
                     if let Some(msg_id) = self.timeline_dialog.selected_message_id() {
                         let msg_id = msg_id.to_string();
@@ -5240,6 +5244,49 @@ mod tests {
 
         assert!(timeline_entries_from_messages(&[]).is_empty());
         assert!(timeline_entries_from_messages(&[assistant, system]).is_empty());
+    }
+
+    /// Guards against adopting vanilla opencode's 100-message window: every user
+    /// prompt in a history larger than 100 messages must still produce an entry.
+    #[test]
+    fn timeline_entries_include_every_user_prompt_in_large_history() {
+        let mut messages = Vec::new();
+        for i in 0..40 {
+            messages.push(message_with_role(
+                &format!("msg_user_{i}"),
+                MessageRole::User,
+                &format!("prompt-{i}"),
+            ));
+            for j in 0..3 {
+                messages.push(message_with_role(
+                    &format!("msg_assistant_{i}_{j}"),
+                    MessageRole::Assistant,
+                    "reply",
+                ));
+            }
+        }
+        assert!(messages.len() > 100);
+
+        let entries = timeline_entries_from_messages(&messages);
+
+        assert_eq!(entries.len(), 40);
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(entry.message_id, format!("msg_user_{i}"));
+            assert_eq!(entry.preview, format!("prompt-{i}"));
+        }
+    }
+
+    /// A user turn is a timeline entry even when it has no text content; the
+    /// timeline must not inherit vanilla's "skip messages without a loaded text
+    /// part" behavior.
+    #[test]
+    fn timeline_entries_do_not_require_text_content() {
+        let empty = message_with_role("msg_empty", MessageRole::User, "");
+        let entries = timeline_entries_from_messages(&[empty]);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message_id, "msg_empty");
+        assert!(entries[0].preview.is_empty());
     }
 
     #[test]
