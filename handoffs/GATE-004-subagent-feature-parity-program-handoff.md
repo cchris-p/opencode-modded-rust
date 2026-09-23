@@ -556,6 +556,15 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - `FEAT-051` moved `todo -> doing -> qa`; awaiting human test/merge on PR #100 before the final item
   (`CLI-010`, PR 7/7) starts.
 
+### 2026-09-23 — PR 6 (`FEAT-051`) merged
+
+- PR #100 merged into `development` at merge commit
+  `5ada12291c49d27157254f18f3fa528bbf100bff` on explicit user approval.
+- Branch cleanup complete: remote and local `feature/FEAT-051-subagent-parity-fixtures` deleted;
+  local `development` fast-forwarded to `5ada122`.
+- `FEAT-051` remains in `qa` pending a recorded post-merge QA report.
+- Gate check for PR 7: `CLI-010` may start now that PR 6 is merged.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
@@ -568,4 +577,6 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
   2026-09-23). Card `FEAT-049` in `qa` pending post-merge QA.
 - PR 5 (`FEAT-048`) — PR #99 / merge commit `0bdde09003305cca9e332d302aaf923288450bfa` (merged
   2026-09-23). Card `FEAT-048` in `qa` pending post-merge QA.
+- PR 6 (`FEAT-051`) — PR #100 / merge commit `5ada12291c49d27157254f18f3fa528bbf100bff` (merged
+  2026-09-23). Card `FEAT-051` in `qa` pending post-merge QA.
 

@@ -133,6 +133,14 @@ roundtrip), which exercise the documented fallback path, not the gate behavior.
 - PR #100 (https://github.com/cchris-p/opencode-modded-rust/pull/100) — `feature/FEAT-051-subagent-parity-fixtures` → `development`.
 - Program: GATE-004 (H-009), PR 6/7. Awaiting human test/merge on the checked-out branch.
 
+### 2026-09-23 - Merged into `development`
+
+- Merged via PR #100 (merge commit `5ada12291c49d27157254f18f3fa528bbf100bff`) on explicit user
+  approval.
+- Branch cleanup complete: remote and local `feature/FEAT-051-subagent-parity-fixtures` deleted;
+  local `development` fast-forwarded to `5ada122`.
+- Card remains in `qa` pending a recorded QA report. The merge alone does not move it to `done`.
+
 ## Related Items
 
 - `GATE-004` subagent feature parity.
