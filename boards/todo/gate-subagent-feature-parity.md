@@ -249,3 +249,8 @@ reused are reference-only and must be called out explicitly.
   (`handoffs/GATE-004-subagent-feature-parity-program-handoff.md`). It fixes the strict child order
   `FEAT-045 -> FEAT-046 -> FEAT-047 -> FEAT-049 -> FEAT-048 -> FEAT-051 -> CLI-010`, corrects the
   stale line references in this card, and runs one PR at a time with human-gated merges.
+- 2026-09-23: `CLI-010` accepted as a documented partial (PR #101): child sessions are no longer
+  filtered from `session list`/`session find` (shown with `parentId`/Parent column) and `session
+  show` lists children; the interactive run footer and CLI abort command are deferred to `CLI-002`
+  (blocked by `GATE-002`). All other non-deferred children (`FEAT-045`–`FEAT-049`, `FEAT-051`) are
+  implemented and merged; closing this gate is the final step once `CLI-010` lands.

@@ -565,6 +565,20 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - `FEAT-051` remains in `qa` pending a recorded post-merge QA report.
 - Gate check for PR 7: `CLI-010` may start now that PR 6 is merged.
 
+### 2026-09-23 — PR 7 (`CLI-010`) opened (documented partial)
+
+- Branch `feature/CLI-010-cli-subagent-surface`; PR #101 targets `development`
+  (https://github.com/cchris-p/opencode-modded-rust/pull/101).
+- `CLI-010` closes as an explicit documented partial per Shared Decision 9: `session list`/`session
+  find` now include child (subagent) sessions with `parentId`/Parent column and `session show` lists
+  children (no live path silently drops them); the interactive run footer and a CLI abort command
+  are deferred to `CLI-002` (blocked by `GATE-002`). Recorded on `CLI-010` and `GATE-004`.
+- Verification green: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo test -p opencode-cli`
+  (7 passed).
+- Awaiting human acceptance of the documented-partial resolution and merge on PR #101. On merge, all
+  non-deferred children are `done` or explicitly partial, so `GATE-004` can be closed and this
+  handoff archived.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
