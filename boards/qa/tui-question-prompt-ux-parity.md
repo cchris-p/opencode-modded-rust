@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -64,20 +64,40 @@ navigation with a final confirm tab, digit option shortcuts, custom answers, mul
 
 ## Acceptance criteria
 
-- [ ] Option descriptions are visible in the TUI prompt.
-- [ ] A single-question request can be answered without any multi-step navigation.
-- [ ] Multi-question requests can be navigated and reviewed before final submission.
-- [ ] Multi-select works and preserves selected labels per question.
-- [ ] A custom answer can be entered when `custom` is enabled.
-- [ ] A question can be rejected/dismissed without hanging the session.
-- [ ] Any deviation from vanilla's TUI flow is documented in this card.
-- [ ] TUI unit tests cover state transitions for single, multi, custom, and reject.
+- [x] Option descriptions are visible in the TUI prompt.
+- [x] A single-question request can be answered without any multi-step navigation.
+- [x] Multi-question requests can be navigated and reviewed before final submission.
+- [x] Multi-select works and preserves selected labels per question.
+- [x] A custom answer can be entered when `custom` is enabled.
+- [x] A question can be rejected/dismissed without hanging the session.
+- [x] Any deviation from vanilla's TUI flow is documented in this card.
+- [x] TUI unit tests cover state transitions for single, multi, custom, and reject.
 
 ## Verification
 
 - `cargo fmt --all`
 - `cargo check -p opencode-tui`
 - `cargo test -p opencode-tui --lib -- --test-threads=1`
+
+## Dev Notes - 2026-09-22
+
+- `crates/opencode-tui/src/components/question.rs`: `QuestionOption` now carries `description`, which
+  is rendered muted under each label. Option shortcuts moved from letters to digits `1`..`9`.
+- Added a "Type your own answer" custom row for choice questions when the server marks `custom`. It
+  enters text-entry mode; a custom answer replaces the selection on single-select and is appended to
+  selected labels on multi-select.
+- Added `QuestionType::Review` plus a multi-question review/confirm screen in
+  `crates/opencode-tui/src/app/app.rs`. After the last question, the flow shows a summary of every
+  question and answer with `Submit answers` / `Go back`; `Go back` re-opens the last question.
+- Added submit guarding (`submitting`) and error recovery that drops the last answer and re-asks it
+  rather than leaving the prompt stuck. `Esc` cancels a custom-answer edit before it rejects the whole
+  request. Space is routed to text input while editing.
+- Documented deviations from vanilla: sequential multi-question flow with a review screen instead of
+  vanilla's tabbed flow, and a compact bottom-of-session prompt rather than a modal.
+- Tests: `cargo test -p opencode-tui --lib` (83 passing), including digit shortcuts, custom answers,
+  multi-select preservation, text input, review action selection, and cancel.
+- Manual smoke pending maintainer verification with `ort-build` then `ort`.
+- Committed directly to `development` per maintainer direction.
 
 ## Related Items
 

@@ -57,6 +57,8 @@ struct PendingQuestionFlow {
     steps: Vec<ApiQuestionPromptInfo>,
     answers: Vec<Vec<String>>,
     current_index: usize,
+    reviewing: bool,
+    submitting: bool,
 }
 
 pub struct App {
@@ -406,14 +408,16 @@ impl App {
                     match key.code {
                         KeyCode::Up => self.question_prompt.move_up(),
                         KeyCode::Down => self.question_prompt.move_down(),
-                        KeyCode::Char(' ') => self.question_prompt.toggle_selected(),
+                        KeyCode::Char(' ') => self.question_prompt.space(),
                         KeyCode::Enter => {
                             if let Some((_question, answer)) = self.question_prompt.confirm() {
                                 self.advance_question_flow(answer);
                             }
                         }
                         KeyCode::Esc => {
-                            self.reject_question_flow();
+                            if !self.question_prompt.cancel_text_input() {
+                                self.reject_question_flow();
+                            }
                         }
                         KeyCode::Char(c) => self.question_prompt.type_char(c),
                         KeyCode::Backspace => self.question_prompt.backspace(),
@@ -3060,22 +3064,49 @@ impl App {
             return;
         }
 
-        let mut flow = PendingQuestionFlow {
+        let flow = PendingQuestionFlow {
             id: question.id,
             session_id: question.session_id,
             answers: Vec::new(),
             current_index: 0,
             steps: question.questions,
+            reviewing: false,
+            submitting: false,
         };
-        self.open_question_flow_step(&mut flow);
         self.pending_question_flow = Some(flow);
+        self.open_current_question_step();
     }
 
-    fn open_question_flow_step(&mut self, flow: &mut PendingQuestionFlow) {
-        let Some(step) = flow.steps.get(flow.current_index) else {
-            self.question_prompt.close();
-            return;
+    /// Render the flow's current question, the multi-question review screen, or
+    /// submit the collected answers when every question has been answered.
+    fn open_current_question_step(&mut self) {
+        let (index, step_count) = match self.pending_question_flow.as_ref() {
+            Some(flow) => (flow.current_index, flow.steps.len()),
+            None => {
+                self.question_prompt.close();
+                return;
+            }
         };
+
+        if index < step_count {
+            let prompt = self
+                .pending_question_flow
+                .as_ref()
+                .map(|flow| Self::question_prompt_for_step(flow, index))
+                .expect("flow checked above");
+            self.question_prompt.ask(prompt);
+            return;
+        }
+
+        if step_count > 1 {
+            self.open_question_review();
+        } else {
+            self.submit_question_flow();
+        }
+    }
+
+    fn question_prompt_for_step(flow: &PendingQuestionFlow, index: usize) -> QuestionRequest {
+        let step = &flow.steps[index];
         let prompt_type = if step.options.is_empty() {
             QuestionType::Text
         } else if step.multiple {
@@ -3083,7 +3114,7 @@ impl App {
         } else {
             QuestionType::SingleChoice
         };
-        let prompt = QuestionRequest {
+        QuestionRequest {
             id: flow.id.clone(),
             question: step
                 .header
@@ -3097,34 +3128,121 @@ impl App {
                 .map(|option| QuestionOption {
                     id: option.label.clone(),
                     label: option.label.clone(),
+                    description: option.description.clone().unwrap_or_default(),
                 })
                 .collect(),
+            custom: step.custom,
+        }
+    }
+
+    fn open_question_review(&mut self) {
+        let Some((request_id, summary)) = self.pending_question_flow.as_ref().map(|flow| {
+            let summary = flow
+                .steps
+                .iter()
+                .enumerate()
+                .map(|(index, step)| {
+                    let answer = flow
+                        .answers
+                        .get(index)
+                        .filter(|answers| !answers.is_empty())
+                        .map(|answers| answers.join(", "))
+                        .unwrap_or_else(|| "Unanswered".to_string());
+                    format!("{}\n  -> {}", step.question, answer)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            (flow.id.clone(), summary)
+        }) else {
+            self.question_prompt.close();
+            return;
+        };
+
+        let prompt = QuestionRequest {
+            id: request_id,
+            question: format!("Review your answers:\n\n{}", summary),
+            question_type: QuestionType::Review,
+            options: vec![
+                QuestionOption {
+                    id: "Submit answers".to_string(),
+                    label: "Submit answers".to_string(),
+                    description: String::new(),
+                },
+                QuestionOption {
+                    id: "Go back".to_string(),
+                    label: "Go back".to_string(),
+                    description: String::new(),
+                },
+            ],
+            custom: false,
         };
         self.question_prompt.ask(prompt);
+        // Pre-select "Submit answers" so the common path is a single keypress.
+        self.question_prompt.toggle_selected();
+        if let Some(flow) = self.pending_question_flow.as_mut() {
+            flow.reviewing = true;
+        }
     }
 
     fn advance_question_flow(&mut self, answer: Vec<String>) {
-        let Some(client) = self.context.get_api_client() else {
-            self.toast
-                .show(ToastVariant::Error, "No API client available", 2200);
-            return;
-        };
         let Some(mut flow) = self.pending_question_flow.take() else {
             self.question_prompt.close();
             return;
         };
 
-        flow.answers.push(answer);
-        flow.current_index += 1;
-
-        if flow.current_index < flow.steps.len() {
-            self.open_question_flow_step(&mut flow);
-            self.pending_question_flow = Some(flow);
+        if flow.reviewing {
+            flow.reviewing = false;
+            let action = answer.first().map(String::as_str);
+            if action == Some("Go back") {
+                flow.current_index = flow.steps.len().saturating_sub(1);
+                flow.answers.pop();
+                self.pending_question_flow = Some(flow);
+                self.open_current_question_step();
+            } else {
+                self.pending_question_flow = Some(flow);
+                self.submit_question_flow();
+            }
             return;
         }
 
-        match client.reply_question(&flow.session_id, &flow.id, flow.answers.clone()) {
+        flow.answers.push(answer);
+        flow.current_index += 1;
+        self.pending_question_flow = Some(flow);
+        self.open_current_question_step();
+    }
+
+    fn submit_question_flow(&mut self) {
+        if self
+            .pending_question_flow
+            .as_ref()
+            .is_some_and(|flow| flow.submitting)
+        {
+            return;
+        }
+
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+
+        let Some((session_id, request_id, answers)) =
+            self.pending_question_flow.as_mut().map(|flow| {
+                flow.submitting = true;
+                (
+                    flow.session_id.clone(),
+                    flow.id.clone(),
+                    flow.answers.clone(),
+                )
+            })
+        else {
+            self.question_prompt.close();
+            return;
+        };
+
+        match client.reply_question(&session_id, &request_id, answers) {
             Ok(_) => {
+                self.pending_question_flow = None;
                 self.question_prompt.close();
                 self.toast
                     .show(ToastVariant::Success, "Question answered", 1800);
@@ -3135,38 +3253,16 @@ impl App {
                     &format!("Failed to answer question: {}", err),
                     3200,
                 );
-                if let Some(question) = flow
-                    .steps
-                    .get(flow.current_index.saturating_sub(1))
-                    .cloned()
-                {
-                    flow.current_index = flow.current_index.saturating_sub(1);
-                    flow.answers.pop();
-                    self.question_prompt.ask(QuestionRequest {
-                        id: flow.id.clone(),
-                        question: question
-                            .header
-                            .as_ref()
-                            .map(|header| format!("{}\n\n{}", header, question.question))
-                            .unwrap_or(question.question),
-                        question_type: if question.options.is_empty() {
-                            QuestionType::Text
-                        } else if question.multiple {
-                            QuestionType::MultipleChoice
-                        } else {
-                            QuestionType::SingleChoice
-                        },
-                        options: question
-                            .options
-                            .into_iter()
-                            .map(|option| QuestionOption {
-                                id: option.label.clone(),
-                                label: option.label,
-                            })
-                            .collect(),
-                    });
+                // Error recovery: drop the last answer and re-ask that question
+                // instead of leaving the prompt stuck in a submitting state.
+                if let Some(flow) = self.pending_question_flow.as_mut() {
+                    flow.submitting = false;
+                    if flow.current_index > 0 {
+                        flow.current_index -= 1;
+                        flow.answers.pop();
+                    }
                 }
-                self.pending_question_flow = Some(flow);
+                self.open_current_question_step();
             }
         }
     }
