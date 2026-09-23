@@ -119,6 +119,9 @@ pub struct AppContext {
     pub message_density: RwLock<MessageDensity>,
     pub semantic_highlight: RwLock<bool>,
     pub has_connected_provider: RwLock<bool>,
+    /// FEAT-048: whether experimental background subagents are enabled
+    /// (reference `capabilities.experimentalBackgroundSubagents`).
+    pub experimental_background_subagents: RwLock<bool>,
     ui_kv: RwLock<UiKv>,
     pub api_client: RwLock<Option<Arc<ApiClient>>>,
 }
@@ -159,6 +162,7 @@ impl AppContext {
             )),
             semantic_highlight: RwLock::new(ui_kv.get_bool("semantic_highlight", true)),
             has_connected_provider: RwLock::new(false),
+            experimental_background_subagents: RwLock::new(false),
             ui_kv: RwLock::new(ui_kv),
             api_client: RwLock::new(None),
         }
@@ -309,6 +313,15 @@ impl AppContext {
 
     pub fn get_api_client(&self) -> Option<Arc<ApiClient>> {
         self.api_client.read().clone()
+    }
+
+    /// FEAT-048: capability gate for background subagents.
+    pub fn set_experimental_background_subagents(&self, enabled: bool) {
+        *self.experimental_background_subagents.write() = enabled;
+    }
+
+    pub fn experimental_background_subagents(&self) -> bool {
+        *self.experimental_background_subagents.read()
     }
 }
 

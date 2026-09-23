@@ -143,6 +143,8 @@ pub struct SessionPrompt {
     ask_question_callback: Option<opencode_tool::QuestionCallback>,
     create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
     prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+    background_subsession_callback: Option<opencode_tool::BackgroundSubsessionCallback>,
+    experimental_background_subagents: bool,
     resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
     session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
 }
@@ -158,6 +160,8 @@ impl SessionPrompt {
             ask_question_callback: None,
             create_subsession_callback: None,
             prompt_subsession_callback: None,
+            background_subsession_callback: None,
+            experimental_background_subagents: false,
             resolve_subagent_callback: None,
             session_inspect_callback: None,
         }
@@ -202,6 +206,26 @@ impl SessionPrompt {
         callback: opencode_tool::PromptSubsessionCallback,
     ) -> Self {
         self.prompt_subsession_callback = Some(callback);
+        self
+    }
+
+    /// Install the async background subagent runner paired with the child
+    /// session callbacks (FEAT-048). When set, the `task` tool may run a
+    /// subagent with `background: true`; the runner notifies the parent on
+    /// completion. When absent, background runs are unavailable.
+    pub fn with_background_subsession_callback(
+        mut self,
+        callback: opencode_tool::BackgroundSubsessionCallback,
+    ) -> Self {
+        self.background_subsession_callback = Some(callback);
+        self
+    }
+
+    /// Enable the experimental background-subagent capability for tool contexts
+    /// built by this runner. Pairs with
+    /// [`Self::with_background_subsession_callback`].
+    pub fn with_experimental_background_subagents(mut self, enabled: bool) -> Self {
+        self.experimental_background_subagents = enabled;
         self
     }
 
@@ -932,6 +956,8 @@ impl SessionPrompt {
             self.ask_question_callback.clone(),
             self.create_subsession_callback.clone(),
             self.prompt_subsession_callback.clone(),
+            self.background_subsession_callback.clone(),
+            self.experimental_background_subagents,
             self.resolve_subagent_callback.clone(),
             self.session_inspect_callback.clone(),
             update_hook,
@@ -1018,6 +1044,8 @@ impl SessionPrompt {
             self.ask_question_callback.clone(),
             self.create_subsession_callback.clone(),
             self.prompt_subsession_callback.clone(),
+            self.background_subsession_callback.clone(),
+            self.experimental_background_subagents,
             self.resolve_subagent_callback.clone(),
             self.session_inspect_callback.clone(),
             None,
@@ -1049,6 +1077,8 @@ impl SessionPrompt {
         ask_question_callback: Option<opencode_tool::QuestionCallback>,
         create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
         prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+        background_subsession_callback: Option<opencode_tool::BackgroundSubsessionCallback>,
+        experimental_background_subagents: bool,
         resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
         session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
         update_hook: Option<SessionUpdateHook>,
@@ -1490,6 +1520,17 @@ impl SessionPrompt {
                         });
                 }
 
+                tool_context = tool_context
+                    .with_experimental_background_subagents(experimental_background_subagents);
+
+                if let Some(background_subsession_callback) = background_subsession_callback.clone()
+                {
+                    tool_context = tool_context.with_background_subsession(move |request| {
+                        let background_subsession_callback = background_subsession_callback.clone();
+                        async move { background_subsession_callback(request).await }
+                    });
+                }
+
                 if let Some(session_inspect_callback) = session_inspect_callback.clone() {
                     tool_context = tool_context.with_session_inspect(move |request| {
                         let session_inspect_callback = session_inspect_callback.clone();
@@ -1927,7 +1968,7 @@ impl SessionPrompt {
                         output: output.clone(),
                     });
                 }
-                Ok(output)
+                Ok(opencode_tool::SubsessionPromptOutcome::Completed(output))
             }
         })
     }
@@ -3070,13 +3111,14 @@ impl SubtaskExecutor {
             .await
             .unwrap_or_else(|_| format!("task_{}_{}", self.agent_name, uuid::Uuid::new_v4()));
 
-        if let Ok(output) = ctx
+        if let Ok(outcome) = ctx
             .do_prompt_subsession(subsession_id.clone(), self.prompt.clone())
             .await
         {
             return Ok(format!(
                 "task_id: {} (for resuming to continue this task if needed)\n\n<task_result>\n{}\n</task_result>",
-                subsession_id, output
+                subsession_id,
+                outcome.text()
             ));
         }
 

@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Metadata, PermissionRequest, ResolvedSubagent, Tool, ToolContext, ToolError, ToolResult,
+    BackgroundSubsessionRequest, Metadata, PermissionRequest, ResolvedSubagent,
+    SubsessionPromptOutcome, Tool, ToolContext, ToolError, ToolResult,
 };
 
 pub struct TaskTool;
@@ -30,14 +31,9 @@ struct TaskInput {
     background: bool,
 }
 
-/// Environment gate matching the reference `experimentalBackgroundSubagents`.
-const BACKGROUND_FLAG_ENV: &str = "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS";
-
-fn background_enabled() -> bool {
-    std::env::var(BACKGROUND_FLAG_ENV)
-        .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
-        .unwrap_or(false)
-}
+/// Guidance returned to the parent model when a task starts in the background
+/// (matches the reference `BACKGROUND_STARTED` text).
+const BACKGROUND_STARTED: &str = "The task is working in the background. You will be notified automatically when it finishes.\nDO NOT sleep, poll for progress, ask the task for status, or duplicate this task's work — avoid working with the same files or topics it is using.\nWork on non-overlapping tasks, or briefly tell the user what you launched and end your response.";
 
 /// Reference `<task id="..." state="...">` wrapper, including the optional
 /// `<summary>` and a `<task_result>`/`<task_error>` body.
@@ -121,18 +117,13 @@ impl Tool for TaskTool {
         let input: TaskInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
 
-        // Background subagents are experimental in the reference and owned by
-        // FEAT-048. Until that lands, `background: true` must fail the same way
-        // the reference does when the experimental gate is off.
-        if input.background {
-            if !background_enabled() {
-                return Err(ToolError::ExecutionError(
-                    "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"
-                        .to_string(),
-                ));
-            }
+        // Background subagents are experimental (reference
+        // `experimentalBackgroundSubagents`). When the gate is off, fail with the
+        // reference message and create nothing.
+        if input.background && !ctx.experimental_background_subagents {
             return Err(ToolError::ExecutionError(
-                "Background subagents are not implemented yet (tracked by FEAT-048)".to_string(),
+                "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"
+                    .to_string(),
             ));
         }
 
@@ -176,23 +167,69 @@ impl Tool for TaskTool {
             .await?
         };
 
-        let result_text = ctx
+        let model = parse_model_ref(preferred_model.as_deref());
+        let model_metadata = serde_json::json!({
+            "modelID": model.model_id,
+            "providerID": model.provider_id,
+        });
+
+        // Background mode (FEAT-048): return immediately with a running-state
+        // result and let the owning runtime run + notify the parent.
+        if input.background {
+            ctx.do_background_subsession(BackgroundSubsessionRequest {
+                parent_session_id: ctx.session_id.clone(),
+                child_session_id: session_id.clone(),
+                agent: resolved.name.clone(),
+                description: input.description.clone(),
+                prompt: input.prompt.clone(),
+                abort: ctx.abort.clone(),
+            })
+            .await?;
+
+            let output = render_task_output(
+                &session_id,
+                "running",
+                Some("Background task started"),
+                BACKGROUND_STARTED,
+            );
+            let mut metadata = Metadata::new();
+            metadata.insert("background".into(), serde_json::json!(true));
+            metadata.insert("jobId".into(), serde_json::json!(session_id));
+            metadata.insert("parentSessionId".into(), serde_json::json!(ctx.session_id));
+            metadata.insert("sessionId".into(), serde_json::json!(session_id));
+            metadata.insert("model".into(), model_metadata);
+
+            return Ok(ToolResult {
+                title: input.description.clone(),
+                output,
+                metadata,
+                truncated: false,
+            });
+        }
+
+        let outcome = ctx
             .do_prompt_subsession(session_id.clone(), input.prompt.clone())
             .await?;
-        let model = parse_model_ref(preferred_model.as_deref());
 
-        let output = render_task_output(&session_id, "completed", None, &result_text);
+        let (state, summary, result_text) = match &outcome {
+            SubsessionPromptOutcome::Completed(text) => ("completed", None, text.as_str()),
+            SubsessionPromptOutcome::Backgrounded => (
+                "running",
+                Some("Background task started"),
+                BACKGROUND_STARTED,
+            ),
+        };
+
+        let output = render_task_output(&session_id, state, summary, result_text);
 
         let mut metadata = Metadata::new();
         metadata.insert("parentSessionId".into(), serde_json::json!(ctx.session_id));
         metadata.insert("sessionId".into(), serde_json::json!(session_id));
-        metadata.insert(
-            "model".into(),
-            serde_json::json!({
-                "modelID": model.model_id,
-                "providerID": model.provider_id,
-            }),
-        );
+        metadata.insert("model".into(), model_metadata);
+        if matches!(outcome, SubsessionPromptOutcome::Backgrounded) {
+            metadata.insert("background".into(), serde_json::json!(true));
+            metadata.insert("jobId".into(), serde_json::json!(session_id));
+        }
 
         Ok(ToolResult {
             title: input.description.clone(),
@@ -284,7 +321,9 @@ mod tests {
                     let prompt_calls = prompt_calls.clone();
                     async move {
                         prompt_calls.lock().await.push((session_id, prompt));
-                        Ok("subagent output".to_string())
+                        Ok(SubsessionPromptOutcome::Completed(
+                            "subagent output".to_string(),
+                        ))
                     }
                 }
             });
@@ -351,7 +390,9 @@ mod tests {
                     }
                 }
             })
-            .with_prompt_subsession(|_id, _prompt| async move { Ok("ok".to_string()) });
+            .with_prompt_subsession(|_id, _prompt| async move {
+                Ok(SubsessionPromptOutcome::Completed("ok".to_string()))
+            });
 
         let args = serde_json::json!({
             "description": "Investigate",
@@ -383,7 +424,9 @@ mod tests {
                     }
                 }
             })
-            .with_prompt_subsession(|_id, _prompt| async move { Ok("ok".to_string()) });
+            .with_prompt_subsession(|_id, _prompt| async move {
+                Ok(SubsessionPromptOutcome::Completed("ok".to_string()))
+            });
 
         let args = serde_json::json!({
             "description": "Investigate",
@@ -483,7 +526,9 @@ mod tests {
                     let prompted = prompted.clone();
                     async move {
                         prompted.lock().await.push((session_id, prompt));
-                        Ok("continued output".to_string())
+                        Ok(SubsessionPromptOutcome::Completed(
+                            "continued output".to_string(),
+                        ))
                     }
                 }
             });
@@ -507,13 +552,8 @@ mod tests {
             .contains("<task id=\"ses_existing_42\" state=\"completed\">"));
     }
 
-    /// The background gate is process-global, so this test alone mutates the
-    /// env var. Keep it in one test to avoid cross-test interference.
     #[tokio::test]
     async fn background_requires_the_experimental_gate() {
-        let previous = std::env::var(BACKGROUND_FLAG_ENV).ok();
-        std::env::remove_var(BACKGROUND_FLAG_ENV);
-
         let ctx = ToolContext::new("session-1".into(), "message-1".into(), ".".into());
         let args = serde_json::json!({
             "description": "Background",
@@ -529,10 +569,107 @@ mod tests {
         assert!(error.to_string().contains(
             "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"
         ));
+    }
 
-        if let Some(previous) = previous {
-            std::env::set_var(BACKGROUND_FLAG_ENV, previous);
-        }
+    #[tokio::test]
+    async fn background_starts_without_waiting_and_reports_running_state() {
+        let background_calls = Arc::new(Mutex::new(Vec::<BackgroundSubsessionRequest>::new()));
+        let prompted = Arc::new(Mutex::new(false));
+
+        let ctx = ToolContext::new("session-1".into(), "message-1".into(), ".".into())
+            .with_experimental_background_subagents(true)
+            .with_resolve_subagent(|name| async move { Ok(resolved(&name, None, false, false)) })
+            .with_create_subsession(|_agent, _title, _model, _disabled| async move {
+                Ok("ses_bg_1".to_string())
+            })
+            .with_prompt_subsession({
+                let prompted = prompted.clone();
+                move |_id, _prompt| {
+                    let prompted = prompted.clone();
+                    async move {
+                        *prompted.lock().await = true;
+                        Ok(SubsessionPromptOutcome::Completed(
+                            "should not run".to_string(),
+                        ))
+                    }
+                }
+            })
+            .with_background_subsession({
+                let background_calls = background_calls.clone();
+                move |request| {
+                    let background_calls = background_calls.clone();
+                    async move {
+                        background_calls.lock().await.push(request);
+                        Ok(())
+                    }
+                }
+            });
+
+        let args = serde_json::json!({
+            "description": "Background",
+            "prompt": "go",
+            "subagent_type": "explore",
+            "background": true
+        });
+
+        let result = TaskTool::new().execute(args, ctx).await.unwrap();
+
+        assert_eq!(
+            result.output,
+            format!(
+                "<task id=\"ses_bg_1\" state=\"running\">\n<summary>Background task started</summary>\n<task_result>\n{}\n</task_result>\n</task>",
+                BACKGROUND_STARTED
+            )
+        );
+        assert_eq!(
+            result.metadata.get("background"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            result.metadata.get("jobId"),
+            Some(&serde_json::json!("ses_bg_1"))
+        );
+        assert_eq!(
+            result.metadata.get("sessionId"),
+            Some(&serde_json::json!("ses_bg_1"))
+        );
+        assert!(
+            !*prompted.lock().await,
+            "background must not block on the synchronous prompt path"
+        );
+
+        let calls = background_calls.lock().await.clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].parent_session_id, "session-1");
+        assert_eq!(calls[0].child_session_id, "ses_bg_1");
+        assert_eq!(calls[0].agent, "explore");
+        assert_eq!(calls[0].description, "Background");
+        assert_eq!(calls[0].prompt, "go");
+    }
+
+    #[tokio::test]
+    async fn promoted_foreground_task_reports_running_state() {
+        let ctx = ToolContext::new("session-1".into(), "message-1".into(), ".".into())
+            .with_resolve_subagent(|name| async move { Ok(resolved(&name, None, false, false)) })
+            .with_create_subsession(|_agent, _title, _model, _disabled| async move {
+                Ok("ses_child".to_string())
+            })
+            .with_prompt_subsession(|_id, _prompt| async move {
+                Ok(SubsessionPromptOutcome::Backgrounded)
+            });
+
+        let args = serde_json::json!({
+            "description": "Promoted",
+            "prompt": "go",
+            "subagent_type": "explore"
+        });
+
+        let result = TaskTool::new().execute(args, ctx).await.unwrap();
+        assert!(result.output.contains("state=\"running\""));
+        assert_eq!(
+            result.metadata.get("background"),
+            Some(&serde_json::json!(true))
+        );
     }
 
     #[test]

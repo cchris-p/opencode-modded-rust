@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
+pub use tokio_util::sync::CancellationToken;
 
 use crate::ToolRegistry;
 
@@ -101,12 +101,59 @@ pub type CreateSubsessionCallback = Arc<
         + Send
         + Sync,
 >;
+/// Outcome of prompting a subagent session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubsessionPromptOutcome {
+    /// The subagent run finished; carries its final assistant text.
+    Completed(String),
+    /// A running foreground subagent was promoted to the background. The caller
+    /// must return a running-state result immediately and stop waiting; the
+    /// owning runtime injects the eventual completion/error into the parent.
+    Backgrounded,
+}
+
+impl SubsessionPromptOutcome {
+    /// Convenience for tests and non-promoting callers: the final text, or an
+    /// empty string when the run was backgrounded.
+    pub fn text(&self) -> &str {
+        match self {
+            SubsessionPromptOutcome::Completed(text) => text,
+            SubsessionPromptOutcome::Backgrounded => "",
+        }
+    }
+}
+
 pub type PromptSubsessionCallback = Arc<
     dyn (Fn(
             String,
             String,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<SubsessionPromptOutcome, ToolError>> + Send,
+            >,
+        >) + Send
+        + Sync,
+>;
+
+/// Request to run a `task` subagent asynchronously (FEAT-048). The owning
+/// runtime spawns the child run, returns control to the caller immediately, and
+/// injects a synthetic `<task ...>` completion/error message into the parent
+/// session when the run finishes.
+#[derive(Debug, Clone)]
+pub struct BackgroundSubsessionRequest {
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    pub agent: String,
+    pub description: String,
+    pub prompt: String,
+    pub abort: CancellationToken,
+}
+
+pub type BackgroundSubsessionCallback = Arc<
+    dyn (Fn(
+            BackgroundSubsessionRequest,
         )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send>>)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ToolError>> + Send>>)
         + Send
         + Sync,
 >;
@@ -440,6 +487,11 @@ pub struct ToolContext {
     pub switch_agent: Option<SwitchAgentCallback>,
     pub create_subsession: Option<CreateSubsessionCallback>,
     pub prompt_subsession: Option<PromptSubsessionCallback>,
+    pub background_subsession: Option<BackgroundSubsessionCallback>,
+    /// Whether experimental background subagents are enabled for this context.
+    /// The owning runtime sets this from config/env (reference
+    /// `experimentalBackgroundSubagents`). Off by default.
+    pub experimental_background_subagents: bool,
     pub resolve_subagent: Option<ResolveSubagentCallback>,
     pub file_time_assert: Option<FileTimeAssertCallback>,
     pub file_time_read: Option<FileTimeReadCallback>,
@@ -475,6 +527,8 @@ impl ToolContext {
             switch_agent: None,
             create_subsession: None,
             prompt_subsession: None,
+            background_subsession: None,
+            experimental_background_subagents: false,
             resolve_subagent: None,
             file_time_assert: None,
             file_time_read: None,
@@ -613,7 +667,9 @@ impl ToolContext {
     pub fn with_prompt_subsession<F, Fut>(mut self, callback: F) -> Self
     where
         F: Fn(String, String) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<String, ToolError>> + Send + 'static,
+        Fut: std::future::Future<Output = Result<SubsessionPromptOutcome, ToolError>>
+            + Send
+            + 'static,
     {
         self.prompt_subsession = Some(Arc::new(move |session_id, prompt| {
             Box::pin(callback(session_id, prompt))
@@ -625,7 +681,7 @@ impl ToolContext {
         &self,
         session_id: String,
         prompt: String,
-    ) -> Result<String, ToolError> {
+    ) -> Result<SubsessionPromptOutcome, ToolError> {
         if let Some(ref callback) = self.prompt_subsession {
             callback(session_id, prompt).await
         } else {
@@ -633,6 +689,36 @@ impl ToolContext {
                 "Subsession prompt callback not configured".to_string(),
             ))
         }
+    }
+
+    /// Install the async subagent runner used by the `task` tool when a call
+    /// requests `background: true`. When absent, background runs fail unless
+    /// [`Self::with_experimental_background_subagents`] is also enabled.
+    pub fn with_background_subsession<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(BackgroundSubsessionRequest) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<(), ToolError>> + Send + 'static,
+    {
+        self.background_subsession = Some(Arc::new(move |request| Box::pin(callback(request))));
+        self
+    }
+
+    pub async fn do_background_subsession(
+        &self,
+        request: BackgroundSubsessionRequest,
+    ) -> Result<(), ToolError> {
+        if let Some(ref callback) = self.background_subsession {
+            callback(request).await
+        } else {
+            Err(ToolError::ExecutionError(
+                "Background subagents are not available in this context".to_string(),
+            ))
+        }
+    }
+
+    pub fn with_experimental_background_subagents(mut self, enabled: bool) -> Self {
+        self.experimental_background_subagents = enabled;
+        self
     }
 
     /// Install the registry-backed subagent resolver used by the `task` tool.

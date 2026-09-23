@@ -136,6 +136,15 @@ impl App {
         if let Ok(dir) = std::env::current_dir() {
             *context.directory.write() = dir.display().to_string();
         }
+        // FEAT-048: expose the experimental background-subagent capability to the
+        // TUI, resolved the same way the server does (env or project config).
+        {
+            let directory = context.directory.read().clone();
+            let enabled = opencode_config::load_config(std::path::Path::new(&directory))
+                .map(|config| config.experimental_background_subagents())
+                .unwrap_or(false);
+            context.set_experimental_background_subagents(enabled);
+        }
         let workspace_identity = context.directory.read().clone();
 
         let base_url = resolve_tui_base_url();
@@ -539,6 +548,25 @@ impl App {
                         self.selection.clear();
                         return Ok(());
                     }
+                }
+
+                // FEAT-048: promote a running foreground subagent to the
+                // background (reference ctrl+b), only when the capability is on.
+                if self.matches_keybind("session_background", *key) {
+                    if self.context.experimental_background_subagents() {
+                        if let Route::Session { session_id } = self.context.current_route() {
+                            if let Some(client) = self.context.get_api_client() {
+                                if let Err(error) = client.background_session(&session_id) {
+                                    self.toast.show(
+                                        ToastVariant::Error,
+                                        &format!("Failed to background task: {}", error),
+                                        3000,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    return Ok(());
                 }
 
                 if self.matches_keybind("session_interrupt", *key) {

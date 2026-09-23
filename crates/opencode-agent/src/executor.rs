@@ -622,7 +622,7 @@ impl AgentExecutor {
                         state.conversation = executor.conversation.clone();
                     }
 
-                    Ok(output)
+                    Ok(opencode_tool::SubsessionPromptOutcome::Completed(output))
                 }
             }
         })

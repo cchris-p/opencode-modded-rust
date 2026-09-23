@@ -1051,7 +1051,11 @@ impl SessionView {
                         |part| matches!(part, MessagePart::ToolCall { name, .. } if name == "task"),
                     );
                     if has_task_part {
-                        let hint = task_view_subagents_line(&theme, &self.context.keybind.read());
+                        let hint = task_view_subagents_line(
+                            &theme,
+                            &self.context.keybind.read(),
+                            self.context.experimental_background_subagents(),
+                        );
                         append_message_lines(
                             &mut lines,
                             &mut line_to_message,
@@ -1768,18 +1772,32 @@ fn subagent_label(title: &str) -> String {
 }
 
 /// The `ctrl+x down view subagents` hint rendered on assistant messages that
-/// contain a `task` tool part, mirroring the reference `AssistantMessage`.
+/// contain a `task` tool part, mirroring the reference `AssistantMessage`. When
+/// experimental background subagents are enabled, the reference also surfaces
+/// `ctrl+b background`.
 fn task_view_subagents_line(
     theme: &crate::theme::Theme,
     keybind: &crate::context::KeybindRegistry,
+    include_background: bool,
 ) -> Line<'static> {
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             keybind.leader_chord("session_child_first"),
             Style::default().fg(theme.text),
         ),
         Span::styled(" view subagents", Style::default().fg(theme.text_muted)),
-    ])
+    ];
+    if include_background {
+        spans.push(Span::styled(
+            format!("  {}", keybind.print("session_background")),
+            Style::default().fg(theme.text),
+        ));
+        spans.push(Span::styled(
+            " background",
+            Style::default().fg(theme.text_muted),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn format_number(value: u64) -> String {
@@ -1821,13 +1839,26 @@ mod tests {
     fn task_hint_uses_leader_chord_and_muted_suffix() {
         let theme = crate::theme::Theme::dark();
         let keybind = crate::context::KeybindRegistry::new();
-        let line = task_view_subagents_line(&theme, &keybind);
+        let line = task_view_subagents_line(&theme, &keybind, false);
         let text: String = line
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
         assert_eq!(text, "ctrl+x down view subagents");
+    }
+
+    #[test]
+    fn task_hint_includes_background_when_capability_enabled() {
+        let theme = crate::theme::Theme::dark();
+        let keybind = crate::context::KeybindRegistry::new();
+        let line = task_view_subagents_line(&theme, &keybind, true);
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(text, "ctrl+x down view subagents  ctrl+b background");
     }
 
     #[test]
