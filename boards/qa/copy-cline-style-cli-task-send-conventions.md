@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-08"
 updated: "2026-09-22"
 ---
@@ -139,3 +139,14 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - Further refinement on 2026-09-16 selected task subcommands over top-level prompt shorthand, current-pointer targeting, explicit server/session context, raw path text instead of first-class attachments, and return-immediately behavior with optional streaming.
 - Follow-up refinement on 2026-09-16 split the explicit default server/session selector into `CLI-007`; CLI-001 should consume that selected target rather than inventing implicit server discovery.
 - `CLI-002` fixed `opencode run` as an interim `AgentExecutor` path, but this card should not build on that executor if the goal is TUI/session-equivalent QA. Build on the canonical session/server prompt path instead.
+
+## Implementation Notes - 2026-09-22
+
+- Branch: `feature/CLI-001-task-commands`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/80.
+- Implemented `opencode task new|send|view` in `crates/opencode-cli/src/main.rs`.
+- `task new` creates a session on the explicit/selected target server, submits through `POST /session/{id}/prompt`, and stores the acknowledged session as the workspace-local default task session.
+- `task send` submits follow-up prompts to the explicit or selected default session through `POST /session/{id}/prompt`.
+- `task view` reads the selected server's `/session/{id}/message` route and prints the transcript without opening the TUI; `--json` prints the raw message array.
+- `--stream` keeps the canonical `/prompt` submission path and follows by polling `GET /session/status` until idle, then prints the transcript.
+- Verification passed: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task --help`; `cargo run -p opencode-cli -- task new --help`; `cargo run -p opencode-cli -- task send --help`; `cargo run -p opencode-cli -- task view --help`.
