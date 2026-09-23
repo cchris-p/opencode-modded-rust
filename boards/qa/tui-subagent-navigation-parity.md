@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 ---
@@ -87,6 +87,7 @@ Reference `f54ce313b99a`:
 ## Dev Notes
 
 Program: `GATE-004` (H-009), PR 3/7. Branch `feature/FEAT-047-tui-subagent-navigation`.
+PR: https://github.com/cchris-p/opencode-modded-rust/pull/97
 
 ### What changed
 
