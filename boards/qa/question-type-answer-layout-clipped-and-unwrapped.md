@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "invariants/option-selection.md"
-status: "todo"
+status: "qa"
 created: "2026-09-23"
 updated: "2026-09-23"
 ---
@@ -277,6 +277,47 @@ Resolved open questions:
 - `crates/opencode-tui/src/components/prompt.rs` — wrapping/cursor patterns to mirror.
 - `invariants/option-selection.md` — rules this must satisfy.
 - `boards/qa/gate-question-tool-full-parity.md` (`GATE-002`) — parent gate; no new deviation expected.
+
+## Implementation Notes
+
+Implemented A + C + E + F on `bug/BUG-039-question-answer-layout`. No protocol/schema changes;
+TUI-only.
+
+- `crates/opencode-tui/src/components/dialogs/text_input.rs`: added
+  `DialogTextInput::insert_str`, which inserts at the caret and flattens
+  `\r\n`/`\r`/`\n`/`\t` to single spaces. Unit-tested for newline/tab flattening and multibyte
+  caret insertion.
+- `crates/opencode-tui/src/components/dialogs/mod.rs`: re-exported `DialogTextInput`.
+- `crates/opencode-tui/src/components/question.rs`:
+  - Replaced the append-only `String` answer buffer with `DialogTextInput`; `type_char`/`space`/
+    `backspace` insert/delete at the caret, and `Left`/`Right`/`Home`/`End`/`Delete`/word-skip are
+    exposed.
+  - Added `insert_text` for paste; it enters custom-answer mode for a choice question with a custom
+    row and flattens newlines.
+  - Added `enter_custom_text_mode`, used when `confirm()` switches the custom row into text mode, so
+    the row marker shows `[x]` regardless of how it was reached (Option E). `cancel_text_input` now
+    clears the marker.
+  - Render now wraps with `Wrap { trim: false }`, sizes the popup from per-line
+    `Paragraph::line_count` at the inner width, and scrolls to the tail when wrapped content
+    overflows so the `>` input line and hint stay visible. Clickable option rows are recomputed from
+    wrapped row offsets; scrolled-away rows use a `u16::MAX` sentinel so the index mapping is
+    preserved.
+  - The input line renders three spans via `split_at_cursor` with a `▏` caret at the cursor offset.
+- `crates/opencode-tui/src/app/app.rs`: added `insert_text_into_active_input`, used by
+  `Event::Paste` and the `input_paste` keybind; the question-open key branch now routes `Ctrl+V` and
+  the caret keys, and ignores `Alt`/`Ctrl` for plain `Char` typing.
+- `crates/opencode-tui/Cargo.toml`: enabled ratatui's `unstable-rendered-line-info` feature, required
+  for `Paragraph::line_count` (the measurement API named in the locked decisions).
+
+Verification: `cargo fmt`, `cargo check -p opencode-tui`, and `cargo test -p opencode-tui`
+(111 passed). New focused tests cover caret edit/delete/word movement, paste flattening and
+custom-mode entry, custom-row marker on text-mode entry, and a `TestBackend` render at a short 40x10
+terminal asserting the input hint and caret stay on-screen.
+
+Not covered by an automated test: the `App`-level paste routing helper itself, because `App::new()`
+initializes the real terminal and is not constructible in unit tests. The routing target
+(`QuestionPrompt::insert_text`/`insert_str`) is tested directly; the thin `App` helper still needs the
+manual smoke step below.
 
 ## Related items
 

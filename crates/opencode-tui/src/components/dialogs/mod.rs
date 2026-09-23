@@ -83,5 +83,6 @@ pub use skill_list::SkillListDialog;
 pub use status::{StatusDialog, StatusLine};
 pub use subagent::{SubagentDialog, SubagentInfo, SubagentMessage};
 pub use tag::{Tag, TagDialog};
+pub use text_input::DialogTextInput;
 pub use theme_list::{ThemeListDialog, ThemeOption};
 pub use timeline::{TimelineDialog, TimelineEntry};

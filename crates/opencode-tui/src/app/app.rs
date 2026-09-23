@@ -405,9 +405,30 @@ impl App {
 
                 // Handle inline question prompt before dialogs
                 if self.question_prompt.is_open {
+                    if self.matches_keybind("input_paste", *key) {
+                        self.paste_clipboard_to_prompt();
+                        return Ok(());
+                    }
                     match key.code {
                         KeyCode::Up => self.question_prompt.move_up(),
                         KeyCode::Down => self.question_prompt.move_down(),
+                        KeyCode::Left => {
+                            if key.modifiers.contains(KeyModifiers::ALT) {
+                                self.question_prompt.move_word_left();
+                            } else {
+                                self.question_prompt.move_left();
+                            }
+                        }
+                        KeyCode::Right => {
+                            if key.modifiers.contains(KeyModifiers::ALT) {
+                                self.question_prompt.move_word_right();
+                            } else {
+                                self.question_prompt.move_right();
+                            }
+                        }
+                        KeyCode::Home => self.question_prompt.move_home(),
+                        KeyCode::End => self.question_prompt.move_end(),
+                        KeyCode::Delete => self.question_prompt.delete(),
                         KeyCode::Char(' ') => self.question_prompt.space(),
                         KeyCode::Enter => {
                             if let Some((_question, answer)) = self.question_prompt.confirm() {
@@ -419,7 +440,13 @@ impl App {
                                 self.reject_question_flow();
                             }
                         }
-                        KeyCode::Char(c) => self.question_prompt.type_char(c),
+                        KeyCode::Char(c) => {
+                            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT)
+                            {
+                                self.question_prompt.type_char(c);
+                            }
+                        }
                         KeyCode::Backspace => self.question_prompt.backspace(),
                         _ => {}
                     }
@@ -799,9 +826,7 @@ impl App {
                 }
             }
             Event::Paste(text) => {
-                if !text.is_empty() {
-                    self.prompt.insert_text(text);
-                }
+                self.insert_text_into_active_input(&text);
             }
             Event::Custom(event) => match event {
                 CustomEvent::StateChanged(StateChange::SessionUpdated(session_id)) => {
@@ -1994,13 +2019,22 @@ impl App {
         Ok(())
     }
 
+    /// Route text to the question answer field when a question is open,
+    /// otherwise to the session prompt.
+    fn insert_text_into_active_input(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.question_prompt.is_open {
+            self.question_prompt.insert_text(text);
+        } else {
+            self.prompt.insert_text(text);
+        }
+    }
+
     fn paste_clipboard_to_prompt(&mut self) {
         match Clipboard::read_text() {
-            Ok(text) => {
-                if !text.is_empty() {
-                    self.prompt.insert_text(&text);
-                }
-            }
+            Ok(text) => self.insert_text_into_active_input(&text),
             Err(err) => {
                 self.alert_dialog
                     .set_message(&format!("Failed to read clipboard:\n{}", err));

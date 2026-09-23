@@ -5,11 +5,25 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
 use crate::theme::Theme;
+
+use super::dialogs::DialogTextInput;
+
+/// Rendered row count for one content line, matching the wrapping the popup
+/// paragraph uses. Empty lines occupy exactly one row.
+fn line_wrapped_rows(line: &Line, width: u16) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    Paragraph::new(vec![line.clone()])
+        .wrap(Wrap { trim: false })
+        .line_count(width)
+        .max(1)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum QuestionType {
@@ -41,7 +55,7 @@ pub struct QuestionPrompt {
     selected_index: usize,
     selected_options: Vec<bool>,
     custom_selected: bool,
-    text_input: String,
+    text_input: DialogTextInput,
     text_mode: bool,
     last_rendered_area: Cell<Option<Rect>>,
     option_rows: RefCell<Vec<u16>>,
@@ -62,7 +76,7 @@ impl QuestionPrompt {
             selected_index: 0,
             selected_options: Vec::new(),
             custom_selected: false,
-            text_input: String::new(),
+            text_input: DialogTextInput::new(),
             text_mode: false,
             last_rendered_area: Cell::new(None),
             option_rows: RefCell::new(Vec::new()),
@@ -121,6 +135,23 @@ impl QuestionPrompt {
             return false;
         };
         self.has_custom_row() && self.selected_index == q.options.len()
+    }
+
+    /// Switch the prompt into custom-answer text mode, keeping the custom-row
+    /// marker consistent regardless of how the row was reached. For
+    /// single-select choices a custom answer replaces the option selection.
+    fn enter_custom_text_mode(&mut self) {
+        let single_select = self
+            .current_question
+            .as_ref()
+            .is_some_and(|q| is_single_select(&q.question_type));
+        self.text_mode = true;
+        self.custom_selected = true;
+        if single_select {
+            for opt in self.selected_options.iter_mut() {
+                *opt = false;
+            }
+        }
     }
 
     pub fn move_up(&mut self) {
@@ -203,14 +234,14 @@ impl QuestionPrompt {
 
     pub fn type_char(&mut self, c: char) {
         if self.text_mode {
-            self.text_input.push(c);
+            self.text_input.insert_char(c);
             return;
         }
         let Some(q) = &self.current_question else {
             return;
         };
         if q.question_type == QuestionType::Text {
-            self.text_input.push(c);
+            self.text_input.insert_char(c);
             return;
         }
         if let Some(digit) = c.to_digit(10) {
@@ -221,14 +252,69 @@ impl QuestionPrompt {
     }
 
     pub fn backspace(&mut self) {
-        let editing_text = self.text_mode
-            || self
-                .current_question
-                .as_ref()
-                .is_some_and(|q| q.question_type == QuestionType::Text);
-        if editing_text {
-            self.text_input.pop();
+        if self.is_text_input_active() {
+            self.text_input.backspace();
         }
+    }
+
+    pub fn delete(&mut self) {
+        if self.is_text_input_active() {
+            self.text_input.delete();
+        }
+    }
+
+    pub fn move_left(&mut self) {
+        if self.is_text_input_active() {
+            self.text_input.move_left();
+        }
+    }
+
+    pub fn move_right(&mut self) {
+        if self.is_text_input_active() {
+            self.text_input.move_right();
+        }
+    }
+
+    pub fn move_word_left(&mut self) {
+        if self.is_text_input_active() {
+            self.text_input.move_word_left();
+        }
+    }
+
+    pub fn move_word_right(&mut self) {
+        if self.is_text_input_active() {
+            self.text_input.move_word_right();
+        }
+    }
+
+    pub fn move_home(&mut self) {
+        if self.is_text_input_active() {
+            self.text_input.move_home();
+        }
+    }
+
+    pub fn move_end(&mut self) {
+        if self.is_text_input_active() {
+            self.text_input.move_end();
+        }
+    }
+
+    /// Insert pasted or programmatic text into the active input. Pasting into a
+    /// choice question enters custom-answer mode so the text has somewhere to go.
+    pub fn insert_text(&mut self, text: &str) {
+        let is_text = self
+            .current_question
+            .as_ref()
+            .is_some_and(|q| q.question_type == QuestionType::Text);
+        if !is_text {
+            if !self.has_custom_row() {
+                return;
+            }
+            if !self.text_mode {
+                self.enter_custom_text_mode();
+            }
+        }
+        self.text_input.insert_str(text);
     }
 
     /// True while keystrokes should be captured as typed answer text.
@@ -243,7 +329,7 @@ impl QuestionPrompt {
     /// Route a space keypress to the active input, otherwise toggle selection.
     pub fn space(&mut self) {
         if self.is_text_input_active() {
-            self.text_input.push(' ');
+            self.text_input.insert_char(' ');
         } else {
             self.toggle_selected();
         }
@@ -254,6 +340,7 @@ impl QuestionPrompt {
     pub fn cancel_text_input(&mut self) -> bool {
         if self.text_mode {
             self.text_mode = false;
+            self.custom_selected = false;
             self.text_input.clear();
             true
         } else {
@@ -271,13 +358,13 @@ impl QuestionPrompt {
 
         // Selecting the custom row enters text-entry mode first.
         if !self.text_mode && !is_text && self.on_custom_row() {
-            self.text_mode = true;
+            self.enter_custom_text_mode();
             return None;
         }
 
         let mut answers: Vec<String> = Vec::new();
         if is_text || self.text_mode {
-            let text = self.text_input.trim().to_string();
+            let text = self.text_input.value().trim().to_string();
             if text.is_empty() {
                 return None;
             }
@@ -386,17 +473,7 @@ impl QuestionPrompt {
         if question.question_type == QuestionType::Text || question.options.is_empty() {
             let editing = question.question_type == QuestionType::Text || self.text_mode;
             if editing {
-                let input_display = if self.text_input.is_empty() {
-                    "Type your answer...".to_string()
-                } else {
-                    format!("> {}", self.text_input)
-                };
-                let input_style = if self.text_input.is_empty() {
-                    Style::default().fg(theme.text_muted)
-                } else {
-                    Style::default().fg(theme.text)
-                };
-                content.push(Line::from(Span::styled(input_display, input_style)));
+                content.push(self.input_line(theme));
                 content.push(Line::from(""));
                 content.push(Line::from(Span::styled(
                     "Type your answer and press Enter",
@@ -451,15 +528,7 @@ impl QuestionPrompt {
 
             content.push(Line::from(""));
             if self.text_mode {
-                let input_display = if self.text_input.is_empty() {
-                    "> Type your answer...".to_string()
-                } else {
-                    format!("> {}", self.text_input)
-                };
-                content.push(Line::from(Span::styled(
-                    input_display,
-                    Style::default().fg(theme.text),
-                )));
+                content.push(self.input_line(theme));
                 content.push(Line::from(Span::styled(
                     "Enter to submit, Esc to cancel",
                     Style::default().fg(theme.text_muted),
@@ -472,8 +541,22 @@ impl QuestionPrompt {
             }
         }
 
-        let height = (content.len() as u16 + 2).min(area.height.saturating_sub(2));
         let width = area.width.saturating_sub(2).min(80);
+        let inner_width = width.saturating_sub(2);
+
+        // Row count each content line occupies once wrapped, so the popup height
+        // and clickable option rows match what actually renders.
+        let line_rows: Vec<usize> = content
+            .iter()
+            .map(|line| line_wrapped_rows(line, inner_width))
+            .collect();
+        let wrapped_rows: usize = line_rows.iter().sum();
+
+        let height = u16::try_from(wrapped_rows)
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
+            .min(area.height.saturating_sub(2));
+        let inner_height = height.saturating_sub(2);
 
         // Render inline at the bottom of the area
         let popup_area = Rect::new(
@@ -483,11 +566,28 @@ impl QuestionPrompt {
             height,
         );
 
+        // Scroll to the tail when the wrapped content overflows so the active
+        // input line and the hint stay visible.
+        let scroll = u16::try_from(wrapped_rows)
+            .unwrap_or(u16::MAX)
+            .saturating_sub(inner_height);
+
         // Track rendered area and absolute option rows for click handling.
         self.last_rendered_area.set(Some(popup_area));
+
+        // Offset of each content line in wrapped rows, so option rows keep their
+        // index mapping even when some are scrolled out of view.
+        let mut offsets = vec![0usize; content.len()];
+        for i in 1..content.len() {
+            offsets[i] = offsets[i - 1] + line_rows[i - 1];
+        }
+        let visible_top = popup_area.y.saturating_add(1);
         let absolute_rows: Vec<u16> = row_indices
-            .into_iter()
-            .map(|index| popup_area.y + 1 + index as u16)
+            .iter()
+            .map(|&index| match offsets[index].checked_sub(scroll as usize) {
+                Some(row) if row < inner_height as usize => visible_top.saturating_add(row as u16),
+                _ => u16::MAX,
+            })
             .collect();
         *self.option_rows.borrow_mut() = absolute_rows;
 
@@ -498,9 +598,31 @@ impl QuestionPrompt {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.primary)),
             )
-            .style(Style::default().bg(theme.background_panel));
+            .style(Style::default().bg(theme.background_panel))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0));
 
         frame.render_widget(paragraph, popup_area);
+    }
+
+    /// The `> {before}▏{after}` input line with the caret drawn at the cursor.
+    fn input_line(&self, theme: &Theme) -> Line<'static> {
+        let text_style = Style::default().fg(theme.text);
+        let caret_style = Style::default().fg(theme.primary);
+        if self.text_input.value().is_empty() {
+            return Line::from(vec![
+                Span::styled("> ", text_style),
+                Span::styled("\u{258f}", caret_style),
+                Span::styled("Type your answer...", Style::default().fg(theme.text_muted)),
+            ]);
+        }
+        let (before, after) = self.text_input.split_at_cursor();
+        Line::from(vec![
+            Span::styled("> ", text_style),
+            Span::styled(before.to_string(), text_style),
+            Span::styled("\u{258f}", caret_style),
+            Span::styled(after.to_string(), text_style),
+        ])
     }
 }
 
@@ -681,6 +803,140 @@ mod tests {
         prompt.cancel_text_input();
 
         assert!(!prompt.text_mode);
-        assert!(prompt.text_input.is_empty());
+        assert!(prompt.text_input.value().is_empty());
+    }
+
+    #[test]
+    fn custom_answer_is_caret_editable() {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(option(QuestionType::SingleChoice, true));
+
+        prompt.type_char('3');
+        assert!(prompt.confirm().is_none());
+        assert!(prompt.text_mode);
+
+        for c in "abc".chars() {
+            prompt.type_char(c);
+        }
+        prompt.move_left();
+        prompt.move_left();
+        prompt.type_char('X');
+        let (_request, answers) = prompt.confirm().expect("custom answer submits");
+        assert_eq!(answers, vec!["aXbc".to_string()]);
+    }
+
+    #[test]
+    fn delete_removes_character_at_caret() {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(option(QuestionType::SingleChoice, true));
+        prompt.type_char('3');
+        prompt.confirm();
+        for c in "abc".chars() {
+            prompt.type_char(c);
+        }
+        prompt.move_home();
+        prompt.move_right();
+        prompt.delete();
+        let (_request, answers) = prompt.confirm().expect("custom answer submits");
+        assert_eq!(answers, vec!["ac".to_string()]);
+    }
+
+    #[test]
+    fn word_movement_skips_by_word() {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(option(QuestionType::SingleChoice, true));
+        prompt.type_char('3');
+        prompt.confirm();
+        prompt.insert_text("alpha beta gamma");
+        prompt.move_home();
+        prompt.move_word_right();
+        prompt.type_char('|');
+        let (_request, answers) = prompt.confirm().expect("custom answer submits");
+        assert_eq!(answers, vec!["alpha| beta gamma".to_string()]);
+    }
+
+    #[test]
+    fn insert_text_flattens_newlines() {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(QuestionRequest {
+            id: "request-text".to_string(),
+            question: "Anything else?".to_string(),
+            question_type: QuestionType::Text,
+            options: Vec::new(),
+            custom: true,
+        });
+        prompt.insert_text("line one\r\nline two\nline three\ttail");
+        let (_request, answers) = prompt.confirm().expect("text answer submits");
+        assert_eq!(
+            answers,
+            vec!["line one line two line three tail".to_string()]
+        );
+    }
+
+    #[test]
+    fn insert_text_enters_custom_mode_and_marks_row() {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(option(QuestionType::SingleChoice, true));
+        prompt.insert_text("pasted");
+        assert!(prompt.text_mode);
+        assert!(prompt.custom_selected);
+        let (_request, answers) = prompt.confirm().expect("pasted answer submits");
+        assert_eq!(answers, vec!["pasted".to_string()]);
+    }
+
+    #[test]
+    fn custom_row_marker_set_when_confirm_enters_text_mode() {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(option(QuestionType::SingleChoice, true));
+        prompt.move_down();
+        prompt.move_down();
+        assert!(!prompt.custom_selected);
+        assert!(prompt.confirm().is_none());
+        assert!(prompt.text_mode);
+        assert!(prompt.custom_selected);
+    }
+
+    #[test]
+    fn short_terminal_keeps_input_and_hint_visible() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(QuestionRequest {
+            id: "long".to_string(),
+            question: "A question long enough to wrap across several rows in a narrow popup"
+                .to_string(),
+            question_type: QuestionType::SingleChoice,
+            options: (0..4)
+                .map(|i| QuestionOption {
+                    id: format!("opt{i}"),
+                    label: format!("Option {i}"),
+                    description: "A description that is also long enough to wrap around"
+                        .to_string(),
+                })
+                .collect(),
+            custom: true,
+        });
+        prompt.type_char('5');
+        prompt.confirm();
+        assert!(prompt.text_mode);
+        prompt.insert_text("the typed answer");
+
+        let theme = Theme::default();
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).expect("terminal");
+        terminal
+            .draw(|frame| prompt.render(frame, frame.size(), &theme))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer.get(x, y).symbol());
+            }
+            text.push('\n');
+        }
+        assert!(text.contains("Enter to submit"), "hint visible in:\n{text}");
+        assert!(text.contains('\u{258f}'), "caret visible in:\n{text}");
     }
 }
