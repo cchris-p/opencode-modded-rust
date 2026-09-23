@@ -108,9 +108,14 @@ Use the normal OpenAI provider path first:
 - `START-012` Refresh provider and model catalog
 - `START-015` Mirror OpenAI auth configuration in settings
 - `START-027` Unify provider setup into one authoritative user path
+- `START-032` Match vanilla Codex authentication parity (completion gate)
 - `FEAT-013` Model capability gating and deprecated model surfacing
 - `BUG-005` OpenAI-compatible chat providers reject requests once tools are attached
 - `BUG-012` Session summary runs before tool results and breaks OpenAI-compatible continuation
+
+## Gated By
+
+- `START-032` Match vanilla Codex authentication parity: Codex 5.5 compatibility cannot be marked complete until the Rust product matches vanilla OpenAI/Codex auth options 1:1, especially ChatGPT Plus/Pro browser login, ChatGPT Plus/Pro headless login, and manual API key entry, or an explicit intentional deviation is approved and documented.
 
 ## Initial Guidance For User Setup
 
@@ -125,6 +130,14 @@ Try this first after building:
 5. If it does not appear, use a direct model override with the exact model id, for example `opencode run -m openai/<model-id> 'reply with exactly OK'`.
 
 Do not assume the displayed catalog is authoritative yet. Current code appears more likely to need catalog/model-picker work than a full transport rewrite, but real compatibility depends on the exact model id, OpenAI account access, and any provider errors from the first smoke tests.
+
+## Correction - 2026-09-23
+
+- An attempted setup pass changed `~/standards` global OpenCode defaults to prefer Codex/OpenAI (`openai/gpt-5.5`) and added Codex-specific standards helper documentation before this card had been refined or confirmed.
+- That was out of scope for this refinement card and conflicted with the Rust product's current default-model requirement (`deepseek/deepseek-flash`).
+- Reverted the local `~/standards` Codex default changes: global `opencode.base.json` no longer defaults to OpenAI, `opencode-use-auto` no longer unconditionally selects Codex/OpenAI, and the untracked `opencode-codex-setup` helper was removed.
+- Also corrected the local untracked repo `opencode.json` model override from `openai/o4-mini` to `deepseek/deepseek-flash` while preserving its permission entries.
+- Future work on this card must validate Codex compatibility through the normal provider setup path first, without changing shared global defaults unless the user explicitly asks for that policy change.
 
 ## Blockers To Resolve If Setup Fails
 
