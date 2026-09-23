@@ -26,6 +26,7 @@ pub struct SettingsView {
     selected_model: usize,
     provider_setup: ProviderSetupInfo,
     openai_auth_methods: Vec<ProviderAuthMethodInfo>,
+    auth_method_selection: Option<usize>,
     input_mode: Option<SettingsInputMode>,
     input_value: String,
     oauth_prompt: Option<ProviderOAuthStartInfo>,
@@ -46,6 +47,7 @@ impl SettingsView {
             selected_model: 0,
             provider_setup: ProviderSetupInfo::default(),
             openai_auth_methods: Vec::new(),
+            auth_method_selection: None,
             input_mode: None,
             input_value: String::new(),
             oauth_prompt: None,
@@ -59,9 +61,55 @@ impl SettingsView {
 
     pub fn set_openai_auth_methods(&mut self, methods: Vec<ProviderAuthMethodInfo>) {
         self.openai_auth_methods = methods;
+        if let Some(selection) = self.auth_method_selection {
+            if self.openai_auth_methods.is_empty() {
+                self.auth_method_selection = None;
+            } else {
+                self.auth_method_selection =
+                    Some(selection.min(self.openai_auth_methods.len() - 1));
+            }
+        }
+    }
+
+    pub fn openai_auth_methods(&self) -> &[ProviderAuthMethodInfo] {
+        &self.openai_auth_methods
+    }
+
+    pub fn begin_auth_method_select(&mut self) {
+        self.auth_method_selection = (!self.openai_auth_methods.is_empty()).then_some(0);
+    }
+
+    pub fn auth_method_selection(&self) -> Option<usize> {
+        self.auth_method_selection
+    }
+
+    pub fn cancel_auth_method_select(&mut self) {
+        self.auth_method_selection = None;
+    }
+
+    pub fn move_auth_method_up(&mut self) {
+        if let Some(selection) = self.auth_method_selection {
+            if selection > 0 {
+                self.auth_method_selection = Some(selection - 1);
+            }
+        }
+    }
+
+    pub fn move_auth_method_down(&mut self) {
+        if let Some(selection) = self.auth_method_selection {
+            if selection + 1 < self.openai_auth_methods.len() {
+                self.auth_method_selection = Some(selection + 1);
+            }
+        }
+    }
+
+    pub fn selected_auth_method(&self) -> Option<ProviderAuthMethodInfo> {
+        let selection = self.auth_method_selection?;
+        self.openai_auth_methods.get(selection).cloned()
     }
 
     pub fn begin_api_key_input(&mut self) {
+        self.auth_method_selection = None;
         self.input_mode = Some(SettingsInputMode::ApiKey);
         self.input_value.clear();
         self.oauth_prompt = None;
@@ -69,6 +117,7 @@ impl SettingsView {
     }
 
     pub fn begin_oauth_input(&mut self, method: usize, prompt: ProviderOAuthStartInfo) {
+        self.auth_method_selection = None;
         self.input_mode = Some(SettingsInputMode::OAuthCode);
         self.input_value.clear();
         self.oauth_prompt = Some(prompt);
@@ -76,6 +125,7 @@ impl SettingsView {
     }
 
     pub fn begin_ollama_base_url_input(&mut self) {
+        self.auth_method_selection = None;
         self.input_mode = Some(SettingsInputMode::OllamaBaseUrl);
         self.input_value = self.provider_setup.ollama_base_url.clone();
         self.oauth_prompt = None;
@@ -95,6 +145,17 @@ impl SettingsView {
 
     pub fn oauth_method(&self) -> Option<usize> {
         self.oauth_method
+    }
+
+    pub fn oauth_requires_code(&self) -> bool {
+        match self
+            .oauth_prompt
+            .as_ref()
+            .map(|prompt| prompt.method_type.as_str())
+        {
+            Some(method) => !method.eq_ignore_ascii_case("auto"),
+            None => true,
+        }
     }
 
     pub fn input_value(&self) -> String {
@@ -565,11 +626,34 @@ impl SettingsView {
             Span::styled(status_text, Style::default().fg(status_color)),
         ])];
 
-        if let Some(method) = self.openai_auth_methods.first() {
-            lines.push(Line::from(vec![
-                Span::styled("Login flow: ", Style::default().fg(theme.text_muted)),
-                Span::styled(method.name.clone(), Style::default().fg(theme.text)),
-            ]));
+        if let Some(selection) = self.auth_method_selection {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Choose ChatGPT/Codex auth method:",
+                Style::default().fg(theme.text),
+            )));
+            for (index, method) in self.openai_auth_methods.iter().enumerate() {
+                let style = if index == selection {
+                    Style::default().fg(theme.text).bg(theme.background_element)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                let kind = if method.is_api() { "api" } else { "oauth" };
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "{} {} ({})",
+                        if index == selection { "▸" } else { " " },
+                        method.name,
+                        kind
+                    ),
+                    style,
+                )));
+            }
+            lines.push(Line::from(Span::styled(
+                "Enter to choose   Esc to cancel",
+                Style::default().fg(theme.warning),
+            )));
+            return lines;
         }
 
         match self.input_mode {
@@ -600,10 +684,17 @@ impl SettingsView {
                         )));
                     }
                 }
-                lines.push(Line::from(Span::styled(
-                    format!("> {}", self.input_value),
-                    Style::default().fg(theme.primary),
-                )));
+                if self.oauth_requires_code() {
+                    lines.push(Line::from(Span::styled(
+                        format!("> {}", self.input_value),
+                        Style::default().fg(theme.primary),
+                    )));
+                } else {
+                    lines.push(Line::from(Span::styled(
+                        "Complete the flow, then press Enter to finish (no code required).",
+                        Style::default().fg(theme.warning),
+                    )));
+                }
             }
             Some(SettingsInputMode::OllamaBaseUrl) => {
                 lines.push(Line::from(""));
@@ -618,8 +709,13 @@ impl SettingsView {
             }
             None => {
                 lines.push(Line::from(""));
+                let shortcut = if self.openai_auth_methods.len() > 1 {
+                    "a API key   l Login (choose method)   x Clear"
+                } else {
+                    "a API key   l Login   x Clear"
+                };
                 lines.push(Line::from(Span::styled(
-                    "a API key   l Login   x Clear",
+                    shortcut,
                     Style::default().fg(theme.text),
                 )));
                 if let Some(source) = self
@@ -695,4 +791,101 @@ fn filtered_providers(context: &Arc<AppContext>) -> Vec<ProviderInfo> {
         .filter(|provider| !opencode_provider::is_provider_temporarily_hidden(&provider.id))
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn method(index: usize, method_type: &str, name: &str) -> ProviderAuthMethodInfo {
+        ProviderAuthMethodInfo {
+            index,
+            method_type: method_type.to_string(),
+            name: name.to_string(),
+            description: method_type.to_string(),
+        }
+    }
+
+    fn codex_methods() -> Vec<ProviderAuthMethodInfo> {
+        vec![
+            method(0, "oauth", "ChatGPT Pro/Plus (browser)"),
+            method(1, "oauth", "ChatGPT Pro/Plus (headless)"),
+            method(2, "api", "Manually enter API Key"),
+        ]
+    }
+
+    #[test]
+    fn openai_auth_methods_are_not_collapsed_to_first() {
+        let mut view = SettingsView::new();
+        view.set_openai_auth_methods(codex_methods());
+        assert_eq!(view.openai_auth_methods().len(), 3);
+        assert_eq!(view.openai_auth_methods()[0].method_type, "oauth");
+        assert!(view.openai_auth_methods()[1].is_oauth());
+        assert!(view.openai_auth_methods()[2].is_api());
+    }
+
+    #[test]
+    fn auth_method_selection_navigates_all_methods() {
+        let mut view = SettingsView::new();
+        view.set_openai_auth_methods(codex_methods());
+        view.begin_auth_method_select();
+        assert_eq!(view.auth_method_selection(), Some(0));
+
+        view.move_auth_method_down();
+        let selected = view.selected_auth_method().expect("method selected");
+        assert_eq!(selected.index, 1);
+        assert_eq!(selected.name, "ChatGPT Pro/Plus (headless)");
+
+        view.move_auth_method_down();
+        view.move_auth_method_down();
+        let selected = view.selected_auth_method().expect("method selected");
+        assert_eq!(selected.index, 2);
+        assert_eq!(selected.name, "Manually enter API Key");
+
+        view.cancel_auth_method_select();
+        assert_eq!(view.auth_method_selection(), None);
+    }
+
+    #[test]
+    fn auto_oauth_does_not_require_a_code_value() {
+        let mut view = SettingsView::new();
+        view.begin_oauth_input(
+            1,
+            ProviderOAuthStartInfo {
+                url: "https://auth.openai.com/codex/device".to_string(),
+                method_type: "auto".to_string(),
+                instructions: "Enter code: ABCD".to_string(),
+            },
+        );
+        assert!(!view.oauth_requires_code());
+    }
+
+    #[test]
+    fn code_oauth_requires_a_code_value() {
+        let mut view = SettingsView::new();
+        view.begin_oauth_input(
+            0,
+            ProviderOAuthStartInfo {
+                url: "https://example.test".to_string(),
+                method_type: "code".to_string(),
+                instructions: "Paste code".to_string(),
+            },
+        );
+        assert!(view.oauth_requires_code());
+    }
+
+    #[test]
+    fn provider_auth_method_payload_deserializes_type_and_index() {
+        let payload = r#"[
+            {"index":0,"type":"oauth","name":"ChatGPT Pro/Plus (browser)","description":"oauth"},
+            {"index":1,"type":"oauth","name":"ChatGPT Pro/Plus (headless)","description":"oauth"},
+            {"index":2,"type":"api","name":"Manually enter API Key","description":"api"}
+        ]"#;
+        let parsed: Vec<ProviderAuthMethodInfo> =
+            serde_json::from_str(payload).expect("payload deserializes");
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[1].index, 1);
+        assert!(parsed[1].is_oauth());
+        assert!(parsed[2].is_api());
+    }
 }

@@ -118,9 +118,10 @@ impl PluginAuthBridge {
     /// Load the auth provider configuration.
     ///
     /// This calls `auth.load` on the plugin, which may return an API key
-    /// and/or indicate that a custom fetch proxy is available.
-    pub async fn load(&self) -> Result<PluginAuthLoadResult, PluginAuthError> {
-        let result = self.client.auth_load(self.provider()).await?;
+    /// and/or indicate that a custom fetch proxy is available. The stored
+    /// `auth` value is forwarded so `loader(getAuth)` can inspect it.
+    pub async fn load(&self, auth: Option<Value>) -> Result<PluginAuthLoadResult, PluginAuthError> {
+        let result = self.client.auth_load(self.provider(), auth).await?;
 
         // Cache the API key
         {

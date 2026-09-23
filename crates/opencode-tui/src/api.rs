@@ -242,8 +242,23 @@ pub struct McpAuthStartInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderAuthMethodInfo {
+    #[serde(default)]
+    pub index: usize,
+    #[serde(rename = "type", default)]
+    pub method_type: String,
     pub name: String,
+    #[serde(default)]
     pub description: String,
+}
+
+impl ProviderAuthMethodInfo {
+    pub fn is_api(&self) -> bool {
+        self.method_type.eq_ignore_ascii_case("api")
+    }
+
+    pub fn is_oauth(&self) -> bool {
+        self.method_type.eq_ignore_ascii_case("oauth")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

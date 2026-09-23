@@ -247,8 +247,15 @@ impl PluginSubprocess {
     }
 
     /// Load auth provider configuration.
-    pub async fn auth_load(&self, provider: &str) -> Result<AuthLoadResult, PluginSubprocessError> {
-        let params = serde_json::json!({ "provider": provider });
+    ///
+    /// `auth` is the stored credential for the provider, forwarded to the
+    /// plugin so `loader(getAuth)` can decide whether to inject a custom fetch.
+    pub async fn auth_load(
+        &self,
+        provider: &str,
+        auth: Option<Value>,
+    ) -> Result<AuthLoadResult, PluginSubprocessError> {
+        let params = serde_json::json!({ "provider": provider, "auth": auth });
         self.call("auth.load", Some(params)).await
     }
 

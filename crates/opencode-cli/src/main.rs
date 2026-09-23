@@ -2131,7 +2131,10 @@ async fn load_plugin_auth_store(config: &opencode_config::Config) -> HashMap<Str
 
     let mut auth_store = HashMap::new();
     for (provider_id, bridge) in loader.auth_bridges().await {
-        match bridge.load().await {
+        let stored_auth = auth_store
+            .get(&provider_id)
+            .and_then(|auth| serde_json::to_value(auth).ok());
+        match bridge.load(stored_auth).await {
             Ok(result) => {
                 if let Some(api_key) = result.api_key {
                     auth_store.insert(

@@ -437,24 +437,34 @@ async fn load_plugin_auth_store(server_url: &str, auth_manager: Arc<AuthManager>
 
     let bridges = loader.auth_bridges().await;
     for (provider_id, bridge) in bridges {
-        match bridge.load().await {
+        let stored_auth = auth_manager.get(&provider_id).await;
+        let stored_auth_json = stored_auth
+            .as_ref()
+            .and_then(|auth| serde_json::to_value(auth).ok());
+        let has_oauth = matches!(stored_auth.as_ref(), Some(AuthInfo::OAuth { .. }));
+
+        match bridge.load(stored_auth_json).await {
             Ok(result) => {
                 sync_custom_fetch_proxy(&provider_id, bridge.clone(), result.has_custom_fetch);
 
+                // OAuth loaders return a placeholder key so the provider path can
+                // run; it must not replace the stored OAuth credential.
                 if let Some(api_key) = result.api_key {
-                    auth_manager
-                        .set(
-                            &provider_id,
-                            AuthInfo::Api {
-                                key: api_key.clone(),
-                            },
-                        )
-                        .await;
-                    // TS parity: copilot auth can power both standard and enterprise providers.
-                    if provider_id == "github-copilot" {
+                    if !has_oauth {
                         auth_manager
-                            .set("github-copilot-enterprise", AuthInfo::Api { key: api_key })
+                            .set(
+                                &provider_id,
+                                AuthInfo::Api {
+                                    key: api_key.clone(),
+                                },
+                            )
                             .await;
+                        // TS parity: copilot auth can power both standard and enterprise providers.
+                        if provider_id == "github-copilot" {
+                            auth_manager
+                                .set("github-copilot-enterprise", AuthInfo::Api { key: api_key })
+                                .await;
+                        }
                     }
                 }
             }

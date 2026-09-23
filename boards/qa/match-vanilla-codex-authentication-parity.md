@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "docs/provider-setup.md"
-status: "refinement"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -139,3 +139,38 @@ The user specifically relies on ChatGPT Plus/Pro headless auth and does not norm
 ## Ready For Implementation
 
 This card is ready for implementation. The implementer should start by making the Rust TUI/provider auth surface method-aware, then add correct `auto` OAuth completion handling, then verify the ChatGPT Plus/Pro headless path because that is the user's primary workflow.
+
+## Implementation Notes - 2026-09-23
+
+Bundled plugin (`crates/opencode-plugin/builtin/codex-auth.ts`) now mirrors vanilla's three OpenAI auth methods:
+
+- `ChatGPT Pro/Plus (browser)` (`type: "oauth"`, `method: "auto"`) with PKCE (`node:crypto`) and a localhost callback server on port `1455`.
+- `ChatGPT Pro/Plus (headless)` (`type: "oauth"`, `method: "auto"`) using the OpenAI device authorization endpoints and polling, returning the vanilla `https://auth.openai.com/codex/device` URL plus user code instructions.
+- `Manually enter API Key` (`type: "api"`).
+
+For OAuth auth, `loader(getAuth)` returns the dummy key plus a custom fetch that strips the existing authorization header, refreshes expired access tokens, injects `Authorization` and `ChatGPT-Account-Id`, and rewrites `/v1/responses` and `/chat/completions` requests to `https://chatgpt.com/backend-api/codex/responses` (with the residency header when present).
+
+Plugin host / bridge changes:
+
+- `auth.load` now forwards the stored credential to `loader(getAuth)` (`crates/opencode-plugin/host/plugin-host.ts`, `subprocess/client.rs`, `subprocess/auth.rs`).
+- Server bootstrap and `plugin_auth_load` pass the stored `AuthInfo`; the bootstrap loop no longer overwrites a stored OAuth credential with the plugin's placeholder key (`crates/opencode-server/src/server.rs`, `routes.rs`).
+
+Rust TUI/provider changes:
+
+- `/provider/auth` now returns `index` and `type` alongside `name`/`description` (`crates/opencode-server/src/routes.rs`).
+- `ProviderAuthMethodInfo` carries `index` and `method_type` with `is_api`/`is_oauth` helpers (`crates/opencode-tui/src/api.rs`).
+- `Settings > Provider` shows a method chooser for OpenAI when more than one method is reported, instead of hardcoding method index `0` (`settings.rs`, `app/app.rs`).
+- Auto OAuth methods complete without a pasted code; `oauth_requires_code()` gates the input requirement, and Enter on an auto method calls the callback with `None` (`settings.rs`, `app/app.rs`).
+
+Documentation: `docs/provider-setup.md` documents the three options, the route-shape deviation, and the in-session token-refresh limitation.
+
+Tests: `crates/opencode-tui/src/components/settings.rs` covers method-list propagation, chooser navigation, auto-vs-code callback behavior, and payload deserialization. `cargo test -p opencode-plugin -p opencode-server -p opencode-tui` passes. Live ChatGPT headless/browser login still requires human QA with a real account.
+## QA Handoff - 2026-09-23
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/84 (base `development`).
+- Branch `feature/START-032-codex-auth-parity` is checked out locally for verification.
+- Human QA: run `ort-build` then `ort`, open `Settings > Provider`, select `openai`, press `l`, and confirm the chooser lists browser/headless/API key.
+- Complete `ChatGPT Pro/Plus (headless)` against a real account, press Enter, and confirm `GET /auth/openai` reports `auth_type: "oauth"`.
+- Run a Codex request with `OPENAI_API_KEY` unset and confirm the saved OAuth credential is used.
+- Smoke-test manual API key entry and confirm `GET /auth/openai` reports `auth_type: "api"`.
+- Browser login is implemented but only verify it if convenient; the headless path is the primary workflow.
