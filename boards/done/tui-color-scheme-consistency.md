@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-23"
 ---
 
@@ -199,5 +199,6 @@ Implemented on branch `feature/FEAT-054-tui-color-scheme-consistency`.
 - Merged into `development` via PR #85 (merge commit `65e4e10`).
 - Feature branch `feature/FEAT-054-tui-color-scheme-consistency` deleted remotely and locally; local
   checkout is back on `development` and fast-forwarded to the merge.
-- Remains in `qa`: no QA report is recorded yet. Promote to the completed lane only after the visual
-  QA in the pending section above is run and recorded, or on explicit user direction.
+- QA approved by the user on explicit direction; promoted from `qa` to `done` with the uniform
+  default-scheme requirement satisfied by the merged change (message panels share `background_panel`;
+  no lighter/darker line tinting).
