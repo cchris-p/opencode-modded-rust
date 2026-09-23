@@ -120,3 +120,11 @@ Reference `f54ce313b99a`:
 - `FEAT-031` investigate/disable `general` - done; this card resolves the parity follow-up.
 - `FEAT-046` task tool contract parity - registry-driven lookup is shared.
 - `wiki/agent-modes-and-custom-agents.md` - must be updated by this card.
+
+### 2026-09-23 - Merged into `development`
+
+- Merged via PR #98 (merge commit `24207e0edaff90b1ade5d9c5f88e459653940245`) on explicit user
+  approval.
+- Branch cleanup complete: remote and local `feature/FEAT-049-agent-role-mention-parity` deleted.
+- Card remains in `qa` pending a recorded QA report (post-merge `@explore`/`@general` smoke on
+  `development`). The merge alone does not move it to `done`.
