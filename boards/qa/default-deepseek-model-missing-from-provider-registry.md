@@ -91,3 +91,9 @@ This was not introduced by deleting the bundled DeepSeek model. The bundled fall
 - `git diff --check` passed.
 - Static search confirmed the deprecated default is gone from config/TUI fallback paths; the remaining `deepseek-v4-flash` config hit is an unrelated OpenRouter override test fixture.
 - Rust tooling was unavailable in this environment: `cargo fmt --all`, `cargo test -p opencode-config default_model`, and `cargo test -p opencode-provider bundled_v1_models_data_contains_expected_models` all failed with `cargo: command not found`.
+
+## Merge Closeout - 2026-09-23
+
+- PR #78 merged into `development` at `ab299a28756cbd3314c2c8cf274cc5a7996719fa`.
+- Merged PR branch `bug/BUG-034-deepseek-default-model-pr` was deleted remotely and locally by `gh pr merge --delete-branch`.
+- Card remains in `qa` pending runtime QA with Rust tooling available.
