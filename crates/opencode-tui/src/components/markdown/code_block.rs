@@ -354,15 +354,7 @@ pub struct CodeTheme {
 
 impl Default for CodeTheme {
     fn default() -> Self {
-        Self {
-            text: Color::Rgb(220, 220, 220),
-            keyword: Color::Rgb(255, 121, 198),
-            string: Color::Rgb(230, 219, 116),
-            number: Color::Rgb(174, 129, 255),
-            comment: Color::Rgb(117, 113, 94),
-            punctuation: Color::Rgb(248, 248, 242),
-            function: Color::Rgb(102, 217, 239),
-        }
+        Self::from_app_theme(&crate::theme::Theme::default())
     }
 }
 

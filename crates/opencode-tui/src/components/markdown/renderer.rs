@@ -1,7 +1,7 @@
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
     Frame,
@@ -628,7 +628,7 @@ fn current_style(styles: &[Style]) -> Style {
     styles
         .last()
         .copied()
-        .unwrap_or_else(|| Style::default().fg(ratatui::style::Color::White))
+        .unwrap_or_else(|| Style::default().fg(Color::Reset))
 }
 
 fn flush_line(lines: &mut Vec<Line<'static>>, current: &mut Vec<Span<'static>>) {

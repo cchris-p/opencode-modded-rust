@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Color;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -685,33 +685,5 @@ fn ansi_to_color_from_color(color: Color) -> Color {
         Color::White => Color::Rgb(255, 255, 255),
         Color::Indexed(code) => ansi_to_color(code as u64),
         other => other,
-    }
-}
-
-pub struct Styles;
-
-impl Styles {
-    pub fn title() -> Style {
-        Style::default().add_modifier(Modifier::BOLD)
-    }
-
-    pub fn muted() -> Style {
-        Style::default().fg(Color::Rgb(128, 128, 128))
-    }
-
-    pub fn success() -> Style {
-        Style::default().fg(Color::Rgb(80, 200, 120))
-    }
-
-    pub fn error() -> Style {
-        Style::default().fg(Color::Rgb(255, 80, 80))
-    }
-
-    pub fn warning() -> Style {
-        Style::default().fg(Color::Rgb(255, 200, 80))
-    }
-
-    pub fn selected() -> Style {
-        Style::default().add_modifier(Modifier::REVERSED)
     }
 }
