@@ -119,3 +119,11 @@ Reference `f54ce313b99a`:
 - Note: the two existing `opencode-tool` task unit tests exercise the tool contract with mock
   callbacks and still pass; the child-session contract is covered by the new server fixtures.
 
+### 2026-09-23 - Merged into `development`
+
+- Merged via PR #91 (merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163`) on explicit user
+  direction.
+- Branch cleanup complete: remote and local `feature/FEAT-045-subagent-child-sessions` deleted.
+- Card remains in `qa` pending a recorded QA report (post-merge restart/resume smoke on
+  `development`). The merge alone does not move it to `done`.
+

@@ -429,3 +429,19 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
   -p opencode-server`.
 - `FEAT-045` moved `todo -> doing -> qa`; awaiting human test/merge on PR #91 before PR 2 (`FEAT-046`)
   starts.
+
+### 2026-09-23 — PR 1 (`FEAT-045`) merged
+
+- PR #91 merged into `development` at merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` on
+  explicit user direction.
+- Branch cleanup complete: remote and local `feature/FEAT-045-subagent-child-sessions` deleted.
+- `FEAT-045` remains in `qa` pending a recorded post-merge QA report; the merge alone does not
+  promote it to `done`.
+- Gate check for PR 2: `FEAT-046` may start now that PR 1 is merged; `development` is current at
+  `7510bf2` in the local checkout.
+
+## Completed With
+
+- PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged
+  2026-09-23). Card `FEAT-045` in `qa`.
+
