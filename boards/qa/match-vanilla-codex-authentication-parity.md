@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "docs/provider-setup.md"
-status: "doing"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -165,3 +165,12 @@ Rust TUI/provider changes:
 Documentation: `docs/provider-setup.md` documents the three options, the route-shape deviation, and the in-session token-refresh limitation.
 
 Tests: `crates/opencode-tui/src/components/settings.rs` covers method-list propagation, chooser navigation, auto-vs-code callback behavior, and payload deserialization. `cargo test -p opencode-plugin -p opencode-server -p opencode-tui` passes. Live ChatGPT headless/browser login still requires human QA with a real account.
+## QA Handoff - 2026-09-23
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/84 (base `development`).
+- Branch `feature/START-032-codex-auth-parity` is checked out locally for verification.
+- Human QA: run `ort-build` then `ort`, open `Settings > Provider`, select `openai`, press `l`, and confirm the chooser lists browser/headless/API key.
+- Complete `ChatGPT Pro/Plus (headless)` against a real account, press Enter, and confirm `GET /auth/openai` reports `auth_type: "oauth"`.
+- Run a Codex request with `OPENAI_API_KEY` unset and confirm the saved OAuth credential is used.
+- Smoke-test manual API key entry and confirm `GET /auth/openai` reports `auth_type: "api"`.
+- Browser login is implemented but only verify it if convenient; the headless path is the primary workflow.
