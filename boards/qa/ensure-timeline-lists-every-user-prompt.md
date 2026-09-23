@@ -229,3 +229,4 @@ Residual Rust gaps (the actual work on this card):
   over a PTY attached to a local server): `/timeline` opened at `Timeline  1/11` on the
   320-message session and `Enter` on the first entry scrolled the session view to the first
   prompt.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/92
