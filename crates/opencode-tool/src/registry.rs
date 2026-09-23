@@ -244,6 +244,7 @@ pub async fn create_default_registry() -> ToolRegistry {
     registry.register(crate::multiedit::MultiEditTool).await;
     registry.register(crate::apply_patch::ApplyPatchTool).await;
     registry.register(crate::skill::SkillTool).await;
+    registry.register(crate::session::SessionTool).await;
     registry.register(crate::lsp_tool::LspTool).await;
     registry.register(crate::codesearch::CodeSearchTool).await;
     registry.register(crate::plan::PlanEnterTool).await;

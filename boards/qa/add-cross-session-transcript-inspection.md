@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-18"
 ---
 
@@ -73,15 +73,27 @@ The first implementation should not automatically pull another session's full tr
 - Create a session in another workspace and confirm it is hidden from session B by default and only reachable with an explicit override.
 - Confirm session A still resumes and accepts new prompts normally after being inspected.
 
-## TBD
+## Resolved decisions
 
-- Exact first access surface: tool, in-session command, TUI read view, or a combination.
-- Whether the agent or only the user may trigger cross-session reads.
-- Exact result shape: raw messages, rendered transcript, structured summary, or a selectable combination.
-- Whether in-progress sessions can be read and how partial/streaming messages are represented.
-- How ranges/pagination are expressed (index range, message id cursor, turn count, etc.).
-- Whether reading another session counts as an approval-gated action.
-- How this interacts with workspace identity for legacy sessions that predate `FEAT-022`.
+- Access surface: CLI `session find`/`inspect` (shipped) plus a read-only
+  `session` agent tool backed by a `SessionInspectCallback` wired in the server
+  prompt path. No separate HTTP transcript route.
+- Trigger: the agent may trigger reads during a turn; the surface is read-only
+  and targeted, never an automatic context import.
+- Result shape: role, timestamp, and bounded per-part previews rendered as
+  Markdown.
+- Pagination: `limit`/`offset` over messages; `list` uses a bounded `limit`.
+- Approval: not gated in the first pass; reads are same-workspace and
+  read-only.
+
+## Remaining / deferred
+
+- Explicit cross-workspace override and CLI `session list`/`show`/resume
+  scoping: `FEAT-057` (hold).
+- CLI direct-run (`opencode run`) wiring of the inspect callback; the tool is
+  registered there but reports "not available" until wired.
+- Cursor-style pagination (the offset is positional today).
+- Legacy/unknown workspace handling: `FEAT-057`.
 
 ## Progress
 
@@ -90,8 +102,17 @@ The first implementation should not automatically pull another session's full tr
   `opencode session inspect "<name|id>"` reads a session's persisted transcript
   (roles, timestamps, per-message part previews, tokens) read-only and bounded
   (`--json`/`--full` for tooling and depth). Both reuse the existing session
-  store. Remaining scope: the agent/API access surface and workspace-scoping
-  enforcement (`FEAT-057`), plus cursor-style pagination.
+  store.
+- The agent surface now ships too: a read-only `session` tool
+  (`crates/opencode-tool/src/session.rs`) with `SessionInspectRequest`/
+  `SessionInspectResponse` and a `SessionInspectCallback` on `ToolContext`,
+  threaded through `SessionPrompt` and wired in `run_prompt_turn`
+  (`crates/opencode-server/src/routes.rs`) against the in-memory session store.
+  `list` enumerates same-workspace sessions with a bounded `limit`; `read`
+  returns a bounded, `offset`-paginated transcript (role, time, per-part
+  previews) and never mutates or resumes the target. Workspace scoping is
+  fail-closed: only sessions whose `workspace_identity` matches the caller's
+  are visible; the explicit cross-workspace override remains with `FEAT-057`.
 - The TUI-side diagnostics added in `FEAT-061` complement this.
 
 ## Related Items
