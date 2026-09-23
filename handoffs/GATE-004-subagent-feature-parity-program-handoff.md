@@ -487,6 +487,21 @@ genuinely implementation-shaped, the recommended shape is stated and the accepta
 - Gate check for PR 4: `FEAT-049` may start now that PR 3 is merged; `development` is current at
   `f48c4c5` in the local checkout.
 
+### 2026-09-23 — PR 4 (`FEAT-049`) opened
+
+- Branch `feature/FEAT-049-agent-role-mention-parity`; PR #98 targets `development`
+  (https://github.com/cchris-p/opencode-modded-rust/pull/98).
+- `general` registered as a `Subagent` (reference description, no dedicated prompt) and never a
+  primary/default; `build_agent_ruleset("general")` adds the reference `todowrite` deny.
+- `@agent-name` mentions now resolve file-first, then fall back to a registered subagent, producing
+  a `PartInput::Agent` (reference-style "call the task tool with subagent: X" instruction). A
+  registered non-subagent mention fails with a clear error; unknown tokens stay plain text.
+- Verification green: `cargo fmt --all`, `cargo check --workspace`,
+  `cargo test -p opencode-permission -p opencode-agent -p opencode-tool -p opencode-server --lib`,
+  `cargo test -p opencode-session --lib resolve_prompt_parts`.
+- `FEAT-049` moved `todo -> doing -> qa`; awaiting human test/merge on PR #98 before PR 5
+  (`FEAT-048`) starts. TUI `@` autocomplete surfacing subagents is a documented follow-up.
+
 ## Completed With
 
 - PR 1 (`FEAT-045`) — PR #91 / merge commit `7510bf2a5a430fc836de9ec9a9562a02d23a6163` (merged

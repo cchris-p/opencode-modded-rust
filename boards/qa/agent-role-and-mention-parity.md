@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 predecessors: ""
 created: "2026-09-21"
 updated: "2026-09-23"
@@ -108,6 +108,11 @@ Reference `f54ce313b99a`:
 - **Known limitation / follow-up:** TUI `@` autocomplete still sources agent suggestions from the
   primary-only `GET /agent` list, so `@general`/`@explore` must currently be typed rather than
   selected. Recorded in `wiki/agent-modes-and-custom-agents.md` open questions.
+
+### PR Link
+
+- PR #98 (https://github.com/cchris-p/opencode-modded-rust/pull/98) — `feature/FEAT-049-agent-role-mention-parity` → `development`.
+- Program: GATE-004 (H-009), PR 4/7. Awaiting human test/merge on the checked-out branch; PR stays open in `qa`.
 
 ## Related Items
 
