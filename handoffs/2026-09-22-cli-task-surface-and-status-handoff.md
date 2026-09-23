@@ -153,6 +153,7 @@ decision or an open gate and must be composed later.
 ### 2026-09-22 - PR 2 / `CLI-006`
 
 - Branch: `feature/CLI-006-cli-status`, stacked on PR #80 because it extends the same `task` command surface.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/81.
 - Implemented `opencode task status [--server <URL>] [--session <SESSION_ID>] [--json]` from `GET /session/status`.
 - Plain output lists server sessions by default and includes queued position/depth when the server reports it; `--session` narrows to one session.
 - Verification passed: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task status --help`.
