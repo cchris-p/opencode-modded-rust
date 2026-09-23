@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -230,4 +230,25 @@ Status: **unconfirmed root cause; this is a coverage fix, not a proven one.** Th
 - Card intentionally **remains in `qa`**: the fix is unverified against a live reproduction and the
   root cause is unconfirmed, so it must not move to `done` until the user reproduces in the TUI and
   records a QA report (or explicitly directs completion).
+
+## QA Notes (2026-09-23)
+
+- Re-confirmed the delivered `InterruptConfirmation` state machine (Idle/Armed/Pending) and the
+  `Pending` latch are present in `development`, along with the session-side `tokio::select!` cancel
+  path that observes abort while the provider stream is quiet.
+- `cargo test -p opencode-tui interrupt` -> 4 passed
+  (`interrupt_second_press_within_window_confirms`,
+  `interrupt_second_press_after_window_rearms_without_confirming`,
+  `interrupt_pending_latches_until_reset`, `interrupt_armed_press_expires_after_window`).
+- `cargo test -p opencode-tui` -> 104 passed, 0 failed.
+- The BUG-038 stream-timeout change also makes a silently wedged stream return control to the loop,
+  which removes the "quiet stream ignores the cancel token" amplifier described by H3.
+- Live reproduction during a thinking phase was **not** run in this headless environment; the root
+  cause remains unconfirmed by live capture.
+
+## Merge Closeout - 2026-09-23
+
+- Cluster closeout PR #89 merged into `development`; card moved `qa -> done`.
+- The interrupt state-machine fix and its tests were already merged (PR #66); the BUG-038 stream
+  timeout also removes the quiet-stream cancel-token amplifier this card flagged (H3).
 

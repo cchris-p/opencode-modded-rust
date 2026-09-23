@@ -125,6 +125,50 @@ pub struct StreamUsage {
 
 pub type StreamResult = Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>;
 
+/// Maximum time the agent loop will wait between provider stream events before
+/// treating the stream as stalled and ending it with a [`StreamEvent::Error`].
+///
+/// Without this bound, a provider that holds the HTTP connection open but stops
+/// sending (for example after a reasoning block and partial text) leaves the
+/// session loop awaiting an event that never arrives. The turn then never
+/// reaches a terminal state, the session stays `active`, and the user is stuck
+/// until they abandon it (BUG-038).
+pub const DEFAULT_STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Wrap a provider event stream so a gap longer than `idle_timeout` between
+/// events ends the stream with a [`StreamEvent::Error`] instead of hanging
+/// forever.
+///
+/// This converts a silently wedged provider connection into a visible terminal
+/// error that the session loop can record and surface, guaranteeing every turn
+/// either completes or fails loudly (BUG-038).
+pub fn with_idle_timeout(stream: StreamResult, idle_timeout: std::time::Duration) -> StreamResult {
+    use futures::StreamExt;
+
+    let stream = futures::stream::unfold(
+        (stream, idle_timeout, false),
+        |(mut stream, idle_timeout, finished)| async move {
+            if finished {
+                return None;
+            }
+            match tokio::time::timeout(idle_timeout, stream.next()).await {
+                Ok(Some(Ok(event))) => Some((Ok(event), (stream, idle_timeout, false))),
+                Ok(Some(Err(error))) => Some((Err(error), (stream, idle_timeout, true))),
+                Ok(None) => None,
+                Err(_) => Some((
+                    Ok(StreamEvent::Error(format!(
+                        "Provider stream stalled: no events received for {}s",
+                        idle_timeout.as_secs()
+                    ))),
+                    (stream, idle_timeout, true),
+                )),
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
 /// Build a provider event stream from a raw SSE byte stream.
 ///
 /// Raw HTTP chunk boundaries do not align with SSE frame boundaries: a single
@@ -571,6 +615,52 @@ mod stateful_parser_tests {
             .collect();
         assert_eq!(texts, vec!["one".to_string(), " two".to_string()]);
         assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+}
+
+#[cfg(test)]
+mod idle_timeout_tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn stalled_stream_ends_with_visible_error() {
+        let inner: StreamResult = Box::pin(futures::stream::pending());
+        let stream = with_idle_timeout(inner, std::time::Duration::from_millis(20));
+
+        let events: Vec<_> =
+            tokio::time::timeout(std::time::Duration::from_secs(2), stream.collect())
+                .await
+                .expect("idle timeout should terminate the stream");
+
+        assert_eq!(
+            events.len(),
+            1,
+            "stalled stream should emit one error event"
+        );
+        match &events[0] {
+            Ok(StreamEvent::Error(message)) => {
+                assert!(
+                    message.contains("stalled"),
+                    "error should name the stall: {message}"
+                );
+            }
+            other => panic!("expected stalled-stream error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn active_stream_passes_events_through_unchanged() {
+        let inner: StreamResult = Box::pin(futures::stream::iter(vec![
+            Ok(StreamEvent::TextDelta("hi".to_string())),
+            Ok(StreamEvent::Done),
+        ]));
+        let stream = with_idle_timeout(inner, std::time::Duration::from_secs(60));
+
+        let events: Vec<Result<StreamEvent, ProviderError>> = stream.collect().await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], Ok(StreamEvent::TextDelta(_))));
+        assert!(matches!(events[1], Ok(StreamEvent::Done)));
     }
 }
 

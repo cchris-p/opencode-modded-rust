@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "done"
 created: "2026-09-23"
 ---
 
@@ -142,3 +142,51 @@ terminal state, so the failure is most likely in the stream/agent loop rather th
 - Relevant files: `crates/opencode-provider/src/stream.rs`,
   `crates/opencode-provider/src/deepseek.rs`, `crates/opencode-session/src/prompt.rs`,
   `crates/opencode-server/src/routes.rs`, `crates/opencode-tui/src/app/app.rs`.
+
+## Dev Notes
+
+Implemented a provider-stream idle timeout (2026-09-23).
+
+- Added `opencode_provider::stream::with_idle_timeout` and
+  `DEFAULT_STREAM_IDLE_TIMEOUT` (90s) in `crates/opencode-provider/src/stream.rs`.
+- `SessionPrompt::loop_inner` now wraps every provider stream with
+  `with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT)` right after
+  `provider.chat_stream`, so a quiet stream is converted into a visible
+  `StreamEvent::Error` instead of an unbounded `stream.next().await`.
+- Root cause (confirmed by code path, not live reproduction): the inner stream
+  loop had no bound on a stream that stops emitting without closing. When that
+  happened, `loop_inner` never returned, `finish_run` never ran,
+  `SESSION_RUN_STATUS` stayed `Busy`, and the session stayed `active` with no
+  terminal record. That matches the captured evidence (session `active`, no
+  usage, partial reasoning+text, no error). The wrapper bounds the wait.
+- The emitted `StreamEvent::Error` flows through the existing error arm, which
+  returns `Err`. The server then records an error assistant message with
+  `finish_reason: "error"` and the queue drain returns the session to `idle`, so
+  the turn fails loudly instead of hanging.
+- Deliberately did **not** add a "stream closed without a finish reason" error at
+  the session layer: providers such as Google end the SSE body without an
+  explicit terminal event on normal completion, so that heuristic would have
+  broken them. The idle timeout targets the actual stall (silence) and is
+  provider-agnostic.
+
+## Verification
+
+- `cargo test -p opencode-provider idle_timeout` -> 2 passed
+  (`stalled_stream_ends_with_visible_error`,
+  `active_stream_passes_events_through_unchanged`).
+- `cargo test -p opencode-session stalled` -> 1 passed
+  (`stalled_stream_error_fails_the_turn_visibly`).
+- `cargo test -p opencode-provider` -> 99 passed + 7 integration passed, 0 failed.
+- `cargo test -p opencode-session` -> 159 passed + 11 integration passed, 0 failed.
+- `cargo check --workspace` clean; `cargo fmt --all -- --check` clean.
+- Live `ort-build`/`ort` reproduction on `deepseek/deepseek-flash` was **not**
+  run in this headless environment; the behavior is covered by the stream-level
+  and session-level regression tests. Re-run the captured prompt on the PR
+  branch for live confirmation.
+
+## Merge Closeout - 2026-09-23
+
+- PR #89 merged into `development` (branch `bug/BUG-027-028-029-038-stability-cluster`).
+- Card moved `todo -> qa -> done` with the cluster closeout.
+- Automated QA recorded above; live `ort` reproduction was not available in the headless environment
+  and remains advisable as a post-merge sanity check.
