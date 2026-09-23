@@ -277,6 +277,7 @@ impl App {
 
         while !matches!(self.state, AppState::Exiting | AppState::Detaching) {
             trace::record_iteration();
+            trace::sync_session(self.active_session_id.as_deref());
             let loop_gap = last_iteration.elapsed();
             last_iteration = Instant::now();
             if loop_gap >= Duration::from_millis(50) {

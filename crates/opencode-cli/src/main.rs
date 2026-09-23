@@ -4392,6 +4392,12 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
                     .as_deref()
                     .unwrap_or("legacy/unknown")
             );
+            if let Some(trace) = opencode_tui::trace::trace_path() {
+                println!(
+                    "  Trace: {} (grep session={} \"{}\")",
+                    trace, session.id, trace
+                );
+            }
             println!(
                 "  Created: {} ({})",
                 format_session_time(session.time.created),
