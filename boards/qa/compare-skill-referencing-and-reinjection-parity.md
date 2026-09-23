@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "SKILLS"
 spec: "invariants/skills/runtime.md"
-status: "doing"
+status: "qa"
 created: "2026-09-21"
 ---
 
