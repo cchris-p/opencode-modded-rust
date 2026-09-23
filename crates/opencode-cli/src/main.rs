@@ -2785,7 +2785,7 @@ async fn create_task_session(
     server: &str,
     title: Option<&str>,
 ) -> anyhow::Result<String> {
-    let endpoint = server_url(server, "/session/");
+    let endpoint = server_url(server, "/session");
     let created: RemoteSessionInfo = parse_http_json(
         client
             .post(endpoint)
@@ -2937,9 +2937,11 @@ fn print_task_statuses(
     );
     for session in rows {
         let status = statuses.get(&session.id);
-        let status_label = status
-            .map(|entry| entry.status.as_str())
-            .unwrap_or("unknown");
+        let status_label = match status {
+            Some(entry) if entry.idle && entry.status == "active" => "idle",
+            Some(entry) => entry.status.as_str(),
+            None => "unknown",
+        };
         let queue = status
             .and_then(|entry| match (entry.position, entry.depth) {
                 (Some(position), Some(depth)) => Some(format!("{}/{}", position, depth)),
