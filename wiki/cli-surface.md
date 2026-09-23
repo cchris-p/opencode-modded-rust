@@ -96,18 +96,19 @@ opencode attach <url>                              # optional: back to the TUI
 
 This is gated by `CLI-001` (task `new`/`send`/`view` on the canonical session runtime) and `CLI-006`
 (status); `CLI-002` retires the parallel `opencode run` engine so headless runs use the same path.
-The immediate work is composed in `handoffs/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
+`CLI-001` and `CLI-006` are delivered and merged into `development` (PR #80, PR #81), pending post-merge QA;
+the composition is recorded in `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
 
 ## Canonical Card Map
 
 | ID | Lane | Role |
 |---|---|---|
-| CLI-001 | todo | Cline-style task send (prerequisite gate) |
+| CLI-001 | qa | Cline-style task send (delivered, PR #80) |
 | CLI-002 | hold | Route `opencode run` through session runtime (gated) |
 | CLI-003 | done | Removed server reuse / fresh server per launch |
 | CLI-004 | done | Explicit `/detach` command |
 | CLI-005 | hold | Same-workspace attach/reuse decision (human gate) |
-| CLI-006 | todo | CLI status visibility (co-gate) |
+| CLI-006 | qa | CLI status visibility (delivered, PR #81) |
 | CLI-007 | qa | Default task target selection (prerequisite input) |
 | CLI-008 | archive | Queue CLI sends (delivered by `GATE-001`) |
 | CLI-009 | hold | Direct-run question and ask/approval parity (gated) |

@@ -1,7 +1,7 @@
 ---
 id: "H-006"
 title: "CLI-001/CLI-006 CLI task surface and status - Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-09-22"
 updated: "2026-09-22"
 owner: ""
@@ -157,3 +157,11 @@ decision or an open gate and must be composed later.
 - Implemented `opencode task status [--server <URL>] [--session <SESSION_ID>] [--json]` from `GET /session/status`.
 - Plain output lists server sessions by default and includes queued position/depth when the server reports it; `--session` narrows to one session.
 - Verification passed: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task status --help`.
+
+## Completed
+
+- `CLI-001`: PR #80 merged into `development` (merge commit `5b71d14`); branch `feature/CLI-001-task-commands` deleted locally and remotely.
+- `CLI-006`: PR #81 retargeted to `development` and merged after #80 (merge commit `22e114d`); branch `feature/CLI-006-cli-status` deleted locally and remotely.
+- Local checkout returned to `development` and fast-forwarded to `22e114d`.
+- Both `CLI-001` and `CLI-006` remain in `qa` pending a recorded post-merge QA report or explicit completion.
+- Follow-up handoff for the deferred dependents (`CLI-002`, `CLI-009`, `CLI-010`, `CLI-005`) is not yet composed.

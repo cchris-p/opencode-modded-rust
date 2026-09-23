@@ -27,7 +27,7 @@ Prerequisites are already in place:
 
 Canonical behavior reference: `wiki/cli-surface.md`.
 
-Handoff: `handoffs/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
+Handoff: `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`, complete).
 
 ## Summary
 
@@ -150,3 +150,9 @@ Background-session lifecycle and attach/detach policy are intentionally handled 
 - `task view` reads the selected server's `/session/{id}/message` route and prints the transcript without opening the TUI; `--json` prints the raw message array.
 - `--stream` keeps the canonical `/prompt` submission path and follows by polling `GET /session/status` until idle, then prints the transcript.
 - Verification passed: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task --help`; `cargo run -p opencode-cli -- task new --help`; `cargo run -p opencode-cli -- task send --help`; `cargo run -p opencode-cli -- task view --help`.
+
+## Merge Closeout - 2026-09-22
+
+- PR #80 merged into `development` (merge commit `5b71d14`).
+- Branch `feature/CLI-001-task-commands` deleted locally and remotely.
+- Remains in `qa` pending a recorded post-merge QA report (`H-006` QA notes) or explicit user completion.

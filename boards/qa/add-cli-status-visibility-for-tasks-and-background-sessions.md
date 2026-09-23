@@ -24,7 +24,7 @@ Prerequisite already in place: `GATE-001` (done) exposes `status` (`idle|busy|qu
 
 Canonical behavior reference: `wiki/cli-surface.md`.
 
-Handoff: `handoffs/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
+Handoff: `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`, complete).
 
 ## Summary
 
@@ -96,3 +96,9 @@ Add a CLI-visible status surface for tasks/sessions so command-line workflows ca
 - Status reads come from `GET /session/status`; queued position/depth is displayed only from that server response.
 - Default output lists root sessions for the selected/provided server; `--session` narrows to one session; `--json` emits parseable session/status objects.
 - Verification passed: `cargo fmt --all`; `cargo check -p opencode-cli`; `cargo run -p opencode-cli -- task status --help`.
+
+## Merge Closeout - 2026-09-22
+
+- PR #81 merged into `development` (merge commit `22e114d`), after #80.
+- Branch `feature/CLI-006-cli-status` deleted locally and remotely.
+- Remains in `qa` pending a recorded post-merge QA report (`H-006` QA notes) or explicit user completion.
