@@ -35,9 +35,10 @@ use crate::worktree::{self, WorktreeInfo as WorktreeInfoStruct};
 use crate::{ApiError, Result, ServerState};
 use opencode_agent::{AgentMode, AgentRegistry};
 use opencode_config::{
-    load_config, update_config, Config as AppConfig, McpServerConfig as LoadedMcpServerConfig,
+    load_config, load_config_with_source, reset_project_model_selection, update_config,
+    Config as AppConfig, McpServerConfig as LoadedMcpServerConfig,
     PermissionAction as ConfigPermissionAction, PermissionConfig as ConfigPermissionConfig,
-    PermissionRule as ConfigPermissionRule,
+    PermissionRule as ConfigPermissionRule, MODEL_SOURCE_PROJECT_CONFIG,
 };
 use opencode_plugin::subprocess::{PluginAuthBridge, PluginLoader, PluginSubprocessError};
 use opencode_provider::{
@@ -3697,6 +3698,7 @@ fn config_routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/", get(get_config).patch(patch_config))
         .route("/providers", get(get_config_providers))
+        .route("/model", delete(reset_model_selection))
 }
 
 static CONFIG_STATE: Lazy<RwLock<AppConfig>> = Lazy::new(|| RwLock::new(AppConfig::default()));
@@ -3728,6 +3730,32 @@ async fn patch_config(
     Ok(Json(updated))
 }
 
+/// Clears the persisted manual model selection from the project-local runtime
+/// config so the product default becomes effective again on the next load.
+async fn reset_model_selection(
+    State(state): State<Arc<ServerState>>,
+) -> Result<Json<serde_json::Value>> {
+    let cwd = current_project_dir()?;
+    let path = reset_project_model_selection(&cwd)
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
+    let updated = load_config(&cwd).map_err(|error| ApiError::InternalError(error.to_string()))?;
+    *CONFIG_STATE.write().await = updated.clone();
+    state
+        .refresh_providers()
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
+    state.broadcast(
+        &serde_json::json!({
+            "type": "config.updated",
+        })
+        .to_string(),
+    );
+    Ok(Json(serde_json::json!({
+        "reset": path.is_some(),
+        "path": path.map(|value| value.to_string_lossy().to_string()),
+    })))
+}
+
 #[derive(Debug, Serialize)]
 pub struct ConfigProvidersResponse {
     pub providers: Vec<ProviderInfo>,
@@ -3739,7 +3767,7 @@ pub struct ConfigProvidersResponse {
 async fn get_config_providers(
     State(state): State<Arc<ServerState>>,
 ) -> Json<ConfigProvidersResponse> {
-    let config = load_runtime_config_from_disk().unwrap_or_default();
+    let (config, model_source) = load_runtime_config_with_source().unwrap_or_default();
     let variant_lookup = get_model_variant_lookup().await;
     let models = state.providers.read().unwrap().list_models();
     let mut provider_map: HashMap<String, Vec<ModelInfo>> = HashMap::new();
@@ -3775,7 +3803,7 @@ async fn get_config_providers(
     Json(ConfigProvidersResponse {
         providers,
         default_model,
-        setup: effective_provider_setup(&state, &config).await,
+        setup: effective_provider_setup(&state, &config, model_source.as_deref()).await,
     })
 }
 
@@ -4731,6 +4759,43 @@ mod permission_grant_tests {
         let rules = permanent_rules_for_request(&request("bash", &[]));
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].pattern, "*");
+    }
+}
+
+#[cfg(test)]
+mod model_selection_source_tests {
+    use super::*;
+    use opencode_config::{DEFAULT_MODEL, MODEL_SOURCE_PRODUCT_DEFAULT};
+
+    #[tokio::test]
+    async fn product_default_selection_reports_product_default_source() {
+        let state = Arc::new(ServerState::new());
+        let config = AppConfig {
+            model: Some(DEFAULT_MODEL.to_string()),
+            ..Default::default()
+        };
+
+        let setup =
+            effective_provider_setup(&state, &config, Some(MODEL_SOURCE_PRODUCT_DEFAULT)).await;
+
+        assert_eq!(setup.effective_model.as_deref(), Some(DEFAULT_MODEL));
+        assert_eq!(setup.selection_source, MODEL_SOURCE_PRODUCT_DEFAULT);
+    }
+
+    #[tokio::test]
+    async fn persisted_selection_reports_project_config_source() {
+        let state = Arc::new(ServerState::new());
+        let config = AppConfig {
+            model: Some("openai/gpt-5".to_string()),
+            ..Default::default()
+        };
+
+        let setup =
+            effective_provider_setup(&state, &config, Some(MODEL_SOURCE_PROJECT_CONFIG)).await;
+
+        assert_eq!(setup.effective_model.as_deref(), Some("openai/gpt-5"));
+        assert_eq!(setup.effective_provider.as_deref(), Some("openai"));
+        assert_eq!(setup.selection_source, MODEL_SOURCE_PROJECT_CONFIG);
     }
 }
 
@@ -6432,6 +6497,11 @@ fn load_runtime_config_from_disk() -> Result<AppConfig> {
     load_config(&cwd).map_err(|error| ApiError::InternalError(error.to_string()))
 }
 
+fn load_runtime_config_with_source() -> Result<(AppConfig, Option<String>)> {
+    let cwd = current_project_dir()?;
+    load_config_with_source(&cwd).map_err(|error| ApiError::InternalError(error.to_string()))
+}
+
 fn normalize_ollama_host(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -6562,7 +6632,11 @@ fn effective_ollama_base_url(config: &AppConfig) -> (String, String) {
     )
 }
 
-async fn effective_provider_setup(state: &ServerState, config: &AppConfig) -> ProviderSetupInfo {
+async fn effective_provider_setup(
+    state: &ServerState,
+    config: &AppConfig,
+    model_source: Option<&str>,
+) -> ProviderSetupInfo {
     let (effective_provider, effective_model, selection_source) = {
         let providers = state.providers.read().unwrap();
         let resolve_from_model = |model: &str| providers.parse_model_string(model);
@@ -6596,11 +6670,10 @@ async fn effective_provider_setup(state: &ServerState, config: &AppConfig) -> Pr
                         .split_once('/')
                         .map(|(provider_id, _)| provider_id.to_string())
                 });
-            (
-                provider_id,
-                Some(model.to_string()),
-                "Settings > Provider".to_string(),
-            )
+            let source = model_source
+                .unwrap_or(MODEL_SOURCE_PROJECT_CONFIG)
+                .to_string();
+            (provider_id, Some(model.to_string()), source)
         } else if let Some(ollama) = providers.get_provider("ollama").ok() {
             if ollama.get_model("qwen3:30b").is_some() {
                 (

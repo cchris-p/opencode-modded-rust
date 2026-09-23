@@ -641,6 +641,25 @@ impl ApiClient {
         Ok(response.json::<AppConfig>()?)
     }
 
+    /// Clears the persisted manual model selection so the product default is
+    /// effective again. Returns `true` when a local runtime config was found.
+    pub fn reset_model_selection(&self) -> anyhow::Result<bool> {
+        let url = format!("{}/config/model", self.base_url);
+        let response = self.client.delete(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to reset model selection: {} - {}", status, text);
+        }
+
+        Ok(response
+            .json::<serde_json::Value>()?
+            .get("reset")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false))
+    }
+
     pub fn get_provider_auth_methods(
         &self,
     ) -> anyhow::Result<HashMap<String, Vec<ProviderAuthMethodInfo>>> {
