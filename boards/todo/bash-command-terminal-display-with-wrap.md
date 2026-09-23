@@ -6,7 +6,9 @@ type: "feature"
 area: "FEAT"
 spec: ""
 status: "todo"
+predecessors: "FEAT-055"
 created: "2026-09-23"
+updated: "2026-09-23"
 ---
 
 # Bash command display: render a terminal block with text wrap
@@ -100,7 +102,8 @@ read long commands or their output.
 - Relevant files: `crates/opencode-tui/src/components/session_tool.rs`,
   `crates/opencode-tui/src/components/session.rs`,
   `crates/opencode-tui/src/components/tool_call.rs` (`BashToolView`).
-- `wrap_spans` (`session.rs:1453-1485`) is greedy per character; a word-aware wrapper is likely needed
-  for command/output so paths and flags do not split mid-token when they fit on the next line.
+- `wrap_spans` (`session.rs:1453-1485`) is upgraded to word-aware wrapping with a hard-break fallback
+  so paths and flags do not split mid-token when they fit on the next line.
 - Coordinate with FEAT-055 so the bash terminal block is the concrete instance of the unified tool
-  render path rather than yet another special case.
+  render path rather than yet another special case. `BashToolView` is reference semantics only: the
+  unused `tool_call.rs` widget is deleted under FEAT-055. Implement after the FEAT-055 core.

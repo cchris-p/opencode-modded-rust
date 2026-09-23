@@ -39,28 +39,59 @@ updates, branched from `development`, merged only on explicit user direction aft
 Because this handoff implements it, move `BUG-022` back to `doing` when implementation starts and to
 `qa` only after the PR is created. Do not treat the current `qa` placement as a completed QA.
 
-## Pre-Implementation Decisions To Settle
+## Settled Pre-Implementation Decisions
 
-These are the open items the strict refinement gate flagged. Settle them at the top of the
-implementation session; the defaults below are the recommended resolution, not yet confirmed.
+The strict refinement gate flagged five open items. They are now resolved from code evidence and are
+**binding for implementation**; do not reopen them without an explicit new user decision.
 
-1. **`FEAT-053` config key names and shape.** The card leaves "names and serde aliases to be settled
-   during refinement". Proposed keys under the existing `tui` section: `thinking`, `tool_calls`,
-   `tool_details`, `timestamps`, `message_density`, `semantic_highlight`, `header`, `scrollbar`,
-   `tips_hidden`. Confirm before touching `crates/opencode-config/src/schema.rs`.
-2. **`FEAT-053` precedence.** Card product decision prefers *config = startup default, persisted
-   `kv.json` value = explicit runtime override*. Confirm; implement exactly one precedence and unit
-   test it.
-3. **`FEAT-055` unused render stack.** `MessageView::render_tool_call`, `ToolCallView`/`BashToolView`
-   and `tool_views.rs` are exported but appear to have no live caller. Decide: **re-home the per-tool
-   views into the live path** (preferred, satisfies FEAT-056's "use `BashToolView` semantics") and then
-   delete the dead code, versus deleting outright. Confirm no non-test caller first.
-4. **`FEAT-055`/`FEAT-056` wrapping strategy.** Decide whether tool command/output uses word-aware
-   wrapping (parity with the markdown `Paragraph::wrap`) with a per-character hard-break fallback for
-   long unbroken tokens. Recommended: yes; `wrap_spans` is currently greedy per-character.
-5. **`FEAT-055` priority vs `FEAT-056`.** `FEAT-056` (P2) is the concrete instance of `FEAT-055`
-   (P3). Recommended: implement the `FEAT-055` core slice first so `FEAT-056` is not built on the stack
-   that `FEAT-055` deletes. If the batch must ship in one PR, order the commits 055-core -> 056.
+1. **`FEAT-053` config key names and shape - SETTLED: snake_case keys, no serde aliases.**
+   Add these optional fields to `TuiConfig` (`crates/opencode-config/src/schema.rs:331`) and populate
+   `Config.tui` (`schema.rs:23`): `thinking`, `tool_calls`, `tool_details`, `timestamps`,
+   `message_density`, `semantic_highlight`, `header`, `scrollbar`, `tips_hidden`. Each is `Option<T>`
+   with `#[serde(skip_serializing_if = "Option::is_none")]`. Use snake_case with no aliases, matching
+   the existing `TuiConfig` fields (`scroll_speed`, `diff_style`) and the vanilla reference tui schema
+   (`packages/opencode/src/config/tui-migrate.ts:72`). `message_density` accepts the existing
+   `MessageDensity` strings `compact`/`cozy` (`app_context.rs:76-91`). Do **not** add a `sidebar` key
+   (not persisted on `AppContext`; owned by `FEAT-008`).
+2. **`FEAT-053` precedence - SETTLED: persisted kv override > config startup default > built-in default.**
+   A present `kv.json` value always wins; config is consulted only when the kv key is absent; the
+   current hard-coded literal is the final fallback. Config is therefore a declarative startup
+   default that never silently reverts an explicit in-session toggle.
+   - Add `UiKv::get_bool_opt`, `UiKv::get_string_opt`, and `UiKv::get_timestamps_opt` returning
+     `Option` (`app_context.rs:390-433`), then seed each flag with
+     `kv_opt.or(config_value).unwrap_or(builtin)` (`app_context.rs:146-160`).
+   - Config must reach `AppContext`. `AppContext::new()` takes no config (`app_context.rs:127`) and is
+     built at `app.rs:114`. In `App::new()`, after the workspace directory is resolved, run
+     `opencode_config::ConfigLoader::load_all(workspace_dir)` (already a TUI dependency,
+     `crates/opencode-tui/Cargo.toml:12`) and pass the merged `Config` into a new
+     `AppContext::new_with_config(&Config)`; keep `AppContext::new()` delegating to
+     `Config::default()` so the `prompt.rs:1704` test caller is unaffected. Only `config.tui` is
+     consumed; provider/model authority stays with the server.
+   - Unit test: kv set + config set -> kv wins; kv absent + config set -> config wins; both absent ->
+     built-in.
+3. **`FEAT-055` unused render stack - SETTLED: port the semantics into the live line renderer, then delete the stack outright.**
+   Evidence it is fully dead: `MessageView` is never constructed (`message.rs` only defines it and
+   re-exports it from `components/mod.rs:41`); `ToolCallView`, `ToolResultView`, `BashToolView`,
+   `ReadToolView`, `WriteToolView` and every `tool_views.rs` type appear only at their definition and
+   the `components/mod.rs:55-61` re-exports; none of the three files contain `#[cfg(test)]` tests. The
+   views render into a `Frame` (`fn render(&self, frame, area, theme)`), not `Vec<Line>`, so
+   "re-homing" them into the live transcript would require rewriting them anyway.
+   - Re-implement the per-tool content as line spans in `session_tool.rs` (bash command + output +
+     exit/running status, read path, write path, edit diff, todowrite list, glob/grep counts).
+   - Delete `components/message.rs`, `components/tool_call.rs`, and `components/tool_views.rs`; drop
+     their `mod`/`pub use` entries in `components/mod.rs` (`:23`, `:33`, `:41`, `:55-61`).
+   - `components/thinking.rs` (`ThinkingBlock`, `mod.rs:52`) is also defined-but-never-called; fold
+     its removal into `BUG-022` unless that phase reuses it.
+4. **`FEAT-055`/`FEAT-056` wrapping strategy - SETTLED: word-aware wrapping with a hard-break fallback.**
+   Upgrade the shared wrapper `wrap_spans` (`session.rs:1453-1485`) so it breaks at whitespace and only
+   hard-breaks a single token wider than the content width, preserving span styles and explicit `\n`.
+   `wrap_block_line` -> `paint_block_lines` then gives tool/bash lines the same treatment as markdown
+   `Paragraph::wrap`. Tests assert whole words move to the next line and an over-width unbroken token
+   hard-breaks.
+5. **`FEAT-055` vs `FEAT-056` order - SETTLED: `FEAT-055` core first, then `FEAT-056`.**
+   `FEAT-056` must be the concrete instance of the unified path, not a special case layered on the
+   stack `FEAT-055` removes. Within the single PR commit `055`-core before `056`; in the board, record
+   `FEAT-056 -> FEAT-055` as a predecessor.
 
 ## Dependency Order
 
@@ -69,7 +100,7 @@ marked inferred.
 
 **Cluster A - display state**
 
-1. `BUG-022` first. It changes what `show_thinking` means (visibility vs `expanded_reasoning`) in
+1. `BUG-022` first. It changes what `show_thinking` means (visibility vs per-block collapse) in
    `app_context.rs` / `session.rs` / `session_text.rs`.
 2. `FEAT-053` second. It seeds those same `AppContext` flags from config, so its `tui.thinking` key
    must encode corrected behavior. `FEAT-053`'s own Notes say to coordinate with `BUG-022`.
@@ -100,14 +131,19 @@ Files: `crates/opencode-tui/src/components/session.rs`,
 
 Approach:
 
-- Invert the reasoning expansion default. Today `expanded_reasoning` starts empty and
-  `collapsed = !expanded_reasoning.contains(id)`, so shown-but-collapsed renders only the count.
-  Either (a) track explicitly *collapsed* reasoning ids and render collapsed only on membership, or
-  (b) keep the set but treat the in-progress/streaming part as expanded by default.
+- Invert the reasoning expansion default (settled): track an explicit per-block
+  `collapsed_reasoning: HashSet<String>` (replacing `expanded_reasoning`, `session.rs:46`) and render
+  the collapsed count only when the `{msg.id}:{part_idx}` id is a member. When `show_thinking` is on,
+  reasoning is expanded by default, including historical and in-progress content; a manual collapse
+  persists for that block. Invert the click handler (`session.rs:1041-1051`) accordingly and keep the
+  visibility scrub at `session.rs:972` (`retain` on the collapsed set now scrubs collapsed ids).
 - Preserve the existing `thinking_visibility` ui key for the global show/hide flag.
-- Make `render_reasoning_part` emit content (not only the `▶ Thinking (N lines)` header) in the
-  shown state; decide whether the unreachable `THINKING_PREVIEW_LINES` preview is revived or left
-  dead and documented.
+- Make `render_reasoning_part` (`session_text.rs:47`) emit content in the shown state; the collapsed
+  state keeps the `▶ Thinking (N lines)` header. Once collapse is membership-based,
+  `THINKING_PREVIEW_LINES`/`preview_lines` are unused; remove them or document them, but do not revive
+  the old "collapsed = preview" behavior.
+- Remove the unused `ThinkingBlock` path (`components/thinking.rs`, `mod.rs:52`) as part of this
+  phase; it has no live caller (the transcript uses `session_text::render_reasoning_part`).
 - Update `handle_click` so manual collapse/expand still works and does not fight the global toggle.
 - Update the `Show/hide thinking blocks` command description if behavior wording changes
   (`command.rs:413-422`).
@@ -121,14 +157,18 @@ emits content lines, not only a count.
 
 Files: `crates/opencode-config/src/schema.rs` (`TuiConfig` at `schema.rs:331-342`),
 `crates/opencode-tui/src/context/app_context.rs` (seed flags `:146-160`, `UiKv` `:373-471`),
+`crates/opencode-tui/src/app/app.rs` (config load + `AppContext::new_with_config`),
 `docs/opencode-config.md`, `docs/opencode-tui.md`.
 
 Approach:
 
-- Add `tui` keys for the display flags (names confirmed in decisions above).
-- Seed `AppContext` display flags from config when the corresponding kv key is absent, replacing the
-  hard-coded default literals.
-- Implement one precedence rule (recommended: config default, kv runtime override) and unit test it.
+- Add the nine `tui` keys and their snake_case shape per Settled Decision 1 in
+  `crates/opencode-config/src/schema.rs`.
+- Add `UiKv` optional getters and seed each `AppContext` flag as
+  `kv_opt.or(config.tui.<key>).unwrap_or(builtin)` per Settled Decision 2; `timestamps` keeps its
+  string/`bool` encoding via `get_timestamps_opt`.
+- Wire the merged config in: load `ConfigLoader::load_all(workspace_dir)` in `App::new()` and pass it
+  through `AppContext::new_with_config(&Config)` per Settled Decision 2.
 - Document the config keys and the previously-hidden runtime store
   (`dirs::state_dir()/opencode/kv.json`, observed at `~/.local/state/opencode/kv.json`).
 
@@ -144,8 +184,7 @@ precedence defined, implemented, unit-tested; existing toggles still work and st
 
 Files: `crates/opencode-tui/src/components/session_tool.rs`,
 `session.rs` (`paint_block_lines`/`wrap_block_line` `:1312-1419`, `append_rendered_tool_call`
-`:1282-1310`), `message.rs` (`:133-270`), `tool_call.rs`, `tool_views.rs`,
-`components/mod.rs`.
+`:1282-1310`), `components/mod.rs`; delete `message.rs`, `tool_call.rs`, `tool_views.rs`.
 
 Approach:
 
@@ -156,9 +195,12 @@ Approach:
   explicit expand/collapse for long output.
 - Reconcile inline-vs-block classification (`ToolRenderMode` vs `is_block_tool`) and unify preview
   budgets (bash 10 lines vs other 6; error 3/1).
-- Re-home or delete the unused view stack per the decision above; confirm no non-test caller
-  (`grep` for `ToolCallView`, `BashToolView`, `tool_views`).
-- Choose word-aware wrapping with a hard-break fallback.
+- Port the per-tool view semantics into the live line renderer, then delete `components/message.rs`,
+  `components/tool_call.rs`, and `components/tool_views.rs` and their re-exports per Settled
+  Decision 3 (caller check already done: no non-test caller; `grep` for `ToolCallView`,
+  `BashToolView`, `tool_views` returns definitions and re-exports only).
+- Upgrade the shared `wrap_spans` to word-aware wrapping with a hard-break fallback per Settled
+  Decision 4.
 
 Acceptance (from card): exactly one renderer serves the transcript; tool blocks align with other
 parts and wrap; no 96-column truncation; expand/collapse still works; per-tool views shown or
@@ -168,7 +210,7 @@ wrapping.
 ### Phase 4 - `FEAT-056`: bash terminal block
 
 Files: `session_tool.rs` (`render_tool_call`, `shell_command_text`, preview/truncation sites),
-`session.rs`, `tool_call.rs` (`BashToolView` `:190-263`).
+`session.rs`, `tool_call.rs` (`BashToolView` `:190-263`, semantics only; the file is deleted in Phase 3).
 
 Approach:
 
@@ -237,7 +279,7 @@ tests.
 ## Execution Sequence
 
 1. Pull latest `development`; create `feature/tui-display-cluster`.
-2. Settle the five pre-implementation decisions above.
+2. Apply the settled pre-implementation decisions above (no open choices remain).
 3. Implement and verify `BUG-022`; commit.
 4. Implement and verify `FEAT-053`; update docs; commit.
 5. Implement and verify the `FEAT-055` core slice; commit.
@@ -248,12 +290,13 @@ tests.
 
 ## Risks And Rollback
 
-- **`FEAT-055` is the highest-risk item**: it deletes/re-homes exported code and changes the live
+- **`FEAT-055` is the highest-risk item**: it deletes exported code and changes the live
   render path. Land it as its own commit so it can be reverted independently within the PR.
 - **`FEAT-053` precedence**: an incorrect rule silently reverts a user's in-session toggle on
   restart; the unit test is the guardrail.
-- **`BUG-022` default flip**: showing all historical reasoning by default could be noisy; if that is
-  not desired, implement "expanded while streaming, collapsed once complete" and record it in Notes.
+- **`BUG-022` default flip**: showing reasoning expanded whenever thinking is on can be noisy on
+  long sessions. This is an accepted consequence of the card's product decision; if a streaming-only
+  default is wanted, reopen it with the user before implementation.
 
 ## Deferred / Out Of Scope
 
@@ -265,8 +308,7 @@ tests.
 
 ## Readiness Assessment
 
-`BUG-022`, `FEAT-055`, and `FEAT-056` are implementation-ready (scope, non-goals, done-when,
-verification, and file evidence are explicit). `FEAT-053` is *conditionally* ready: it names its own
-open decisions (config key names/aliases and precedence), which the **Decisions To Settle** section
-above captures with recommended defaults. Resolve those five decisions first, then execute in the
-sequence above.
+All five pre-implementation decisions are settled above and the refinement gate passes. `BUG-022`,
+`FEAT-053`, `FEAT-055`, and `FEAT-056` each have explicit scope, non-goals, done-when, verification,
+file evidence, and a fixed implementation order. The handoff is implementation-ready; begin at Step 2
+of the Execution Sequence.

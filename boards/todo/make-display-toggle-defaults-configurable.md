@@ -6,7 +6,9 @@ type: "feature"
 area: "FEAT"
 spec: ""
 status: "todo"
+predecessors: "BUG-022"
 created: "2026-09-23"
+updated: "2026-09-23"
 ---
 
 # Make TUI display-toggle defaults configurable from opencode.json
@@ -114,3 +116,8 @@ expressible in config.
   should be introduced deliberately rather than mirroring the whole file.
 - Coordinate with `BUG-022` (`/thinking` collapse semantics) so the config `thinking` key maps to
   the corrected behavior, not the current line-count rendering.
+- Refinement settled 2026-09-23 (handoff `H-007`): keys are snake_case with no aliases —
+  `thinking`, `tool_calls`, `tool_details`, `timestamps`, `message_density`, `semantic_highlight`,
+  `header`, `scrollbar`, `tips_hidden`; `message_density` accepts `compact`/`cozy`. Precedence is
+  persisted `kv.json` override > config startup default > built-in default. The TUI loads config with
+  `ConfigLoader::load_all(workspace_dir)` and seeds via `AppContext::new_with_config`.
