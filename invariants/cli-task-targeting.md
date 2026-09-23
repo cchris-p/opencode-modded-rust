@@ -1,5 +1,7 @@
 # CLI Task Targeting Invariants
 
+Canonical behavior reference: `wiki/cli-surface.md`.
+
 - CLI task commands must send work only to an explicit target: a server/session provided on the command line or a user-selected default task target.
 - Selecting a default task target is a user-directed action that may be changed or cleared at any time.
 - The selected default task target is scoped to CLI task sends and views; it must not cause normal `ort` TUI launches to auto-attach to or reuse a server.

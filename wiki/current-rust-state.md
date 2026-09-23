@@ -10,6 +10,7 @@ Assess whether the current Rust codebase is a strong foundation for the V1 produ
 - Product boundary: `wiki/product-boundary.md`
 - Reference strategy: `wiki/reference-strategy.md`
 - Runtime and task invariants: `invariants/runtime-lifecycle.md`, `invariants/task-state.md`, `invariants/context.md`, `invariants/verification.md`
+- Canonical CLI surface and TUI lifecycle behavior: `wiki/cli-surface.md`
 - Reference context only: `$HOME/repos/opencode-modded` `dev` branch, pinned at `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (re-pinned by `GATE-004`)
 
 ## Conclusion

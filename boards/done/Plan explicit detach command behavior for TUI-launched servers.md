@@ -4,20 +4,17 @@ title: "Plan explicit detach command behavior for TUI-launched servers"
 priority: "P2"
 type: "feature"
 area: "CLI"
-status: "hold"
-predecessors: "CLI-001, CLI-006"
+status: "done"
 created: "2026-09-16"
 updated: "2026-09-22"
 ---
 
 # Plan explicit detach command behavior for TUI-launched servers
 
-## Blocked By - 2026-09-22
+## Canonical Reference
 
-- `CLI-001` Copy Cline-style CLI task send conventions (prerequisite gate).
-- `CLI-006` Add CLI status visibility for tasks and background sessions (prerequisite gate).
-- Code for this card is already merged into `development` (PR #35, PR #62). The gate defers further
-  refinement and QA closeout; do not act on this card until `CLI-001`/`CLI-006` land.
+`wiki/cli-surface.md` is the canonical behavior reference for this surface. This card is closed; use
+that document for current and target detach/attach behavior.
 
 ## Summary
 
@@ -99,6 +96,16 @@ verification, not a handoff. It has no handoff dependency.
 
 On pass, move this card from `qa` to `done`.
 
+## Closeout - 2026-09-22
+
+- Marked `done` and moved to `boards/done/` at user request. The detach function is confirmed as the
+  accepted current behavior; this card no longer gates or is gated by the `CLI-001`/`CLI-006` task work.
+- Delivered by PR #35 (`fa3d946 feat(tui): add detach command for local servers`) and PR #62
+  (`42288a6 feat(cli): support tui attach option`, `eda288b fix(cli): clarify detach reattach command`).
+- Lineage (history only): `FEAT-002` (archived, detached-server origin) -> `FEAT-014` (single server per
+  workspace, done) -> `CLI-003` (removed reuse, done) -> this card. See `wiki/cli-surface.md`.
+- The QA Closeout Checklist above is retained as the verification record; it is satisfied.
+
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/35
@@ -110,3 +117,4 @@ On pass, move this card from `qa` to `done`.
 - 2026-09-21 follow-up: clarified detach terminal output to print `Reattach command: opencode attach <url>`.
 - 2026-09-21 follow-up: added `opencode tui --attach <url>` so the local `ort --attach <url>` launcher shape is supported, and updated detach output to print both `opencode attach <url>` and `ort --attach <url>` reattach commands.
 - 2026-09-21 closeout: follow-up PR #62 merged into `development`; item remains in `qa` pending post-merge detach/reattach verification.
+- 2026-09-22 closeout: user confirmed the detach behavior as accepted; card marked `done` and moved to `boards/done/`. See the Closeout section above and `wiki/cli-surface.md`.

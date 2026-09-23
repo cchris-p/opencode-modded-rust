@@ -251,6 +251,7 @@ This shape satisfies the invariants above; exact types are implementation detail
 - **Handoffs:** `handoffs/2026-09-21-session-prompt-queue-gate-handoff.md` (`H-004`, closed; satisfied by
   `GATE-001`; also owns the reactivated `CLI-001`/`CLI-006`). `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`
   (`H-003`) is superseded and folded into `H-004` (2026-09-22).
+- **Canonical behavior doc:** `wiki/cli-surface.md` (current + target CLI task and TUI lifecycle behavior).
 - **Existing invariants:** `invariants/cli-task-targeting.md` (targeting rules; its enqueue
   rule references this doc), `invariants/coding-session-behavior.md` (canonical session path),
   `invariants/runtime-lifecycle.md` (no lifecycle changes).

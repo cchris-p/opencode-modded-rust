@@ -74,6 +74,8 @@ That path is still not the canonical TUI/session runtime path. It does not becom
 
 Use `opencode run` as a useful CLI smoke path, not as proof that TUI-backed sessions behave identically.
 
+The canonical map of CLI/lifecycle behavior and the owning `CLI-*` cards is `wiki/cli-surface.md`; use it to see what exists today versus the target `opencode task` surface.
+
 ## Relationship To CLI-001
 
 `CLI-001` should make the canonical non-TUI runtime path ergonomic. Its future `opencode task new`, `opencode task send`, and `opencode task view` commands should submit and inspect work through the server/session prompt path rather than through `AgentExecutor`.

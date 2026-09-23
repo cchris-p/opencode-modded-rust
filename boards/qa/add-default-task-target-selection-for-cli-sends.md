@@ -102,3 +102,5 @@ On pass, move this card from `qa` to `done`.
 `task target` is the routing input for `CLI-001` (reactivated 2026-09-22). It has no consumer until `CLI-001`
 lands, but it is now the prerequisite that `CLI-001` consumes rather than an orphan, so this card's QA can
 proceed against the merged target commands.
+
+Canonical behavior reference: `wiki/cli-surface.md`.

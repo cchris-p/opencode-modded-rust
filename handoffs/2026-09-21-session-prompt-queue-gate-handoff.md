@@ -209,6 +209,7 @@ called out rather than left ambiguous.
 - The user reactivated `CLI-001` and `CLI-006` on 2026-09-22 as prerequisite gates for the remaining
   `CLI-*` stories. Only their cancellation is superseded; `CLI-008` remains archived (its queue behavior was
   delivered by `GATE-001`). This handoff otherwise stays closed.
+- Canonical CLI/lifecycle behavior now lives in `wiki/cli-surface.md`.
 
 ## Folded Predecessor - H-003 (2026-09-22)
 

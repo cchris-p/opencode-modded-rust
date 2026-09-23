@@ -42,6 +42,7 @@ This handoff is for follow-up work after `FEAT-038` landed. Do not treat `GATE-0
   (`handoffs/2026-09-21-session-prompt-queue-gate-handoff.md`), which consolidated the former `H-003`
   (`handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`). This handoff does not restate that CLI
   scope; track `CLI-001`/`CLI-006` progress in `H-004` and keep `CLI-009` blocked until they land.
+- Canonical CLI/lifecycle behavior now lives in `wiki/cli-surface.md`.
 
 ## Included Board Items
 

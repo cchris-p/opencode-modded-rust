@@ -25,6 +25,8 @@ Prerequisites are already in place:
 - `CLI-007` (merged, PR #37) shipped `opencode task target list|select|show|clear`, which this card consumes.
 - `invariants/cli-task-targeting.md` and `invariants/message-queuing.md` remain binding.
 
+Canonical behavior reference: `wiki/cli-surface.md`.
+
 ## Summary
 
 Add a CLI-first task interaction surface inspired by Cline's `task` flow, focused on starting tasks, sending follow-up messages, and viewing task conversation state outside the TUI.

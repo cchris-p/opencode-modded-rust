@@ -22,6 +22,8 @@ Prerequisite already in place: `GATE-001` (done) exposes `status` (`idle|busy|qu
 `position`/`depth` from `GET /session/status`, which is this card's data source. Do not synthesize
 `queued` client-side.
 
+Canonical behavior reference: `wiki/cli-surface.md`.
+
 ## Summary
 
 Add a CLI-visible status surface for tasks/sessions so command-line workflows can see what is running, waiting, completed, errored, or otherwise actionable without opening the TUI.
