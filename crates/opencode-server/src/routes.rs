@@ -2793,6 +2793,365 @@ async fn prompt_child_subagent(
     Ok(output)
 }
 
+fn inspect_session_status_label(status: &opencode_session::SessionStatus) -> &'static str {
+    match status {
+        opencode_session::SessionStatus::Active => "active",
+        opencode_session::SessionStatus::Completed => "completed",
+        opencode_session::SessionStatus::Archived => "archived",
+        opencode_session::SessionStatus::Compacting => "compacting",
+    }
+}
+
+fn inspect_message_role_label(role: &opencode_session::MessageRole) -> &'static str {
+    match role {
+        opencode_session::MessageRole::User => "user",
+        opencode_session::MessageRole::Assistant => "assistant",
+        opencode_session::MessageRole::System => "system",
+        opencode_session::MessageRole::Tool => "tool",
+    }
+}
+
+fn inspect_message_is_queued(message: &opencode_session::SessionMessage) -> bool {
+    message
+        .metadata
+        .get("queued_pending")
+        .and_then(|value| value.as_bool())
+        == Some(true)
+}
+
+fn inspect_truncate(text: &str, max_chars: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= max_chars {
+        collapsed
+    } else {
+        let mut out: String = collapsed.chars().take(max_chars).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// One-line, bounded preview of a message part, used by the read-only
+/// cross-session inspection surface (FEAT-026).
+fn inspect_part_preview(part: &opencode_session::MessagePart) -> Option<String> {
+    use opencode_session::PartType;
+    const MAX: usize = 200;
+    match &part.part_type {
+        PartType::Text { text, .. } => {
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(inspect_truncate(text, MAX))
+            }
+        }
+        PartType::Reasoning { text } => {
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(format!("thinking: {}", inspect_truncate(text, MAX)))
+            }
+        }
+        PartType::ToolCall { name, input, .. } => Some(format!(
+            "[tool call] {} {}",
+            name,
+            inspect_truncate(&input.to_string(), MAX)
+        )),
+        PartType::ToolResult {
+            content, is_error, ..
+        } => {
+            let label = if *is_error {
+                "[tool error]"
+            } else {
+                "[tool result]"
+            };
+            Some(format!("{} {}", label, inspect_truncate(content, MAX)))
+        }
+        PartType::File { filename, .. } => Some(format!("[file] {}", filename)),
+        PartType::Patch { filepath, .. } => Some(format!("[patch] {}", filepath)),
+        PartType::Subtask {
+            description,
+            status,
+            ..
+        } => Some(format!(
+            "[subtask:{}] {}",
+            status,
+            inspect_truncate(description, MAX)
+        )),
+        PartType::Retry { count, reason } => Some(format!(
+            "[retry {}] {}",
+            count,
+            inspect_truncate(reason, MAX)
+        )),
+        PartType::Agent { name, status } => Some(format!("[agent {}: {}]", name, status)),
+        PartType::Compaction { summary } => {
+            if summary.trim().is_empty() {
+                None
+            } else {
+                Some(format!("compaction: {}", inspect_truncate(summary, MAX)))
+            }
+        }
+        PartType::StepStart { .. } | PartType::StepFinish { .. } | PartType::Snapshot { .. } => {
+            None
+        }
+    }
+}
+
+fn inspect_message_previews(message: &opencode_session::SessionMessage) -> Vec<String> {
+    message
+        .parts
+        .iter()
+        .filter_map(inspect_part_preview)
+        .collect()
+}
+
+/// Select one session by exact id, slug, or title, then by unique substring.
+/// Mirrors the CLI `session inspect` resolution order.
+fn resolve_inspectable_session<'a>(
+    sessions: &[&'a opencode_session::Session],
+    target: &str,
+) -> std::result::Result<&'a opencode_session::Session, opencode_tool::ToolError> {
+    let target_lower = target.to_lowercase();
+    if let Some(session) = sessions
+        .iter()
+        .copied()
+        .find(|session| session.id == target)
+    {
+        return Ok(session);
+    }
+    if let Some(session) = sessions
+        .iter()
+        .copied()
+        .find(|session| session.slug == target)
+    {
+        return Ok(session);
+    }
+    if let Some(session) = sessions
+        .iter()
+        .copied()
+        .find(|session| session.title.to_lowercase() == target_lower)
+    {
+        return Ok(session);
+    }
+
+    let matches: Vec<&opencode_session::Session> = sessions
+        .iter()
+        .copied()
+        .filter(|session| {
+            session.id.to_lowercase().contains(&target_lower)
+                || session.slug.to_lowercase().contains(&target_lower)
+                || session.title.to_lowercase().contains(&target_lower)
+        })
+        .collect();
+
+    match matches.as_slice() {
+        [single] => Ok(single),
+        [] => Err(opencode_tool::ToolError::ExecutionError(format!(
+            "No session in this workspace matches `{}`",
+            target
+        ))),
+        _ => Err(opencode_tool::ToolError::ExecutionError(format!(
+            "Session `{}` is ambiguous; matches: {}",
+            target,
+            matches
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+/// Resolve a read-only cross-session inspection request against the server's
+/// in-memory sessions, scoped to the caller's workspace.
+///
+/// Sessions from other workspaces are excluded by default (fail-closed): a
+/// session is visible only when its `workspace_identity` matches the caller's.
+/// The explicit cross-workspace override is defined by FEAT-057 and is
+/// intentionally not implemented here.
+async fn inspect_session_for_tool(
+    state: &Arc<ServerState>,
+    current_workspace: Option<String>,
+    request: opencode_tool::SessionInspectRequest,
+) -> std::result::Result<opencode_tool::SessionInspectResponse, opencode_tool::ToolError> {
+    use opencode_tool::{
+        SessionInspectRequest, SessionInspectResponse, SessionSummaryData, SessionTranscriptData,
+        SessionTranscriptMessageData,
+    };
+
+    let manager = state.sessions.lock().await;
+    let visible: Vec<&opencode_session::Session> = manager
+        .list()
+        .into_iter()
+        .filter(|session| session.workspace_identity == current_workspace)
+        .collect();
+
+    match request {
+        SessionInspectRequest::List { query, limit } => {
+            let needle = query.map(|query| query.to_lowercase());
+            let mut sessions: Vec<&opencode_session::Session> = visible
+                .into_iter()
+                .filter(|session| match &needle {
+                    Some(needle) => {
+                        session.title.to_lowercase().contains(needle)
+                            || session.id.to_lowercase().contains(needle)
+                            || session.slug.to_lowercase().contains(needle)
+                    }
+                    None => true,
+                })
+                .collect();
+            sessions.sort_by(|a, b| b.time.updated.cmp(&a.time.updated));
+            let total = sessions.len();
+            let summaries: Vec<SessionSummaryData> = sessions
+                .into_iter()
+                .take(limit)
+                .map(|session| SessionSummaryData {
+                    id: session.id.clone(),
+                    title: session.title.clone(),
+                    status: inspect_session_status_label(&session.status).to_string(),
+                    updated: session.time.updated,
+                    directory: session.directory.clone(),
+                })
+                .collect();
+            Ok(SessionInspectResponse::List {
+                sessions: summaries,
+                total,
+            })
+        }
+        SessionInspectRequest::Read { id, limit, offset } => {
+            let target = resolve_inspectable_session(&visible, &id)?;
+            let messages: Vec<&opencode_session::SessionMessage> = target
+                .messages
+                .iter()
+                .filter(|message| !inspect_message_is_queued(message))
+                .collect();
+            let total = messages.len();
+            let slice: Vec<SessionTranscriptMessageData> = messages
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|message| SessionTranscriptMessageData {
+                    role: inspect_message_role_label(&message.role).to_string(),
+                    created: message.created_at.timestamp_millis(),
+                    previews: inspect_message_previews(message),
+                })
+                .collect();
+            let returned = slice.len();
+            Ok(SessionInspectResponse::Read(SessionTranscriptData {
+                id: target.id.clone(),
+                title: target.title.clone(),
+                status: inspect_session_status_label(&target.status).to_string(),
+                directory: target.directory.clone(),
+                total,
+                offset,
+                returned,
+                messages: slice,
+            }))
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_inspect_tests {
+    use super::*;
+    use opencode_tool::{SessionInspectRequest, SessionInspectResponse, ToolError};
+
+    /// Seed two sessions in distinct workspaces; returns (a_id, b_id, workspace_a).
+    async fn seed(state: &Arc<ServerState>) -> (String, String, String) {
+        let mut manager = state.sessions.lock().await;
+        let workspace_a =
+            opencode_session::Session::canonical_workspace_identity("/tmp/feat026-ws-a").unwrap();
+
+        let a = manager.create("proj", "/tmp/feat026-ws-a");
+        {
+            let session = manager.get_mut(&a.id).expect("session a exists");
+            session.add_user_message("hello from a");
+            session.add_assistant_message().add_text("reply from a");
+        }
+
+        let b = manager.create("proj", "/tmp/feat026-ws-b");
+        manager
+            .get_mut(&b.id)
+            .expect("session b exists")
+            .add_user_message("hello from b");
+
+        (a.id, b.id, workspace_a)
+    }
+
+    #[tokio::test]
+    async fn list_excludes_other_workspaces() {
+        let state = Arc::new(ServerState::new());
+        let (a_id, _b_id, workspace_a) = seed(&state).await;
+
+        let response = inspect_session_for_tool(
+            &state,
+            Some(workspace_a),
+            SessionInspectRequest::List {
+                query: None,
+                limit: 20,
+            },
+        )
+        .await
+        .expect("list succeeds");
+
+        match response {
+            SessionInspectResponse::List { sessions, total } => {
+                assert_eq!(total, 1, "only the same-workspace session is visible");
+                assert_eq!(sessions.len(), 1);
+                assert_eq!(sessions[0].id, a_id);
+            }
+            _ => panic!("expected a list response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_rejects_other_workspace() {
+        let state = Arc::new(ServerState::new());
+        let (_a_id, b_id, workspace_a) = seed(&state).await;
+
+        let error = inspect_session_for_tool(
+            &state,
+            Some(workspace_a),
+            SessionInspectRequest::Read {
+                id: b_id,
+                limit: 10,
+                offset: 0,
+            },
+        )
+        .await
+        .expect_err("cross-workspace read must fail closed");
+
+        assert!(matches!(error, ToolError::ExecutionError(_)));
+    }
+
+    #[tokio::test]
+    async fn read_paginates_same_workspace_transcript() {
+        let state = Arc::new(ServerState::new());
+        let (a_id, _b_id, workspace_a) = seed(&state).await;
+
+        let response = inspect_session_for_tool(
+            &state,
+            Some(workspace_a),
+            SessionInspectRequest::Read {
+                id: a_id.clone(),
+                limit: 1,
+                offset: 0,
+            },
+        )
+        .await
+        .expect("same-workspace read succeeds");
+
+        match response {
+            SessionInspectResponse::Read(data) => {
+                assert_eq!(data.id, a_id);
+                assert_eq!(data.total, 2);
+                assert_eq!(data.returned, 1);
+                assert_eq!(data.messages.len(), 1);
+                assert!(!data.messages[0].previews.is_empty());
+            }
+            _ => panic!("expected a read response"),
+        }
+    }
+}
+
 async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: PendingPrompt) {
     set_session_run_status(&state, &session_id, SessionRunStatus::Busy).await;
 
@@ -3100,6 +3459,18 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
             })
         });
 
+    let session_inspect_callback: opencode_tool::SessionInspectCallback = {
+        let inspect_state = task_state.clone();
+        let inspect_workspace = session.workspace_identity.clone().or_else(|| {
+            opencode_session::Session::canonical_workspace_identity(&session.directory)
+        });
+        Arc::new(move |request| {
+            let state = inspect_state.clone();
+            let workspace = inspect_workspace.clone();
+            Box::pin(async move { inspect_session_for_tool(&state, workspace, request).await })
+        })
+    };
+
     let prompt_runner = Arc::new(
         opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
             opencode_session::SessionStateManager::new(),
@@ -3107,7 +3478,8 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         .with_ask_callback(permission_callback)
         .with_ask_question_callback(question_callback)
         .with_create_subsession_callback(create_subsession_callback)
-        .with_prompt_subsession_callback(prompt_subsession_callback),
+        .with_prompt_subsession_callback(prompt_subsession_callback)
+        .with_session_inspect_callback(session_inspect_callback),
     );
     ACTIVE_PROMPTS
         .write()

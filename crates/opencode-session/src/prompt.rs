@@ -143,6 +143,7 @@ pub struct SessionPrompt {
     ask_question_callback: Option<opencode_tool::QuestionCallback>,
     create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
     prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+    session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
 }
 
 impl SessionPrompt {
@@ -156,6 +157,7 @@ impl SessionPrompt {
             ask_question_callback: None,
             create_subsession_callback: None,
             prompt_subsession_callback: None,
+            session_inspect_callback: None,
         }
     }
 
@@ -198,6 +200,14 @@ impl SessionPrompt {
         callback: opencode_tool::PromptSubsessionCallback,
     ) -> Self {
         self.prompt_subsession_callback = Some(callback);
+        self
+    }
+
+    pub fn with_session_inspect_callback(
+        mut self,
+        callback: opencode_tool::SessionInspectCallback,
+    ) -> Self {
+        self.session_inspect_callback = Some(callback);
         self
     }
 
@@ -909,6 +919,7 @@ impl SessionPrompt {
             self.ask_question_callback.clone(),
             self.create_subsession_callback.clone(),
             self.prompt_subsession_callback.clone(),
+            self.session_inspect_callback.clone(),
             update_hook,
         )
         .await;
@@ -993,6 +1004,7 @@ impl SessionPrompt {
             self.ask_question_callback.clone(),
             self.create_subsession_callback.clone(),
             self.prompt_subsession_callback.clone(),
+            self.session_inspect_callback.clone(),
             None,
         )
         .await;
@@ -1022,6 +1034,7 @@ impl SessionPrompt {
         ask_question_callback: Option<opencode_tool::QuestionCallback>,
         create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
         prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+        session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
         update_hook: Option<SessionUpdateHook>,
     ) -> anyhow::Result<()> {
         let mut step = 0u32;
@@ -1459,6 +1472,13 @@ impl SessionPrompt {
                             let prompt_subsession_callback = prompt_subsession_callback.clone();
                             async move { prompt_subsession_callback(session_id, prompt).await }
                         });
+                }
+
+                if let Some(session_inspect_callback) = session_inspect_callback.clone() {
+                    tool_context = tool_context.with_session_inspect(move |request| {
+                        let session_inspect_callback = session_inspect_callback.clone();
+                        async move { session_inspect_callback(request).await }
+                    });
                 }
 
                 let registry = Arc::new(opencode_tool::create_default_registry().await);

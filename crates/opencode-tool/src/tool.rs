@@ -214,6 +214,71 @@ pub type CreateSyntheticMessageCallback = Arc<
         + Sync,
 >;
 
+/// A compact, read-only description of a session the agent may inspect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummaryData {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub updated: i64,
+    pub directory: String,
+}
+
+/// Request for the read-only cross-session inspection callback.
+#[derive(Debug, Clone)]
+pub enum SessionInspectRequest {
+    /// Enumerate the sessions visible to the caller's workspace.
+    List { query: Option<String>, limit: usize },
+    /// Read a bounded slice of one session's transcript.
+    Read {
+        id: String,
+        limit: usize,
+        offset: usize,
+    },
+}
+
+/// One message from an inspected session, reduced to role/time/part previews.
+#[derive(Debug, Clone)]
+pub struct SessionTranscriptMessageData {
+    pub role: String,
+    pub created: i64,
+    pub previews: Vec<String>,
+}
+
+/// A bounded, paginated transcript of one inspected session.
+#[derive(Debug, Clone)]
+pub struct SessionTranscriptData {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub directory: String,
+    pub total: usize,
+    pub offset: usize,
+    pub returned: usize,
+    pub messages: Vec<SessionTranscriptMessageData>,
+}
+
+/// Result of the read-only cross-session inspection callback.
+#[derive(Debug, Clone)]
+pub enum SessionInspectResponse {
+    List {
+        sessions: Vec<SessionSummaryData>,
+        total: usize,
+    },
+    Read(SessionTranscriptData),
+}
+
+/// Resolves read-only cross-session inspection requests. Implementations are
+/// responsible for workspace scoping and for bounding/paginating the result.
+pub type SessionInspectCallback = Arc<
+    dyn Fn(
+            SessionInspectRequest,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<SessionInspectResponse, ToolError>> + Send>,
+        > + Send
+        + Sync,
+>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionRequest {
     pub permission: String,
@@ -360,6 +425,7 @@ pub struct ToolContext {
     pub todo_get: Option<TodoGetCallback>,
     pub get_last_model: Option<GetLastModelCallback>,
     pub create_synthetic_message: Option<CreateSyntheticMessageCallback>,
+    pub session_inspect: Option<SessionInspectCallback>,
     pub project_root: String,
     pub loaded_instructions: LoadedInstructions,
     pub registry: Option<Arc<ToolRegistry>>,
@@ -393,6 +459,7 @@ impl ToolContext {
             todo_get: None,
             get_last_model: None,
             create_synthetic_message: None,
+            session_inspect: None,
             project_root: directory,
             loaded_instructions: LoadedInstructions::new(),
             registry: None,
@@ -722,6 +789,30 @@ impl ToolContext {
             callback(self.session_id.clone(), agent, text).await
         } else {
             Ok(())
+        }
+    }
+
+    pub fn with_session_inspect<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(SessionInspectRequest) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<SessionInspectResponse, ToolError>>
+            + Send
+            + 'static,
+    {
+        self.session_inspect = Some(Arc::new(move |request| Box::pin(callback(request))));
+        self
+    }
+
+    pub async fn do_session_inspect(
+        &self,
+        request: SessionInspectRequest,
+    ) -> Result<SessionInspectResponse, ToolError> {
+        if let Some(ref callback) = self.session_inspect {
+            callback(request).await
+        } else {
+            Err(ToolError::ExecutionError(
+                "Session inspection is not available in this context".to_string(),
+            ))
         }
     }
 
