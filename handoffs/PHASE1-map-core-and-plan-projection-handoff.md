@@ -52,6 +52,13 @@ Extend `scopemux-core` with the fields and API the map needs (`WI-033`, `WI-032`
 - `WI-032`/`WI-036` are large; keep each card independently shippable and avoid making plan nodes a dependency for basic retrieval.
 - `WI-030` (Rust grammar) is a prerequisite for the map to be useful on this repo; it is separate and sizeable.
 
+## Progress (2026-09-24)
+
+- **`WI-033` core landed**: `ProjectInfoBlock` gains origin/lifecycle/provenance/confidence; `origin_mask`/`lifecycle_mask` filters added to search and tiered requests. `scopemux-core` PRs #10 and #11 merged; tests pass (`run_interfile_tests.sh`, `run_c_tests.sh`). Product FFI synced and pin advanced to `9f1398f` in `opencode-modded-rust` PR #106.
+- Remaining `WI-033` acceptance (incremental-update provenance, durable-store serialization) depends on `WI-018`/`WI-031`.
+
+Next: `WI-032` (target-state plan InfoBlocks + reconciliation), which builds on these fields.
+
 ## Exit criteria
 
 - The registry distinguishes parsed and planned blocks, and plan nodes carry lifecycle, provenance, and confidence.
