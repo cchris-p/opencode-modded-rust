@@ -36,6 +36,14 @@
 - Full parity with OpenCode is deferred.
 - Upstream sync is optional and selective, not a standing maintenance obligation.
 
+## ScopeMux Integration Scope
+
+- Integration work includes the `scopemux` development it depends on.
+- The ScopeMux integration program owns the required `scopemux-core` engine changes and the `scopemux-notes` planning/board work that gates them; upstream `FIX-*`/`WI-*` items are in-scope deliverables, not external prerequisites.
+- Upstream artifacts are edited in their own repositories (`$HOME/apps/scopemux-core`, `$HOME/apps/scopemux-notes`); cross-repo ownership rules still apply.
+- This does not make `scopemux` a V1 dependency or change runtime authority over task state, lifecycle, verification, or review.
+- Canonical rule: `invariants/integration-scope.md`.
+
 ## Storage Paths
 
 - The Rust product resolves its SQLite database as `dirs::data_local_dir()/opencode/opencode.db` (`crates/opencode-storage/src/database.rs:138`).

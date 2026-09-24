@@ -172,7 +172,7 @@ The product's own repository is Rust, and `scopemux-core` does not parse Rust to
 
 ## Phasing
 
-- **Prerequisites.** Upstream core conflict fixes (`FIX-001`-`FIX-006`, handoff `H-001`) and enabling items (`WI-018`, `WI-030`-`WI-036`) in `$HOME/apps/scopemux-notes`; the product boundary `START-025` gates `SCOPE-002`.
+- **Prerequisites.** Upstream core conflict fixes (`FIX-001`-`FIX-006`, handoff `H-001`) and enabling items (`WI-018`, `WI-030`-`WI-036`) in `$HOME/apps/scopemux-notes`; the product boundary `START-025` gates `SCOPE-002`. These are in-scope deliverables of the integration program, not external blockers: integration work includes the `scopemux` development it depends on (`invariants/integration-scope.md`).
 - **Phase 0 - Boundary.** Land `START-025` and the near-term provider integration (`SCOPE-002`). No plan nodes required.
 - **Phase 1 - Map core.** Rust grammar and resolution, incremental reconciliation, InfoBlock origin/lifecycle/provenance, delta view, agent map API. This is the minimum that makes the map useful on this product's own repo.
 - **Phase 2 - Plan projection.** Project the authoritative task record into plan nodes and reconcile them (`SCOPE-003`).

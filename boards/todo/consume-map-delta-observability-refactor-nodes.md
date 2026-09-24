@@ -56,9 +56,9 @@ Connecting `scopemux` (`SCOPE-002`) and projecting target state (`SCOPE-003`) on
 - `SCOPE-001` Idealized scopemux map integration.
 - `SCOPE-003` Project authoritative task state into scopemux plan nodes - predecessor.
 - `START-025` Add retrieval-provider boundary for task context assembly.
-- Upstream: `WI-034` (observability blocks), `WI-035` (refactor detection), `WI-036` (delta and map query API), plus `FIX-002` (context model disambiguation) in `$HOME/apps/scopemux-notes`.
+- Upstream (in-scope integration work per `invariants/integration-scope.md`): `WI-034` (observability blocks), `WI-035` (refactor detection), `WI-036` (delta and map query API), plus `FIX-002` (context model disambiguation) in `$HOME/apps/scopemux-notes`.
 
 ## Notes
 
-- Depends on `SCOPE-003` and upstream `WI-034`-`WI-036`.
+- Depends on `SCOPE-003` and upstream `WI-034`-`WI-036`, which the integration program owns and develops in `$HOME/apps/scopemux-notes`.
 - Review must use a stricter confidence threshold than implementation per `invariants/retrieval.md`.

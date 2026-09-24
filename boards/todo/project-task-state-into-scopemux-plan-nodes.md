@@ -56,9 +56,9 @@ This is Phase 2 of `SCOPE-001`. It does not give `scopemux` any authority over t
 - `SCOPE-002` Integrate scopemux-core behind the retrieval-provider boundary - predecessor.
 - `SCOPE-004` Consume map delta, observability, and refactor nodes in context assembly.
 - `START-016` Define structured task state for V1.
-- Upstream: `WI-032`, `WI-033`, `WI-036`, plus `FIX-002` (block-type disambiguation) and `FIX-006` (planning-doc alignment) in `$HOME/apps/scopemux-notes`.
+- Upstream (in-scope integration work per `invariants/integration-scope.md`): `WI-032`, `WI-033`, `WI-036`, plus `FIX-002` (block-type disambiguation) and `FIX-006` (planning-doc alignment) in `$HOME/apps/scopemux-notes`.
 
 ## Notes
 
-- Depends on `SCOPE-002` and the upstream plan-InfoBlock work (`WI-032`, `WI-033`).
+- Depends on `SCOPE-002` and the upstream plan-InfoBlock work (`WI-032`, `WI-033`), which the integration program owns and develops in `$HOME/apps/scopemux-notes`.
 - Authority rule: if a plan node and the task record disagree, the task record wins.

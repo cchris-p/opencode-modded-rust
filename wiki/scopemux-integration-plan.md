@@ -12,6 +12,12 @@ V1 still needs to ship as a useful personal daily-driver with explicit task stat
 
 The current Rust runtime already assembles context directly inside session and prompt code. That is acceptable for V1 as long as the system does not hard-code assumptions that prevent a later retrieval layer from being inserted cleanly.
 
+## Integration Scope
+
+Integration work includes the `scopemux` development it depends on. When this product takes on ScopeMux integration (the `SCOPE` program), the effort owns the required `scopemux-core` engine changes and the `scopemux-notes` planning and board work that gates them (`FIX-001`-`FIX-006`, `WI-018`, `WI-030`-`WI-036`), editing those artifacts in their own repository.
+
+Upstream items are therefore in-scope deliverables of the integration program, not external prerequisites that block it while another owner waits. This is recorded as a binding rule in `invariants/integration-scope.md` and does not change the V1 guardrails: `ScopeMux` stays optional, the generic provider remains the default and fallback, and runtime authority over task state, lifecycle, verification, and review is unchanged.
+
 ## Planning Constraints
 
 - `ScopeMux` must remain optional for V1.
@@ -160,7 +166,7 @@ This keeps retrieval mistakes from silently reshaping the task.
 This plan requires explicit follow-up items:
 
 - `START-025` Add retrieval-provider boundary for task context assembly — introduce the narrow abstraction that lets V1 keep generic retrieval while leaving a clean insertion point for future `ScopeMux` support.
-- `SCOPE-002` Integrate scopemux-core behind the retrieval-provider boundary — connect the concrete `scopemux-core` engine as one provider behind that boundary (Phase 0, near-term).
+- `SCOPE-002` Integrate scopemux-core behind the retrieval-provider boundary — connect the concrete `scopemux-core` engine as one provider behind that boundary (Phase 0, near-term). Integration work includes the `scopemux-core`/`scopemux-notes` development it depends on, per `invariants/integration-scope.md`.
 - `SCOPE-001` Idealized scopemux map integration — the target map model and phases (`SCOPE-003`, `SCOPE-004`) that extend this plan without changing its guardrails.
 
 ## Non-Goals
