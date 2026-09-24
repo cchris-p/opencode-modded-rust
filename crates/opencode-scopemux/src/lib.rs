@@ -88,6 +88,10 @@ mod ffi {
         pub tier: c_int,
         pub estimated_tokens: usize,
         pub related_symbol_count: usize,
+        pub origin: c_int,
+        pub lifecycle: c_int,
+        pub provenance: *mut c_char,
+        pub confidence: f32,
     }
 
     #[repr(C)]
@@ -100,6 +104,8 @@ mod ffi {
         pub include_related: bool,
         pub include_dependencies: bool,
         pub max_hits: usize,
+        pub origin_mask: u32,
+        pub lifecycle_mask: u32,
     }
 
     #[repr(C)]
@@ -219,6 +225,8 @@ impl RetrievalProvider for ScopemuxProvider {
                 include_related: false,
                 include_dependencies: true,
                 max_hits: request.token_budget.unwrap_or(20),
+                origin_mask: 0,    // all origins
+                lifecycle_mask: 0, // all lifecycles
             };
 
             let mut result = ffi::ProjectSearchResult {
@@ -253,7 +261,11 @@ impl RetrievalProvider for ScopemuxProvider {
                     (RetrievalCandidateKind::Snippet, None)
                 };
 
-                let confidence = if hit.name_match || hit.text_match {
+                // Parsed blocks carry confidence 1.0 and are exact facts;
+                // otherwise fall back to the search match type.
+                let confidence = if (*block).confidence >= 0.99 {
+                    RetrievalConfidence::Exact
+                } else if hit.name_match || hit.text_match {
                     RetrievalConfidence::High
                 } else if hit.relationship_match {
                     RetrievalConfidence::Medium
@@ -261,12 +273,21 @@ impl RetrievalProvider for ScopemuxProvider {
                     RetrievalConfidence::Low
                 };
 
+                let provenance = {
+                    let source = cstr((*block).provenance);
+                    if source.is_empty() {
+                        format!("scopemux search hit (id: {id})")
+                    } else {
+                        format!("scopemux: {source}")
+                    }
+                };
+
                 candidates.push(RetrievalCandidate {
                     kind,
                     path: file_path,
                     symbol,
                     snippet: None,
-                    provenance: format!("scopemux search hit (id: {id})"),
+                    provenance,
                     confidence,
                     score: hit.score as f32,
                     estimated_tokens: Some((*block).estimated_tokens),
