@@ -63,7 +63,9 @@ Extend `scopemux-core` with the fields and API the map needs (`WI-033`, `WI-032`
 
 - **`WI-036` core implemented**: `scopemux-core` PR #13 (stacked on #12) adds the delta view (`{ add, change, remove, reuse }` with anchors/shape/provenance/confidence/tokens, task-filterable) and the map query API (`node`, `resolve`, `expand`, `neighbors`, `duplicates`, `observability`, `change_impact`), each returning machine-readable items with a static selection reason. Verified via `scripts/docker_test.sh` interfile (project_context 9/9) and C suites. `observability`/`duplicates` remain heuristic pending `WI-034`/`WI-035`.
 
-Next: `WI-031` (durable map store), then `WI-034`/`WI-035` as needed, then `SCOPE-003` on the product side.
+- **`WI-031` core implemented**: `scopemux-core` PR #14 (stacked on #12) adds JSON persistence for the durable plan-node store (`project_context_plan_nodes_to_json`/`from_json`, `..._save`/`..._load`, replace-or-merge) and documents the derived/durable ownership boundary in `docs/durable-plan-store.md`. Verified via `scripts/docker_test.sh` interfile (project_context 9/9, `durable_plan_store_roundtrip`) and C suites.
+
+Next: `WI-018` (incremental index/watcher) and/or `WI-030` (Rust grammar), then product `SCOPE-003`. All three open upstream PRs (#12 WI-032, #13 WI-036, #14 WI-031) are stacked on this handoff and should merge in dependency order.
 
 ## Exit criteria
 
