@@ -8,6 +8,7 @@ members = [
     "crates/opencode-grep",
     "crates/opencode-permission",
     "crates/opencode-provider",
+    "crates/opencode-retrieval",
     "crates/opencode-session",
     "crates/opencode-storage",
     "crates/opencode-tool",

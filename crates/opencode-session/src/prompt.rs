@@ -27,6 +27,7 @@ use crate::message_v2::{
 use crate::summary::{summarize_into_session, SummarizeInput};
 use crate::system::SystemPrompt;
 use crate::{MessageRole, PartType, Session, SessionMessage, SessionStateManager};
+use opencode_types::RetrievalRole;
 
 const MAX_STEPS: u32 = 100;
 
@@ -283,6 +284,24 @@ impl SessionPrompt {
 
         let project_root = session.directory.clone();
 
+        // Retrieval-provider boundary: derive a request from authoritative task
+        // state plus this prompt's explicit file seeds and retain the provider's
+        // candidates as provenance. The provider is optional; on failure the
+        // generic path is unchanged.
+        let seed_files: Vec<String> = input
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                PartInput::File { url, .. } if !url.starts_with("data:") => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        let retrieval_response = if seed_files.is_empty() {
+            None
+        } else {
+            crate::retrieval::retrieve(session, RetrievalRole::Implementing, seed_files).await
+        };
+
         // Accept-time materialization: when the server has already persisted the
         // user message for this prompt, consume that exact message instead of
         // creating a second one. `message_id` ownership is enforced here.
@@ -367,6 +386,22 @@ impl SessionPrompt {
                     );
                 }
             }
+        }
+
+        if let Some(response) = retrieval_response {
+            msg.metadata.insert(
+                "retrieval_provider".to_string(),
+                serde_json::Value::String(response.provider),
+            );
+            let candidates: Vec<String> = response
+                .candidates
+                .iter()
+                .map(|candidate| candidate.path.clone())
+                .collect();
+            msg.metadata.insert(
+                "retrieval_candidates".to_string(),
+                serde_json::json!(candidates),
+            );
         }
 
         Ok(())

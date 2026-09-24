@@ -49,7 +49,7 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 
 - Making `scopemux-core` a V1 hard dependency or a build requirement for the daily-driver path.
 - Porting `scopemux-core` to Rust or rewriting its parsers.
-- Adding Rust grammar support to `scopemux-core` (separate upstream work; tracked as `WI-030` in `$HOME/apps/scopemux-notes`).
+- Adding Rust grammar support to `scopemux-core` as part of this product-side provider card (it is upstream program work; tracked as `WI-030`).
 - Target-state/plan nodes, delta views, observability blocks, or duplication analysis (those belong to `SCOPE-001` later phases).
 - Replacing direct file reads for small, obvious tasks.
 - Giving `scopemux-core` authority over task lifecycle, completion, verification, or review.
@@ -87,11 +87,12 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 - `PHASE-003` V2 reliability - parent phase where early ScopeMux integration was scheduled.
 - `START-016` Define structured task state for V1 - source of task/stage intent the retrieval request is built from.
 - `PHASE-001` / `START-005` - V1 runtime loop that must remain generic and ScopeMux-free.
-- Upstream prerequisites in `$HOME/apps/scopemux-notes`: `FIX-001` (C++ resolver registration and declaration), `FIX-003` (Python interpreter range), `FIX-004` (Python API surface docs). These make the C API and build contract reliable before integration; the full core conflict set is `FIX-001`-`FIX-006` composed by `H-001`.
+- Upstream work in `$HOME/apps/scopemux-notes` (in-scope for ScopeMux integration, not an external prerequisite): `FIX-001` (C++ resolver registration and declaration), `FIX-003` (Python interpreter range), `FIX-004` (Python API surface docs). These make the C API and build contract reliable before integration; the full core conflict set is `FIX-001`-`FIX-006` composed by `H-001`.
 
 ## Notes
 
 - Depends on `START-025`; do not start implementation before the boundary exists.
+- Integration scope: the ScopeMux integration program includes the `scopemux-core`/`scopemux-notes` development it depends on (`invariants/integration-scope.md`); upstream `FIX-*`/`WI-*` items are in-scope program deliverables, not external prerequisites.
 - Keep the integration one provider among peers, not a special case threaded through the runtime.
 - Treat `scopemux-core` maturity gaps (no Rust grammar, dev-oriented build, C-only project API) as first-class design inputs, not as footnotes.
 - The wiki companions are `wiki/scopemux-integration-plan.md` (boundary and guardrails) and `wiki/scopemux-map-integration.md` (idealized target).
