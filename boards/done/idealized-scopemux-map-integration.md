@@ -101,13 +101,14 @@ Every prerequisite is tracked in this repo or in `$HOME/apps/scopemux-notes`. No
 
 | Prerequisite | Home | Gates | Status |
 | --- | --- | --- | --- |
-| `START-025` retrieval-provider boundary | this repo | `SCOPE-002` implementation | todo |
-| `FIX-001` C++ resolver registration/declaration | scopemux-notes | trustworthy C API core for `SCOPE-002` | todo |
-| `FIX-003` Python interpreter range alignment | scopemux-notes | pinned/reproducible build for `SCOPE-002` | todo |
-| `FIX-004` Python API surface correction | scopemux-notes | honest C-only boundary for `SCOPE-002` | todo |
-| `FIX-002` InfoBlock terminology disambiguation | scopemux-notes | trustworthy context model for Phase 2/3 | todo |
-| `FIX-006` planning-doc alignment | scopemux-notes | docs cannot be mistaken for implementation | todo |
-| `FIX-005` duplicate `parser_free` declaration | scopemux-notes | clean parser public surface | todo |
+| `START-025` retrieval-provider boundary | this repo | `SCOPE-002` implementation | done (PR #104) |
+| `FIX-001` C++ resolver registration/declaration | scopemux-notes | trustworthy C API core for `SCOPE-002` | done (`scopemux-core` PR #7) |
+| `FIX-003` Python interpreter range alignment | scopemux-notes | pinned/reproducible build for `SCOPE-002` | done (`scopemux-core` PR #7) |
+| `FIX-004` Python API surface correction | scopemux-notes | honest C-only boundary for `SCOPE-002` | done (`scopemux-core` PR #7) |
+| `FIX-002` InfoBlock terminology disambiguation | scopemux-notes | trustworthy context model for Phase 2/3 | done (`scopemux-core` PR #7) |
+| `FIX-006` planning-doc alignment | scopemux-notes | docs cannot be mistaken for implementation | done (`scopemux-notes` `9691e45`) |
+| `FIX-005` duplicate `parser_free` declaration | scopemux-notes | clean parser public surface | done (`scopemux-core` PR #7) |
+| `TESTS-006` C example AST mismatch | scopemux-notes | clean `run_c_tests.sh` baseline | done (`scopemux-core` PR #8) |
 | `WI-030` Rust grammar and reference resolution | scopemux-notes | Phase 1 usefulness on this repo | todo |
 | `WI-018` incremental index and watcher | scopemux-notes | map stays current | todo |
 | `WI-031` durable map store | scopemux-notes | plan persistence | todo |
@@ -119,7 +120,7 @@ Every prerequisite is tracked in this repo or in `$HOME/apps/scopemux-notes`. No
 
 - The core invariants that constrain the upstream fixes are `$HOME/apps/scopemux-notes/invariants/`.
 - `FIX-001`-`FIX-006` are correctness prerequisites with no standalone feature value; they are composed by `$HOME/apps/scopemux-notes/handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`).
-- `SCOPE-002` is gated by `START-025` and must not start before that boundary exists. The `FIX-*` items are strongly recommended before `SCOPE-002` because they make the C API surface and build contract reliable, but they do not block a spike.
+- `SCOPE-002` was gated by `START-025`; that boundary now exists (PR #104). The `FIX-*` items are done and merged (`scopemux-core` PR #7), and `TESTS-006` cleared the C test baseline (PR #8), so `SCOPE-002` is unblocked.
 
 ## Phasing
 
