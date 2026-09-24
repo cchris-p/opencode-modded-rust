@@ -10,6 +10,7 @@ opencode-core = { path = "../opencode-core" }
 opencode-types = { path = "../opencode-types" }
 opencode-storage = { path = "../opencode-storage" }
 opencode-provider = { path = "../opencode-provider" }
+opencode-retrieval = { path = "../opencode-retrieval" }
 opencode-tool = { path = "../opencode-tool" }
 opencode-mcp = { path = "../opencode-mcp" }
 opencode-lsp = { path = "../opencode-lsp" }

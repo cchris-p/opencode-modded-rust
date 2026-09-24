@@ -6,6 +6,7 @@ pub mod llm;
 pub mod message;
 pub mod message_v2;
 pub mod prompt;
+pub mod retrieval;
 pub mod retry;
 pub mod revert;
 pub mod session;
