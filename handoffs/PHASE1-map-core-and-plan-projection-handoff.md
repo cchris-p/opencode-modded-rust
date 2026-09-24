@@ -65,7 +65,9 @@ Extend `scopemux-core` with the fields and API the map needs (`WI-033`, `WI-032`
 
 - **`WI-031` core implemented**: `scopemux-core` PR #14 (stacked on #12) adds JSON persistence for the durable plan-node store (`project_context_plan_nodes_to_json`/`from_json`, `..._save`/`..._load`, replace-or-merge) and documents the derived/durable ownership boundary in `docs/durable-plan-store.md`. Verified via `scripts/docker_test.sh` interfile (project_context 9/9, `durable_plan_store_roundtrip`) and C suites.
 
-Next: `WI-018` (incremental index/watcher) and/or `WI-030` (Rust grammar), then product `SCOPE-003`. All three open upstream PRs (#12 WI-032, #13 WI-036, #14 WI-031) are stacked on this handoff and should merge in dependency order.
+- **Upstream stack merged to `scopemux-core` `main`**: PR #12 (`5b2a74c`), #13 (`e6787cc`), and #14 (`1b3cbbe`) are all merged; `main` is current and the feature branches are deleted.
+
+Next: product `SCOPE-003` (project authoritative task state into plan nodes via the FFI), pinning `scopemux-core` `main` and syncing the FFI layout. `WI-018`/`WI-030` remain independent enablers.
 
 ## Exit criteria
 
