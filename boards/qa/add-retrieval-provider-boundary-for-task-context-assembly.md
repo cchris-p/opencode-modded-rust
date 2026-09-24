@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "START"
 spec: "wiki/scopemux-integration-plan.md"
-status: "todo"
+status: "qa"
 created: "2026-08-30"
 ---
 
@@ -77,6 +77,18 @@ Introduce a narrow runtime retrieval interface so task context assembly can stay
 - The runtime has one explicit retrieval-provider boundary for task context assembly.
 - V1 still works without `ScopeMux`.
 - Future `ScopeMux` integration can target that boundary instead of scattering logic across the runtime.
+
+## Implementation
+
+First cut landed on `feature/START-025-retrieval-provider-boundary` (PR #104, awaiting QA):
+
+- Contract types in `opencode-types` (`crates/opencode-types/src/retrieval.rs`).
+- `opencode-retrieval` crate: `RetrievalProvider` trait + `GenericRepositoryProvider`.
+- v1 live-path consumption in `SessionPrompt::create_user_message`, deriving the request from `Session.task` + explicit seed files and retaining candidates as message provenance.
+- Provider is optional; absence/failure leaves generic behavior unchanged.
+- Role is fixed to `Implementing`; budgets reuse existing agent/compaction limits; gitignore handling unchanged; v2 `StreamInput` adoption deferred to the `FEAT-011` consolidation.
+
+Verification: `cargo test -p opencode-types -p opencode-retrieval` and `cargo test -p opencode-session retrieval` pass; `cargo clippy -p opencode-retrieval` clean.
 
 ## Related Items
 
