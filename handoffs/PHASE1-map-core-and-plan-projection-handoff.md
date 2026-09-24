@@ -67,7 +67,9 @@ Extend `scopemux-core` with the fields and API the map needs (`WI-033`, `WI-032`
 
 - **Upstream stack merged to `scopemux-core` `main`**: PR #12 (`5b2a74c`), #13 (`e6787cc`), and #14 (`1b3cbbe`) are all merged; `main` is current and the feature branches are deleted.
 
-Next: product `SCOPE-003` (project authoritative task state into plan nodes via the FFI), pinning `scopemux-core` `main` and syncing the FFI layout. `WI-018`/`WI-030` remain independent enablers.
+- **`SCOPE-003` implemented**: `opencode-modded-rust` PR #107 (open, base `development`) projects the task record into plan nodes via the projection contract in `opencode-types::plan`, extends `RetrievalRequest`/`RetrievalResponse` and `RetrievalCandidate` with plan nodes, reconciliation signals, and origin/lifecycle, syncs the `opencode-scopemux` FFI to the new layout, and advances the pin to `1b3cbbe`. The native provider returns `stale`/`conflict`/`implemented` as evidence only. Verified native `cargo test -p opencode-scopemux --features native` 5/5; default crate tests and clippy clean on touched files. Card moved to `qa`.
+
+Next: review/merge `opencode-modded-rust` PR #107; then post-merge QA on `development`. `WI-018`/`WI-030` remain independent enablers.
 
 ## Exit criteria
 
