@@ -1,7 +1,7 @@
 ---
 id: "H-011"
 title: "Phase 1/2 map core and plan projection - Handoff"
-status: "open"
+status: "complete"
 created: "2026-09-24"
 updated: "2026-09-24"
 owner: ""
@@ -12,6 +12,23 @@ items: ["WI-033", "WI-032", "WI-036", "WI-031", "SCOPE-003"]
 ---
 
 # Phase 1/2 Map Core And Plan Projection - Handoff
+
+## Completed with
+
+All items in this handoff are implemented and merged:
+
+| Item | Deliverable | Merge |
+| --- | --- | --- |
+| `WI-033` | origin/lifecycle/provenance/confidence + origin/lifecycle masks | `scopemux-core` #10, #11 |
+| `WI-033` (product) | FFI sync + pin `9f1398f` | `opencode-modded-rust` #106 (`77c81c9`) |
+| `WI-032` | target-state plan InfoBlocks + reconciliation | `scopemux-core` #12 (`5b2a74c`) |
+| `WI-036` | delta view + agent map query API | `scopemux-core` #13 (`e6787cc`) |
+| `WI-031` | durable plan-node store + derived/durable boundary | `scopemux-core` #14 (`1b3cbbe`) |
+| `SCOPE-003` | task-record → plan-node projection + reconcile evidence | `opencode-modded-rust` #107 (`681c83c`) |
+
+Pin: `scopemux-core` `main` `1b3cbbe6074e6119dc980691d51b8deaa02739d1`.
+
+Post-merge QA on `development` remains the gate before the store cards move to `done`; `WI-018` (incremental index/watcher) and `WI-030` (Rust grammar) are separate Phase 1 enablers outside this handoff.
 
 ## Objective
 
