@@ -1,7 +1,7 @@
 ---
 id: "H-010"
 title: "SCOPE-002 scopemux-core FFI provider - Handoff"
-status: "in_progress"
+status: "completed"
 created: "2026-09-24"
 updated: "2026-09-24"
 owner: ""
@@ -91,3 +91,9 @@ Remaining: config-driven provider enablement, stage-aware tiered-context slices,
 - `ScopemuxProvider` returns ranked candidates for a supported-language workspace behind the `START-025` boundary.
 - The generic provider remains default and fallback, with no scopemux logic outside the provider.
 - The build is pinned and reproducible, and verification is recorded on `SCOPE-002`.
+
+## Completion (2026-09-24)
+
+Exit criteria met. `opencode-modded-rust` PR #105 merged into `development` (`224e2ca`); `scopemux-core` PR #9 (AppleClang portability) merged. `SCOPE-002` moved to `done`.
+
+Deferred polish (not blocking, not tracked elsewhere): config-driven provider enablement, stage-aware tiered-context slices, and replacing the fetch script with a submodule or vendored artifact. Re-open a card if any is wanted.

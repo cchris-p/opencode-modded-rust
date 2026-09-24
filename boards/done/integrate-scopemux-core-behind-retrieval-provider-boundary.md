@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-integration-plan.md"
-status: "qa"
+status: "done"
 created: "2026-09-21"
 ---
 
