@@ -45,11 +45,28 @@ pub async fn retrieve(
     seed_files: Vec<String>,
 ) -> Option<RetrievalResponse> {
     let request = build_request(session, role, seed_files);
-    match GenericRepositoryProvider::new().retrieve(&request).await {
+
+    // Prefer the configured provider (scopemux when built natively); fall back
+    // to the generic repository-local provider when it is unavailable.
+    let provider = opencode_scopemux::default_provider();
+    match provider.retrieve(&request).await {
         Ok(response) => Some(response),
         Err(error) => {
-            tracing::warn!("generic retrieval provider failed: {error}");
-            None
+            if provider.name() == "generic" {
+                tracing::warn!("generic retrieval provider failed: {error}");
+                return None;
+            }
+            tracing::debug!(
+                provider = provider.name(),
+                "retrieval provider unavailable ({error}); falling back to generic"
+            );
+            match GenericRepositoryProvider::new().retrieve(&request).await {
+                Ok(response) => Some(response),
+                Err(error) => {
+                    tracing::warn!("generic retrieval provider failed: {error}");
+                    None
+                }
+            }
         }
     }
 }
