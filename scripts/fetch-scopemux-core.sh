@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-PINNED_REV="9f1398fd7a54f8a6b508e2003222863192033e20"
+PINNED_REV="1b3cbbe6074e6119dc980691d51b8deaa02739d1"
 REPO_URL="${SCOPEMUX_CORE_REPO:-git@github.com:cchris-p/scopemux-core.git}"
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -31,6 +31,8 @@ pub fn build_request(
             changed_files: Vec::new(),
             role,
             token_budget: None,
+            task_id: None,
+            plan_nodes: Vec::new(),
         },
     }
 }
@@ -97,6 +99,15 @@ mod tests {
         assert_eq!(request.workspace_root, "/tmp/ws");
         assert_eq!(request.role, RetrievalRole::Reviewing);
         assert_eq!(request.seed_files, vec!["a.rs".to_string()]);
+        assert!(
+            request.task_id.is_some(),
+            "task id should flow into the request"
+        );
+        assert_eq!(
+            request.plan_nodes.len(),
+            2,
+            "objective and completion criterion should project to plan nodes"
+        );
     }
 
     #[tokio::test]
