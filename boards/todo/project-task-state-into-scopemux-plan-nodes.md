@@ -50,6 +50,18 @@ This is Phase 2 of `SCOPE-001`. It does not give `scopemux` any authority over t
 - Confirm the durable task record wins on any disagreement with plan-node state.
 - Confirm a task completes when `scopemux` is absent.
 
+## Dependencies and design (2026-09-24)
+
+Gated on upstream `scopemux-core` work, sequenced by `H-011`: `WI-033` (origin/lifecycle/provenance/confidence on `ProjectInfoBlock`), `WI-032` (target-state plan InfoBlocks + reconciliation), then `WI-036` (delta/query API); `WI-031` persists plan nodes. Only then can this card project task state into real plan nodes.
+
+Product-side shape:
+
+- Extend `opencode-scopemux` FFI bindings and the retrieval contract to carry origin/lifecycle and delta entries; keep the `ProjectSearchResult`/`ProjectInfoBlock` layout in lockstep with the pinned `scopemux-core` revision.
+- Map task-record fields (`objective`, `completion_criteria`, `stage`, `workspace_target`, `artifacts`, `reopen_reason`) to plan-node attributes.
+- Reconciliation handshake: plan-node lifecycle transitions and `stale`/`conflict` are evidence returned to the runtime; the runtime remains the sole writer of stage and completion.
+
+Do not start implementation until `WI-032`/`WI-033`/`WI-036` land; the runtime must keep completing tasks with no plan nodes present.
+
 ## Related Items
 
 - `SCOPE-001` Idealized scopemux map integration.
