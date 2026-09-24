@@ -58,7 +58,10 @@ Extend `scopemux-core` with the fields and API the map needs (`WI-033`, `WI-032`
 - Product FFI sync **merged**: `opencode-modded-rust` PR #106 merged into `development` at `77c81c9`; branch deleted.
 - Remaining `WI-033` acceptance (incremental-update provenance, durable-store serialization) depends on `WI-018`/`WI-031`.
 
-Next: `WI-032` (target-state plan InfoBlocks + reconciliation), which builds on these fields.
+- **`WI-032` core implemented**: `scopemux-core` PR #12 adds `ProjectPlanNode` (kinds, fields, stable `plan:<task>:<slug>` id, desired shape, rationale, anchors) projected into the canonical registry with `origin=planned`, plus create/update/query and `project_context_reconcile_plan_nodes` (vanished anchors -> `stale`, partial divergence -> `conflict`, projected symbol appearing in parsed state -> `implemented`; nodes never deleted, task authority untouched). Verified via `scripts/docker_test.sh` interfile (project_context 8/8) and C suites. The plan-node store survives derived re-index; durable on-disk serialization remains `WI-031`.
+- Remaining `WI-032` acceptance (delta/query surface) depends on `WI-036`.
+
+Next: `WI-036` (delta view and agent map query API), then `WI-031` (durable map store), then `SCOPE-003` on the product side.
 
 ## Exit criteria
 
