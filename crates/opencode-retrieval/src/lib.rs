@@ -92,6 +92,8 @@ impl RetrievalProvider for GenericRepositoryProvider {
                 confidence: RetrievalConfidence::Exact,
                 score: 1.0,
                 estimated_tokens: None,
+                origin: None,
+                lifecycle: None,
             });
         }
 
@@ -109,6 +111,8 @@ impl RetrievalProvider for GenericRepositoryProvider {
                 confidence: RetrievalConfidence::Medium,
                 score: 0.5,
                 estimated_tokens: None,
+                origin: None,
+                lifecycle: None,
             });
         }
 
@@ -119,6 +123,7 @@ impl RetrievalProvider for GenericRepositoryProvider {
         Ok(RetrievalResponse {
             candidates,
             provider: self.name().to_string(),
+            plan_signals: Vec::new(),
         })
     }
 }
@@ -156,6 +161,8 @@ mod tests {
             changed_files: Vec::new(),
             role: RetrievalRole::Implementing,
             token_budget: None,
+            task_id: None,
+            plan_nodes: Vec::new(),
         }
     }
 

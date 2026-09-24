@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "todo"
+status: "qa"
 created: "2026-09-23"
 predecessor: "SCOPE-002"
 ---
@@ -74,3 +74,14 @@ Do not start implementation until `WI-032`/`WI-033`/`WI-036` land; the runtime m
 
 - Depends on `SCOPE-002` and the upstream plan-InfoBlock work (`WI-032`, `WI-033`), which the integration program owns and develops in `$HOME/apps/scopemux-notes`.
 - Authority rule: if a plan node and the task record disagree, the task record wins.
+
+## Implementation (2026-09-24)
+
+Implemented in `opencode-modded-rust` PR #107 (open, base `development`), now that `WI-032`/`WI-033`/`WI-036` have merged to `scopemux-core` `main`:
+
+- Projection contract in `opencode-types::plan`: `PlanNodeKind`, `PlanLifecycle`, `PlanNodeDraft`, `PlanReconciliationSignal`, and `project_task_to_plan_nodes` mapping `objective`, `completion_criteria`, `workspace_target`, `artifacts`, and `reopen_reason` to plan-node attributes (backticked criterion symbol -> `projected_symbol`).
+- `RetrievalRequest` carries `task_id` + projection-only `plan_nodes`; `RetrievalResponse` carries `plan_signals`; `RetrievalCandidate` carries `origin`/`lifecycle`.
+- `opencode-scopemux` FFI synced to the new `ProjectInfoBlock` layout and extended with plan-node create/set/anchor/reconcile; the native provider materializes the task's plan nodes, reconciles against parsed state, and returns `stale`/`conflict`/`implemented` as evidence only.
+- Pin advanced to `scopemux-core` `main` `1b3cbbe`.
+- Verified: default `cargo test` for the touched crates, clippy clean on touched files, `cargo check --workspace`, and native `cargo test -p opencode-scopemux --features native` 5/5. (Two pre-existing `opencode-session` instruction path tests fail on macOS, unrelated.)
+- Authority preserved: no stage/verification/review/completion is written from plan evidence.

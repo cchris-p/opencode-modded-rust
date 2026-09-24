@@ -92,6 +92,45 @@ mod ffi {
         pub lifecycle: c_int,
         pub provenance: *mut c_char,
         pub confidence: f32,
+        pub plan_kind: c_int,
+        pub desired_shape: *mut c_char,
+        pub rationale: *mut c_char,
+        pub anchor_list: *mut c_char,
+    }
+
+    #[repr(C)]
+    pub struct ProjectPlanNode {
+        pub id: *mut c_char,
+        pub task_id: *mut c_char,
+        pub slug: *mut c_char,
+        pub title: *mut c_char,
+        pub desired_shape: *mut c_char,
+        pub rationale: *mut c_char,
+        pub provenance: *mut c_char,
+        pub projected_symbol: *mut c_char,
+        pub file_path: *mut c_char,
+        pub kind: c_int,
+        pub lifecycle: c_int,
+        pub confidence: f32,
+        pub anchor_ids: *mut *mut c_char,
+        pub anchor_count: usize,
+        pub anchor_capacity: usize,
+    }
+
+    #[repr(C)]
+    pub struct ProjectPlanNodeReconciliationEntry {
+        pub node: *const ProjectPlanNode,
+        pub previous_lifecycle: c_int,
+        pub new_lifecycle: c_int,
+    }
+
+    #[repr(C)]
+    pub struct ProjectPlanNodeReconciliationResult {
+        pub entries: *mut ProjectPlanNodeReconciliationEntry,
+        pub entry_count: usize,
+        pub stale_count: usize,
+        pub conflict_count: usize,
+        pub implemented_count: usize,
     }
 
     #[repr(C)]
@@ -141,6 +180,59 @@ mod ffi {
             out_result: *mut ProjectSearchResult,
         ) -> bool;
         pub fn project_search_result_free(result: *mut ProjectSearchResult);
+        pub fn project_context_plan_node_create(
+            project: *mut ProjectContext,
+            task_id: *const c_char,
+            slug: *const c_char,
+            kind: c_int,
+        ) -> *mut ProjectPlanNode;
+        pub fn project_context_plan_node_set_title(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            title: *const c_char,
+        ) -> bool;
+        pub fn project_context_plan_node_set_desired_shape(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            desired_shape: *const c_char,
+        ) -> bool;
+        pub fn project_context_plan_node_set_rationale(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            rationale: *const c_char,
+        ) -> bool;
+        pub fn project_context_plan_node_set_provenance(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            provenance: *const c_char,
+        ) -> bool;
+        pub fn project_context_plan_node_set_projected_symbol(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            symbol_name: *const c_char,
+        ) -> bool;
+        pub fn project_context_plan_node_set_file_path(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            file_path: *const c_char,
+        ) -> bool;
+        pub fn project_context_plan_node_set_lifecycle(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            lifecycle: c_int,
+        ) -> bool;
+        pub fn project_context_plan_node_add_anchor(
+            project: *mut ProjectContext,
+            node: *mut ProjectPlanNode,
+            anchor_block_id: *const c_char,
+        ) -> bool;
+        pub fn project_context_reconcile_plan_nodes(
+            project: *mut ProjectContext,
+            out_result: *mut ProjectPlanNodeReconciliationResult,
+        ) -> bool;
+        pub fn project_plan_node_reconciliation_result_free(
+            result: *mut ProjectPlanNodeReconciliationResult,
+        );
     }
 }
 
@@ -158,7 +250,10 @@ impl RetrievalProvider for ScopemuxProvider {
         use std::ffi::CString;
 
         use opencode_retrieval::RetrievalError;
-        use opencode_types::{RetrievalCandidate, RetrievalCandidateKind, RetrievalConfidence};
+        use opencode_types::{
+            PlanLifecycle, RetrievalCandidate, RetrievalCandidateKind, RetrievalConfidence,
+            RetrievalOrigin,
+        };
 
         if !workspace_supported(request) {
             return Err(RetrievalError::Unavailable(
@@ -291,8 +386,15 @@ impl RetrievalProvider for ScopemuxProvider {
                     confidence,
                     score: hit.score as f32,
                     estimated_tokens: Some((*block).estimated_tokens),
+                    origin: Some(RetrievalOrigin::from_ffi((*block).origin)),
+                    lifecycle: Some(PlanLifecycle::from_ffi((*block).lifecycle)),
                 });
             }
+
+            // SCOPE-003: project the task's plan-node drafts into the map,
+            // reconcile them against parsed state, and report evidence. This
+            // never advances task stage or completion; the runtime owns that.
+            let plan_signals = project_and_reconcile_plan_nodes(ctx, request);
 
             drop(result_guard);
             drop(guard);
@@ -300,9 +402,127 @@ impl RetrievalProvider for ScopemuxProvider {
             Ok(opencode_types::RetrievalResponse {
                 candidates,
                 provider: self.name().to_string(),
+                plan_signals,
             })
         }
     }
+}
+
+/// Materialize projected plan nodes into the map and report reconciliation
+/// evidence. Projection is best-effort: a malformed draft is skipped rather
+/// than failing retrieval.
+#[cfg(feature = "native")]
+fn project_and_reconcile_plan_nodes(
+    ctx: *mut ffi::ProjectContext,
+    request: &RetrievalRequest,
+) -> Vec<opencode_types::PlanReconciliationSignal> {
+    use std::ffi::CString;
+
+    use opencode_types::{stage_lifecycle, PlanLifecycle, PlanReconciliationSignal};
+
+    let mut signals = Vec::new();
+    if request.plan_nodes.is_empty() {
+        return signals;
+    }
+
+    let task_id = request
+        .task_id
+        .clone()
+        .unwrap_or_else(|| "task".to_string());
+    let Ok(task_id_c) = CString::new(task_id.as_str()) else {
+        return signals;
+    };
+    let provenance =
+        CString::new(format!("task:{task_id}:{:?}", request.stage).to_lowercase()).ok();
+    let lifecycle = stage_lifecycle(&request.stage).as_ffi();
+
+    for draft in &request.plan_nodes {
+        let Ok(slug) = CString::new(draft.slug.as_str()) else {
+            continue;
+        };
+        let node = unsafe {
+            ffi::project_context_plan_node_create(
+                ctx,
+                task_id_c.as_ptr(),
+                slug.as_ptr(),
+                draft.kind.as_ffi(),
+            )
+        };
+        if node.is_null() {
+            continue;
+        }
+
+        unsafe {
+            if let Ok(title) = CString::new(draft.title.as_str()) {
+                ffi::project_context_plan_node_set_title(ctx, node, title.as_ptr());
+            }
+            if let Some(shape) = draft
+                .desired_shape
+                .as_deref()
+                .and_then(|s| CString::new(s).ok())
+            {
+                ffi::project_context_plan_node_set_desired_shape(ctx, node, shape.as_ptr());
+            }
+            if let Some(rationale) = draft
+                .rationale
+                .as_deref()
+                .and_then(|s| CString::new(s).ok())
+            {
+                ffi::project_context_plan_node_set_rationale(ctx, node, rationale.as_ptr());
+            }
+            if let Some(symbol) = draft
+                .projected_symbol
+                .as_deref()
+                .and_then(|s| CString::new(s).ok())
+            {
+                ffi::project_context_plan_node_set_projected_symbol(ctx, node, symbol.as_ptr());
+            }
+            if let Some(path) = draft
+                .file_path
+                .as_deref()
+                .and_then(|s| CString::new(s).ok())
+            {
+                ffi::project_context_plan_node_set_file_path(ctx, node, path.as_ptr());
+            }
+            if let Some(provenance) = provenance.as_ref() {
+                ffi::project_context_plan_node_set_provenance(ctx, node, provenance.as_ptr());
+            }
+            ffi::project_context_plan_node_set_lifecycle(ctx, node, lifecycle);
+            for anchor in &draft.anchors {
+                if let Ok(anchor_c) = CString::new(anchor.as_str()) {
+                    ffi::project_context_plan_node_add_anchor(ctx, node, anchor_c.as_ptr());
+                }
+            }
+        }
+    }
+
+    let mut reconcile = ffi::ProjectPlanNodeReconciliationResult {
+        entries: std::ptr::null_mut(),
+        entry_count: 0,
+        stale_count: 0,
+        conflict_count: 0,
+        implemented_count: 0,
+    };
+    if !unsafe { ffi::project_context_reconcile_plan_nodes(ctx, &mut reconcile as *mut _) } {
+        return signals;
+    }
+
+    unsafe {
+        for i in 0..reconcile.entry_count {
+            let entry = &*reconcile.entries.add(i);
+            if entry.node.is_null() {
+                continue;
+            }
+            signals.push(PlanReconciliationSignal {
+                plan_node_id: cstr((*entry.node).id),
+                previous: PlanLifecycle::from_ffi(entry.previous_lifecycle),
+                current: PlanLifecycle::from_ffi(entry.new_lifecycle),
+            });
+        }
+        ffi::project_plan_node_reconciliation_result_free(&mut reconcile as *mut _);
+    }
+
+    signals
 }
 
 #[cfg(feature = "native")]
@@ -339,6 +559,14 @@ mod tests {
     use super::*;
     use opencode_types::{RetrievalRequest, RetrievalRole, TaskStage};
 
+    /// The C core keeps process-global parser/query state and is not safe for
+    /// concurrent use, so native tests serialize behind one lock.
+    #[cfg(feature = "native")]
+    fn native_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn request(root: &str, seeds: Vec<&str>) -> RetrievalRequest {
         RetrievalRequest {
             objective: "find the entry point".to_string(),
@@ -349,6 +577,8 @@ mod tests {
             changed_files: Vec::new(),
             role: RetrievalRole::Implementing,
             token_budget: None,
+            task_id: None,
+            plan_nodes: Vec::new(),
         }
     }
 
@@ -376,6 +606,8 @@ mod tests {
     async fn native_provider_returns_candidates_for_c_file() {
         use opencode_retrieval::RetrievalProvider;
 
+        let _guard = native_test_lock();
+
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("add.c"),
@@ -395,6 +627,75 @@ mod tests {
             !response.candidates.is_empty(),
             "expected at least one scopemux candidate"
         );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .all(|candidate| candidate.origin == Some(opencode_types::RetrievalOrigin::Parsed)),
+            "parsed facts should be labeled with parsed origin"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_provider_reports_plan_reconciliation_evidence() {
+        use opencode_retrieval::RetrievalProvider;
+        use opencode_types::{PlanLifecycle, PlanNodeDraft, PlanNodeKind};
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("add.c"),
+            "int add(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["add.c"]);
+        req.objective = "add".to_string();
+        req.task_id = Some("task_plan".to_string());
+        req.plan_nodes = vec![
+            PlanNodeDraft {
+                slug: "implemented".to_string(),
+                kind: PlanNodeKind::ModifySymbol,
+                title: "implement add".to_string(),
+                desired_shape: None,
+                rationale: None,
+                projected_symbol: Some("add".to_string()),
+                file_path: None,
+                anchors: Vec::new(),
+            },
+            PlanNodeDraft {
+                slug: "stale".to_string(),
+                kind: PlanNodeKind::Remove,
+                title: "remove legacy".to_string(),
+                desired_shape: None,
+                rationale: None,
+                projected_symbol: None,
+                file_path: None,
+                anchors: vec!["sym:does_not_exist".to_string()],
+            },
+        ];
+
+        let response = ScopemuxProvider::new()
+            .retrieve(&req)
+            .await
+            .expect("scopemux retrieve should succeed");
+
+        let implemented = response
+            .plan_signals
+            .iter()
+            .find(|signal| signal.plan_node_id == "plan:task_plan:implemented")
+            .expect("projected symbol present in parsed state should emit a signal");
+        assert_eq!(implemented.current, PlanLifecycle::Implemented);
+        assert_eq!(implemented.previous, PlanLifecycle::InProgress);
+
+        let stale = response
+            .plan_signals
+            .iter()
+            .find(|signal| signal.plan_node_id == "plan:task_plan:stale")
+            .expect("vanished anchor should emit a divergence signal");
+        assert!(stale.current.is_divergence());
     }
 
     #[test]
