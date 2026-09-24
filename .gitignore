@@ -24,3 +24,6 @@
 
 # Local runtime workspace config (machine-specific permission grants)
 /opencode.json
+
+# Vendored native dependency (scopemux-core), fetched via scripts/fetch-scopemux-core.sh
+/third_party/

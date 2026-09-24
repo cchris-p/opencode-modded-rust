@@ -1,7 +1,7 @@
 ---
 id: "H-010"
 title: "SCOPE-002 scopemux-core FFI provider - Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-09-24"
 updated: "2026-09-24"
 owner: ""
@@ -72,6 +72,19 @@ Recommendation: submodule with a `build.rs` CMake step, feature-gated so default
 - The `scopemux-core` test harness is Linux/GNU only (Criterion, GNU `ld --whole-archive`); use its `scripts/docker_test.sh` for its own tests. The product-side FFI build must cover macOS and Linux C toolchains.
 - `scopemux-core`'s CMake unconditionally calls `find_package(Python 3.10...<3.12)` even when only C targets are built; a CMake option to skip Python for the C-only library would simplify the product build.
 - FFI struct layouts must match `project_context.h` exactly; keep the binding surface minimal and tied to the pinned commit.
+
+## Progress (2026-09-24)
+
+First cut implemented on `opencode-modded-rust` PR #105 (branch `feature/SCOPE-002-scopemux-provider`):
+
+- `opencode-scopemux` crate with `ScopemuxProvider` (FFI to the C API), feature-gated `native`.
+- `build.rs` builds `parser_core` + Tree-sitter static libs via CMake; bakes the queries path.
+- Provider selection in `opencode-session` with generic fallback.
+- `scripts/fetch-scopemux-core.sh` pins `scopemux-core` at `1a1b681`.
+- Upstream portability fix merged: `scopemux-core` PR #9 (AppleClang declarations + glibc guard).
+- Verified: default tests/clippy pass; native `cargo test -p opencode-scopemux --features native` passes (4 tests, FFI round-trip included).
+
+Remaining: config-driven provider enablement, stage-aware tiered-context slices, and replacing the fetch script with a submodule or vendored artifact. The native build relaxes AppleClang-only diagnostics via `CMAKE_C_FLAGS`; a CMake option to skip Python for the C-only build remains a recommended upstream simplification.
 
 ## Exit criteria
 

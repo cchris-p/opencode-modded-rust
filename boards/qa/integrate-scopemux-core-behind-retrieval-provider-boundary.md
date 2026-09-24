@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-integration-plan.md"
-status: "todo"
+status: "qa"
 created: "2026-09-21"
 ---
 
@@ -105,6 +105,19 @@ A `ScopemuxProvider` implements `RetrievalProvider` by mapping `RetrievalRequest
 - Mechanism: FFI vs out-of-process helper (recommend FFI for the first cut).
 - Distribution: git submodule vs vendored prebuilt artifact.
 - Whether context provenance should expose a "structural retrieval unavailable" signal for unsupported languages.
+
+## Implementation (2026-09-24)
+
+First cut on `feature/SCOPE-002-scopemux-provider` (PR #105, awaiting QA):
+
+- `opencode-scopemux` crate: `ScopemuxProvider` over the `scopemux-core` C API, feature-gated (`native`); default builds use the generic provider.
+- `build.rs` builds `parser_core` + Tree-sitter static libraries via CMake when native; bakes the queries path.
+- Provider selection in `opencode-session` prefers the configured provider and falls back to generic when scopemux is unavailable or the workspace language is unsupported.
+- `scripts/fetch-scopemux-core.sh` pins `scopemux-core` at `1a1b681` (includes upstream PR #9).
+
+Verification: default `cargo test`/clippy pass; native `cargo test -p opencode-scopemux --features native` on macOS arm64 passes 4 tests including an FFI round-trip returning candidates for a C fixture.
+
+Remaining polish (tracked by `H-010`): config-driven provider enablement, tiered-context slices per stage, and replacing the fetch script with a submodule or vendored artifact.
 
 ## Related Items
 

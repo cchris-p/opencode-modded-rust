@@ -1,0 +1,26 @@
+[package]
+name = "opencode-scopemux"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[features]
+default = []
+# Enable the native scopemux-core FFI provider. Requires a scopemux-core
+# checkout (SCOPEMUX_CORE_DIR or third_party/scopemux-core) and a C toolchain.
+native = []
+
+[dependencies]
+opencode-types = { path = "../opencode-types" }
+opencode-retrieval = { path = "../opencode-retrieval" }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"
+
+[build-dependencies]

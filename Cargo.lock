@@ -2356,6 +2356,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "opencode-scopemux"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "opencode-retrieval",
+ "opencode-types",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "opencode-server"
 version = "0.1.0"
 dependencies = [
@@ -2408,6 +2421,7 @@ dependencies = [
  "opencode-plugin",
  "opencode-provider",
  "opencode-retrieval",
+ "opencode-scopemux",
  "opencode-storage",
  "opencode-tool",
  "opencode-types",
