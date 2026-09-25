@@ -450,13 +450,9 @@ impl QuestionPrompt {
             None => return,
         };
 
-        let mut content = vec![
-            Line::from(Span::styled(
-                "Question:",
-                Style::default().fg(theme.primary).bold(),
-            )),
-            Line::from(""),
-        ];
+        // The prompt box is the single place the question is shown; the border
+        // title labels it, so no separate "Question:" line is repeated here.
+        let mut content: Vec<Line> = Vec::new();
 
         for line in question.question.split('\n') {
             content.push(Line::from(Span::styled(
@@ -541,7 +537,10 @@ impl QuestionPrompt {
             }
         }
 
-        let width = area.width.saturating_sub(2).min(80);
+        // Two-thirds of the area, clamped to sensible bounds and centered.
+        let max_width = area.width.saturating_sub(2).max(1);
+        let target_width = ((area.width as u32) * 2 / 3) as u16;
+        let width = target_width.clamp(24.min(max_width), max_width);
         let inner_width = width.saturating_sub(2);
 
         // Row count each content line occupies once wrapped, so the popup height
@@ -550,42 +549,57 @@ impl QuestionPrompt {
             .iter()
             .map(|line| line_wrapped_rows(line, inner_width))
             .collect();
-        let wrapped_rows: usize = line_rows.iter().sum();
 
-        let height = u16::try_from(wrapped_rows)
+        // Reserve one blank row above and below the box so it does not touch the
+        // transcript or the bottom edge.
+        let max_height = area.height.saturating_sub(2).max(1);
+
+        // No scrolling: when the wrapped content is taller than the box can be,
+        // statically drop leading content lines so the input line and hint stay
+        // visible.
+        let mut start = 0usize;
+        let mut visible_rows: usize = line_rows.iter().sum();
+        while visible_rows + 2 > max_height as usize && start < content.len() {
+            visible_rows -= line_rows[start];
+            start += 1;
+        }
+        if start > 0 {
+            content.drain(0..start);
+            row_indices = row_indices
+                .iter()
+                .filter_map(|&index| index.checked_sub(start))
+                .collect();
+        }
+        let visible_line_rows = &line_rows[start..];
+
+        let height = u16::try_from(visible_rows)
             .unwrap_or(u16::MAX)
             .saturating_add(2)
-            .min(area.height.saturating_sub(2));
+            .min(max_height);
         let inner_height = height.saturating_sub(2);
 
-        // Render inline at the bottom of the area
+        // Render inline near the bottom of the area.
         let popup_area = Rect::new(
-            area.x + 1,
+            area.x + area.width.saturating_sub(width) / 2,
             area.y + area.height.saturating_sub(height + 1),
             width,
             height,
         );
 
-        // Scroll to the tail when the wrapped content overflows so the active
-        // input line and the hint stay visible.
-        let scroll = u16::try_from(wrapped_rows)
-            .unwrap_or(u16::MAX)
-            .saturating_sub(inner_height);
-
         // Track rendered area and absolute option rows for click handling.
         self.last_rendered_area.set(Some(popup_area));
 
-        // Offset of each content line in wrapped rows, so option rows keep their
-        // index mapping even when some are scrolled out of view.
+        // Offset of each visible content line in wrapped rows, so clickable
+        // option rows map to the rows actually drawn.
         let mut offsets = vec![0usize; content.len()];
         for i in 1..content.len() {
-            offsets[i] = offsets[i - 1] + line_rows[i - 1];
+            offsets[i] = offsets[i - 1] + visible_line_rows[i - 1];
         }
         let visible_top = popup_area.y.saturating_add(1);
         let absolute_rows: Vec<u16> = row_indices
             .iter()
-            .map(|&index| match offsets[index].checked_sub(scroll as usize) {
-                Some(row) if row < inner_height as usize => visible_top.saturating_add(row as u16),
+            .map(|&index| match offsets.get(index) {
+                Some(&row) if row < inner_height as usize => visible_top.saturating_add(row as u16),
                 _ => u16::MAX,
             })
             .collect();
@@ -599,9 +613,11 @@ impl QuestionPrompt {
                     .border_style(Style::default().fg(theme.primary)),
             )
             .style(Style::default().bg(theme.background_panel))
-            .wrap(Wrap { trim: false })
-            .scroll((scroll, 0));
+            .wrap(Wrap { trim: false });
 
+        // Clear the popup area first so transcript glyphs never bleed through
+        // the box background.
+        frame.render_widget(ratatui::widgets::Clear, popup_area);
         frame.render_widget(paragraph, popup_area);
     }
 
@@ -938,5 +954,40 @@ mod tests {
         }
         assert!(text.contains("Enter to submit"), "hint visible in:\n{text}");
         assert!(text.contains('\u{258f}'), "caret visible in:\n{text}");
+    }
+
+    #[test]
+    fn wide_terminal_uses_two_thirds_width_and_centers() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(option(QuestionType::SingleChoice, false));
+
+        let theme = Theme::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
+        terminal
+            .draw(|frame| prompt.render(frame, frame.size(), &theme))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer();
+        let mut corner = None;
+        'outer: for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                if buffer.get(x, y).symbol() == "\u{250c}" {
+                    corner = Some((x, y));
+                    break 'outer;
+                }
+            }
+        }
+        let (x, y) = corner.expect("box top-left corner");
+        let expected_width = (120u32 * 2 / 3) as u16;
+        let expected_x = (120 - expected_width) / 2;
+        assert_eq!(x, expected_x, "box is horizontally centered");
+        assert_eq!(
+            buffer.get(x + expected_width - 1, y).symbol(),
+            "\u{2510}",
+            "box is two-thirds of the terminal width"
+        );
     }
 }
