@@ -114,6 +114,7 @@ fn main() {
         "tree-sitter-python",
         "tree-sitter-javascript",
         "tree-sitter-typescript",
+        "tree-sitter-rust",
     ] {
         println!("cargo:rustc-link-lib=static={lib}");
     }
