@@ -23,11 +23,11 @@ mod todo_item;
 
 pub use dialog::Dialog;
 pub use dialogs::{
-    Agent, AgentSelectDialog, AlertDialog, CommandPalette, ConfirmDialog, ForkDialog, ForkEntry,
-    HelpDialog, McpDialog, McpItem, Model, ModelSelectDialog, PromptStashDialog, Provider,
-    ProviderDialog, ProviderStatus, SessionDeleteState, SessionExportDialog, SessionItem,
-    SessionListDialog, SessionRenameDialog, SkillListDialog, StashItem, StatusDialog, StatusLine,
-    Tag, TagDialog, ThemeListDialog, ThemeOption, TimelineDialog, TimelineEntry,
+    Agent, AgentSelectDialog, AlertDialog, CommandPalette, ForkDialog, ForkEntry, HelpDialog,
+    McpDialog, McpItem, Model, ModelSelectDialog, PromptStashDialog, Provider, ProviderDialog,
+    ProviderStatus, SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog,
+    SessionRenameDialog, SkillListDialog, StashItem, StatusDialog, StatusLine, Tag, TagDialog,
+    ThemeListDialog, ThemeOption, TimelineDialog, TimelineEntry,
 };
 pub use diff::{DiffLine, DiffLineType, DiffMode, DiffView};
 pub use home::HomeView;

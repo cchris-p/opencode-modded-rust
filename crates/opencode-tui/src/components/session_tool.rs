@@ -131,6 +131,15 @@ pub fn render_tool_call(
     let block_mode = is_block_tool(name, result);
     let normalized = normalize_tool_name(name);
 
+    // A pending question is represented by the interactive question prompt, so
+    // do not also render a transcript card that repeats the question text.
+    if normalized == "question" && !matches!(state, ToolState::Completed | ToolState::Failed) {
+        return ToolCallRender {
+            lines: Vec::new(),
+            collapsible: false,
+        };
+    }
+
     // FEAT-056: bash/shell renders as a terminal block with a `$` prompt and an
     // inset output region. The command is pre-wrapped to the content width so
     // every wrapped line keeps the `$` prompt.
