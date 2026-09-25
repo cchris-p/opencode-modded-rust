@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "SCOPE"
 spec: "invariants/providers.md"
-status: "doing"
+status: "done"
 created: "2026-09-25"
 ---
 
@@ -116,3 +116,12 @@ Still open (non-blocking): `impl`/trait method scoping and dynamic dispatch in
 
 - Invariants: `providers.md` and `integration-scope.md` record the activation
   scope; `AGENTS.md` records the build prerequisite and activation rule.
+
+## Closeout (2026-09-25)
+
+Merged into `development` via PR #110 (merge commit `9eab642`); branch deleted
+locally and remotely. Agent QA passed on the merged content: `provider=scopemux`
+with real candidates for both `@sample.rs` (20) and `@sample.c` (16) under
+`ollama/qwen3:30b`. Core-side fix in `scopemux-core` PR #23 (`e93df08`); product
+pin at that commit. `ort-qwen` launcher added to the shared `opencode-config`
+starts Ollama and the TUI on `ollama/qwen3:30b`. Card moved to `done`.
