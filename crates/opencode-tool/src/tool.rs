@@ -504,6 +504,10 @@ pub struct ToolContext {
     pub get_last_model: Option<GetLastModelCallback>,
     pub create_synthetic_message: Option<CreateSyntheticMessageCallback>,
     pub session_inspect: Option<SessionInspectCallback>,
+    /// Resolved session-scoped plan file path, when plan mode is active. Set by
+    /// the session prompt loop from the shared `opencode_core::plan_file_path`
+    /// helper so `plan_exit` reports the exact file the reminder named.
+    pub plan_path: Option<String>,
     pub project_root: String,
     pub loaded_instructions: LoadedInstructions,
     pub registry: Option<Arc<ToolRegistry>>,
@@ -541,6 +545,7 @@ impl ToolContext {
             get_last_model: None,
             create_synthetic_message: None,
             session_inspect: None,
+            plan_path: None,
             project_root: directory,
             loaded_instructions: LoadedInstructions::new(),
             registry: None,
@@ -556,6 +561,13 @@ impl ToolContext {
 
     pub fn with_abort(mut self, abort: CancellationToken) -> Self {
         self.abort = abort;
+        self
+    }
+
+    /// Attach the resolved session-scoped plan file path so the plan tools report
+    /// and approve the same file the plan-mode reminder advertises.
+    pub fn with_plan_path(mut self, plan_path: Option<String>) -> Self {
+        self.plan_path = plan_path;
         self
     }
 

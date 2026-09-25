@@ -1,5 +1,6 @@
 use opencode_agent::{AgentInfo, AgentRegistry, PermissionDecision};
 use opencode_config::load_config;
+use opencode_core::{opencode_data_dir, plans_dir};
 use opencode_permission::{
     evaluate as evaluate_permission, PermissionAction, PermissionRule, PermissionRuleset,
 };
@@ -46,10 +47,26 @@ pub async fn resolve_agentic_context(
 ) -> ResolvedAgenticContext {
     let registry = build_agent_registry(directory);
     let agent_name = resolve_agent_name(&registry, requested_agent);
-    let agent = registry
+    let mut agent = registry
         .get(&agent_name)
         .cloned()
         .unwrap_or_else(|| AgentInfo::build());
+
+    // Plan mode may only edit the session-scoped plan file. The base `plan`
+    // ruleset blanket-denies `edit`, so append the narrow plan-file allows the
+    // resolver derived from the same helper the reminder/tool paths use.
+    if agent_name == "plan" {
+        let data_dir =
+            opencode_data_dir().unwrap_or_else(|| Path::new(directory).join(".opencode"));
+        let worktree_plans_dir = plans_dir(Path::new(directory), &data_dir);
+        let global_plans_dir = data_dir.join("plans");
+        agent
+            .permission
+            .extend(opencode_permission::plan_file_edit_rules(
+                &worktree_plans_dir,
+                &global_plans_dir,
+            ));
+    }
 
     let system_prompt = build_system_prompt(&agent, model_api_id, provider_id, directory);
     let tools = if supports_tools {
@@ -204,11 +221,18 @@ pub async fn resolve_tools(agent: &AgentInfo) -> Vec<ToolDefinition> {
     schemas
         .into_iter()
         .filter(|schema| {
-            schema.name != "invalid"
-                && !matches!(
-                    agent.tool_permission_decision(&schema.name),
-                    PermissionDecision::Deny
-                )
+            if schema.name == "invalid" {
+                return false;
+            }
+            // An explicit `allowed_tools` allow-list (e.g. `explore`) narrows the
+            // surface before permission evaluation.
+            if !agent.allowed_tools.is_empty()
+                && !agent.allowed_tools.iter().any(|tool| tool == &schema.name)
+            {
+                return false;
+            }
+            !opencode_permission::disabled(&[schema.name.clone()], &agent.permission)
+                .contains(&schema.name)
         })
         .map(|schema| ToolDefinition {
             name: schema.name,
