@@ -316,3 +316,11 @@ Verification: `cargo test -p opencode-core -p opencode-permission -p opencode-to
 `opencode-session::instruction::tests` (`test_find_up_walks_parents`, `test_find_up_stops_at_stop_dir`)
 fail identically on the base commit (temp-dir symlink/canonicalization); they are unrelated and
 untouched by this card.
+
+## Closeout
+
+- Merged PR #109 (merge commit `91e6515`) into `development` on 2026-09-25.
+- PR branch `gate-003-plan-mode-parity` deleted remotely and locally; the local checkout is back on
+  `development` at the merge commit.
+- Card intentionally remains in `qa`: a merge alone does not promote it to `done`. Promote when a QA
+  report is recorded or the user explicitly completes it.
