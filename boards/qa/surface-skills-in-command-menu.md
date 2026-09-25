@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SKILLS"
 spec: "wiki/skills-parity-audit.md"
-status: "todo"
+status: "qa"
 created: "2026-09-25"
 ---
 
@@ -136,3 +136,19 @@ Constraints:
   by the dialog and inline completion so the three do not drift.
 - Prefer extending the existing command entry model (an explicit `source`/`kind`) over string-sniffing
   annotations at render time.
+
+## Dev Notes
+
+- `crates/opencode-tui/src/command.rs`: added `CommandAction::InsertSkill(String)`.
+- `crates/opencode-tui/src/components/slash_command.rs`: `SlashCommandPopup` now carries
+  `skills: Vec<SkillSummary>` via `set_skills`; `refresh_filter()` keeps the bare `/` list to suggested
+  built-ins and, only for a non-empty query, appends fuzzy-matched skills (score-ordered, deduped
+  against registry commands including `/`-prefixed names). `render()` appends a muted `· skill` suffix
+  to skill rows, and `select_current()` emits `InsertSkill` for a selected skill row.
+- `crates/opencode-tui/src/app/app.rs`: `refresh_skill_list_dialog()` feeds the popup from the same
+  `list_skills` load used by the dialog and inline completion, and `execute_command_action()` handles
+  `InsertSkill` by setting prompt input to `/name ` (same shape as the skill list dialog).
+- Decisions implemented as refined: popup-only surface; skills gated on non-empty query; selection
+  inserts `/name ` instead of executing; annotation is a muted `· skill` suffix.
+- Verification: `cargo check -p opencode-tui` passed; `cargo test -p opencode-tui slash_command`
+  passed (3 tests). Manual TUI verification is pending on the PR branch.
