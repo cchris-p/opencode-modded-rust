@@ -5,7 +5,7 @@ priority: "P1"
 type: "gate"
 area: "GATE"
 spec: ""
-status: "todo"
+status: "doing"
 predecessors: ""
 created: "2026-09-25"
 ---
@@ -225,20 +225,20 @@ makes "create/modify the plan file" legal in plan mode.
 
 ## Done when
 
-- [ ] The plan file resolves to a session-scoped timestamped file under `.opencode/plans/` (VCS) or the
+- [x] The plan file resolves to a session-scoped timestamped file under `.opencode/plans/` (VCS) or the
       product's data `plans/` directory (no VCS), via one shared helper.
-- [ ] The plan agent can edit the resolved plan file and is denied every other edit; build mode is
+- [x] The plan agent can edit the resolved plan file and is denied every other edit; build mode is
       unaffected.
-- [ ] The plan-mode prompt names the plan path, distinguishes create vs incremental edit, carries the
+- [x] The plan-mode prompt names the plan path, distinguishes create vs incremental edit, carries the
       vanilla workflow, and is injected as a synthetic reminder after the directory is ensured.
-- [ ] `plan_exit` reports the worktree-relative path in its question and the absolute path in the
+- [x] `plan_exit` reports the worktree-relative path in its question and the absolute path in the
       injected message.
-- [ ] The model `plan_enter` tool is removed (registry, tool-id surface, tests) and `plan_exit` is the
+- [x] The model `plan_enter` tool is removed (registry, tool-id surface, tests) and `plan_exit` is the
       only plan-mode model tool; client-driven entry still works.
-- [ ] `BUILD_SWITCH` is injected on the plan -> non-plan transition, with the plan-file line when a plan
+- [x] `BUILD_SWITCH` is injected on the plan -> non-plan transition, with the plan-file line when a plan
       file exists.
-- [ ] Side-by-side parity evidence against the pinned reference commit is recorded.
-- [ ] Tests for path resolution, the plan-agent permission set, and reminder content pass.
+- [x] Side-by-side parity evidence against the pinned reference commit is recorded.
+- [x] Tests for path resolution, the plan-agent permission set, and reminder content pass.
 
 ## Recommended verification
 
@@ -266,3 +266,53 @@ makes "create/modify the plan file" legal in plan mode.
 - Created on 2026-09-25; no pre-existing `GATE-003` card existed.
 - Verified against the frozen reference pin `f54ce313b99a6661d7758ad042f7a6e05c8e0972`; if a later board
   item re-pins the reference, re-evaluate the line references here.
+
+## Dev Notes
+
+Implemented on branch `gate-003-plan-mode-parity`.
+
+- **One path helper.** Added `opencode_core::plan_file_path` / `plans_dir` / `opencode_data_dir`
+  (`crates/opencode-core/src/plan.rs`). It resolves `<worktree>/.opencode/plans/<created>-<slug>.md`
+  for a VCS project (`.git` present, file or dir) and `<data_dir>/plans/...` otherwise. Both the
+  reminder injection and `plan_exit` call it; no fixed `PLAN.md` remains.
+- **Reminder injection.** `insert_reminders` now takes the resolved `PlanReminder { path, exists }`
+  plus `last_assistant_was_plan` and injects the ported `plan-mode.txt` as a synthetic text part only
+  on entry into plan mode, creating the plans directory first when the file is absent. The
+  create-vs-edit `${planInfo}` wording matches the reference. The plan -> non-plan transition injects
+  the ported `build-switch.txt`, appending the "A plan file exists at ..." line when present.
+  `session_plan_reminder(session)` is the single builder; the prompt loop also attaches the resolved
+  path to `ToolContext.plan_path`.
+- **Permissions + tool visibility.** `opencode_permission::plan_file_edit_rules` appends `edit` allows
+  for the worktree and global plans directories plus an `external_directory` allow for the global
+  plans dir. `resolve_agentic_context` appends these to the `plan` ruleset (where the worktree is
+  known) before `resolve_tools` runs. `resolve_tools` now hides tools using the reference `disabled`
+  semantics (last matching rule for the permission is a `*` deny) instead of `tool_permission_decision`
+  on pattern `*`, so a trailing plan-file allow keeps `edit`/`write` declared while every other edit is
+  still denied per call. The explicit `allowed_tools` allow-list (e.g. `explore`) is preserved.
+- **Tools.** Removed `PlanEnterTool` (registry + `list_tool_ids` surface); `plan_enter` remains a
+  permission action only. `plan_exit` reports the worktree-relative path in its question and the
+  absolute path in the injected synthetic message, and uses the ported `plan-exit.txt` description.
+- **Docs.** Added `invariants/plan-mode.md`, linked from `invariants/README.md`, and updated the
+  plan-agent row in `wiki/agent-modes-and-custom-agents.md`.
+
+Parity evidence (pin `f54ce313b99a6661d7758ad042f7a6e05c8e0972`):
+
+- Path/naming: `session.ts` `Session.plan` `[time.created, slug].join("-") + ".md"` ->
+  `plan_file_path` `format!("{created_ms}-{slug}.md")`. VCS vs data base matches.
+- Prompt: `plan-mode.txt` ported verbatim (including `${planInfo}`); `build-switch.txt` ported
+  verbatim; plan-exit description ported from `plan-exit.txt`.
+- Permissions: reference `plan` agent `edit: { "*": "deny", ".opencode/plans/*.md": "allow",
+  <global plans>: "allow" }`, `external_directory[<global plans>/*]: allow` ->
+  `plan_file_edit_rules` (`edit` allows for both plan dirs, `external_directory` allow; pattern is
+  `<plans_dir>/*` because the matcher has no `prefix/*.md` form).
+- Tools: reference registers `PlanExitTool` only; `plan_enter` is a permission
+  (`agent.ts:149`). Rust now matches.
+- Tool-availability divergence note: the reference always exposes `edit`/`write` and gates per path;
+  Rust previously hid them via blanket pattern-`*` evaluation. Switching `resolve_tools` to the
+  reference `disabled` semantics removes that divergence.
+
+Verification: `cargo test -p opencode-core -p opencode-permission -p opencode-tool -p opencode-session`
+(164 passed) and `cargo test -p opencode-server` (59 + 3 passed). Two pre-existing macOS failures in
+`opencode-session::instruction::tests` (`test_find_up_walks_parents`, `test_find_up_stops_at_stop_dir`)
+fail identically on the base commit (temp-dir symlink/canonicalization); they are unrelated and
+untouched by this card.

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionAction {
@@ -129,6 +130,41 @@ pub fn from_config(permission: &ConfigPermission) -> PermissionRuleset {
 
 pub fn merge(rulesets: &[PermissionRuleset]) -> PermissionRuleset {
     rulesets.iter().flat_map(|r| r.clone()).collect()
+}
+
+/// Plan-file permission overrides appended to the `plan` agent ruleset.
+///
+/// The plan agent blanket-denies `edit` (`build_agent_ruleset("plan", ..)`), so
+/// it may only touch files under the session's plans directory. These rules are
+/// appended *after* that deny so the last matching rule wins for plan paths
+/// (`evaluate` scans in reverse). They mirror the reference plan agent
+/// (`packages/opencode/src/agent/agent.ts`): an `edit` allow for
+/// `.opencode/plans/*.md` in the worktree and the relative global `plans/*.md`,
+/// plus an `external_directory` allow for the global plans directory.
+pub fn plan_file_edit_rules(
+    worktree_plans_dir: &Path,
+    global_plans_dir: &Path,
+) -> PermissionRuleset {
+    let worktree_pattern = worktree_plans_dir.join("*").to_string_lossy().into_owned();
+    let global_pattern = global_plans_dir.join("*").to_string_lossy().into_owned();
+
+    vec![
+        PermissionRule {
+            permission: "edit".to_string(),
+            pattern: worktree_pattern.clone(),
+            action: PermissionAction::Allow,
+        },
+        PermissionRule {
+            permission: "edit".to_string(),
+            pattern: global_pattern.clone(),
+            action: PermissionAction::Allow,
+        },
+        PermissionRule {
+            permission: "external_directory".to_string(),
+            pattern: global_pattern,
+            action: PermissionAction::Allow,
+        },
+    ]
 }
 
 pub fn evaluate(permission: &str, pattern: &str, rulesets: &[PermissionRuleset]) -> PermissionRule {
@@ -499,6 +535,60 @@ mod tests {
             normalize_permission_pattern("external_directory", "/tmp/demo/*"),
             "/tmp/demo/*"
         );
+    }
+
+    #[test]
+    fn plan_file_rules_allow_only_plan_paths() {
+        let worktree_plans = Path::new("/repo/.opencode/plans");
+        let global_plans = Path::new("/home/u/.local/share/opencode/plans");
+        let mut ruleset = build_agent_ruleset("plan", &[]);
+        ruleset.extend(plan_file_edit_rules(worktree_plans, global_plans));
+
+        // Plan file in the worktree is allowed...
+        assert_eq!(
+            evaluate("edit", "/repo/.opencode/plans/1-x.md", &[ruleset.clone()]).action,
+            PermissionAction::Allow
+        );
+        // ...a global plan file is allowed...
+        assert_eq!(
+            evaluate(
+                "edit",
+                "/home/u/.local/share/opencode/plans/1-x.md",
+                &[ruleset.clone()]
+            )
+            .action,
+            PermissionAction::Allow
+        );
+        // ...but a regular source edit is denied.
+        assert_eq!(
+            evaluate("edit", "/repo/src/main.rs", &[ruleset.clone()]).action,
+            PermissionAction::Deny
+        );
+        // The global plans directory is an allowed external directory.
+        assert_eq!(
+            evaluate(
+                "external_directory",
+                "/home/u/.local/share/opencode/plans/1-x.md",
+                &[ruleset]
+            )
+            .action,
+            PermissionAction::Allow
+        );
+    }
+
+    #[test]
+    fn plan_file_rules_keep_edit_tools_visible_for_plan_agent() {
+        let mut ruleset = build_agent_ruleset("plan", &[]);
+        ruleset.extend(plan_file_edit_rules(
+            Path::new("/repo/.opencode/plans"),
+            Path::new("/home/u/opencode/plans"),
+        ));
+
+        let disabled_tools = disabled(&["edit".to_string(), "write".to_string()], &ruleset);
+        // A trailing plan-file allow means `disabled` no longer treats the last
+        // `edit` rule as a hard deny, so the tools stay declared.
+        assert!(!disabled_tools.contains("edit"));
+        assert!(!disabled_tools.contains("write"));
     }
 
     #[test]

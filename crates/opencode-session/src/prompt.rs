@@ -1223,8 +1223,10 @@ impl SessionPrompt {
 
             let mut prompt_messages = filtered_messages;
             if let Some(agent) = agent_name {
-                let was_plan = was_plan_agent(&prompt_messages);
-                prompt_messages = insert_reminders(&prompt_messages, agent, was_plan);
+                let plan = session_plan_reminder(session);
+                let last_assistant_was_plan = last_assistant_was_plan(&prompt_messages);
+                prompt_messages =
+                    insert_reminders(&prompt_messages, agent, last_assistant_was_plan, &plan);
             }
 
             let mut chat_messages =
@@ -1508,6 +1510,7 @@ impl SessionPrompt {
             if has_tool_calls {
                 tracing::info!("Processing tool calls for session {}", session_id);
 
+                let plan_path = session_plan_reminder(session).path.display().to_string();
                 let mut tool_context = opencode_tool::ToolContext::new(
                     session_id.clone(),
                     session
@@ -1519,6 +1522,7 @@ impl SessionPrompt {
                 )
                 .with_agent(String::new())
                 .with_abort(token.clone())
+                .with_plan_path(Some(plan_path))
                 .with_loaded_instructions(loaded_instructions.clone());
 
                 if let Some(ask_callback) = ask_callback.clone() {
@@ -3380,87 +3384,195 @@ pub fn extract_structured_output(parts: &[crate::MessagePart]) -> Option<serde_j
     None
 }
 
-const PROMPT_PLAN: &str = r#"You are in PLAN mode. The user wants you to create a plan before executing.
+/// Ported `session/prompt/plan-mode.txt`. `${planInfo}` is replaced with the
+/// resolved plan path and its create-vs-edit wording when the reminder is
+/// injected.
+const PLAN_MODE: &str = r#"<system-reminder>
+Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
-## Your task:
-1. Understand the user's request thoroughly
-2. Explore the codebase to understand the current state
-3. Create a detailed plan in the plan file
-4. Use the plan_exit tool when done planning
+## Plan File Info:
+${planInfo}
+You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
-## Important:
-- Do NOT make any edits or run commands (except read operations)
-- Only create/modify the plan file
-- Ask clarifying questions if needed
-- Use explore subagent to understand the codebase"#;
+## Plan Workflow
 
-const BUILD_SWITCH: &str = r#"The user has approved your plan and wants you to execute it.
+### Phase 1: Initial Understanding
+Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
 
-## Your task:
-1. Execute the plan step by step
-2. Make the necessary changes to the codebase
-3. Test your changes
-4. Verify the implementation matches the plan
+1. Focus on understanding the user's request and the code associated with their request
 
-## Important:
-- You may now use all tools including edit, write, bash
-- Follow the plan closely but adapt as needed
-- Report progress to the user"#;
+2. **Launch up to 3 explore agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
+ - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
+ - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
+ - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
+ - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
 
+3. After exploring the code, use the question tool to clarify ambiguities in the user request up front.
+
+### Phase 2: Design
+Goal: Design an implementation approach.
+
+Launch general agent(s) to design the implementation based on the user's intent and your exploration results from Phase 1.
+
+You can launch up to 1 agent(s) in parallel.
+
+**Guidelines:**
+- **Default**: Launch at least 1 Plan agent for most tasks - it helps validate your understanding and consider alternatives
+- **Skip agents**: Only for truly trivial tasks (typo fixes, single-line changes, simple renames)
+
+Examples of when to use multiple agents:
+- The task touches multiple parts of the codebase
+- It's a large refactor or architectural change
+- There are many edge cases to consider
+- You'd benefit from exploring different approaches
+
+Example perspectives by task type:
+- New feature: simplicity vs performance vs maintainability
+- Bug fix: root cause vs workaround vs prevention
+- Refactoring: minimal change vs clean architecture
+
+In the agent prompt:
+- Provide comprehensive background context from Phase 1 exploration including filenames and code path traces
+- Describe requirements and constraints
+- Request a detailed implementation plan
+
+### Phase 3: Review
+Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
+1. Read the critical files identified by agents to deepen your understanding
+2. Ensure that the plans align with the user's original request
+3. Use question tool to clarify any remaining questions with the user
+
+### Phase 4: Final Plan
+Goal: Write your final plan to the plan file (the only file you can edit).
+- Include only your recommended approach, not all alternatives
+- Ensure that the plan file is concise enough to scan quickly, but detailed enough to execute effectively
+- Include the paths of critical files to be modified
+- Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
+
+### Phase 5: Call plan_exit tool
+At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
+This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
+
+**Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
+
+NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
+</system-reminder>"#;
+
+/// Ported `session/prompt/build-switch.txt`.
+const BUILD_SWITCH: &str = r#"<system-reminder>
+Your operational mode has changed from plan to build.
+You are no longer in read-only mode.
+You are permitted to make file changes, run shell commands, and utilize your arsenal of tools as needed.
+</system-reminder>"#;
+
+/// Plan-file context for the injected plan-mode reminder.
+#[derive(Debug, Clone)]
+pub struct PlanReminder {
+    pub path: std::path::PathBuf,
+    pub exists: bool,
+}
+
+fn push_synthetic_reminder(message: &mut SessionMessage, text: String) {
+    message.parts.push(crate::MessagePart {
+        id: format!("prt_{}", uuid::Uuid::new_v4()),
+        part_type: PartType::Text {
+            text,
+            synthetic: Some(true),
+            ignored: None,
+        },
+        created_at: chrono::Utc::now(),
+        message_id: None,
+    });
+}
+
+/// Resolve the session's plan file path and whether it already exists, using the
+/// shared `opencode_core::plan_file_path` helper so the reminder, the plan tools,
+/// and the permission allow-list all reference one path.
+pub fn session_plan_reminder(session: &Session) -> PlanReminder {
+    let worktree = Path::new(&session.directory);
+    let data_dir = opencode_core::opencode_data_dir().unwrap_or_else(|| worktree.join(".opencode"));
+    let path =
+        opencode_core::plan_file_path(worktree, &data_dir, &session.slug, session.time.created);
+    let exists = path.exists();
+    PlanReminder { path, exists }
+}
+
+/// Whether the most recent assistant message ran under the `plan` agent.
+///
+/// Mirrors the reference `assistantMessage?.info.agent === "plan"` transition
+/// check used to decide plan-mode entry and the build switch.
+pub fn last_assistant_was_plan(messages: &[SessionMessage]) -> bool {
+    messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.role, MessageRole::Assistant))
+        .and_then(|m| m.metadata.get("agent"))
+        .and_then(|agent| agent.as_str())
+        == Some("plan")
+}
+
+/// Inject plan-mode reminders onto the last user message.
+///
+/// Mirrors the reference `SessionReminders.apply` experimental plan-mode branch:
+/// entering plan mode injects the ported `plan-mode.txt` with the resolved plan
+/// path and create-vs-edit wording (creating the plans directory first when the
+/// file is absent); leaving plan mode injects `build-switch.txt`, plus the
+/// "a plan file exists" line when a plan file is present.
 pub fn insert_reminders(
     messages: &[SessionMessage],
     agent_name: &str,
-    was_plan: bool,
+    last_assistant_was_plan: bool,
+    plan: &PlanReminder,
 ) -> Vec<SessionMessage> {
-    let last_user_idx = messages
+    let Some(idx) = messages
         .iter()
-        .rposition(|m| matches!(m.role, MessageRole::User));
+        .rposition(|m| matches!(m.role, MessageRole::User))
+    else {
+        return messages.to_vec();
+    };
 
-    if let Some(idx) = last_user_idx {
-        let mut messages = messages.to_vec();
+    let mut messages = messages.to_vec();
 
-        if agent_name == "plan" {
-            let reminder_text = PROMPT_PLAN.to_string();
-            messages[idx].parts.push(crate::MessagePart {
-                id: format!("prt_{}", uuid::Uuid::new_v4()),
-                part_type: PartType::Text {
-                    text: reminder_text,
-                    synthetic: None,
-                    ignored: None,
-                },
-                created_at: chrono::Utc::now(),
-                message_id: None,
-            });
-        }
-
-        if was_plan && agent_name == "build" {
-            let reminder_text = BUILD_SWITCH.to_string();
-            messages[idx].parts.push(crate::MessagePart {
-                id: format!("prt_{}", uuid::Uuid::new_v4()),
-                part_type: PartType::Text {
-                    text: reminder_text,
-                    synthetic: None,
-                    ignored: None,
-                },
-                created_at: chrono::Utc::now(),
-                message_id: None,
-            });
-        }
-
-        messages
-    } else {
-        messages.to_vec()
-    }
-}
-
-pub fn was_plan_agent(messages: &[SessionMessage]) -> bool {
-    messages.iter().any(|m| {
-        if let Some(agent) = m.metadata.get("agent") {
-            agent.as_str() == Some("plan")
+    if agent_name != "plan" && last_assistant_was_plan {
+        let text = if plan.exists {
+            format!(
+                "{}\n\nA plan file exists at {}. You should execute on the plan defined within it",
+                BUILD_SWITCH,
+                plan.path.display()
+            )
         } else {
-            false
+            BUILD_SWITCH.to_string()
+        };
+        push_synthetic_reminder(&mut messages[idx], text);
+        return messages;
+    }
+
+    if agent_name != "plan" || last_assistant_was_plan {
+        return messages;
+    }
+
+    if !plan.exists {
+        if let Some(parent) = plan.path.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-    })
+    }
+    let plan_info = if plan.exists {
+        format!(
+            "A plan file already exists at {}. You can read it and make incremental edits using the edit tool.",
+            plan.path.display()
+        )
+    } else {
+        format!(
+            "No plan file exists yet. You should create your plan at {} using the write tool.",
+            plan.path.display()
+        )
+    };
+    push_synthetic_reminder(
+        &mut messages[idx],
+        PLAN_MODE.replace("${planInfo}", &plan_info),
+    );
+
+    messages
 }
 
 pub struct ResolvedTool {
@@ -4036,12 +4148,8 @@ mod tests {
             .any(|p| matches!(p.part_type, PartType::Compaction { .. })));
     }
 
-    #[test]
-    fn insert_reminders_adds_plan_prompt_for_plan_agent() {
-        let messages = vec![SessionMessage::user("ses_test", "plan this")];
-        let output = insert_reminders(&messages, "plan", false);
-        let last = output.last().unwrap();
-        let injected = last
+    fn collect_text(message: &SessionMessage) -> String {
+        message
             .parts
             .iter()
             .filter_map(|p| match &p.part_type {
@@ -4049,8 +4157,36 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        assert!(injected.contains("You are in PLAN mode"));
+            .join("\n")
+    }
+
+    fn temp_plan_reminder(exists: bool) -> PlanReminder {
+        let path = std::env::temp_dir()
+            .join(format!("opencode-plan-reminder-{}", std::process::id()))
+            .join("plans")
+            .join("1-x.md");
+        PlanReminder { path, exists }
+    }
+
+    #[test]
+    fn insert_reminders_adds_plan_mode_with_create_wording() {
+        let messages = vec![SessionMessage::user("ses_test", "plan this")];
+        let plan = temp_plan_reminder(false);
+        let output = insert_reminders(&messages, "plan", false, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(injected.contains("Plan mode is active"));
+        assert!(injected.contains(&plan.path.display().to_string()));
+        assert!(injected.contains("No plan file exists yet"));
+    }
+
+    #[test]
+    fn insert_reminders_adds_plan_mode_with_incremental_wording() {
+        let messages = vec![SessionMessage::user("ses_test", "plan this")];
+        let plan = temp_plan_reminder(true);
+        let output = insert_reminders(&messages, "plan", false, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(injected.contains("A plan file already exists at"));
+        assert!(injected.contains(&plan.path.display().to_string()));
     }
 
     #[test]
@@ -4058,18 +4194,20 @@ mod tests {
         let mut user = SessionMessage::user("ses_test", "execute this");
         user.metadata
             .insert("agent".to_string(), serde_json::json!("plan"));
-        let output = insert_reminders(&[user], "build", true);
-        let last = output.last().unwrap();
-        let injected = last
-            .parts
-            .iter()
-            .filter_map(|p| match &p.part_type {
-                PartType::Text { text, .. } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(injected.contains("The user has approved your plan"));
+        let plan = temp_plan_reminder(true);
+        let output = insert_reminders(&[user], "build", true, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(injected.contains("Your operational mode has changed from plan to build"));
+        assert!(injected.contains(&plan.path.display().to_string()));
+    }
+
+    #[test]
+    fn insert_reminders_skips_plan_reminder_when_already_in_plan() {
+        let messages = vec![SessionMessage::user("ses_test", "continue")];
+        let plan = temp_plan_reminder(true);
+        let output = insert_reminders(&messages, "plan", true, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(!injected.contains("Plan mode is active"));
     }
 
     #[tokio::test]

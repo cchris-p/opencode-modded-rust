@@ -67,7 +67,7 @@ Enum at `crates/opencode-agent/src/agent.rs:30-63`; constructors are `AgentInfo:
 | Agent | Mode | Native | Enabled today | Notes |
 | --- | --- | --- | --- | --- |
 | `build` | Primary | yes | yes | Default agent. No system prompt, so the model default prompt is used; `max_steps = 100` |
-| `plan` | Primary | yes | yes | Plan mode; `edit` denied, `plan_exit` allowed |
+| `plan` | Primary | yes | yes | Plan mode; session-scoped plan file is the only editable path, every other `edit` denied; `plan_exit` allowed; `plan_enter` is a client-driven permission, not a model tool |
 | `general` | Subagent | yes | yes | General-purpose multi-step research; defaults plus `todowrite` deny; no dedicated prompt (uses the model default) |
 | `explore` | Subagent | yes | yes | Read/search/bash allowlist |
 | `compaction` | Subagent | yes | yes | Internal |
