@@ -26,7 +26,7 @@ pub fn default_provider() -> Box<dyn RetrievalProvider> {
 }
 
 /// Map a file path to the `scopemux-core` `Language` enum value, or `None` when
-/// the language is unsupported (`scopemux-core` does not parse Rust).
+/// the extension is not a language `scopemux-core` parses.
 pub fn language_for_path(path: &str) -> Option<i32> {
     let ext = std::path::Path::new(path)
         .extension()
@@ -39,6 +39,7 @@ pub fn language_for_path(path: &str) -> Option<i32> {
         "py" => Some(3),                                // LANG_PYTHON
         "js" | "mjs" | "cjs" => Some(4),                // LANG_JAVASCRIPT
         "ts" | "tsx" => Some(5),                        // LANG_TYPESCRIPT
+        "rs" => Some(6),                                // LANG_RUST
         _ => None,
     }
 }
@@ -583,18 +584,20 @@ mod tests {
     }
 
     #[test]
-    fn language_mapping_covers_supported_and_rejects_rust() {
+    fn language_mapping_covers_supported_languages() {
         assert_eq!(language_for_path("a.c"), Some(1));
         assert_eq!(language_for_path("a.cpp"), Some(2));
         assert_eq!(language_for_path("a.py"), Some(3));
         assert_eq!(language_for_path("a.js"), Some(4));
         assert_eq!(language_for_path("a.ts"), Some(5));
-        assert_eq!(language_for_path("a.rs"), None);
+        assert_eq!(language_for_path("a.rs"), Some(6));
+        assert_eq!(language_for_path("a.txt"), None);
     }
 
     #[test]
     fn workspace_supported_requires_a_supported_seed() {
-        assert!(!workspace_supported(&request("/ws", vec!["lib.rs"])));
+        assert!(!workspace_supported(&request("/ws", vec!["notes.txt"])));
+        assert!(workspace_supported(&request("/ws", vec!["lib.rs"])));
         assert!(workspace_supported(&request(
             "/ws",
             vec!["lib.rs", "main.c"]
@@ -626,6 +629,41 @@ mod tests {
         assert!(
             !response.candidates.is_empty(),
             "expected at least one scopemux candidate"
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .all(|candidate| candidate.origin == Some(opencode_types::RetrievalOrigin::Parsed)),
+            "parsed facts should be labeled with parsed origin"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_provider_returns_candidates_for_rust_file() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "pub struct Worker {\n    pub count: u32,\n}\n\npub fn add(a: u32, b: u32) -> u32 {\n    a + b\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["lib.rs"]);
+        req.objective = "add".to_string();
+        let response = ScopemuxProvider::new()
+            .retrieve(&req)
+            .await
+            .expect("scopemux retrieve should succeed for a Rust workspace");
+
+        assert_eq!(response.provider, "scopemux");
+        assert!(
+            !response.candidates.is_empty(),
+            "expected at least one scopemux candidate for a Rust file"
         );
         assert!(
             response
