@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "todo"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -17,7 +17,7 @@ Define the idealized way `scopemux` helps `scopemux-code`: a live **map** of the
 
 The map is more than the parser and more than an index. It holds the **current state** (parsed code) and the **target state** (planned nodes that become real code), and it exposes the **delta** between them. Target-state nodes are InfoBlocks that help with system understanding, observability when debugging, and DRY by surfacing refactor opportunities. The map is kept current by incremental reconciliation rather than constant full re-indexing.
 
-This card is the design and vision. The full design lives in `wiki/scopemux-map-integration.md`. Implementation is split into `SCOPE-002`, `SCOPE-003`, and `SCOPE-004`, with enabling upstream work tracked in `$HOME/apps/scopemux-notes`.
+This card is the design and vision. The full design lives in `wiki/scopemux-map-integration.md`. Implementation is split into `SCOPE-002`, `SCOPE-003`, and `SCOPE-004`. Integration work includes the enabling `scopemux` development it depends on: the upstream work tracked in `$HOME/apps/scopemux-notes` is in-scope for this program, not a separate owner's prerequisite (`invariants/integration-scope.md`).
 
 ## Why this exists
 
@@ -97,17 +97,18 @@ The generic provider remains the default and fallback; unsupported language is a
 
 ## Prerequisites
 
-Every prerequisite is tracked in this repo or in `$HOME/apps/scopemux-notes`. No phase starts until its prerequisites are met.
+Every prerequisite is tracked in this repo or in `$HOME/apps/scopemux-notes`. No phase starts until its prerequisites are met. Under `invariants/integration-scope.md`, these upstream items are in-scope deliverables of the integration program rather than external blockers; they are developed in their own repository.
 
 | Prerequisite | Home | Gates | Status |
 | --- | --- | --- | --- |
-| `START-025` retrieval-provider boundary | this repo | `SCOPE-002` implementation | todo |
-| `FIX-001` C++ resolver registration/declaration | scopemux-notes | trustworthy C API core for `SCOPE-002` | todo |
-| `FIX-003` Python interpreter range alignment | scopemux-notes | pinned/reproducible build for `SCOPE-002` | todo |
-| `FIX-004` Python API surface correction | scopemux-notes | honest C-only boundary for `SCOPE-002` | todo |
-| `FIX-002` InfoBlock terminology disambiguation | scopemux-notes | trustworthy context model for Phase 2/3 | todo |
-| `FIX-006` planning-doc alignment | scopemux-notes | docs cannot be mistaken for implementation | todo |
-| `FIX-005` duplicate `parser_free` declaration | scopemux-notes | clean parser public surface | todo |
+| `START-025` retrieval-provider boundary | this repo | `SCOPE-002` implementation | done (PR #104) |
+| `FIX-001` C++ resolver registration/declaration | scopemux-notes | trustworthy C API core for `SCOPE-002` | done (`scopemux-core` PR #7) |
+| `FIX-003` Python interpreter range alignment | scopemux-notes | pinned/reproducible build for `SCOPE-002` | done (`scopemux-core` PR #7) |
+| `FIX-004` Python API surface correction | scopemux-notes | honest C-only boundary for `SCOPE-002` | done (`scopemux-core` PR #7) |
+| `FIX-002` InfoBlock terminology disambiguation | scopemux-notes | trustworthy context model for Phase 2/3 | done (`scopemux-core` PR #7) |
+| `FIX-006` planning-doc alignment | scopemux-notes | docs cannot be mistaken for implementation | done (`scopemux-notes` `9691e45`) |
+| `FIX-005` duplicate `parser_free` declaration | scopemux-notes | clean parser public surface | done (`scopemux-core` PR #7) |
+| `TESTS-006` C example AST mismatch | scopemux-notes | clean `run_c_tests.sh` baseline | done (`scopemux-core` PR #8) |
 | `WI-030` Rust grammar and reference resolution | scopemux-notes | Phase 1 usefulness on this repo | todo |
 | `WI-018` incremental index and watcher | scopemux-notes | map stays current | todo |
 | `WI-031` durable map store | scopemux-notes | plan persistence | todo |
@@ -119,7 +120,7 @@ Every prerequisite is tracked in this repo or in `$HOME/apps/scopemux-notes`. No
 
 - The core invariants that constrain the upstream fixes are `$HOME/apps/scopemux-notes/invariants/`.
 - `FIX-001`-`FIX-006` are correctness prerequisites with no standalone feature value; they are composed by `$HOME/apps/scopemux-notes/handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`).
-- `SCOPE-002` is gated by `START-025` and must not start before that boundary exists. The `FIX-*` items are strongly recommended before `SCOPE-002` because they make the C API surface and build contract reliable, but they do not block a spike.
+- `SCOPE-002` was gated by `START-025`; that boundary now exists (PR #104). The `FIX-*` items are done and merged (`scopemux-core` PR #7), and `TESTS-006` cleared the C test baseline (PR #8), so `SCOPE-002` is unblocked.
 
 ## Phasing
 
@@ -167,3 +168,4 @@ Every prerequisite is tracked in this repo or in `$HOME/apps/scopemux-notes`. No
 - Upstream `scopemux-notes` items: `WI-018` (incremental index/watcher, refined), `WI-030` (Rust grammar), `WI-031` (durable map store), `WI-032` (plan InfoBlocks), `WI-033` (InfoBlock origin/lifecycle), `WI-034` (observability blocks), `WI-035` (duplication/refactor detection), `WI-036` (delta and map query API).
 - Core conflict fixes: `FIX-001`-`FIX-006`, composed by `handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`); core invariants at `$HOME/apps/scopemux-notes/invariants/`.
 - Cross-repo material is referenced by path only; binding rules are restated in this repo per `invariants/documentation-boundary.md`.
+- Closed out 2026-09-23 (design-only). Done-when verified: design captured in `wiki/scopemux-map-integration.md` and indexed from `wiki/README.md`; phases represented by `SCOPE-002`/`SCOPE-003`/`SCOPE-004`; upstream `FIX-001`-`FIX-006` and `WI-018`, `WI-030`-`WI-036` exist as cards in `$HOME/apps/scopemux-notes`; design consistent with `invariants/task-state.md`, `invariants/retrieval.md`, and `invariants/context.md`. No implementation is claimed here; execution remains gated on the prerequisites table, which is in-scope integration work per `invariants/integration-scope.md`.

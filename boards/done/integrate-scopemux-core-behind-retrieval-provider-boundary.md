@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-integration-plan.md"
-status: "todo"
+status: "done"
 created: "2026-09-21"
 ---
 
@@ -49,7 +49,7 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 
 - Making `scopemux-core` a V1 hard dependency or a build requirement for the daily-driver path.
 - Porting `scopemux-core` to Rust or rewriting its parsers.
-- Adding Rust grammar support to `scopemux-core` (separate upstream work; tracked as `WI-030` in `$HOME/apps/scopemux-notes`).
+- Adding Rust grammar support to `scopemux-core` as part of this product-side provider card (it is upstream program work; tracked as `WI-030`).
 - Target-state/plan nodes, delta views, observability blocks, or duplication analysis (those belong to `SCOPE-001` later phases).
 - Replacing direct file reads for small, obvious tasks.
 - Giving `scopemux-core` authority over task lifecycle, completion, verification, or review.
@@ -79,19 +79,60 @@ Those map directly onto the retrieval responsibilities the plan assigned to a fu
 - Check a Rust workspace (unsupported grammar) and confirm the fallback behavior matches the chosen policy.
 - Confirm the pinned version is recorded and reproducible from a clean checkout.
 
+## Integration mechanism (recommended)
+
+The `START-025` boundary is in-process Rust (`opencode-retrieval::RetrievalProvider`); `scopemux-core` exposes a C API with `ProjectContext`, tiered context, search, and prompt assembly as C-only. Recommended first implementation:
+
+- **Rust FFI against the `scopemux-core` C API**, pinned as a git submodule at a recorded commit and built through `build.rs` (CMake) or a small wrapper crate. This keeps retrieval in-process and is the only path that reaches `ProjectContext` without IPC.
+- **Out-of-process helper** (a compiled `scopemux-core` binary driven by a small JSON stdin/stdout protocol) is the fallback if coupling the product build to CMake/tree-sitter is unacceptable.
+- **Python sidecar is rejected** for the first cut: the exposed Python surface lacks `ProjectContext`, tiered context, search, and prompt assembly (`FIX-004`).
+
+A `ScopemuxProvider` implements `RetrievalProvider` by mapping `RetrievalRequest` (objective, stage, workspace root, seeds, role, budget) onto `scopemux-core` calls and mapping results back to `RetrievalCandidate`s with provenance and confidence.
+
+## Fallback and provenance
+
+- `scopemux-core` does not parse Rust, so this product's own repo and Rust workspaces cannot use it. Unsupported language is an explicit provenance signal (for example `provider = "generic"`, `reason = "unsupported_language"`), not a silent downgrade.
+- Provider absence, build failure, or call failure leaves assembly on the generic provider unchanged.
+- Structural links are heuristic and must carry confidence per `invariants/retrieval.md`.
+
+## Build pinning
+
+- Pin the `scopemux-core` commit (submodule or vendored prebuilt artifact) and record it; a clean checkout must reproduce the build.
+- Keep the Python bindings out of the product build; consume the C API only.
+
+## Decisions before implementation
+
+- Mechanism: FFI vs out-of-process helper (recommend FFI for the first cut).
+- Distribution: git submodule vs vendored prebuilt artifact.
+- Whether context provenance should expose a "structural retrieval unavailable" signal for unsupported languages.
+
+## Implementation (2026-09-24)
+
+First cut on `feature/SCOPE-002-scopemux-provider` (PR #105, awaiting QA):
+
+- `opencode-scopemux` crate: `ScopemuxProvider` over the `scopemux-core` C API, feature-gated (`native`); default builds use the generic provider.
+- `build.rs` builds `parser_core` + Tree-sitter static libraries via CMake when native; bakes the queries path.
+- Provider selection in `opencode-session` prefers the configured provider and falls back to generic when scopemux is unavailable or the workspace language is unsupported.
+- `scripts/fetch-scopemux-core.sh` pins `scopemux-core` at `1a1b681` (includes upstream PR #9).
+
+Verification: default `cargo test`/clippy pass; native `cargo test -p opencode-scopemux --features native` on macOS arm64 passes 4 tests including an FFI round-trip returning candidates for a C fixture.
+
+Remaining polish (tracked by `H-010`): config-driven provider enablement, tiered-context slices per stage, and replacing the fetch script with a submodule or vendored artifact.
+
 ## Related Items
 
 - `SCOPE-001` Idealized scopemux map integration - the vision this card is the first phase of.
-- `START-025` Add retrieval-provider boundary for task context assembly - prerequisite; this card plugs into that boundary.
+- `START-025` Add retrieval-provider boundary for task context assembly - done (PR #104); this card plugs into that boundary.
 - `START-007` Plan ScopeMux integration - defined the deferred contract and responsibilities this card now implements.
 - `PHASE-003` V2 reliability - parent phase where early ScopeMux integration was scheduled.
 - `START-016` Define structured task state for V1 - source of task/stage intent the retrieval request is built from.
 - `PHASE-001` / `START-005` - V1 runtime loop that must remain generic and ScopeMux-free.
-- Upstream prerequisites in `$HOME/apps/scopemux-notes`: `FIX-001` (C++ resolver registration and declaration), `FIX-003` (Python interpreter range), `FIX-004` (Python API surface docs). These make the C API and build contract reliable before integration; the full core conflict set is `FIX-001`-`FIX-006` composed by `H-001`.
+- Upstream work in `$HOME/apps/scopemux-notes` (in-scope for ScopeMux integration): `FIX-001` (C++ resolver registration and declaration), `FIX-003` (Python interpreter range), and `FIX-004` (Python API surface docs) are done and merged (`scopemux-core` PR #7, composed by `H-001`).
 
 ## Notes
 
-- Depends on `START-025`; do not start implementation before the boundary exists.
+- Dependencies are met: `START-025` landed (PR #104; `opencode-retrieval` crate + v1 boundary) and `FIX-001`/`FIX-003`/`FIX-004` merged (`scopemux-core` PR #7). `TESTS-006` cleared the C test baseline (`scopemux-core` PR #8). Ready to implement.
+- Integration scope: the ScopeMux integration program includes the `scopemux-core`/`scopemux-notes` development it depends on (`invariants/integration-scope.md`); upstream `FIX-*`/`WI-*` items are in-scope program deliverables, not external prerequisites.
 - Keep the integration one provider among peers, not a special case threaded through the runtime.
 - Treat `scopemux-core` maturity gaps (no Rust grammar, dev-oriented build, C-only project API) as first-class design inputs, not as footnotes.
 - The wiki companions are `wiki/scopemux-integration-plan.md` (boundary and guardrails) and `wiki/scopemux-map-integration.md` (idealized target).

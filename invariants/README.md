@@ -37,6 +37,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `coding-session-polling.md` defines low-context polling requirements for coding-session waits.
 - `verification.md` defines verification requirements.
 - `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.
+- `integration-scope.md` defines that ScopeMux integration work includes the `scopemux-core` and `scopemux-notes` development it depends on.
 - Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
 
 ## Cross-repo boundary
