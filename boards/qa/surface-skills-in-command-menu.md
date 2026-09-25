@@ -152,3 +152,6 @@ Constraints:
   inserts `/name ` instead of executing; annotation is a muted `· skill` suffix.
 - Verification: `cargo check -p opencode-tui` passed; `cargo test -p opencode-tui slash_command`
   passed (3 tests). Manual TUI verification is pending on the PR branch.
+- Closeout: merged via PR #111 into `development` (merge commit `0203159`); the remote and local
+  feature branches were deleted. The card remains in `qa` until a QA report is recorded or completion
+  is explicitly directed.
