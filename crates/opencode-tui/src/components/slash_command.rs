@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::{
     layout::Rect,
     style::Style,
@@ -6,11 +8,13 @@ use ratatui::{
     Frame,
 };
 
-use crate::command::{CommandAction, CommandRegistry};
+use crate::api::SkillSummary;
+use crate::command::{fuzzy_match, CommandAction, CommandRegistry};
 use crate::theme::Theme;
 
 pub struct SlashCommandPopup {
     pub registry: CommandRegistry,
+    pub skills: Vec<SkillSummary>,
     pub query: String,
     pub filtered: Vec<String>,
     pub state: ListState,
@@ -22,6 +26,7 @@ impl SlashCommandPopup {
     pub fn new() -> Self {
         Self {
             registry: CommandRegistry::new(),
+            skills: Vec::new(),
             query: String::new(),
             filtered: Vec::new(),
             state: ListState::default(),
@@ -56,7 +61,24 @@ impl SlashCommandPopup {
         &self.query
     }
 
+    pub fn set_skills(&mut self, skills: Vec<SkillSummary>) {
+        self.skills = skills;
+        if self.open {
+            self.refresh_filter();
+        }
+    }
+
+    fn is_skill(&self, name: &str) -> bool {
+        self.registry.get(name).is_none() && self.skills.iter().any(|skill| skill.name == name)
+    }
+
+    fn registry_has_command(&self, skill_name: &str) -> bool {
+        self.registry.get(skill_name).is_some()
+            || self.registry.get(&format!("/{}", skill_name)).is_some()
+    }
+
     fn refresh_filter(&mut self) {
+        self.filtered.clear();
         if self.query.is_empty() {
             self.filtered = self
                 .registry
@@ -65,12 +87,28 @@ impl SlashCommandPopup {
                 .map(|cmd| cmd.name.clone())
                 .collect();
         } else {
-            self.filtered = self
-                .registry
-                .search(&self.query)
+            let mut seen: HashSet<String> = HashSet::new();
+            for cmd in self.registry.search(&self.query) {
+                if seen.insert(cmd.name.clone()) {
+                    self.filtered.push(cmd.name.clone());
+                }
+            }
+
+            let mut skill_matches: Vec<(String, i32)> = self
+                .skills
                 .iter()
-                .map(|cmd| cmd.name.clone())
+                .filter(|skill| !self.registry_has_command(&skill.name))
+                .filter_map(|skill| {
+                    fuzzy_match(&self.query, &skill.name).map(|score| (skill.name.clone(), score))
+                })
+                .filter(|(name, _)| !seen.contains(name))
                 .collect();
+            skill_matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            for (name, _) in skill_matches {
+                if seen.insert(name.clone()) {
+                    self.filtered.push(name);
+                }
+            }
         }
         self.state.select(Some(0));
     }
@@ -105,9 +143,12 @@ impl SlashCommandPopup {
 
     pub fn select_current(&mut self) {
         if let Some(idx) = self.state.selected() {
-            if let Some(name) = self.filtered.get(idx) {
-                if let Some(cmd) = self.registry.get(name) {
+            if let Some(name) = self.filtered.get(idx).cloned() {
+                if let Some(cmd) = self.registry.get(&name) {
                     self.selected_action = Some(cmd.action.clone());
+                    self.close();
+                } else if self.is_skill(&name) {
+                    self.selected_action = Some(CommandAction::InsertSkill(name));
                     self.close();
                 }
             }
@@ -138,8 +179,8 @@ impl SlashCommandPopup {
             .enumerate()
             .map(|(idx, name)| {
                 let cmd = self.registry.get(name);
-                let title = cmd.map(|c| c.title.as_str()).unwrap_or(name);
-                let _desc = cmd.map(|c| c.description.as_str()).unwrap_or("");
+                let is_skill = cmd.is_none() && self.is_skill(name);
+                let title = cmd.map(|c| c.title.as_str()).unwrap_or(name.as_str());
                 let keybind = cmd.and_then(|c| c.keybind.clone());
 
                 let is_selected = self.state.selected() == Some(idx);
@@ -150,17 +191,17 @@ impl SlashCommandPopup {
                 } else {
                     Style::default().fg(theme.text)
                 };
+                let muted = Style::default().fg(theme.text_muted);
 
-                let content = if let Some(kb) = keybind {
-                    Line::from(vec![
-                        Span::styled(title, style),
-                        Span::styled(format!("  ({})", kb), Style::default().fg(theme.text_muted)),
-                    ])
-                } else {
-                    Line::from(Span::styled(title, style))
-                };
+                let mut spans = vec![Span::styled(title, style)];
+                if let Some(kb) = keybind {
+                    spans.push(Span::styled(format!("  ({})", kb), muted));
+                }
+                if is_skill {
+                    spans.push(Span::styled("  \u{b7} skill", muted));
+                }
 
-                ListItem::new(content)
+                ListItem::new(Line::from(spans))
             })
             .collect();
 
@@ -180,5 +221,64 @@ impl SlashCommandPopup {
 impl Default for SlashCommandPopup {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SlashCommandPopup;
+    use crate::api::SkillSummary;
+    use crate::command::CommandAction;
+
+    fn skill(name: &str) -> SkillSummary {
+        SkillSummary {
+            name: name.to_string(),
+            description: None,
+        }
+    }
+
+    fn popup_with_skills() -> SlashCommandPopup {
+        let mut popup = SlashCommandPopup::new();
+        popup.set_skills(vec![skill("session-summary"), skill("review-pr")]);
+        popup
+    }
+
+    #[test]
+    fn empty_query_lists_no_skills() {
+        let mut popup = popup_with_skills();
+        popup.open();
+        assert!(!popup.filtered.is_empty());
+        assert!(popup.filtered.iter().all(|name| !popup.is_skill(name)));
+    }
+
+    #[test]
+    fn filtering_lists_matching_skills() {
+        let mut popup = popup_with_skills();
+        popup.open();
+        for c in "summary".chars() {
+            popup.handle_input(c);
+        }
+        assert!(popup.filtered.iter().any(|name| name == "session-summary"));
+    }
+
+    #[test]
+    fn selecting_skill_yields_insert_action() {
+        let mut popup = popup_with_skills();
+        popup.open();
+        for c in "review".chars() {
+            popup.handle_input(c);
+        }
+        let idx = popup
+            .filtered
+            .iter()
+            .position(|name| name == "review-pr")
+            .expect("skill should be listed");
+        popup.state.select(Some(idx));
+        popup.select_current();
+        assert!(matches!(
+            popup.take_action(),
+            Some(CommandAction::InsertSkill(name)) if name == "review-pr"
+        ));
+        assert!(!popup.is_open());
     }
 }

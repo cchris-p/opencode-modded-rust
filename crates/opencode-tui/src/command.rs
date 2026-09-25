@@ -105,6 +105,8 @@ pub enum CommandAction {
     PromptStashPush,
     PromptStashList,
     PromptSkillList,
+    // Skills
+    InsertSkill(String),
     // System
     Exit,
     Detach,

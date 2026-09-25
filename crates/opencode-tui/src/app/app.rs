@@ -1938,6 +1938,9 @@ impl App {
             CommandAction::PromptSkillList => {
                 self.open_skill_list_dialog();
             }
+            CommandAction::InsertSkill(name) => {
+                self.prompt.set_input(format!("/{} ", name));
+            }
             CommandAction::SwitchTheme => {
                 self.refresh_theme_list_dialog();
                 let current_theme = self.context.current_theme_name();
@@ -3323,6 +3326,7 @@ impl App {
         };
         let skills = client.list_skills()?;
         self.skill_list_dialog.set_skills(skills.clone());
+        self.slash_popup.set_skills(skills.clone());
         self.prompt.set_skill_suggestions(skill_names(&skills));
         Ok(())
     }
