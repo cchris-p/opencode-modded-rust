@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "invariants/option-selection.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 updated: "2026-09-25"
 ---
