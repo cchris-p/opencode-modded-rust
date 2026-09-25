@@ -7249,7 +7249,6 @@ async fn list_tool_ids() -> Json<Vec<String>> {
         "websearch".to_string(),
         "task".to_string(),
         "lsp".to_string(),
-        "plan_enter".to_string(),
         "plan_exit".to_string(),
         "todoread".to_string(),
         "todowrite".to_string(),

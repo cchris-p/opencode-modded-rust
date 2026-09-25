@@ -32,6 +32,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `session-durability.md` defines durable session/message ownership, additive persistence, explicit deletion, and resume integrity.
 - `retrieval.md` defines retrieval expectations.
 - `coding-session-behavior.md` defines agentic coding-session request requirements (agent identity, system prompt, environment context, tool attachment).
+- `plan-mode.md` defines plan-mode plan-file path, permissions, reminder injection, and tools.
 - `cli-task-targeting.md` defines CLI task target selection and queued cross-client send requirements.
 - `message-queuing.md` defines per-session prompt ordering, queue-aware status, abort/cancel, and durable ordering intent.
 - `coding-session-polling.md` defines low-context polling requirements for coding-session waits.
