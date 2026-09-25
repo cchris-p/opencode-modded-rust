@@ -129,11 +129,18 @@ interactive TUI.
   line will not appear.
 - **ANSI in logs.** Strip escapes (`perl -pe 's/\e\[[0-9;]*[A-Za-z]//g'`)
   before grepping/parsing values.
-- **Duplicate tree-sitter runtime.** scopemux-core vendors tree-sitter and the
-  product links the `tree-sitter` crate; version/ABI mismatch breaks
-  `ts_parser_set_language`, and duplicate runtimes can break the core search
-  index even when ABIs match. If the provider falls back, check for
-  `duplicate symbol` linker warnings and `ts_parser_set_language failed`.
+- **Tree-sitter ABI mismatch.** scopemux-core vendors tree-sitter and the
+  product links the `tree-sitter` crate; if their grammar ABI versions differ,
+  `ts_parser_set_language failed` appears in the log and every workspace falls
+  back. Keep the workspace `tree-sitter`/`tree-sitter-bash` versions aligned with
+  the core's vendored tree-sitter. Duplicate `ts_*` linker symbols are a warning,
+  not the failure, once the ABIs match.
+- **Selected provider with zero candidates.** `provider=scopemux candidates=0`
+  means scopemux-core parsed or indexed nothing useful. Check the core log for
+  `Failed to parse file` (grammar/ABI) or `project search failed` (search index).
+  A search-text buffer that did not grow for long absolute paths was fixed in
+  scopemux-core `e93df08`; if it regresses, reproduce with an absolute
+  `file://` seed.
 - **The server is unsecured** (no `OPENCODE_SERVER_PASSWORD`) and binds
   `127.0.0.1`; do not expose it.
 - **Shared checkout.** Other sessions may hold the main checkout on another

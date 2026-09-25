@@ -83,5 +83,36 @@ Branch `feature/scopemux-qwen-local-activation`, base `development`.
   `opencode-cli` enables it by default, so the shipped binary compiles the provider.
 - Pin: `scripts/fetch-scopemux-core.sh` advanced to `scopemux-core` `main`
   `230383ea2ee315c2632ad5742e7a0fb4a04e89fa` (headers unchanged by `PR #20-#22`).
+
+### Agent QA (2026-09-25)
+
+Performed with the attach/detach harness (`scripts/scopemux-qa-server.sh`,
+`scripts/scopemux-qa-check.sh`); see the `scopemux-self-qa` skill. Two real bugs
+were found and fixed before the provider returned candidates:
+
+1. **Tree-sitter ABI mismatch.** Enabling `native` linked scopemux-core's
+   vendored tree-sitter 0.26 (grammar ABI 15) alongside the product's
+   `tree-sitter` 0.24.7 (ABI 14); `ts_parser_set_language` failed and every
+   workspace fell back. Fixed by bumping `tree-sitter` to 0.26 and
+   `tree-sitter-bash` to 0.25 (`ecf289e`).
+2. **Core search-index fixed buffer.** `append_text_part` wrote into a fixed
+   256-byte buffer and failed when block text (absolute paths + node content)
+   overflowed, so `project search failed` for every absolute `file://` seed.
+   Fixed upstream in `scopemux-core` PR #23 (`e93df08`) by growing the buffer;
+   the product pin advanced to that commit (`0908c5b`). Regression tests added in
+   both repos.
+
+Final QA evidence (binary `0908c5b`, server `127.0.0.1:4096`, model
+`ollama/qwen3:30b`):
+
+- `@sample.rs` -> `provider=scopemux candidates=20` PASS.
+- `@sample.c` -> `provider=scopemux candidates=16` PASS.
+- Unit coverage: `opencode-scopemux` native 10/10; core Docker `run_c_tests` +
+  `run_interfile_tests` ALL TESTS PASSED (project context 12/12).
+
+Still open (non-blocking): `impl`/trait method scoping and dynamic dispatch in
+`scopemux-core` (`WI-030`), and the product binary still emits a duplicate
+`tree-sitter` linker warning (harmless now that ABIs match).
+
 - Invariants: `providers.md` and `integration-scope.md` record the activation
   scope; `AGENTS.md` records the build prerequisite and activation rule.
