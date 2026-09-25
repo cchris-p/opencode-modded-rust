@@ -30,6 +30,11 @@ use crate::routes;
 
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:4096";
 
+/// Cadence for the background models.dev catalog refresh. Mirrors vanilla
+/// OpenCode's `Schedule.spaced("60 minutes")` in `packages/core/src/models-dev.ts`.
+pub const MODELS_DEV_REFRESH_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(60 * 60);
+
 struct PluginBridgeFetchProxy {
     bridge: Arc<PluginAuthBridge>,
 }
@@ -537,8 +542,29 @@ fn cors_layer() -> CorsLayer {
         .allow_headers(Any)
 }
 
+/// Spawn the periodic models.dev catalog refresh. `refresh_providers` re-reads
+/// the on-disk catalog (refetching when stale under `MODELS_DEV_TTL`) and
+/// rebuilds the provider registry, so long-running sessions pick up new models
+/// without a restart. Failures are logged and never stop the server.
+fn spawn_models_dev_refresh(state: Arc<ServerState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(MODELS_DEV_REFRESH_INTERVAL);
+        // `interval` completes immediately on the first tick; skip it so startup
+        // work stays in `new_with_storage_for_url` and the first scheduled
+        // refresh happens after one full interval.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(error) = state.refresh_providers().await {
+                tracing::warn!(%error, "scheduled models.dev catalog refresh failed");
+            }
+        }
+    });
+}
+
 pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     let state = Arc::new(ServerState::new_with_storage_for_url(format!("http://{}", addr)).await?);
+    spawn_models_dev_refresh(state.clone());
 
     let app = routes::router()
         .layer(cors_layer())
@@ -558,6 +584,8 @@ pub async fn run_server_with_state(
     addr: SocketAddr,
     state: Arc<ServerState>,
 ) -> anyhow::Result<()> {
+    spawn_models_dev_refresh(state.clone());
+
     let app = routes::router()
         .layer(cors_layer())
         .layer(TraceLayer::new_for_http())

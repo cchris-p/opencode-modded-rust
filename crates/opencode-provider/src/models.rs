@@ -2,9 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
 pub const MODELS_DEV_URL: &str = "https://models.opencode.ai";
+
+/// Freshness window for the on-disk models.dev catalog cache. Mirrors vanilla
+/// OpenCode's `Duration.minutes(5)` in `packages/core/src/models-dev.ts`; a cache
+/// older than this is refetched on the next load or scheduled refresh.
+pub const MODELS_DEV_TTL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCost {
@@ -139,67 +145,127 @@ pub type ModelsData = HashMap<String, ProviderInfo>;
 pub struct ModelsRegistry {
     data: Arc<RwLock<Option<ModelsData>>>,
     cache_path: PathBuf,
+    ttl: Duration,
+    source_url: String,
 }
 
 impl ModelsRegistry {
     pub fn new(cache_path: PathBuf) -> Self {
+        Self::with_ttl(cache_path, MODELS_DEV_TTL)
+    }
+
+    /// Build a registry with an explicit freshness window. Primarily useful for
+    /// tests that need deterministic staleness without waiting on the clock.
+    pub fn with_ttl(cache_path: PathBuf, ttl: Duration) -> Self {
         Self {
             data: Arc::new(RwLock::new(None)),
             cache_path,
+            ttl,
+            source_url: MODELS_DEV_URL.to_string(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_source(cache_path: PathBuf, ttl: Duration, source_url: String) -> Self {
+        Self {
+            data: Arc::new(RwLock::new(None)),
+            cache_path,
+            ttl,
+            source_url,
         }
     }
 
     pub async fn get(&self) -> ModelsData {
-        let data = self.data.read().await;
-        if let Some(ref d) = *data {
-            return d.clone();
+        {
+            let data = self.data.read().await;
+            if let Some(ref d) = *data {
+                return d.clone();
+            }
         }
-        drop(data);
 
         self.load().await
     }
 
     async fn load(&self) -> ModelsData {
-        if let Ok(content) = tokio::fs::read_to_string(&self.cache_path).await {
-            if let Ok(parsed) = serde_json::from_str::<ModelsData>(&content) {
-                let mut data = self.data.write().await;
-                *data = Some(parsed.clone());
-                return parsed;
+        match self.read_cache().await {
+            Some(cached) if self.cache_is_fresh().await => {
+                self.store(cached.clone()).await;
+                cached
             }
+            Some(cached) => match self.fetch().await {
+                Some(fresh) => fresh,
+                None => {
+                    tracing::debug!(
+                        "models.dev catalog refresh failed; using the existing cached catalog"
+                    );
+                    self.store(cached.clone()).await;
+                    cached
+                }
+            },
+            None => self.fetch().await.unwrap_or_default(),
         }
-
-        self.fetch().await
     }
 
-    async fn fetch(&self) -> ModelsData {
-        let url = format!("{}/api.json", MODELS_DEV_URL);
+    async fn read_cache(&self) -> Option<ModelsData> {
+        let content = tokio::fs::read_to_string(&self.cache_path).await.ok()?;
+        serde_json::from_str::<ModelsData>(&content).ok()
+    }
 
-        match reqwest::Client::new()
+    async fn cache_is_fresh(&self) -> bool {
+        let Ok(metadata) = tokio::fs::metadata(&self.cache_path).await else {
+            return false;
+        };
+        let Ok(mtime) = metadata.modified() else {
+            return false;
+        };
+        cache_mtime_is_fresh(mtime, SystemTime::now(), self.ttl)
+    }
+
+    async fn store(&self, parsed: ModelsData) {
+        let mut data = self.data.write().await;
+        *data = Some(parsed);
+    }
+
+    /// Fetch the catalog, writing a successful response to the on-disk cache and
+    /// replacing the in-memory snapshot. Returns `None` on any failure so callers
+    /// can keep serving the existing cache.
+    async fn fetch(&self) -> Option<ModelsData> {
+        let url = format!("{}/api.json", self.source_url);
+
+        let response = reqwest::Client::new()
             .get(&url)
             .header("User-Agent", "opencode-rust")
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(Duration::from_secs(10))
             .send()
             .await
-        {
-            Ok(response) if response.status().is_success() => match response.text().await {
-                Ok(text) => {
-                    if let Ok(parsed) = serde_json::from_str::<ModelsData>(&text) {
-                        let _ = tokio::fs::write(&self.cache_path, &text).await;
-                        let mut data = self.data.write().await;
-                        *data = Some(parsed.clone());
-                        return parsed;
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
+            .ok()?;
+
+        if !response.status().is_success() {
+            return None;
         }
 
-        HashMap::new()
+        let text = response.text().await.ok()?;
+        let parsed = serde_json::from_str::<ModelsData>(&text).ok()?;
+        let _ = tokio::fs::write(&self.cache_path, &text).await;
+        self.store(parsed.clone()).await;
+        Some(parsed)
     }
 
-    pub async fn refresh(&self) {
-        self.fetch().await;
+    /// Refresh the catalog following the freshness policy. When `force` is false
+    /// and the cache is still within the TTL this is a no-op; `force` always
+    /// refetches. Returns `true` only when a fetch succeeded.
+    pub async fn refresh(&self, force: bool) -> bool {
+        if !force && self.cache_is_fresh().await {
+            return false;
+        }
+
+        match self.fetch().await {
+            Some(_) => true,
+            None => {
+                tracing::debug!("models.dev catalog refresh failed; keeping the existing cache");
+                false
+            }
+        }
     }
 
     pub async fn get_provider(&self, provider_id: &str) -> Option<ProviderInfo> {
@@ -239,13 +305,35 @@ impl Default for ModelsRegistry {
     }
 }
 
-/// Ensure the on-disk models.dev catalog cache is populated before provider
-/// bootstrapping reads it. `bootstrap_registry` only reads the cache file and
-/// otherwise falls back to the bundled snapshot, so without this the runtime
-/// provider/model list can silently lag the canonical catalog.
+/// Returns true when `mtime` is within `ttl` of `now`. A future mtime (clock
+/// skew) is treated as fresh so a skewed clock does not force a refetch on every
+/// load. Extracted so staleness detection is unit-testable without network or
+/// filesystem mtime manipulation.
+pub fn cache_mtime_is_fresh(mtime: SystemTime, now: SystemTime, ttl: Duration) -> bool {
+    match now.duration_since(mtime) {
+        Ok(age) => age < ttl,
+        Err(_) => true,
+    }
+}
+
+/// Ensure the on-disk models.dev catalog cache is populated and fresh before
+/// provider bootstrapping reads it. `bootstrap_registry` only reads the cache
+/// file and otherwise falls back to the bundled snapshot, so without this the
+/// runtime provider/model list can silently lag the canonical catalog. When the
+/// cache is stale (older than `MODELS_DEV_TTL`) this refetches; a failed fetch
+/// keeps the existing cache.
 pub async fn ensure_models_dev_cache() {
     let registry = ModelsRegistry::default();
     let _ = registry.get().await;
+}
+
+/// Force a models.dev catalog refetch, ignoring the freshness TTL, and leave the
+/// refreshed cache on disk for the subsequent provider bootstrap to read.
+/// Returns `true` when the fetch succeeded; failures are non-fatal and preserve
+/// the existing cache.
+pub async fn refresh_models_dev_cache() -> bool {
+    let registry = ModelsRegistry::default();
+    registry.refresh(true).await
 }
 
 pub fn default_model_limits() -> (u64, u64) {
@@ -301,4 +389,111 @@ pub fn supports_function_calling(model_id: &str) -> bool {
     let lower = model_id.to_lowercase();
 
     !lower.contains("embedding") && !lower.contains("whisper") && !lower.contains("tts")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    const SAMPLE_CATALOG: &str = r#"{"demo":{"name":"Demo","env":[],"id":"demo","models":{}}}"#;
+
+    fn temp_cache_path(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let dir = std::env::temp_dir().join(format!(
+            "opencode-models-registry-{}-{}-{}",
+            std::process::id(),
+            label,
+            nanos
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp cache dir");
+        dir.join("models.json")
+    }
+
+    fn write_sample_cache(path: &Path) {
+        std::fs::write(path, SAMPLE_CATALOG).expect("write sample cache");
+    }
+
+    fn cleanup(path: &Path) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+    }
+
+    #[test]
+    fn ttl_boundary_classifies_fresh_and_stale() {
+        let now = SystemTime::now();
+        let ttl = Duration::from_secs(300);
+
+        assert!(cache_mtime_is_fresh(
+            now - Duration::from_secs(60),
+            now,
+            ttl
+        ));
+        assert!(!cache_mtime_is_fresh(
+            now - Duration::from_secs(301),
+            now,
+            ttl
+        ));
+        // A future mtime (clock skew) stays fresh instead of refetching forever.
+        assert!(cache_mtime_is_fresh(now + Duration::from_secs(5), now, ttl));
+    }
+
+    #[tokio::test]
+    async fn fresh_cache_is_served_without_refetch() {
+        let path = temp_cache_path("fresh");
+        write_sample_cache(&path);
+
+        let registry = ModelsRegistry::with_source(
+            path.clone(),
+            MODELS_DEV_TTL,
+            "http://127.0.0.1:1".to_string(),
+        );
+
+        let data = registry.get().await;
+        assert!(data.contains_key("demo"));
+
+        // A non-forced refresh on a fresh cache must not hit the unreachable source.
+        assert!(!registry.refresh(false).await);
+
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn stale_cache_refetch_failure_keeps_cached_catalog() {
+        let path = temp_cache_path("stale");
+        write_sample_cache(&path);
+
+        // A zero TTL makes the cache immediately stale, so `get` attempts a
+        // refetch. The source is unreachable, so the cached catalog is preserved.
+        let registry = ModelsRegistry::with_source(
+            path.clone(),
+            Duration::ZERO,
+            "http://127.0.0.1:1".to_string(),
+        );
+
+        let data = registry.get().await;
+        assert!(data.contains_key("demo"));
+
+        assert!(!registry.refresh(true).await);
+
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn missing_cache_with_failed_fetch_returns_empty() {
+        let path = temp_cache_path("missing");
+        let registry = ModelsRegistry::with_source(
+            path.clone(),
+            MODELS_DEV_TTL,
+            "http://127.0.0.1:1".to_string(),
+        );
+
+        assert!(registry.get().await.is_empty());
+
+        cleanup(&path);
+    }
 }
