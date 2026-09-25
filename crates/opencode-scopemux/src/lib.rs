@@ -14,6 +14,9 @@ use opencode_types::RetrievalRequest;
 /// Native builds prefer the scopemux provider; if it is unavailable or errors,
 /// the session falls back to the generic provider. Non-native builds always
 /// return the generic provider.
+///
+/// This ignores the active model. Runtime prompt assembly uses
+/// [`provider_for`] so scopemux only activates on its scoped local model.
 pub fn default_provider() -> Box<dyn RetrievalProvider> {
     #[cfg(feature = "native")]
     {
@@ -23,6 +26,49 @@ pub fn default_provider() -> Box<dyn RetrievalProvider> {
     {
         Box::new(opencode_retrieval::GenericRepositoryProvider::new())
     }
+}
+
+/// Provider id whose local models may use the scopemux provider.
+pub const SCOPEMUX_LOCAL_PROVIDER_ID: &str = "ollama";
+
+/// Model id prefix that activates the scopemux provider on the local path.
+pub const SCOPEMUX_LOCAL_MODEL_PREFIX: &str = "qwen";
+
+/// Whether the active model is the local path scopemux is scoped to: the Ollama
+/// provider serving a Qwen model.
+pub fn model_scope_enabled(provider_id: Option<&str>, model_id: Option<&str>) -> bool {
+    let provider_matches =
+        provider_id.is_some_and(|id| id.eq_ignore_ascii_case(SCOPEMUX_LOCAL_PROVIDER_ID));
+    let model_matches = model_id.is_some_and(|model| {
+        model
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with(SCOPEMUX_LOCAL_MODEL_PREFIX)
+    });
+    provider_matches && model_matches
+}
+
+/// Select the retrieval provider for the active model.
+///
+/// The scopemux provider is scoped to the local Qwen-via-Ollama model so
+/// improvements can be experimented on a small local model; every other model
+/// keeps the generic repository-local provider as the default and fallback.
+/// Non-native builds always return the generic provider.
+pub fn provider_for(
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+) -> Box<dyn RetrievalProvider> {
+    // Only consulted by native builds; keep the parameters used either way.
+    let _ = (provider_id, model_id);
+
+    #[cfg(feature = "native")]
+    {
+        if model_scope_enabled(provider_id, model_id) {
+            return Box::new(ScopemuxProvider::new());
+        }
+    }
+
+    Box::new(opencode_retrieval::GenericRepositoryProvider::new())
 }
 
 /// Map a file path to the `scopemux-core` `Language` enum value, or `None` when
@@ -734,6 +780,44 @@ mod tests {
             .find(|signal| signal.plan_node_id == "plan:task_plan:stale")
             .expect("vanished anchor should emit a divergence signal");
         assert!(stale.current.is_divergence());
+    }
+
+    #[test]
+    fn model_scope_is_local_qwen_only() {
+        assert!(model_scope_enabled(Some("ollama"), Some("qwen3:30b")));
+        assert!(model_scope_enabled(Some("OLLAMA"), Some("Qwen2.5-Coder")));
+        assert!(!model_scope_enabled(Some("ollama"), Some("llama3:8b")));
+        assert!(!model_scope_enabled(
+            Some("deepseek"),
+            Some("deepseek-flash")
+        ));
+        assert!(!model_scope_enabled(Some("ollama"), None));
+        assert!(!model_scope_enabled(None, Some("qwen3:30b")));
+        assert!(!model_scope_enabled(None, None));
+    }
+
+    #[test]
+    fn provider_for_keeps_generic_outside_the_scoped_model() {
+        // Off-scope models and the absence of a model fall back to the generic
+        // provider regardless of the native feature.
+        assert_eq!(
+            provider_for(Some("deepseek"), Some("deepseek-flash")).name(),
+            "generic"
+        );
+        assert_eq!(
+            provider_for(Some("ollama"), Some("llama3:8b")).name(),
+            "generic"
+        );
+        assert_eq!(provider_for(None, None).name(), "generic");
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn provider_for_activates_scopemux_for_local_qwen() {
+        assert_eq!(
+            provider_for(Some("ollama"), Some("qwen3:30b")).name(),
+            "scopemux"
+        );
     }
 
     #[test]

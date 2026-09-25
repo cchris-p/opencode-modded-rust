@@ -5,3 +5,4 @@
 - Upstream `FIX-*` and `WI-*` items that gate integration are in-scope deliverables of that program, not external prerequisites owned by someone else.
 - Upstream artifacts are edited in their own repository (`$HOME/apps/scopemux-core`, `$HOME/apps/scopemux-notes`) per `invariants/documentation-boundary.md`; this convention does not import upstream ownership into this repo.
 - This convention does not make `scopemux` a V1 hard dependency: the generic provider remains the default and fallback, and runtime authority over task state, lifecycle, verification, and review is unchanged.
+- ScopeMux activation is scoped to the local Qwen-via-Ollama model (`invariants/providers.md`); the generic provider remains the default and fallback for every other model and for unsupported workspaces.

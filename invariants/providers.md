@@ -9,6 +9,8 @@
 - If OpenRouter is temporarily hidden from normal provider-selection lists, explicit `openrouter/...` configuration behavior must remain intentional and documented by the implementing board item.
 - OpenRouter must not become the implicit product default unless an explicit project invariant changes that policy.
 - The product-owned default model/provider is `deepseek/deepseek-flash` and is independent of vanilla OpenCode's global OpenRouter configuration.
+- The ScopeMux structural retrieval provider is scoped to the local Qwen-via-Ollama model: it activates only when the effective provider is `ollama` and the effective model id starts with `qwen`. Every other model uses the generic repository-local provider, which remains the default and fallback.
+- ScopeMux remains evidence-only and does not gain runtime authority over task state, lifecycle, verification, or review when active.
 - OpenAI model retrieval must match vanilla OpenCode's current `models.dev`-backed provider catalog for the in-scope OpenAI surface. The Rust product must not ship a stale, manually divergent OpenAI model list when vanilla would expose newer OpenAI or Codex-family models through provider/model listing.
 - "Match" means the same catalog source vanilla uses (`https://models.opencode.ai/api.json`), the same status filtering (drop deprecated; drop alpha unless experimental models are enabled), and the same `experimental.modes` expansion into `<model-id>-<mode>` entries. `scripts/compare-openai-model-parity.sh` is the parity check and must pass.
 - Any intentional OpenAI model exclusion, rename, status filter, or auth-scope limitation must be explicit in code and board/docs. Hidden divergence from vanilla model retrieval is not allowed.

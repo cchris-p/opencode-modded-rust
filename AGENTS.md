@@ -42,6 +42,7 @@
 - The ScopeMux integration program owns the required `scopemux-core` engine changes and the `scopemux-notes` planning/board work that gates them; upstream `FIX-*`/`WI-*` items are in-scope deliverables, not external prerequisites.
 - Upstream artifacts are edited in their own repositories (`$HOME/apps/scopemux-core`, `$HOME/apps/scopemux-notes`); cross-repo ownership rules still apply.
 - This does not make `scopemux` a V1 dependency or change runtime authority over task state, lifecycle, verification, or review.
+- The native ScopeMux provider is compiled into the product binary but activates only for the local Qwen-via-Ollama model (`ollama` + a model id starting with `qwen`); every other model and unsupported workspace uses the generic provider. Canonical rule: `invariants/providers.md`.
 - Canonical rule: `invariants/integration-scope.md`.
 
 ## Storage Paths
@@ -54,6 +55,7 @@
 ## Local Launchers
 
 - `ort-build` builds the Rust TUI/CLI binary from `$HOME/repos/opencode-modded-rust`.
+- The default `opencode` binary now compiles the native ScopeMux provider (`scopemux-native` is a default feature on `opencode-cli`). Before the first build on a clone, run `scripts/fetch-scopemux-core.sh` (populates `third_party/scopemux-core` at the pinned revision) or set `SCOPEMUX_CORE_DIR` to a `scopemux-core` checkout; `cargo check --workspace` can avoid the C build with `SCOPEMUX_SKIP_NATIVE_BUILD=1`.
 - `ort` launches the most recently built Rust TUI binary without rebuilding first.
 - `ort` runs the TUI in the directory it was activated from, so that directory is the workspace (config search root and displayed working directory).
 - `ort` always starts a fresh local TUI server for that workspace. It never reuses, rotates, or attaches to a previously recorded server, so a stale or other-workspace server can never serve the TUI. Use `opencode attach <url>` for intentional re-attachment.

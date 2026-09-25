@@ -299,7 +299,13 @@ impl SessionPrompt {
         let retrieval_response = if seed_files.is_empty() {
             None
         } else {
-            crate::retrieval::retrieve(session, RetrievalRole::Implementing, seed_files).await
+            crate::retrieval::retrieve(
+                session,
+                RetrievalRole::Implementing,
+                seed_files,
+                input.model.as_ref(),
+            )
+            .await
         };
 
         // Accept-time materialization: when the server has already persisted the

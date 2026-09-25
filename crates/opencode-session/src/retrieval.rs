@@ -8,6 +8,7 @@
 use opencode_retrieval::{GenericRepositoryProvider, RetrievalProvider};
 use opencode_types::{RetrievalRequest, RetrievalResponse, RetrievalRole, TaskStage};
 
+use crate::prompt::ModelRef;
 use crate::session::Session;
 
 /// Build the retrieval request for a session from authoritative task state.
@@ -37,20 +38,26 @@ pub fn build_request(
     }
 }
 
-/// Ask the default provider for candidates.
+/// Ask the provider selected for the active model for candidates.
 ///
-/// Returns `None` on provider failure so assembly continues with generic
-/// behavior; the provider is optional by design.
+/// The scopemux provider is scoped to the local Qwen-via-Ollama model; every
+/// other model uses the generic repository-local provider. Returns `None` on
+/// provider failure so assembly continues with generic behavior; the provider
+/// is optional by design.
 pub async fn retrieve(
     session: &Session,
     role: RetrievalRole,
     seed_files: Vec<String>,
+    model: Option<&ModelRef>,
 ) -> Option<RetrievalResponse> {
     let request = build_request(session, role, seed_files);
 
-    // Prefer the configured provider (scopemux when built natively); fall back
-    // to the generic repository-local provider when it is unavailable.
-    let provider = opencode_scopemux::default_provider();
+    // Select by the active model: scopemux only for local qwen, generic
+    // otherwise. Fall back to the generic provider when scopemux is unavailable.
+    let provider = opencode_scopemux::provider_for(
+        model.map(|m| m.provider_id.as_str()),
+        model.map(|m| m.model_id.as_str()),
+    );
     match provider.retrieve(&request).await {
         Ok(response) => Some(response),
         Err(error) => {
@@ -120,6 +127,7 @@ mod tests {
             &session,
             RetrievalRole::Implementing,
             vec!["a.rs".to_string()],
+            None,
         )
         .await
         .expect("generic provider should succeed");
@@ -127,5 +135,27 @@ mod tests {
         assert_eq!(response.provider, "generic");
         assert_eq!(response.candidates.len(), 1);
         assert!(response.candidates[0].path.ends_with("a.rs"));
+    }
+
+    #[tokio::test]
+    async fn retrieve_uses_generic_for_non_local_models() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn main() {}").unwrap();
+        let session = session_with_task(&dir.path().to_string_lossy());
+        let model = ModelRef {
+            provider_id: "deepseek".to_string(),
+            model_id: "deepseek-flash".to_string(),
+        };
+
+        let response = retrieve(
+            &session,
+            RetrievalRole::Implementing,
+            vec!["a.rs".to_string()],
+            Some(&model),
+        )
+        .await
+        .expect("generic provider should succeed");
+
+        assert_eq!(response.provider, "generic");
     }
 }
