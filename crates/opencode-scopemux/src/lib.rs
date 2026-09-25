@@ -347,7 +347,9 @@ impl RetrievalProvider for ScopemuxProvider {
             if !ffi::project_parse_all_files(ctx) {
                 return Err(RetrievalError::Failed("project parse failed".to_string()));
             }
-            let _ = ffi::project_resolve_references(ctx);
+            if !ffi::project_resolve_references(ctx) {
+                tracing::warn!("scopemux: project_resolve_references returned false");
+            }
             if !ffi::project_context_rebuild_info_blocks(ctx) {
                 return Err(RetrievalError::Failed(
                     "info block rebuild failed".to_string(),
@@ -627,6 +629,36 @@ mod tests {
             task_id: None,
             plan_nodes: Vec::new(),
         }
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_provider_handles_absolute_file_seed() {
+        // Regression: real prompts pass absolute `file://` seeds with an empty
+        // objective. The core's search-index text builder must grow for
+        // absolute paths and node content instead of failing.
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("sample.rs");
+        std::fs::write(&file, "pub fn helper(v: u32) -> u32 {\n    v + 1\n}\n").unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec![]);
+        req.seed_files = vec![format!("file://{}", file.display())];
+        req.objective = String::new();
+        req.changed_files = Vec::new();
+
+        let response = ScopemuxProvider::new()
+            .retrieve(&req)
+            .await
+            .expect("scopemux retrieve should succeed for an absolute file seed");
+        assert_eq!(response.provider, "scopemux");
+        assert!(
+            !response.candidates.is_empty(),
+            "expected at least one candidate for an absolute file seed"
+        );
     }
 
     #[test]
