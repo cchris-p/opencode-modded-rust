@@ -468,6 +468,18 @@ Verification:
   cascade in `utf8_backspace_delete_and_cursor_are_char_safe` that passes in isolation); neither
   touches the question prompt.
 
+## QA Verification - 2026-09-25
+
+Live TUI verification on `bug/BUG-039-question-prompt-layout` after rebuilding and relaunching `ort`:
+
+- The question prompt renders at two-thirds width, horizontally centered, with a blank row above and
+  below and no overlap with the transcript.
+- The question appears only in the prompt box; the pending `question` tool card no longer duplicates
+  it in the transcript.
+- Long question text and option descriptions wrap on word boundaries within the border.
+- The multi-question review/confirm screen renders correctly.
+- Maintainer: "Looks great now, we can close this."
+
 ## Related items
 
 - `BUG-042` (folded/removed 2026-09-25) — follow-up for question-prompt and review-screen width,
