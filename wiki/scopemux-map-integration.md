@@ -160,7 +160,7 @@ The generic repository-local provider stays the default and the fallback. When `
 
 ## Language Coverage
 
-The product's own repository is Rust, and `scopemux-core` does not parse Rust today. A map that cannot map its own workspace is not usable as the primary path, so Rust grammar and Rust reference resolution are phase-one enabling work, not an afterthought. Until that lands, the Rust workspace exercises only the generic provider.
+The product's own repository is Rust, so Rust grammar and reference resolution were phase-one enabling work. `WI-030` (merged 2026-09-25) added Rust parsing, symbol extraction, `use`-path module following, and reference resolution to `scopemux-core`, so the Rust workspace is now parseable. Rust resolution is not yet at C/C++ parity: trait-object dispatch, macro expansion, and generic type-parameter binding remain open gaps tracked on `WI-030`, and the generic provider stays the fallback.
 
 ## Confidence And Provenance
 

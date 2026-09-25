@@ -86,7 +86,7 @@ Concretely, this can give the product:
 
 Honest limits to design around:
 
-- `scopemux-core` does not parse Rust today (`scopemux-core/README.md` lists C, C++, Python, JavaScript, and TypeScript), so it cannot help with this product's own repository or Rust workspaces; those must fall back to the generic provider.
+- `scopemux-core` parses Rust as of `WI-030` (merged 2026-09-25; grammars C, C++, Python, JavaScript, TypeScript, Rust), so it can map this product's own repository and Rust workspaces. Rust resolution is not yet at C/C++ parity: trait-object dispatch, macro expansion, and generic binding remain gaps tracked upstream on `WI-030`, and unsupported constructs fall back to the generic provider.
 - the shipped Python extension exposes only `ParserContext` and `ContextEngine` (`scopemux-core/core/src/bindings/module.c`); `ProjectContext`, tiered context, search, and prompt assembly are C-only, so integration needs FFI or a compiled helper.
 - `scopemux-core` is development-oriented and not packaged for standard distribution, so it must be pinned and built reproducibly rather than assumed present.
 - its structural relationships are heuristic, so the confidence rules below still apply.
