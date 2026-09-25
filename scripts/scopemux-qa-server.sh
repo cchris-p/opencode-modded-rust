@@ -105,4 +105,6 @@ echo "  model:     ${OPENCODE_CONFIG_CONTENT:-<from $WORKSPACE/opencode.json>}"
 echo "  url:       http://127.0.0.1:${PORT}"
 
 cd "$WORKSPACE"
+# Emit the retrieval-provider selection line consumed by scopemux-qa-check.sh.
+export RUST_LOG="${RUST_LOG:-info}"
 exec "$BINARY" serve --port "$PORT" --hostname 127.0.0.1

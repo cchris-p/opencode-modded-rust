@@ -395,6 +395,13 @@ impl SessionPrompt {
         }
 
         if let Some(response) = retrieval_response {
+            // Deterministic signal for the attach/detach QA convention: the
+            // effective provider after any fallback (SCOPE-005).
+            tracing::info!(
+                provider = %response.provider,
+                candidates = response.candidates.len(),
+                "retrieval provider selected"
+            );
             msg.metadata.insert(
                 "retrieval_provider".to_string(),
                 serde_json::Value::String(response.provider),
