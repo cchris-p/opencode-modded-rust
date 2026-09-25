@@ -1,16 +1,22 @@
 ---
 id: "BUG-039"
-title: "Question prompt custom-answer layout clips the typed answer and does not wrap"
+title: "Question prompt and review screen layout: wrapping, width, and cleanup"
 priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "invariants/option-selection.md"
 status: "qa"
 created: "2026-09-23"
-updated: "2026-09-23"
+updated: "2026-09-25"
 ---
 
-# Question prompt custom-answer layout clips the typed answer and does not wrap
+# Question prompt and review screen layout: wrapping, width, and cleanup
+
+> **Consolidated 2026-09-25.** A follow-up card (`BUG-042`) proposed for the same surfaces was
+> folded into this card and removed. This is now the single card for question-prompt and
+> review-screen layout. The 2026-09-23 sections below record the original defect and the
+> implementation that already landed for wrapping/caret/paste; the **Follow-up scope (2026-09-25)**
+> section adds the remaining width, no-scroll, and dead-code cleanup work.
 
 ## Summary
 
@@ -115,10 +121,10 @@ Rendering lives in `crates/opencode-tui/src/components/question.rs`.
 
 Existing correct patterns to reuse:
 
-- `Paragraph::wrap(Wrap { trim: false })`, `Paragraph::line_count(width)`, and
-  `Paragraph::scroll((row, col))` are all available in ratatui 0.27
-  (`~/.cargo/registry/.../ratatui-0.27.0/src/widgets/paragraph.rs:172,189,277`).
-- The main prompt already wraps and scrolls multi-line input (`components/prompt.rs:312-323,377-399`)
+- `Paragraph::wrap(Wrap { trim: false })` and `Paragraph::line_count(width)` are available in ratatui
+  0.27 (`~/.cargo/registry/.../ratatui-0.27.0/src/widgets/paragraph.rs:172,189,277`).
+  `Paragraph::scroll(...)` also exists but is **not used** per the 2026-09-25 no-scroll decision.
+- The main prompt already wraps multi-line input (`components/prompt.rs:312-323,377-399`)
   and owns the cursor/boundary helpers `prev_char_boundary`, `next_char_boundary`,
   `prev_word_boundary`, `next_word_boundary` (`prompt.rs:1596-1652`).
 - The dialog cursor buffer `DialogTextInput`
@@ -134,13 +140,15 @@ Locked for implementation. Do not re-litigate during the build.
 - **Reject Option B (collapse the option list while typing).** Keep the option list visible in text
   mode. The compact bottom prompt with the list intact stays; this preserves the current interaction
   model and avoids a new `GATE-002` deviation.
-- **Defer Option D (box geometry) as optional polish, out of scope here.** Do not change the bottom
-  anchor or the 80-column cap in this card; file a follow-up if the un-centered look still bothers.
+- **Option D (box geometry) was deferred here.** The width and layout cleanup is now in scope in
+  **Follow-up scope (2026-09-25)** below; the bottom anchor still stays.
 - **Wrapping.** Use `.wrap(Wrap { trim: false })` and size the box from `Paragraph::line_count`
   measured at the inner content width, not from the raw content-line count.
-- **Never hide the active input.** When wrapped content exceeds the available height, scroll the
-  paragraph to the tail so the `>` input line and the hint stay visible; the option list scrolls
-  rather than clipping the input.
+- **No vertical or horizontal scrolling (revised 2026-09-25).** Supersedes the earlier
+  "scroll to the tail" rule. The box grows upward to fit wrapped content; horizontal content always
+  wraps (never scrolls); vertical overflow beyond the available height is statically clipped from the
+  top so the `>` input line and hint stay visible. No `scroll` offset or scrollable region is used.
+  See **Follow-up scope (2026-09-25)** for the exact sizing rule.
 - **Caret input.** Replace the append-only `String` with `DialogTextInput`; render a `▏` caret at the
   cursor via `split_at_cursor`; support `Left`/`Right`/`Home`/`End`/`Delete` and `Alt+Left`/`Alt+Right`
   word skipping; typing inserts at the caret. This satisfies `invariants/option-selection.md:23-25`.
@@ -149,19 +157,97 @@ Locked for implementation. Do not re-litigate during the build.
   valid one-shot answer. The session prompt keeps its current paste behavior when no question is open.
 - **Single-line answers.** `Enter` submits; newlines never become part of the answer.
 - **Descriptions wrap; no ellipsis.** Long question text and option descriptions wrap inside the box.
-- **Review screen shares the renderer.** The wrapping/height/scroll fix applies to the
+- **Review screen shares the renderer.** The wrapping/height fix applies to the
   `QuestionType::Review` screen too; do not change its flow semantics.
 - **No protocol/schema changes.** This is a TUI-only bug.
 
 Resolved open questions:
 
-- Primary trigger is horizontal clipping plus paste misrouting; the un-centered box is secondary and
-  deferred (Option D).
+- Primary trigger is horizontal clipping plus paste misrouting; the un-centered/narrow box is now
+  addressed by the 2026-09-25 width decision below.
 - The custom-answer input **is** subject to the caret-editability invariant; it must be
   caret-editable with a visible caret.
 - Long descriptions wrap, not ellipsize.
 
-## Implementation plan
+## Follow-up scope (2026-09-25)
+
+The wrapping/caret/paste work above landed, but the user still reports the prompt as "so squashed
+and text appears outside of the defined box." The remaining work is consolidation cleanup of the
+question prompt and its multi-question review/confirm screen. Locked decisions:
+
+- **Scope is the question prompt and the review/confirm screen only.** The permission/confirm
+  (`[y]/[n]/[a]/[p]`) prompt is out of scope.
+- **Wrapping inside the box is the primary fix.** No content may render past the border.
+- **No vertical or horizontal scrolling.** Horizontal content always wraps. Vertical content grows
+  the box upward from its bottom anchor. This supersedes the 2026-09-23 "scroll to the tail" rule.
+- **Horizontal width (resolved).** Target two-thirds of the area width:
+  `width = (area.width * 2 / 3)` clamped to `[24, area.width.saturating_sub(2)]`. There is no
+  80-column cap. Horizontally center the box: `x = area.x + (area.width - width) / 2`.
+- **Vertical sizing and overflow (resolved).** `height = wrapped_rows + 2`, bottom-anchored at
+  `y = area.y + area.height.saturating_sub(height + 1)`, clamped to `area.height.saturating_sub(1)`
+  (one-row top margin). If `wrapped_rows` still exceeds the clamped inner height, statically drop
+  leading content lines until it fits, so the `>` input line and the final hint stay visible. This is
+  a fixed top-clip, not a scroll offset.
+- **Keep the prompt bottom-anchored**; do not convert it to a centered modal or change the compact
+  bottom-prompt placement (`GATE-002` deviation).
+- **Remove the unused `ConfirmDialog`** (`crates/opencode-tui/src/components/dialogs/confirm.rs`).
+  A workspace-wide search confirms the only references are its own re-exports
+  (`crates/opencode-tui/src/components/dialogs/mod.rs:71`,
+  `crates/opencode-tui/src/components/mod.rs:26`); it is never constructed or rendered.
+
+Prerequisite verification (resolve before coding):
+
+- Confirm the landed fix is in the checkout: `git merge-base --is-ancestor d5cd9fb HEAD` (or confirm
+  `crates/opencode-tui/src/components/question.rs` contains `.wrap(Wrap { trim: false })` and
+  `DialogTextInput`).
+- Rebuild the current binary: `ort-build`.
+- Launch it: `ort` (build before launching so the fresh server runs the latest binary).
+- Reproduce: trigger a question with options + descriptions (ask the agent to use the question tool)
+  from a realistic session; also exercise the multi-question review screen.
+- Capture and record on this card: terminal size (cols x rows), the exact question/review content,
+  whether it is the prompt or the review screen, and a screenshot/copy of the rendered box.
+- If, with wrapping present, content still renders outside the border, that capture is the repro this
+  card fixes. If content is already contained, the remaining work is only the width/no-scroll/cleanup
+  items and the wrap-contention is a stale-binary artifact to note and close.
+
+### Residual implementation plan (2026-09-25)
+
+All paths in `crates/opencode-tui/src/components/question.rs` unless noted. The 2026-09-23 plan below
+is already landed; this is the remaining work.
+
+1. **Width.** Replace `width = area.width.saturating_sub(2).min(80)` (`:544`) with:
+   `width = ((area.width as u32 * 2 / 3) as u16).clamp(24, area.width.saturating_sub(2))`. Horizontally
+   center `popup_area`: `x = area.x + (area.width - width) / 2`.
+2. **Height and no scroll.** Remove the `scroll` computation and `.scroll((scroll, 0))` (`:571-573`,
+   `:602-603`). Compute `wrapped_rows` as today via `line_wrapped_rows` at the new `inner_width`.
+   Set `height = (wrapped_rows + 2).min(area.height.saturating_sub(1))` and bottom-anchor at
+   `y = area.y + area.height.saturating_sub(height + 1)`.
+3. **Top-clip overflow.** When `wrapped_rows + 2 > area.height.saturating_sub(1)`, the height clamp
+   binds: drop leading `content` lines and subtract their wrapped row counts until
+   `wrapped_rows <= height - 2` (the inner height), keeping the `>` input line and final hint. Recompute
+   row offsets and `row_indices` after trimming so `option_rows`/`handle_click` map to the shifted
+   rows (clipped rows use the existing `u16::MAX` sentinel).
+4. **Horizontal no-scroll.** Ensure the `Paragraph` keeps `Wrap { trim: false }` and no horizontal
+   scroll/offset. Every line must wrap to `inner_width`; verify the caret input line and long
+   descriptions never exceed the inner width.
+5. **Review screen.** Confirm `QuestionType::Review` renders through the same path and inherits the
+   width, wrapping, and top-clip behavior; no flow changes.
+6. **Remove `ConfirmDialog`.**
+   - Delete `crates/opencode-tui/src/components/dialogs/confirm.rs`.
+   - In `crates/opencode-tui/src/components/dialogs/mod.rs`: remove `mod confirm;` and
+     `pub use confirm::ConfirmDialog;`.
+   - In `crates/opencode-tui/src/components/mod.rs`: remove `ConfirmDialog` from the re-export list.
+7. **Tests.**
+   - `TestBackend` at a wide terminal (e.g. 120x40): assert box width is ~2/3 of the area and
+     horizontally centered.
+   - `TestBackend` at a short terminal (e.g. 40x10): assert no glyph is written outside the box
+     border and the `>` input line and hint are visible (top-clip works).
+   - Long question text, long option descriptions, and a long multi-question review summary: assert
+     full wrapping with no horizontal clipping.
+   - No test should set or depend on a vertical scroll offset.
+8. **Verify.** `cargo fmt`, `cargo check -p opencode-tui`, `cargo test -p opencode-tui`.
+
+## Implementation plan (2026-09-23, landed)
 
 1. **Reuse the cursor buffer.**
    - Re-export `DialogTextInput` from `crates/opencode-tui/src/components/dialogs/mod.rs`
@@ -211,12 +297,16 @@ Resolved open questions:
 
 ## Scope
 
-- Wrap question text, option labels/descriptions, and the input line; size and scroll the box so the
-  active input is always visible.
+- Wrap question text, option labels/descriptions, and the input line; size the box (no scrolling) so
+  the active input is always visible.
 - Make the custom-answer/free-text input caret-editable with a visible caret, reusing
   `DialogTextInput`.
 - Route bracketed paste and `Ctrl+V` to the question input while the question prompt is open.
 - Set the custom-row marker consistently when text mode is entered.
+- **Follow-up:** use two-thirds of the available width (no 80-column cap), horizontally centered, and
+  grow the box upward to fit wrapped content with no vertical or horizontal scrolling.
+- **Follow-up:** guarantee containment on the question prompt and review/confirm screen.
+- **Follow-up:** remove the unused `ConfirmDialog` and its re-exports.
 - Update/keep tests.
 
 ## Non-goals
@@ -224,30 +314,41 @@ Resolved open questions:
 - Changing the question/answer protocol, schema, or tool contract.
 - Changing the multi-question sequential flow, the review/confirm screen semantics, or the compact
   bottom-prompt placement.
-- Box centering/width polish (Option D) and collapsing the option list (Option B) — deferred/out of
-  scope.
+- The permission/confirm (`[y]/[n]/[a]/[p]`) prompt (`components/permission.rs`).
+- Collapsing the option list while typing (Option B).
+- Converting the prompt to a centered modal.
 - Reworking the session prompt's own input or paste behavior when no question is open.
 - Full multi-line answer editing (answers stay single-line; newlines are flattened).
 
 ## Acceptance criteria
 
 - Long question text and option descriptions wrap within the box; nothing is clipped horizontally.
-- At every supported terminal size, the `>` input line and the submit hint stay visible while typing;
-  the option list scrolls instead of hiding the input.
+- The box uses two-thirds of the horizontal space on a wide terminal, is horizontally centered, and
+  stays bottom-anchored.
+- The box leaves at least one blank row between the transcript above it and its top border.
+- The question is shown only in the question box, not duplicated by a transcript card.
+- Wrapped text breaks on word boundaries; it is never cut off mid-word.
+- There is no vertical or horizontal scrolling. The box grows upward to fit wrapped content; when
+  content exceeds the available height, leading lines are statically clipped from the top so the
+  input line and hint remain visible, and content never renders outside the border.
+- At every supported terminal size, the `>` input line and the submit hint stay visible while typing.
 - The custom-answer input is caret-editable: typing inserts at the caret, `Left`/`Right`/`Home`/`End`/
   `Delete` work, `Alt+Left`/`Alt+Right` skip by word, and a `▏` caret renders at the cursor offset.
 - Pasting (bracketed paste and `Ctrl+V`) while the question prompt is open inserts the text into the
   active question input as a single line with the question box background; the session prompt is not
   modified while the question is open, and paste still works normally when no question is open.
 - The custom row shows `[x]` when the prompt is in text mode, regardless of how the row was selected.
-- The review screen wraps and keeps its options reachable.
+- The review screen wraps, is sized like the option screen, and keeps its options reachable.
+- `ConfirmDialog` is removed and no references remain.
 - `cargo check -p opencode-tui` and `cargo test -p opencode-tui` pass, including the new tests.
 
 ## Done when
 
-- All acceptance criteria are met and the locked decisions are reflected in the code.
+- All acceptance criteria are met and the locked decisions are reflected in the code, including the
+  2026-09-25 follow-up decisions.
 - Focused tests cover buffer editing (including newline flattening and multibyte), wrapped-height and
-  input visibility, paste routing, and the custom-row marker.
+  input visibility, paste routing, the custom-row marker, containment/width in `TestBackend`, and the
+  removal of `ConfirmDialog`.
 - `cargo test -p opencode-tui` passes.
 - Manual smoke confirms the behavior at both a tall and a short terminal size.
 
@@ -259,19 +360,29 @@ Resolved open questions:
   shows `[x]`.
 - Paste a multi-line blob with `Ctrl+V` and with the terminal's native paste; confirm it lands in the
   answer field as a single flattened line with the question box background and is not clipped.
-- Shrink the terminal until the box would overflow; confirm the input line and hint stay visible and
-  the option list scrolls.
-- Trigger a question with a long question line and long option descriptions; confirm they wrap.
-- Trigger a multi-question request and confirm the review screen wraps and still submits/returns.
+- Shrink the terminal until the box would overflow; confirm the box grows upward to fit the wrapped
+  content and, past the available height, statically clips leading lines so the input line and hint
+  stay visible. Confirm there is no vertical scroll (content does not move as you type) and nothing
+  renders past the border.
+- On a wide terminal, confirm the box uses two-thirds of the width, is horizontally centered, and
+  stays bottom-anchored.
+- Trigger a question with a long question line and long option descriptions; confirm they wrap with no
+  horizontal scrolling or clipping.
+- Trigger a multi-question request and confirm the review screen wraps, widens like the option
+  screen, and still submits/returns.
 - Trigger a free-text question, paste, and confirm the same behavior.
+- Confirm `ConfirmDialog` is gone and the TUI builds/tests clean.
 - `cargo fmt`, `cargo check -p opencode-tui`, `cargo test -p opencode-tui`.
 
 ## Likely touchpoints
 
-- `crates/opencode-tui/src/components/question.rs` — layout, wrapping, height/scroll, caret render,
-  custom-row state, input buffer.
+- `crates/opencode-tui/src/components/question.rs` — two-thirds width and horizontal centering,
+  wrapped sizing with top-clip (no scroll), caret render, custom-row state, input buffer.
 - `crates/opencode-tui/src/components/dialogs/text_input.rs` — add `insert_str`; reuse the buffer.
-- `crates/opencode-tui/src/components/dialogs/mod.rs` — re-export `DialogTextInput`.
+- `crates/opencode-tui/src/components/dialogs/confirm.rs` — delete the unused `ConfirmDialog`.
+- `crates/opencode-tui/src/components/dialogs/mod.rs` — re-export `DialogTextInput`; drop the
+  `confirm` module and its re-export.
+- `crates/opencode-tui/src/components/mod.rs` — drop the `ConfirmDialog` re-export.
 - `crates/opencode-tui/src/app/app.rs:406-427` (question key routing), `:557-560` (`input_paste`), and
   `:801-805` (`Event::Paste`) — caret keys and paste routing.
 - `crates/opencode-tui/src/components/prompt.rs` — wrapping/cursor patterns to mirror.
@@ -279,6 +390,9 @@ Resolved open questions:
 - `boards/qa/gate-question-tool-full-parity.md` (`GATE-002`) — parent gate; no new deviation expected.
 
 ## Implementation Notes
+
+Historical record of the landed 2026-09-23 work. Its tail-scroll behavior is **superseded** by the
+2026-09-25 no-scroll decision above; keep the caret/paste/marker parts.
 
 Implemented A + C + E + F on `bug/BUG-039-question-answer-layout`. No protocol/schema changes;
 TUI-only.
@@ -319,8 +433,45 @@ initializes the real terminal and is not constructible in unit tests. The routin
 (`QuestionPrompt::insert_text`/`insert_str`) is tested directly; the thin `App` helper still needs the
 manual smoke step below.
 
+## Live QA feedback and implementation (2026-09-25)
+
+Live TUI repro (fresh build, `ort`) confirmed the prompt still looked cramped and surfaced three
+additional issues; all are addressed on `bug/BUG-039-question-prompt-layout`:
+
+- **No gap above the box.** The box touched/overlapped the transcript. The box now reserves one blank
+  row above and below (`max_height = area.height - 2`) and bottom-anchors within that.
+- **Question shown twice.** The pending `question` tool call rendered a transcript card whose argument
+  preview repeated the question JSON, while the prompt box also showed it. `render_tool_call` now
+  returns no lines for a non-completed `question` call, so the prompt box is the only place the
+  question appears. The redundant in-box `Question:` label was also removed (the border title labels
+  it).
+- **Mid-word wrapping / cramped width.** Width is now two-thirds of the area (clamped, centered) and
+  the popup area is cleared before drawing so transcript glyphs cannot bleed through.
+
+Implementation:
+
+- `crates/opencode-tui/src/components/question.rs`: removed `Paragraph::scroll`;
+  `width = clamp(area.width * 2 / 3, 24, area.width - 2)` centered via
+  `x = area.x + (area.width - width) / 2`; `height` capped at `area.height - 2` with leading content
+  lines dropped when wrapped content overflows (top-clip, no scroll); `Clear` rendered over the popup
+  area before the paragraph; removed the `Question:` body label.
+- `crates/opencode-tui/src/components/session_tool.rs`: suppress the transcript card for a pending or
+  running `question` tool call.
+
+Verification:
+
+- `cargo fmt --all`.
+- `cargo test -p opencode-tui --lib components::question` — 18 passed, including the new
+  `wide_terminal_uses_two_thirds_width_and_centers` and the existing short-terminal input/hint test.
+- Full `cargo test -p opencode-tui --lib` still hits the pre-existing unrelated
+  `components::prompt::tests::tab_autocomplete_uses_first_candidate` failure (and a poisoned-lock
+  cascade in `utf8_backspace_delete_and_cursor_are_char_safe` that passes in isolation); neither
+  touches the question prompt.
+
 ## Related items
 
+- `BUG-042` (folded/removed 2026-09-25) — follow-up for question-prompt and review-screen width,
+  no-inner-scroll, and `ConfirmDialog` removal; now part of this card.
 - `GATE-002` Question tool full parity — parent gate; the compact bottom prompt is a documented
   deliberate deviation and this fix stays within it.
 - `FEAT-041` TUI question prompt UX parity — added descriptions, digit keys, custom answers, and the
