@@ -5,8 +5,9 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "done"
 created: "2026-09-21"
+updated: "2026-09-25"
 ---
 
 # Resume an interrupted session from where it left off
@@ -95,3 +96,41 @@ state whose next turn continues from where the run left off.
 - Cited error: `docs/transcripts/tool-call-issue.md:35`. The original reference failure for this
   `400` was noted in `BUG-023` as "promote to its own card if the symptom recurs"; the user-reported
   trigger is interrupt, captured on 2026-09-21.
+
+## Verification And Closeout - 2026-09-25
+
+The behavior this card asked for was delivered by the two interrupt fixes that closed its blockers,
+so the card was stale in `todo` rather than actually pending.
+
+Evidence:
+
+- `BUG-019` (`4e4fbcc`, PR #54) made abort leave a valid, resumable turn.
+  `SessionPrompt::mark_aborted` (`crates/opencode-session/src/prompt.rs:1701`) writes a durable
+  `metadata.error = "aborted"` / `metadata.finish_reason = "aborted"` marker and injects
+  `"Aborted by user."` when a turn was interrupted before any visible output (reasoning-only turns
+  previously serialized as a content-less assistant message and caused the
+  `400 Invalid assistant message`).
+- `SessionPrompt::abort_pending_tool_calls` (`prompt.rs:1789`), invoked alongside `mark_aborted`
+  when the cancel token fires (`prompt.rs:1625`), resolves every tool call that lacks a matching
+  result with an error result, so an interrupted turn is never left without matching tool results.
+- `BUG-029` (`bff30c1`, PR #66) made the `Esc` double-press confirmation actually cancel the run;
+  the loop observes cancellation during streaming (`prompt.rs:1308`) and tool execution
+  (`prompt.rs:1524`).
+- Continuation is preserved by construction: `build_chat_messages` (`prompt.rs:2081`) converts every
+  `SessionMessage` (including the aborted turn, its completed tool calls, and the injected error
+  tool results) into the next request, so the next prompt continues from the interrupted context
+  instead of restarting.
+- Export is a full JSON dump of session messages (`export_session_data`,
+  `crates/opencode-cli/src/main.rs:5457`), so the persisted `aborted` marker and the resumed
+  continuation are both present in an export.
+- Focused tests exist for the risky paths and pass with `cargo test -p opencode-session`
+  (166 unit + 11 integration tests): `mark_aborted_records_durable_error_state`,
+  `mark_aborted_adds_text_when_only_reasoning_present`, `abort_pending_tool_calls_*`.
+
+Known gap: there is no dedicated end-to-end "abort mid-turn, then send a follow-up prompt" test;
+continuation is covered indirectly by the context-preserving conversion and the existing
+`session_handles_three_consecutive_prompts` regression. A future integration test would be a
+nice hardening step but is not required to consider this behavior delivered.
+
+Closed as complete and moved from `todo` to `done`. Related to (but distinct from) `FEAT-033`
+(the exit-time resume-command hint), which shipped separately in PR #53.
