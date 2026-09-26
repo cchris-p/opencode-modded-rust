@@ -1,7 +1,7 @@
 ---
 id: "H-013"
 title: "FEAT-065 Feynman GATE-001 result-vetting handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-09-26"
 updated: "2026-09-26"
 owner: ""
@@ -188,3 +188,12 @@ artifact still exists (may be stale). Record the decision on the card.
   Branch `research/FEAT-065-feynman-gate-001-vetting`; PR open for review (not
   merged). Handoff remains `in_progress` until the user reviews/merges.
   PR: https://github.com/cchris-p/opencode-modded-rust/pull/125
+
+## Completed with
+
+- 2026-09-26: PR
+  [#125](https://github.com/cchris-p/opencode-modded-rust/pull/125) merged into
+  `development` (merge commit `f223e20`). Covers `FEAT-065`: sanitized verdict
+  (`docs/research/FEAT-065-feynman-gate-001-vetting.md`), card Dev Notes, and
+  follow-up deferral. Branch deleted remotely and locally. `FEAT-065` remains in
+  `qa` pending post-merge QA; merge alone does not complete the card.
