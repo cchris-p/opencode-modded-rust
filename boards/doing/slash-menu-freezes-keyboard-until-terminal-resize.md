@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-22"
 ---
 
@@ -86,3 +86,50 @@ can recover it.
 - Regression coverage exists for the stale focus/render state if practical.
 - Manual verification includes opening `/`, cancelling with `Esc`, typing text, and submitting a prompt
   without resizing the terminal.
+## Root Cause (2026-09-25)
+
+Reproduced on `development` by running the rebuilt TUI locally and pressing `/`.
+
+- The menu was rendered against the whole frame instead of the prompt rect: `draw()` passed
+  `frame.size()` to `SlashCommandPopup::render`, and `render` computes its top as
+  `area.y - (height + 1)`. With `area.y == 0` the menu was pinned to the top of the screen,
+  far from the prompt at the bottom, so pressing `/` looked like it did nothing and the menu
+  appeared to vanish.
+- Key routing then sent every typed character into that top-anchored menu query, so the input
+  line stayed empty while the user typed. The event loop was alive, but the UI read as frozen.
+- The popup was counted in `has_open_dialog_layer()`, so opening it also painted the
+  full-screen modal backdrop, dimming the prompt and reinforcing the disabled/frozen look.
+- While the menu was open, `handle_dialog_key` swallowed every key, including `Ctrl-C` and
+  `Ctrl-D`, removing the usual global escapes; `Ctrl-D` stopped quitting.
+- Resizing forces a full redraw/relayout, which is why a resize could appear to restore the UI.
+
+The behavior has existed since the popup was introduced (`e937c3c publish`); it is not caused
+by the provider-list change.
+
+## Dev Notes
+
+- `crates/opencode-tui/src/components/session.rs`: `render`/`render_main` now return the
+  rendered prompt `Rect` (`None` when the prompt is hidden) so overlays can anchor to the input.
+- `crates/opencode-tui/src/components/home.rs`: `render`/`render_with_prompt` return the prompt
+  `Rect`.
+- `crates/opencode-tui/src/components/slash_command.rs`: `render` takes the prompt rect, clamps
+  to the frame, and falls back below the prompt when there is no room above it.
+- `crates/opencode-tui/src/app/app.rs`: `draw()` passes the prompt rect to the menu (falling back
+  to the bottom edge when the prompt is hidden); the inline menu no longer triggers the
+  full-screen modal backdrop (`has_modal_dialog_layer`); and `Ctrl-C`/`Ctrl-D` pass through while
+  the menu is open, with `Ctrl-C` also closing it.
+
+## Verification
+
+- `cargo test -p opencode-tui` — 157 passed, including 3 new menu tests (bare `/` lists suggested
+  commands, reopening resets query/selection, and the menu renders directly above the prompt).
+- `cargo check --workspace` (with `SCOPEMUX_SKIP_NATIVE_BUILD=1`).
+- `cargo clippy -p opencode-tui --all-targets` — no new warnings.
+- Manual (Linux, rebuilt binary): `/` opens the menu directly above the prompt on both the home
+  and in-session surfaces; `Esc` closes it and returns focus (typing lands in the input);
+  `Ctrl-C` closes the menu and clears the prompt; `Ctrl-D` still exits while the menu is open.
+  Prompt submission was not exercised locally (no model call); a manual pass on iTerm2 is pending.
+
+## PR / Merge
+
+- PR: (recorded on creation)
