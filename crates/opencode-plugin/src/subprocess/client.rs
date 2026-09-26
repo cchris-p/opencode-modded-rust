@@ -51,6 +51,13 @@ impl From<RpcError> for PluginSubprocessError {
     }
 }
 
+/// Timeout for interactive OAuth RPCs (`auth.authorize` / `auth.callback`).
+///
+/// These calls block until a human finishes a browser or device login, which
+/// routinely exceeds the default hook timeout. Keep this at or above the
+/// plugin's own browser callback budget (5 minutes in `codex-auth.ts`).
+const AUTH_FLOW_TIMEOUT: Duration = Duration::from_secs(330);
+
 // ---------------------------------------------------------------------------
 // Result types (deserialized from host responses)
 // ---------------------------------------------------------------------------
@@ -237,13 +244,15 @@ impl PluginSubprocess {
             "methodIndex": method_index,
             "inputs": inputs.unwrap_or(Value::Null),
         });
-        self.call("auth.authorize", Some(params)).await
+        self.call_with_timeout("auth.authorize", Some(params), AUTH_FLOW_TIMEOUT)
+            .await
     }
 
     /// Complete OAuth callback.
     pub async fn auth_callback(&self, code: Option<&str>) -> Result<Value, PluginSubprocessError> {
         let params = serde_json::json!({ "code": code });
-        self.call("auth.callback", Some(params)).await
+        self.call_with_timeout("auth.callback", Some(params), AUTH_FLOW_TIMEOUT)
+            .await
     }
 
     /// Load auth provider configuration.
@@ -432,12 +441,22 @@ impl PluginSubprocess {
         method: &str,
         params: Option<Value>,
     ) -> Result<T, PluginSubprocessError> {
+        self.call_with_timeout(method, params, self.timeout).await
+    }
+
+    /// Send a JSON-RPC request and wait for the response with an explicit timeout.
+    async fn call_with_timeout<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Option<Value>,
+        timeout: Duration,
+    ) -> Result<T, PluginSubprocessError> {
         let _rpc_guard = self.rpc_lock.lock().await;
         let id = self.next_id();
         self.write_request(id, method, params).await?;
 
         // Read response with timeout
-        let response = tokio::time::timeout(self.timeout, self.read_response_for_id(id))
+        let response = tokio::time::timeout(timeout, self.read_response_for_id(id))
             .await
             .map_err(|_| PluginSubprocessError::Timeout)??;
 

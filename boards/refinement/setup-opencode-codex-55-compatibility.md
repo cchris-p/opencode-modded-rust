@@ -147,3 +147,10 @@ Do not assume the displayed catalog is authoritative yet. Current code appears m
 - Model picker/catalog hides the model even though direct `-m openai/<model-id>` works.
 - Responses request options are incomplete for this model family.
 - Tool-call streaming or continuation differs from the currently tested OpenAI Responses behavior.
+
+## Live Smoke-Test Evidence - 2026-09-26
+
+- A live `openai/gpt-5.5` smoke test returned `Provider error: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.`
+- That API billing message means the request went to the standard OpenAI API with the stored `sk-proj-…` key, not through the ChatGPT Codex backend.
+- Cause is the auth gate, not this card: the Codex browser OAuth callback failed first (see the Reopened section of `START-032`), so no OAuth credential/custom-fetch proxy was registered and the provider fell back to `OPENAI_API_KEY`.
+- Do not re-test model access until `START-032` auth actually persists an OAuth credential and the runtime uses the Codex backend; this card remains gated by `START-032`.
