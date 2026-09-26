@@ -174,8 +174,11 @@ pub enum AuthError {
     #[error("OAuth authorization code missing for provider: {0}")]
     OauthCodeMissing(String),
 
-    #[error("OAuth callback failed")]
-    OauthCallbackFailed,
+    #[error("OAuth authorization failed: {0}")]
+    OauthAuthorizeFailed(String),
+
+    #[error("OAuth callback failed: {0}")]
+    OauthCallbackFailed(String),
 
     #[error("API key not set for provider: {0}")]
     ApiKeyNotSet(String),

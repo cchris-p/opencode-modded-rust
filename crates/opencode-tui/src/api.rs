@@ -5,6 +5,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Interactive OAuth flows wait on a human browser/device login, so they must
+/// not be bound by the default 30s request timeout used for regular API calls.
+const AUTH_FLOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(360);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub id: String,
@@ -740,6 +744,7 @@ impl ApiClient {
         let response = self
             .client
             .post(&url)
+            .timeout(AUTH_FLOW_TIMEOUT)
             .json(&ProviderOAuthAuthorizeRequest { method })
             .send()?;
 
@@ -767,6 +772,7 @@ impl ApiClient {
         let response = self
             .client
             .post(&url)
+            .timeout(AUTH_FLOW_TIMEOUT)
             .json(&ProviderOAuthCallbackRequest { method, code })
             .send()?;
 
