@@ -87,7 +87,8 @@ prerequisite self-healing and the pin observable.
 
 ## PR
 
-- (filled in after push)
+- [#122](https://github.com/cchris-p/opencode-modded-rust/pull/122) into `development`.
+- Launcher change committed separately in `~/standards` `main` as `783e871` (local, not pushed).
 
 ## Related Items
 
