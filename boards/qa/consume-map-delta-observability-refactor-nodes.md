@@ -66,8 +66,9 @@ Connecting `scopemux` (`SCOPE-002`) and projecting target state (`SCOPE-003`) on
 ## Implementation (2026-09-26)
 
 Worktree `scope-004`, branch `feature/SCOPE-004-stage-aware-map-slices`, base
-`development`. The provider pin stays at `e93df08`; that revision already exposes
-the `WI-036` delta and map query surface the slices consume.
+`development`. PR: [#124](https://github.com/cchris-p/opencode-modded-rust/pull/124).
+The provider pin stays at `e93df08`; that revision already exposes the `WI-036`
+delta and map query surface the slices consume.
 
 Stage table (`crates/opencode-types/src/retrieval.rs`):
 
