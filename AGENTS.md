@@ -44,6 +44,7 @@
 - This does not make `scopemux` a V1 dependency or change runtime authority over task state, lifecycle, verification, or review.
 - The native ScopeMux provider is compiled into the product binary but activates only for the local Qwen-via-Ollama model (`ollama` + a model id starting with `qwen`); every other model and unsupported workspace uses the generic provider. Canonical rule: `invariants/providers.md`.
 - Canonical rule: `invariants/integration-scope.md`.
+- In this repository (`opencode-modded-rust`), ScopeMux work must always use a separate git worktree for PR flows. This rule does not apply to the `scopemux` repositories themselves.
 
 ## Storage Paths
 
