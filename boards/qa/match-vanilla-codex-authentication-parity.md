@@ -251,7 +251,7 @@ Both 30s bounds are shorter than a real login and must be raised for the auth RP
 
 ## Implementation Notes - 2026-09-26
 
-Branch `bug/START-032-codex-auth-callback-failure`.
+Branch `bug/START-032-codex-auth-callback-failure`, PR: https://github.com/cchris-p/opencode-modded-rust/pull/116 (base `development`).
 
 Fix 1 - surface the real auth error:
 
