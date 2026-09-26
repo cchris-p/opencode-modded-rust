@@ -202,6 +202,7 @@ dependency order; do not start C until B is merged into `development`.
 ### Pass A - BUG-045 (server diagnostics) - implemented, in `qa`
 
 - Branch: `bug/BUG-045-server-runtime-diagnostics` (target `development`).
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/117
 - Delivered: durable server log at `dirs::data_local_dir()/opencode/traces/server.log`
   (`OPENCODE_SERVER_LOG` override; `0`/`false`/`off`/empty disables), TUI spawn redirects server
   stdout/stderr to it instead of `/dev/null`, global panic hook appends message + location +

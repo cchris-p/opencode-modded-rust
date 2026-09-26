@@ -109,3 +109,8 @@ investigator is reduced to OS-thread sampling, which cannot see parked async tas
 
 - Captured evidence: `lsof -a -p 99477 -d 0,1,2` (2026-09-26).
 - Relevant files: `crates/opencode-cli/src/main.rs` (server spawn/stdio), `crates/opencode-server/`.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/117
+  (branch `bug/BUG-045-server-runtime-diagnostics`, base `development`, handoff H-012 Pass A).
