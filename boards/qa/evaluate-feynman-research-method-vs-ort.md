@@ -217,3 +217,12 @@ kept open for review).
   (`docs/research/FEAT-065-feynman-gate-001-vetting.md`).
 - **`FEAT-066`** (Feynman→`ort` chunk pipeline) remains out of scope and
   unaffected.
+
+### Closeout
+
+- 2026-09-26: PR
+  [#125](https://github.com/cchris-p/opencode-modded-rust/pull/125) merged into
+  `development` (merge commit `f223e20`). Branch
+  `research/FEAT-065-feynman-gate-001-vetting` deleted remotely and locally.
+  Card remains in `qa` pending post-merge QA / explicit completion; the merge
+  alone does not move it out of `qa`. Handoff `H-013` archived.
