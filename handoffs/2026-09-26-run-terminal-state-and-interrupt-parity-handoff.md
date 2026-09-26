@@ -1,7 +1,7 @@
 ---
 id: "H-012"
 title: "BUG-043..047 run terminal-state, interrupt, and persistence cluster - Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-09-26"
 updated: "2026-09-26"
 owner: ""
@@ -196,3 +196,21 @@ dependency order; do not start C until B is merged into `development`.
 - DB schema or storage-engine changes beyond incremental writes.
 - Reasoning-token display work (the `/thinking` surface).
 - Provider transport rewrites beyond the step/turn bound.
+
+## Execution Progress
+
+### Pass A - BUG-045 (server diagnostics) - implemented, in `qa`
+
+- Branch: `bug/BUG-045-server-runtime-diagnostics` (target `development`).
+- Delivered: durable server log at `dirs::data_local_dir()/opencode/traces/server.log`
+  (`OPENCODE_SERVER_LOG` override; `0`/`false`/`off`/empty disables), TUI spawn redirects server
+  stdout/stderr to it instead of `/dev/null`, global panic hook appends message + location +
+  backtrace, and `debug paths` / `session inspect` surface the path.
+- Verification: `cargo test -p opencode-cli` 10 passed; `cargo check --workspace` clean;
+  `cargo fmt --all` clean; live serve smoke test captured stderr to the sink.
+- Remaining for Phase 0 exit gate: with the merged diagnostic build, reproduce the deepseek stall
+  and classify it as panic / parked await / endless stream, then record the result on `BUG-043`.
+
+### Pass B - BUG-043 + BUG-047 - not started
+
+### Pass C - BUG-046 + BUG-044 - not started
