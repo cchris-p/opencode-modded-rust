@@ -1,7 +1,7 @@
 ---
 id: "H-012"
 title: "BUG-043..047 run terminal-state, interrupt, and persistence cluster - Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-09-26"
 updated: "2026-09-26"
 owner: ""
@@ -236,3 +236,14 @@ dependency order; do not start C until B is merged into `development`.
   stale-resume root cause confirmed as the `BUG-047` persistence gap.
 - Verification: `opencode-provider` 104 + 7 passed; `opencode-session` 166 passed (2 pre-existing
   unrelated failures); `cargo check --workspace` and `cargo fmt --all` clean.
+
+## Completed With
+
+- Pass A `BUG-045` - PR #117 merged into `development` (`29bbeb6`).
+- Pass B `BUG-043`, `BUG-047` - PR #118 merged into `development` (`3c3c0d5`).
+- Pass C `BUG-046`, `BUG-044` - PR #119 merged into `development` (`0bd0ece`).
+- All five cards (`BUG-043`..`BUG-047`) are in `qa` pending post-merge/live confirmation.
+- Remaining QA: confirm on a live recurrence (with the `BUG-045` server log) that a stalled run now
+  finalizes instead of wedging, that `Esc` recovers it, and that continuation resumes from the latest
+  persisted part. The stall is emergent (fresh session, after time), so this is a live check rather
+  than a deterministic repro.
