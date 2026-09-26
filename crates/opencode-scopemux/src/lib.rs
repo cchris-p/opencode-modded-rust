@@ -217,6 +217,54 @@ mod ffi {
         pub total_match_count: usize,
     }
 
+    // WI-036 delta view. Layout mirrors `ProjectDeltaEntry`/`ProjectDeltaResult`.
+    #[repr(C)]
+    pub struct ProjectDeltaEntry {
+        pub kind: c_int,
+        pub block: *const ProjectInfoBlock,
+        pub plan_node: *const ProjectPlanNode,
+        pub anchors: *const c_char,
+        pub projected_shape: *const c_char,
+        pub provenance: *const c_char,
+        pub confidence: f32,
+        pub lifecycle: c_int,
+        pub estimated_tokens: usize,
+    }
+
+    #[repr(C)]
+    pub struct ProjectDeltaResult {
+        pub task_id: *const c_char,
+        pub stage: *const c_char,
+        pub entries: *mut ProjectDeltaEntry,
+        pub entry_count: usize,
+        pub add_count: usize,
+        pub change_count: usize,
+        pub remove_count: usize,
+        pub reuse_count: usize,
+        pub estimated_tokens: usize,
+    }
+
+    // WI-036 map query surface. Layout mirrors `ProjectMapResultItem`/
+    // `ProjectMapQueryResult`.
+    #[repr(C)]
+    pub struct ProjectMapResultItem {
+        pub block: *const ProjectInfoBlock,
+        pub kind: c_int,
+        pub reason: *const c_char,
+        pub provenance: *const c_char,
+        pub confidence: f32,
+        pub estimated_tokens: usize,
+        pub distance: usize,
+    }
+
+    #[repr(C)]
+    pub struct ProjectMapQueryResult {
+        pub kind: c_int,
+        pub items: *mut ProjectMapResultItem,
+        pub item_count: usize,
+        pub estimated_tokens: usize,
+    }
+
     extern "C" {
         pub fn project_context_create(root_directory: *const c_char) -> *mut ProjectContext;
         pub fn project_context_free(project: *mut ProjectContext);
@@ -287,6 +335,36 @@ mod ffi {
         pub fn project_plan_node_reconciliation_result_free(
             result: *mut ProjectPlanNodeReconciliationResult,
         );
+        pub fn project_context_compute_delta(
+            project: *mut ProjectContext,
+            task_id: *const c_char,
+            stage: *const c_char,
+            out_result: *mut ProjectDeltaResult,
+        ) -> bool;
+        pub fn project_context_query_resolve(
+            project: *mut ProjectContext,
+            task_id: *const c_char,
+            stage: *const c_char,
+            out_result: *mut ProjectMapQueryResult,
+        ) -> bool;
+        pub fn project_context_query_duplicates(
+            project: *mut ProjectContext,
+            scope: *const c_char,
+            out_result: *mut ProjectMapQueryResult,
+        ) -> bool;
+        pub fn project_context_query_observability(
+            project: *mut ProjectContext,
+            symbol: *const c_char,
+            out_result: *mut ProjectMapQueryResult,
+        ) -> bool;
+        pub fn project_context_query_change_impact(
+            project: *mut ProjectContext,
+            files: *const *const c_char,
+            file_count: usize,
+            out_result: *mut ProjectMapQueryResult,
+        ) -> bool;
+        pub fn project_map_query_result_free(result: *mut ProjectMapQueryResult);
+        pub fn project_delta_result_free(result: *mut ProjectDeltaResult);
     }
 }
 
@@ -304,10 +382,7 @@ impl RetrievalProvider for ScopemuxProvider {
         use std::ffi::CString;
 
         use opencode_retrieval::RetrievalError;
-        use opencode_types::{
-            PlanLifecycle, RetrievalCandidate, RetrievalCandidateKind, RetrievalConfidence,
-            RetrievalOrigin,
-        };
+        use opencode_types::RetrievalRepresentation;
 
         if !workspace_supported(request) {
             return Err(RetrievalError::Unavailable(
@@ -363,122 +438,475 @@ impl RetrievalProvider for ScopemuxProvider {
                 ));
             }
 
-            let query = CString::new(request.objective.as_str())
-                .map_err(|e| RetrievalError::Failed(format!("invalid objective: {e}")))?;
-            let anchor = seeds.first().and_then(|s| CString::new(s.as_str()).ok());
-
-            let search_request = ffi::ProjectSearchRequest {
-                query_text: query.as_ptr(),
-                anchor_symbol: std::ptr::null(),
-                anchor_file_path: anchor.as_ref().map_or(std::ptr::null(), |a| a.as_ptr()),
-                min_tier: 0,
-                max_tier: 4,
-                include_related: false,
-                include_dependencies: true,
-                max_hits: request.token_budget.unwrap_or(20),
-                origin_mask: 0,    // all origins
-                lifecycle_mask: 0, // all lifecycles
+            // SCOPE-003: materialize the task's projected plan nodes into the
+            // map so the delta/observability/duplicate slices can see target
+            // state. SCOPE-004: select the representation the stage asked for.
+            materialize_plan_nodes(ctx, request);
+            let candidates = match request.representation {
+                RetrievalRepresentation::Search => search_candidates(ctx, request, &seeds)?,
+                RetrievalRepresentation::Delta => delta_candidates(ctx, request),
+                RetrievalRepresentation::Anchors => resolve_candidates(ctx, request),
+                RetrievalRepresentation::Observability => observability_candidates(ctx, request),
+                RetrievalRepresentation::Duplicates => duplicates_candidates(ctx, request),
+                RetrievalRepresentation::Impact => impact_candidates(ctx, request),
+                RetrievalRepresentation::Review => review_candidates(ctx, request),
+                RetrievalRepresentation::Reconcile => Vec::new(),
             };
 
-            let mut result = ffi::ProjectSearchResult {
-                hits: std::ptr::null_mut(),
-                hit_count: 0,
-                total_match_count: 0,
-            };
+            // Reconciliation evidence is always reported; the runtime decides
+            // whether to act on it. It never advances task stage or completion.
+            let plan_signals = reconcile_plan_nodes(ctx);
 
-            if !ffi::project_context_search_info_blocks(ctx, &search_request, &mut result as *mut _)
-            {
-                return Err(RetrievalError::Failed("project search failed".to_string()));
-            }
-
-            let result_guard = SearchResultGuard(&mut result as *mut _);
-
-            let mut candidates = Vec::new();
-            for i in 0..result.hit_count {
-                let hit = &*result.hits.add(i);
-                let block = hit.block;
-                if block.is_null() {
-                    continue;
-                }
-                let file_path = cstr((*block).file_path);
-                let qualified_name = cstr((*block).qualified_name);
-                let id = cstr((*block).id);
-
-                let (kind, symbol) = if id.starts_with("sym:") {
-                    (RetrievalCandidateKind::Symbol, Some(qualified_name.clone()))
-                } else if id.starts_with("file:") {
-                    (RetrievalCandidateKind::File, None)
-                } else {
-                    (RetrievalCandidateKind::Snippet, None)
-                };
-
-                // Parsed blocks carry confidence 1.0 and are exact facts;
-                // otherwise fall back to the search match type.
-                let confidence = if (*block).confidence >= 0.99 {
-                    RetrievalConfidence::Exact
-                } else if hit.name_match || hit.text_match {
-                    RetrievalConfidence::High
-                } else if hit.relationship_match {
-                    RetrievalConfidence::Medium
-                } else {
-                    RetrievalConfidence::Low
-                };
-
-                let provenance = {
-                    let source = cstr((*block).provenance);
-                    if source.is_empty() {
-                        format!("scopemux search hit (id: {id})")
-                    } else {
-                        format!("scopemux: {source}")
-                    }
-                };
-
-                candidates.push(RetrievalCandidate {
-                    kind,
-                    path: file_path,
-                    symbol,
-                    snippet: None,
-                    provenance,
-                    confidence,
-                    score: hit.score as f32,
-                    estimated_tokens: Some((*block).estimated_tokens),
-                    origin: Some(RetrievalOrigin::from_ffi((*block).origin)),
-                    lifecycle: Some(PlanLifecycle::from_ffi((*block).lifecycle)),
-                });
-            }
-
-            // SCOPE-003: project the task's plan-node drafts into the map,
-            // reconcile them against parsed state, and report evidence. This
-            // never advances task stage or completion; the runtime owns that.
-            let plan_signals = project_and_reconcile_plan_nodes(ctx, request);
-
-            drop(result_guard);
             drop(guard);
 
             Ok(opencode_types::RetrievalResponse {
                 candidates,
                 provider: self.name().to_string(),
+                representation: request.representation,
                 plan_signals,
             })
         }
     }
 }
 
-/// Materialize projected plan nodes into the map and report reconciliation
-/// evidence. Projection is best-effort: a malformed draft is skipped rather
-/// than failing retrieval.
+/// Search over the canonical InfoBlock registry (`Search` representation).
 #[cfg(feature = "native")]
-fn project_and_reconcile_plan_nodes(
+fn search_candidates(
     ctx: *mut ffi::ProjectContext,
     request: &RetrievalRequest,
-) -> Vec<opencode_types::PlanReconciliationSignal> {
+    seeds: &[String],
+) -> Result<Vec<opencode_types::RetrievalCandidate>, opencode_retrieval::RetrievalError> {
     use std::ffi::CString;
 
-    use opencode_types::{stage_lifecycle, PlanLifecycle, PlanReconciliationSignal};
+    use opencode_retrieval::RetrievalError;
+    use opencode_types::RetrievalConfidence;
 
-    let mut signals = Vec::new();
+    let query = CString::new(request.objective.as_str())
+        .map_err(|e| RetrievalError::Failed(format!("invalid objective: {e}")))?;
+    let anchor = seeds.first().and_then(|s| CString::new(s.as_str()).ok());
+
+    let search_request = ffi::ProjectSearchRequest {
+        query_text: query.as_ptr(),
+        anchor_symbol: std::ptr::null(),
+        anchor_file_path: anchor.as_ref().map_or(std::ptr::null(), |a| a.as_ptr()),
+        min_tier: 0,
+        max_tier: 4,
+        include_related: false,
+        include_dependencies: true,
+        max_hits: request.token_budget.unwrap_or(20),
+        origin_mask: 0,    // all origins
+        lifecycle_mask: 0, // all lifecycles
+    };
+
+    let mut result = ffi::ProjectSearchResult {
+        hits: std::ptr::null_mut(),
+        hit_count: 0,
+        total_match_count: 0,
+    };
+
+    if !unsafe {
+        ffi::project_context_search_info_blocks(ctx, &search_request, &mut result as *mut _)
+    } {
+        return Err(RetrievalError::Failed("project search failed".to_string()));
+    }
+
+    let _result_guard = SearchResultGuard(&mut result as *mut _);
+
+    let mut candidates = Vec::new();
+    for i in 0..result.hit_count {
+        let hit = unsafe { &*result.hits.add(i) };
+        let block = hit.block;
+        if block.is_null() {
+            continue;
+        }
+        let id = unsafe { cstr((*block).id) };
+
+        // Parsed blocks carry confidence 1.0 and are exact facts; otherwise
+        // fall back to the search match type.
+        let confidence = if unsafe { (*block).confidence } >= 0.99 {
+            RetrievalConfidence::Exact
+        } else if hit.name_match || hit.text_match {
+            RetrievalConfidence::High
+        } else if hit.relationship_match {
+            RetrievalConfidence::Medium
+        } else {
+            RetrievalConfidence::Low
+        };
+
+        let provenance = {
+            let source = unsafe { cstr((*block).provenance) };
+            if source.is_empty() {
+                format!("scopemux search hit (id: {id})")
+            } else {
+                format!("scopemux: {source}")
+            }
+        };
+
+        if let Some(candidate) =
+            unsafe { block_candidate(block, provenance, confidence, hit.score as f32, None) }
+        {
+            candidates.push(candidate);
+        }
+    }
+
+    Ok(candidates)
+}
+
+/// Delta between current (parsed) and target (planned) state (`Delta`).
+#[cfg(feature = "native")]
+fn delta_candidates(
+    ctx: *mut ffi::ProjectContext,
+    request: &RetrievalRequest,
+) -> Vec<opencode_types::RetrievalCandidate> {
+    use std::ffi::CString;
+
+    let task_id = request
+        .task_id
+        .as_deref()
+        .and_then(|id| CString::new(id).ok());
+    let stage = CString::new(stage_label(&request.stage)).ok();
+
+    let mut result = ffi::ProjectDeltaResult {
+        task_id: std::ptr::null(),
+        stage: std::ptr::null(),
+        entries: std::ptr::null_mut(),
+        entry_count: 0,
+        add_count: 0,
+        change_count: 0,
+        remove_count: 0,
+        reuse_count: 0,
+        estimated_tokens: 0,
+    };
+    let ok = unsafe {
+        ffi::project_context_compute_delta(
+            ctx,
+            task_id.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+            stage.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+            &mut result as *mut _,
+        )
+    };
+    if !ok {
+        return Vec::new();
+    }
+    let _guard = DeltaResultGuard(&mut result as *mut _);
+
+    let mut candidates = Vec::new();
+    for i in 0..result.entry_count {
+        let entry = unsafe { &*result.entries.add(i) };
+        let label = match entry.kind {
+            0 => "delta add",
+            1 => "delta change",
+            2 => "delta remove",
+            3 => "delta reuse",
+            _ => "delta",
+        };
+        let provenance = {
+            let source = cstr(entry.provenance);
+            if source.is_empty() {
+                format!("scopemux: {label}")
+            } else {
+                format!("scopemux: {label}: {source}")
+            }
+        };
+        let confidence = confidence_from_score(entry.confidence);
+        if let Some(candidate) =
+            unsafe { block_candidate(entry.block, provenance, confidence, entry.confidence, None) }
+        {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
+}
+
+/// Seed nodes and anchors resolved for a task and stage (`Anchors`).
+#[cfg(feature = "native")]
+fn resolve_candidates(
+    ctx: *mut ffi::ProjectContext,
+    request: &RetrievalRequest,
+) -> Vec<opencode_types::RetrievalCandidate> {
+    use std::ffi::CString;
+
+    let task_id = request
+        .task_id
+        .as_deref()
+        .and_then(|id| CString::new(id).ok());
+    let stage = CString::new(stage_label(&request.stage)).ok();
+
+    let mut result = empty_map_result();
+    let ok = unsafe {
+        ffi::project_context_query_resolve(
+            ctx,
+            task_id.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+            stage.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+            &mut result as *mut _,
+        )
+    };
+    if !ok {
+        return Vec::new();
+    }
+    map_query_candidates(&mut result)
+}
+
+/// Observability blocks attached to anchored symbols (`Observability`).
+///
+/// Symbols come from the request's explicit `seed_symbols` plus the projected
+/// symbols of its plan nodes, so a review slice can resolve the symbol a task
+/// intends to touch to its observability points and covering tests.
+#[cfg(feature = "native")]
+fn observability_candidates(
+    ctx: *mut ffi::ProjectContext,
+    request: &RetrievalRequest,
+) -> Vec<opencode_types::RetrievalCandidate> {
+    use std::ffi::CString;
+
+    let mut symbols = request.seed_symbols.clone();
+    for draft in &request.plan_nodes {
+        if let Some(symbol) = &draft.projected_symbol {
+            if !symbols.contains(symbol) {
+                symbols.push(symbol.clone());
+            }
+        }
+    }
+
+    let mut candidates = Vec::new();
+    for symbol in &symbols {
+        let Ok(symbol_c) = CString::new(symbol.as_str()) else {
+            continue;
+        };
+        let mut result = empty_map_result();
+        let ok = unsafe {
+            ffi::project_context_query_observability(ctx, symbol_c.as_ptr(), &mut result as *mut _)
+        };
+        if ok {
+            candidates.extend(map_query_candidates(&mut result));
+        }
+    }
+    candidates
+}
+
+/// Duplicate/refactor-opportunity clusters (`Duplicates`).
+///
+/// Detection is scoped to the whole parsed project rather than one seed file,
+/// because a duplicate is only visible across files. The provider only parses
+/// the request's seeds, so this stays bounded.
+#[cfg(feature = "native")]
+fn duplicates_candidates(
+    ctx: *mut ffi::ProjectContext,
+    _request: &RetrievalRequest,
+) -> Vec<opencode_types::RetrievalCandidate> {
+    let mut result = empty_map_result();
+    let ok = unsafe {
+        ffi::project_context_query_duplicates(ctx, std::ptr::null(), &mut result as *mut _)
+    };
+    if !ok {
+        return Vec::new();
+    }
+    map_query_candidates(&mut result)
+}
+
+/// Impact of changed files: their blocks plus anchored plans (`Impact`).
+#[cfg(feature = "native")]
+fn impact_candidates(
+    ctx: *mut ffi::ProjectContext,
+    request: &RetrievalRequest,
+) -> Vec<opencode_types::RetrievalCandidate> {
+    use std::ffi::CString;
+
+    let files: Vec<CString> = request
+        .changed_files
+        .iter()
+        .filter_map(|p| CString::new(p.strip_prefix("file://").unwrap_or(p)).ok())
+        .collect();
+    let pointers: Vec<*const std::os::raw::c_char> = files.iter().map(|c| c.as_ptr()).collect();
+
+    let mut result = empty_map_result();
+    let ok = unsafe {
+        ffi::project_context_query_change_impact(
+            ctx,
+            pointers.as_ptr(),
+            pointers.len(),
+            &mut result as *mut _,
+        )
+    };
+    if !ok {
+        return Vec::new();
+    }
+    map_query_candidates(&mut result)
+}
+
+/// Composed review slice: delta, then duplicates and observability (`Review`).
+#[cfg(feature = "native")]
+fn review_candidates(
+    ctx: *mut ffi::ProjectContext,
+    request: &RetrievalRequest,
+) -> Vec<opencode_types::RetrievalCandidate> {
+    let mut candidates = delta_candidates(ctx, request);
+    candidates.extend(duplicates_candidates(ctx, request));
+    candidates.extend(observability_candidates(ctx, request));
+
+    // Keep the first occurrence of each (path, symbol, provenance) triple so a
+    // node reached by more than one slice is not duplicated.
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|candidate| {
+        seen.insert((
+            candidate.path.clone(),
+            candidate.symbol.clone(),
+            candidate.provenance.clone(),
+        ))
+    });
+    candidates
+}
+
+/// Convert map query result items into candidates and free the result.
+#[cfg(feature = "native")]
+fn map_query_candidates(
+    result: &mut ffi::ProjectMapQueryResult,
+) -> Vec<opencode_types::RetrievalCandidate> {
+    use opencode_types::RetrievalCandidateKind;
+
+    let mut candidates = Vec::new();
+    for i in 0..result.item_count {
+        let item = unsafe { &*result.items.add(i) };
+        let reason = cstr(item.reason);
+        let provenance = {
+            let source = cstr(item.provenance);
+            if source.is_empty() {
+                format!("scopemux: {reason}")
+            } else {
+                format!("scopemux: {reason}: {source}")
+            }
+        };
+        // `4` is `PROJECT_MAP_QUERY_DUPLICATES`; `5` is
+        // `PROJECT_MAP_QUERY_OBSERVABILITY` in `ProjectMapQueryKind`.
+        let kind_override = match item.kind {
+            4 => Some(RetrievalCandidateKind::RefactorOpportunity),
+            5 => Some(RetrievalCandidateKind::Observability),
+            _ => None,
+        };
+        let confidence = confidence_from_score(item.confidence);
+        if let Some(candidate) = unsafe {
+            block_candidate(
+                item.block,
+                provenance,
+                confidence,
+                item.confidence,
+                kind_override,
+            )
+        } {
+            candidates.push(candidate);
+        }
+    }
+    unsafe { ffi::project_map_query_result_free(result as *mut _) };
+    candidates
+}
+
+#[cfg(feature = "native")]
+fn empty_map_result() -> ffi::ProjectMapQueryResult {
+    ffi::ProjectMapQueryResult {
+        kind: 0,
+        items: std::ptr::null_mut(),
+        item_count: 0,
+        estimated_tokens: 0,
+    }
+}
+
+/// Build a candidate from a canonical InfoBlock.
+///
+/// Kind is derived from the stable id scheme (`sym:`/`file:`) unless the caller
+/// knows the map slice implies a specific kind (`Observability`,
+/// `RefactorOpportunity`).
+#[cfg(feature = "native")]
+unsafe fn block_candidate(
+    block: *const ffi::ProjectInfoBlock,
+    provenance: String,
+    confidence: opencode_types::RetrievalConfidence,
+    score: f32,
+    kind_override: Option<opencode_types::RetrievalCandidateKind>,
+) -> Option<opencode_types::RetrievalCandidate> {
+    use opencode_types::{
+        PlanLifecycle, RetrievalCandidate, RetrievalCandidateKind, RetrievalOrigin,
+    };
+
+    if block.is_null() {
+        return None;
+    }
+    let block = &*block;
+    let id = cstr(block.id);
+    let name = cstr(block.name);
+    let qualified_name = cstr(block.qualified_name);
+    let file_path = cstr(block.file_path);
+
+    let kind = kind_override.unwrap_or_else(|| {
+        if id.starts_with("sym:") {
+            RetrievalCandidateKind::Symbol
+        } else if id.starts_with("file:") {
+            RetrievalCandidateKind::File
+        } else {
+            RetrievalCandidateKind::Snippet
+        }
+    });
+    let symbol = if !qualified_name.is_empty() {
+        Some(qualified_name)
+    } else if !name.is_empty() {
+        Some(name)
+    } else {
+        None
+    };
+
+    Some(RetrievalCandidate {
+        kind,
+        path: file_path,
+        symbol,
+        snippet: None,
+        provenance,
+        confidence,
+        score,
+        estimated_tokens: Some(block.estimated_tokens),
+        origin: Some(RetrievalOrigin::from_ffi(block.origin)),
+        lifecycle: Some(PlanLifecycle::from_ffi(block.lifecycle)),
+    })
+}
+
+#[cfg(feature = "native")]
+fn confidence_from_score(value: f32) -> opencode_types::RetrievalConfidence {
+    use opencode_types::RetrievalConfidence;
+    if value >= 0.99 {
+        RetrievalConfidence::Exact
+    } else if value >= 0.85 {
+        RetrievalConfidence::High
+    } else if value >= 0.6 {
+        RetrievalConfidence::Medium
+    } else {
+        RetrievalConfidence::Low
+    }
+}
+
+/// Runtime stage label recorded on map requests (not interpreted by the core).
+#[cfg(feature = "native")]
+fn stage_label(stage: &opencode_types::TaskStage) -> &'static str {
+    use opencode_types::TaskStage;
+    match stage {
+        TaskStage::Selected => "selected",
+        TaskStage::ContextPrepared => "context_prepared",
+        TaskStage::Implementing => "implementing",
+        TaskStage::Verifying => "verifying",
+        TaskStage::Reviewing => "reviewing",
+        TaskStage::Repairing => "repairing",
+        TaskStage::Completed => "completed",
+    }
+}
+
+/// Materialize projected plan nodes into the map. Best-effort: a malformed
+/// draft is skipped rather than failing retrieval.
+#[cfg(feature = "native")]
+fn materialize_plan_nodes(ctx: *mut ffi::ProjectContext, request: &RetrievalRequest) {
+    use std::ffi::CString;
+
+    use opencode_types::stage_lifecycle;
+
     if request.plan_nodes.is_empty() {
-        return signals;
+        return;
     }
 
     let task_id = request
@@ -486,7 +914,7 @@ fn project_and_reconcile_plan_nodes(
         .clone()
         .unwrap_or_else(|| "task".to_string());
     let Ok(task_id_c) = CString::new(task_id.as_str()) else {
-        return signals;
+        return;
     };
     let provenance =
         CString::new(format!("task:{task_id}:{:?}", request.stage).to_lowercase()).ok();
@@ -551,7 +979,17 @@ fn project_and_reconcile_plan_nodes(
             }
         }
     }
+}
 
+/// Reconcile materialized plan nodes against parsed state and report evidence.
+/// The runtime decides whether to act; this never advances stage or completion.
+#[cfg(feature = "native")]
+fn reconcile_plan_nodes(
+    ctx: *mut ffi::ProjectContext,
+) -> Vec<opencode_types::PlanReconciliationSignal> {
+    use opencode_types::{PlanLifecycle, PlanReconciliationSignal};
+
+    let mut signals = Vec::new();
     let mut reconcile = ffi::ProjectPlanNodeReconciliationResult {
         entries: std::ptr::null_mut(),
         entry_count: 0,
@@ -610,10 +1048,20 @@ impl Drop for SearchResultGuard {
     }
 }
 
+#[cfg(feature = "native")]
+struct DeltaResultGuard(*mut ffi::ProjectDeltaResult);
+
+#[cfg(feature = "native")]
+impl Drop for DeltaResultGuard {
+    fn drop(&mut self) {
+        unsafe { ffi::project_delta_result_free(self.0) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opencode_types::{RetrievalRequest, RetrievalRole, TaskStage};
+    use opencode_types::{MapRole, RetrievalRepresentation, RetrievalRequest, TaskStage};
 
     /// The C core keeps process-global parser/query state and is not safe for
     /// concurrent use, so native tests serialize behind one lock.
@@ -631,9 +1079,11 @@ mod tests {
             seed_files: seeds.into_iter().map(str::to_string).collect(),
             seed_symbols: Vec::new(),
             changed_files: Vec::new(),
-            role: RetrievalRole::Implementing,
+            role: MapRole::Project,
+            representation: RetrievalRepresentation::Search,
             token_budget: None,
             task_id: None,
+            reopen_reason: None,
             plan_nodes: Vec::new(),
         }
     }
@@ -819,6 +1269,197 @@ mod tests {
             .find(|signal| signal.plan_node_id == "plan:task_plan:stale")
             .expect("vanished anchor should emit a divergence signal");
         assert!(stale.current.is_divergence());
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_delta_slice_returns_projected_entries() {
+        use opencode_retrieval::RetrievalProvider;
+        use opencode_types::{
+            PlanNodeDraft, PlanNodeKind, RetrievalOrigin, RetrievalRepresentation,
+        };
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("add.c"),
+            "int add(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["add.c"]);
+        req.stage = TaskStage::ContextPrepared;
+        req.role = MapRole::Slice;
+        req.representation = RetrievalRepresentation::Delta;
+        req.task_id = Some("task_delta".to_string());
+        req.plan_nodes = vec![PlanNodeDraft {
+            slug: "new-helper".to_string(),
+            kind: PlanNodeKind::NewSymbol,
+            title: "add a helper".to_string(),
+            desired_shape: Some("fn helper()".to_string()),
+            rationale: Some("objective".to_string()),
+            projected_symbol: Some("helper".to_string()),
+            file_path: None,
+            anchors: Vec::new(),
+        }];
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert_eq!(response.representation, RetrievalRepresentation::Delta);
+        assert!(
+            !response.candidates.is_empty(),
+            "delta slice should report the projected change"
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.provenance.contains("delta")),
+            "delta entries should carry delta provenance: {:?}",
+            response.candidates
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.origin == Some(RetrievalOrigin::Planned)),
+            "the projected node should be labeled planned"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_duplicates_slice_flags_matching_symbols() {
+        use opencode_retrieval::RetrievalProvider;
+        use opencode_types::{RetrievalCandidateKind, RetrievalRepresentation};
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.c"),
+            "int dup(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("b.c"),
+            "int dup(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["a.c", "b.c"]);
+        req.representation = RetrievalRepresentation::Duplicates;
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert_eq!(response.representation, RetrievalRepresentation::Duplicates);
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.kind == RetrievalCandidateKind::RefactorOpportunity),
+            "matching symbols should be flagged as a refactor opportunity"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_observability_slice_resolves_symbol_points() {
+        use opencode_retrieval::RetrievalProvider;
+        use opencode_types::{PlanNodeDraft, PlanNodeKind, RetrievalCandidateKind};
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("add.c"),
+            "int add(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["add.c"]);
+        req.representation = RetrievalRepresentation::Observability;
+        req.seed_symbols = vec!["add".to_string()];
+        req.task_id = Some("task_obs".to_string());
+        req.plan_nodes = vec![PlanNodeDraft {
+            slug: "observe-add".to_string(),
+            kind: PlanNodeKind::ObservabilityPoint,
+            title: "log add inputs".to_string(),
+            desired_shape: None,
+            rationale: Some("debugging".to_string()),
+            projected_symbol: Some("add".to_string()),
+            file_path: None,
+            anchors: Vec::new(),
+        }];
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert_eq!(
+            response.representation,
+            RetrievalRepresentation::Observability
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.kind == RetrievalCandidateKind::Observability),
+            "observability plan node anchored to the symbol should resolve: {:?}",
+            response.candidates
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_review_slice_composes_delta_and_duplicates() {
+        use opencode_retrieval::RetrievalProvider;
+        use opencode_types::{PlanNodeDraft, PlanNodeKind, RetrievalCandidateKind};
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.c"),
+            "int dup(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("b.c"),
+            "int dup(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["a.c", "b.c"]);
+        req.stage = TaskStage::Reviewing;
+        req.role = MapRole::Project;
+        req.representation = RetrievalRepresentation::Review;
+        req.task_id = Some("task_review".to_string());
+        req.plan_nodes = vec![PlanNodeDraft {
+            slug: "modify-dup".to_string(),
+            kind: PlanNodeKind::ModifySymbol,
+            title: "change dup".to_string(),
+            desired_shape: None,
+            rationale: Some("criterion".to_string()),
+            projected_symbol: Some("dup".to_string()),
+            file_path: None,
+            anchors: Vec::new(),
+        }];
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert_eq!(response.representation, RetrievalRepresentation::Review);
+        assert!(
+            !response.candidates.is_empty(),
+            "review slice should compose delta and duplicate signals"
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.kind == RetrievalCandidateKind::RefactorOpportunity),
+            "review slice should include duplicate/refactor flags: {:?}",
+            response.candidates
+        );
     }
 
     #[test]
