@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -91,4 +91,20 @@ reference has a total turn/step bound, so this is a real robustness gap for reas
 - Verification is by fault injection (a mock stream that keeps emitting and never finishes is stopped
   at the configured budget), not by waiting for a live recurrence. Live recurrence is QA evidence,
   classified later with the `BUG-045` server log.
+## Dev Notes - 2026-09-26
 
+- `crates/opencode-provider/src/stream.rs`:
+  - Added `DEFAULT_STREAM_BUDGET` (15 min) and `stream_budget_from_env()`
+    (`OPENCODE_STREAM_BUDGET_MS` override; `0` disables).
+  - Added `with_stream_budget(stream, budget)`: bounds the whole provider step by wall clock and ends
+    the stream with `StreamEvent::Error` on exhaustion. Unlike `with_idle_timeout`, it cannot be
+    reset by keep-alive deltas.
+- `crates/opencode-session/src/prompt.rs`: the provider stream is wrapped with both
+  `with_idle_timeout` (silence) and `with_stream_budget` (total step time).
+
+## Verification - 2026-09-26
+
+- New test `never_idle_stream_is_stopped_by_budget` (a never-ending, never-idle stream ends with a
+  budget error).
+- `cargo test -p opencode-provider` -> 104 lib + 7 integration passed, 0 failed.
+- `cargo check --workspace` clean; `cargo fmt --all` clean.
