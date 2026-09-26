@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -136,3 +136,84 @@ Facts recorded 2026-09-26 (re-verify before reuse):
 - Feynman findings are advisory — they do not open/close `GATE-001` or change dispositions.
 - `docs/feynman_role_for_optimization.md` is an early attempt; this item supersedes or supplements it (an old session/notes artifact may still exist and may be stale).
 - "Stronger research method than opencode alone" is a falsifiable claim; a null result is a valid conclusion.
+
+## Dev Notes
+
+### 2026-09-26 — comparison executed; verdict EQUAL (null)
+
+Executed handoff `H-013` end to end (Phases 0–5). Companion sanitized note:
+`docs/research/FEAT-065-feynman-gate-001-vetting.md`. PR:
+https://github.com/cchris-p/opencode-modded-rust/pull/125 (into `development`,
+kept open for review).
+
+**Environment / exact commands**
+
+- aa-studies refetched and read on `development` @ `e7abe68` (never `main`);
+  `git status` confirmed clean after both arms. No optimization/backtest runs.
+- Feynman 0.5.8 was not previously installed and the checkout at
+  `$HOME/repos/feynman-modded` cannot run here (needs Node >=22.22, host has
+  v20). Installed the released 0.5.8 standalone bundle.
+- Feynman's default model `anthropic/claude-opus-5-5` failed with
+  "credit balance is too low"; ran Arm A with
+  `FEYNMAN_MODEL=deepseek/deepseek-flash` to hold the model constant with Arm B.
+- Arm A: `FEYNMAN_MODEL=deepseek/deepseek-flash feynman "<shared task>"` from the
+  aa-studies tree. Persisted its own report artifact outside the repo.
+- Arm B: `opencode run --dir <aa-studies> -m deepseek/deepseek-flash "<shared task>"`
+  using `target/debug/opencode` (built 2026-09-25). Same prompt text, same repo,
+  same model as Arm A.
+- Raw captures: `/tmp/opencode/feat-065/arm-a-feynman.txt`,
+  `/tmp/opencode/feat-065/arm-b-opencode.txt` (not committed; no private content).
+
+**Observed result**
+
+- Both arms delivered comparable structured condition vetting (A GAP; B.1–B.7
+  partial/verified with cross-document drift; C verified) and heavily
+  overlapping improvement lists.
+- Each caught one material issue the other missed. Arm A found an MHAL `v1.02`
+  B.7 timeframe-coverage defect (artifact declares four established TFs but
+  contains only two) — independently re-verified here. Arm B found that the
+  "MQL4 + MQL5 + AA" condition header is structurally unverifiable for V1 because
+  MQL5/MT5 is out of scope.
+- Arm A ~4.6 min wall clock; Arm B ~1.6 min. Arm A adds a separate harness,
+  provider-auth surface, own Node runtime, and a moving-target fork.
+
+**Verdict**
+
+- Vetting `GATE-001`: **EQUAL**. Finding improvements: **EQUAL**.
+- **Null result confirmed**: Feynman's research method is not stronger than
+  opencode/`ort` alone for this objective, at ~3x latency and higher operational
+  complexity.
+
+**Value components**
+
+- Carries value: ordinary local-file reasoning + review-artifact discipline
+  (reproducible in `ort` by redirecting `opencode run`).
+- Marginal: explicit-invocation provenance.
+- No demonstrated value here: literature/alphaXiv/web tools (unused), and any
+  multi-agent decomposition/verifier pass (not observable).
+
+**Doc relationship**
+
+- **Supplement, not supersede** `docs/feynman_role_for_optimization.md`: that doc
+  scopes a different objective (walkforward optimization copilot) and its
+  no-alphaXiv ruling is reinforced here. Old session artifact
+  `session-ses_fd61.md` exists but has no Feynman references; the durable
+  aa-studies artifact remains that doc.
+
+**Guardrails**
+
+- Read-only on aa-studies; no edits, no gate-disposition change; findings
+  advisory; no private content committed.
+
+### Follow-ups (explicitly deferred / advisory)
+
+- **Method adoption**: deferred — null result gives no method component to adopt.
+  Optional low-cost item if desired: standardize persisting `opencode run`
+  research output to a file.
+- **Further Feynman work on this objective**: explicitly deferred (no advantage
+  shown).
+- **aa-studies improvement candidates**: advisory only, operator-owned,
+  aa-studies not edited. Consolidated list recorded in the companion note
+  (`docs/research/FEAT-065-feynman-gate-001-vetting.md`).
+- **`FEAT-066`** (Feynman→`ort` chunk pipeline) remains out of scope and
+  unaffected.
