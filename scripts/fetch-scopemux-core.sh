@@ -17,6 +17,44 @@ REPO_URL="${SCOPEMUX_CORE_REPO:-git@github.com:cchris-p/scopemux-core.git}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${SCOPEMUX_CORE_DIR:-${PROJECT_ROOT}/third_party/scopemux-core}"
 
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif [ -t 0 ]; then
+        sudo "$@"
+    elif [ -n "${SUDO_ASKPASS:-}" ]; then
+        sudo -A "$@"
+    else
+        echo "[fetch-scopemux-core] cmake install requires sudo; rerun from a terminal or install cmake manually" >&2
+        exit 1
+    fi
+}
+
+ensure_cmake() {
+    if command -v cmake >/dev/null 2>&1; then
+        return
+    fi
+
+    echo "[fetch-scopemux-core] cmake not found; installing native build dependency"
+    if command -v apt-get >/dev/null 2>&1; then
+        run_as_root apt-get update
+        run_as_root apt-get install -y cmake
+    elif command -v dnf >/dev/null 2>&1; then
+        run_as_root dnf install -y cmake
+    elif command -v yum >/dev/null 2>&1; then
+        run_as_root yum install -y cmake
+    elif command -v pacman >/dev/null 2>&1; then
+        run_as_root pacman -Sy --needed --noconfirm cmake
+    elif command -v brew >/dev/null 2>&1; then
+        brew install cmake
+    else
+        echo "[fetch-scopemux-core] Unable to install cmake automatically; install cmake and rerun this script" >&2
+        exit 1
+    fi
+}
+
+ensure_cmake
+
 if [ -d "${DEST}/.git" ]; then
     if [ "${1:-}" != "--force" ]; then
         echo "[fetch-scopemux-core] ${DEST} already exists; use --force to refresh"
