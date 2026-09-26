@@ -144,3 +144,13 @@ Integrated attach/detach harness; the agent ran QA, no human testing.
 - Caveat: the HTTP API has no route to set or advance a session task, so a stage-specific
   representation (`Delta`/`Review`/`Impact`) cannot be driven through the harness without
   adding a task-bearing session route. That is out of scope for this card.
+
+## Closeout (2026-09-26)
+
+- Merged into `development` via PR #124 (`c1c5f9aff6ec27093a39251b00285b133afeeedf`);
+  feature branch `feature/SCOPE-004-stage-aware-map-slices` deleted remote + local.
+- The card stays in `qa`: the delivered slice satisfies the stage table, per-slice
+  dispatch, review inclusion threshold, observability resolution, and generic fallback,
+  but the repair-context depth and prompt-budget injection remain intentionally deferred
+  and are tracked under "Still open / follow-ups" above. Promote to `done` only after
+  those follow-ups land or the user explicitly completes it.
