@@ -34,6 +34,8 @@ echo "[fetch-scopemux-core] Checking out pinned revision ${PINNED_REV}"
 git -C "${DEST}" checkout --quiet "${PINNED_REV}"
 
 echo "[fetch-scopemux-core] Initializing submodules"
-git -C "${DEST}" submodule update --init --recursive
+git -C "${DEST}" \
+    -c 'url.git@github.com:.insteadOf=https://github.com/' \
+    submodule update --init --recursive
 
 echo "[fetch-scopemux-core] Done. Build with: cargo build -p opencode-scopemux --features native"
