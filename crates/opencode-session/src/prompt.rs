@@ -28,7 +28,6 @@ use crate::message_v2::{
 use crate::summary::{summarize_into_session, SummarizeInput};
 use crate::system::SystemPrompt;
 use crate::{MessageRole, PartType, Session, SessionMessage, SessionStateManager};
-use opencode_types::RetrievalRole;
 
 const MAX_STEPS: u32 = 100;
 
@@ -300,13 +299,7 @@ impl SessionPrompt {
         let retrieval_response = if seed_files.is_empty() {
             None
         } else {
-            crate::retrieval::retrieve(
-                session,
-                RetrievalRole::Implementing,
-                seed_files,
-                input.model.as_ref(),
-            )
-            .await
+            crate::retrieval::retrieve(session, seed_files, input.model.as_ref()).await
         };
 
         // Accept-time materialization: when the server has already persisted the
@@ -397,15 +390,21 @@ impl SessionPrompt {
 
         if let Some(response) = retrieval_response {
             // Deterministic signal for the attach/detach QA convention: the
-            // effective provider after any fallback (SCOPE-005).
+            // effective provider after any fallback (SCOPE-005), plus the
+            // representation slice selected for the task stage (SCOPE-004).
             tracing::info!(
                 provider = %response.provider,
+                representation = ?response.representation,
                 candidates = response.candidates.len(),
                 "retrieval provider selected"
             );
             msg.metadata.insert(
                 "retrieval_provider".to_string(),
                 serde_json::Value::String(response.provider),
+            );
+            msg.metadata.insert(
+                "retrieval_representation".to_string(),
+                serde_json::to_value(response.representation).unwrap_or(serde_json::Value::Null),
             );
             let candidates: Vec<String> = response
                 .candidates
