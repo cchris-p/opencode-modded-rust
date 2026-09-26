@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -74,7 +74,43 @@ investigator is reduced to OS-thread sampling, which cannot see parked async tas
 - `session-diagnostics-and-stack-capture` (done) - existing diagnostics/stacks work this extends.
 - `BUG-046` / `BUG-047` - other `BUG-043` split-outs.
 
+## Dev Notes - 2026-09-26
+
+- `crates/opencode-cli/src/main.rs`:
+  - Added `resolve_server_log_path` / `server_log_path`: default
+    `dirs::data_local_dir()/opencode/traces/server.log`; override with `OPENCODE_SERVER_LOG`;
+    `0`/`false`/`off`/empty disables the sink.
+  - `spawn_detached_tui_server` now opens the server log and points the child's stdout/stderr at it
+    instead of `/dev/null` (falls back to `/dev/null` only if the log cannot be created or disabled).
+  - `install_server_panic_hook` (called at server start in `run_server_command`) installs a global
+    panic hook writing `[PANIC] <message>` + source location + `Backtrace::force_capture()` to the
+    sink, so detached-task panics are durable even when stdio is discarded.
+  - Discoverability: `opencode debug paths` prints `server-log`; `opencode session inspect` prints
+    `Server log: <path>`.
+- This is the Phase 0 prerequisite for `BUG-043`; it does not change run behavior.
+
+## Verification - 2026-09-26
+
+- `cargo test -p opencode-cli` -> 10 passed (new: `server_log_path_respects_override_and_disable`,
+  `format_panic_entry_includes_message_location_and_backtrace`,
+  `panic_hook_writes_message_and_location_to_sink`).
+- `cargo check --workspace` clean (`SCOPEMUX_SKIP_NATIVE_BUILD=1`); `cargo fmt --all` clean.
+- Live discovery: `opencode debug paths` shows
+  `server-log  /Users/lapis/Library/Application Support/opencode/traces/server.log`;
+  `opencode session inspect ses_2c1168ee…` prints `Server log: …/traces/server.log`.
+- Live capture mechanism: launched `opencode serve --port 3398` with stdout/stderr redirected to a
+  file (what the TUI spawn now does); `GET /health` returned 200 and the file captured the server's
+  stderr (`Warning: …`, `Server errors are logged to …`, `Starting OpenCode serve server …`).
+- Not run here: the full `ort` spawn path (headless) and a real detached-task panic end-to-end; the
+  panic hook is covered by the unit test and the redirect by the live serve test. Confirm during QA
+  by reproducing a failing run and checking `…/traces/server.log` for a session-scoped error.
+
 ## Notes
 
 - Captured evidence: `lsof -a -p 99477 -d 0,1,2` (2026-09-26).
 - Relevant files: `crates/opencode-cli/src/main.rs` (server spawn/stdio), `crates/opencode-server/`.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/117
+  (branch `bug/BUG-045-server-runtime-diagnostics`, base `development`, handoff H-012 Pass A).
