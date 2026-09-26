@@ -4,7 +4,17 @@
 #
 # Clones scopemux-core at the recorded revision into third_party/scopemux-core
 # (gitignored) and initializes its submodules (Tree-sitter grammars, pybind11),
-# which the C build needs. Re-run with --force to refresh an existing checkout.
+# which the C build needs.
+#
+# `ort-build` runs this automatically when the source is missing and warns when
+# an existing checkout drifts from the pin; set OPENCODE_RUST_REFRESH_CORE=1 to
+# refresh a drifted checkout.
+#
+# Options:
+#   --force   re-check out the pinned revision and refresh submodules even if
+#             the checkout already matches the pin
+#   --check   verify the checkout matches the pin without changing it; exits
+#             non-zero when missing or stale (for CI and pin-bump tooling)
 #
 # After this, build the native provider with:
 #   cargo build -p opencode-scopemux --features native
@@ -102,16 +112,51 @@ ensure_python_dev() {
     fi
 }
 
+force=false
+check_only=false
+for arg in "$@"; do
+    case "$arg" in
+        --force) force=true ;;
+        --check) check_only=true ;;
+        *)
+            echo "[fetch-scopemux-core] unknown argument: ${arg}" >&2
+            exit 2
+            ;;
+    esac
+done
+
+current_rev=""
+if [ -d "${DEST}/.git" ]; then
+    current_rev="$(git -C "${DEST}" rev-parse HEAD 2>/dev/null || true)"
+fi
+
+if [ "${check_only}" = true ]; then
+    if [ -z "${current_rev}" ]; then
+        echo "[fetch-scopemux-core] ${DEST} is missing (expected ${PINNED_REV})" >&2
+        exit 1
+    fi
+    if [ "${current_rev}" != "${PINNED_REV}" ]; then
+        echo "[fetch-scopemux-core] ${DEST} is at ${current_rev}, expected ${PINNED_REV}" >&2
+        exit 1
+    fi
+    echo "[fetch-scopemux-core] ${DEST} is at the pinned revision ${PINNED_REV}"
+    exit 0
+fi
+
 ensure_cmake
 ensure_python_dev
 
 if [ -d "${DEST}/.git" ]; then
-    if [ "${1:-}" != "--force" ]; then
-        echo "[fetch-scopemux-core] ${DEST} already exists; use --force to refresh"
-        exit 0
+    if [ "${current_rev}" = "${PINNED_REV}" ] && [ "${force}" != true ]; then
+        echo "[fetch-scopemux-core] ${DEST} already at pinned revision ${PINNED_REV}; ensuring submodules"
+    else
+        if [ "${current_rev}" != "${PINNED_REV}" ]; then
+            echo "[fetch-scopemux-core] Refreshing ${DEST} from ${current_rev:-unknown} to ${PINNED_REV}"
+        else
+            echo "[fetch-scopemux-core] Refreshing ${DEST}"
+        fi
+        git -C "${DEST}" fetch --all --tags
     fi
-    echo "[fetch-scopemux-core] Refreshing ${DEST}"
-    git -C "${DEST}" fetch --all --tags
 else
     echo "[fetch-scopemux-core] Cloning ${REPO_URL} into ${DEST}"
     mkdir -p "$(dirname "${DEST}")"
@@ -119,7 +164,10 @@ else
 fi
 
 echo "[fetch-scopemux-core] Checking out pinned revision ${PINNED_REV}"
-git -C "${DEST}" checkout --quiet "${PINNED_REV}"
+if ! git -C "${DEST}" checkout --quiet "${PINNED_REV}"; then
+    echo "[fetch-scopemux-core] failed to check out ${PINNED_REV}; is the pin reachable from ${REPO_URL}?" >&2
+    exit 1
+fi
 
 echo "[fetch-scopemux-core] Initializing submodules"
 git -C "${DEST}" \
