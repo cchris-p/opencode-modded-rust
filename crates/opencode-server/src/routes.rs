@@ -2629,6 +2629,31 @@ async fn finalize_run_without_terminal(
     persist_sessions_if_enabled(state).await;
 }
 
+/// Cheap content fingerprint used to detect in-flight assistant output changes
+/// (streamed text/reasoning and tool calls) between snapshots, so persistence
+/// can flush the current chunk without rewriting the whole session on every
+/// stream delta.
+fn session_content_fingerprint(session: &opencode_session::Session) -> (usize, usize, usize) {
+    use opencode_session::PartType;
+    let mut parts = 0usize;
+    let mut bytes = 0usize;
+    for message in &session.messages {
+        parts += message.parts.len();
+        for part in &message.parts {
+            bytes += match &part.part_type {
+                PartType::Text { text, .. } => text.len(),
+                PartType::Reasoning { text } => text.len(),
+                _ => 1,
+            };
+        }
+    }
+    (session.messages.len(), parts, bytes)
+}
+
+/// Minimum interval between time-throttled persistence flushes of in-flight
+/// assistant output. New messages always persist immediately.
+const STREAM_PERSIST_INTERVAL: Duration = Duration::from_millis(1000);
+
 async fn drain_session_queue(state: Arc<ServerState>, session_id: String) {
     loop {
         let next = {
@@ -3674,13 +3699,16 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         tokio::sync::mpsc::unbounded_channel::<opencode_session::Session>();
     let update_state = task_state.clone();
     let update_task = tokio::spawn(async move {
-        // BUG-047: persist incrementally as the turn produces new messages
-        // (assistant steps and tool results) instead of only at turn end, so a
-        // stalled/aborted run keeps its progress and can be resumed.
-        let mut last_persisted_messages = usize::MAX;
+        // BUG-047: persist turn progress as it is produced, so a stalled,
+        // aborted, or exited run keeps its progress and can be resumed from the
+        // latest chunk. New messages persist immediately; in-flight content
+        // (streamed text/reasoning, tool calls) persists on a short throttle.
+        let mut last_fingerprint = (usize::MAX, usize::MAX, usize::MAX);
+        let mut last_persist = tokio::time::Instant::now() - STREAM_PERSIST_INTERVAL;
         while let Some(snapshot) = update_rx.recv().await {
             let snapshot_id = snapshot.id.clone();
-            let message_count = snapshot.messages.len();
+            let fingerprint = session_content_fingerprint(&snapshot);
+            let message_count_changed = fingerprint.0 != last_fingerprint.0;
             apply_session_snapshot(&update_state, &snapshot_id, snapshot).await;
             update_state.broadcast(
                 &serde_json::json!({
@@ -3690,8 +3718,12 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
                 })
                 .to_string(),
             );
-            if message_count != last_persisted_messages {
-                last_persisted_messages = message_count;
+            if message_count_changed
+                || (fingerprint != last_fingerprint
+                    && last_persist.elapsed() >= STREAM_PERSIST_INTERVAL)
+            {
+                last_fingerprint = fingerprint;
+                last_persist = tokio::time::Instant::now();
                 persist_sessions_if_enabled(&update_state).await;
             }
         }
@@ -8955,5 +8987,39 @@ mod subagent_child_session_tests {
             TASK_RUNS.lock().await.get(&child_id).is_none(),
             "cancelled run must clean up its registry entry"
         );
+    }
+}
+
+#[cfg(test)]
+mod persistence_fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn fingerprint_changes_when_in_flight_text_grows() {
+        let mut session = opencode_session::Session::new("proj", ".");
+        session.add_user_message("do something");
+        session.add_assistant_message().add_text("partial");
+
+        let before = session_content_fingerprint(&session);
+        session
+            .messages
+            .last_mut()
+            .expect("assistant message")
+            .add_text(" more");
+        let after = session_content_fingerprint(&session);
+
+        assert_ne!(
+            before, after,
+            "fingerprint must change when in-flight assistant text grows"
+        );
+    }
+
+    #[test]
+    fn fingerprint_changes_when_message_count_grows() {
+        let mut session = opencode_session::Session::new("proj", ".");
+        let before = session_content_fingerprint(&session);
+        session.add_user_message("hello");
+        let after = session_content_fingerprint(&session);
+        assert_ne!(before, after);
     }
 }
