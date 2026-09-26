@@ -124,6 +124,7 @@ Facts recorded 2026-09-26 (re-verify before reuse):
 - `FEAT-031` Investigate the builtin "general" agent and decide whether to remove it
 - `SKILLS-002` Plan URL-backed skills parity
 - `START-004` Assess current Rust state
+- `H-013` `handoffs/2026-09-26-feat-065-feynman-gate-001-vetting-handoff.md` - next-agent runbook for this item
 - aa-studies `GATE-001`, `docs/v1-readiness-gate.md`, `docs/strategy-readiness.md`, `docs/strategy-registry.md`, `docs/feynman_role_for_optimization.md` (external, private)
 
 ## Notes
