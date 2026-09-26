@@ -20,6 +20,15 @@
 - The recorded reference commit is pinned for reproducibility: `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (branch `dev`, package `1.18.31`, 2026-09-21), re-pinned by `GATE-004`.
 - The previous pin `e62912b5d18b73316c7bfd6e894b040698f6c880` is unreachable on the remote (force-pushed) and is superseded; do not cite it as current.
 
+## aa-studies Workflow (Live Research Repo)
+
+- `$HOME/repos/aa-studies` (private `cchris-p/aa-studies`) is the live research repo behind the only active production workflow and the `GATE-001` V1 Readiness Gate. `FEAT-065`/`FEAT-066` operate against it.
+- Clone it locally if absent: `git clone --branch development git@github.com:cchris-p/aa-studies.git "$HOME/repos/aa-studies"` (private; auth required).
+- **Always work and read on the `development` branch, never `main`.** `main` is behind. Fetch first: `git -C "$HOME/repos/aa-studies" fetch origin development`. Prefer reading the local project directory directly; use `gh api repos/cchris-p/aa-studies/contents/<path>?ref=development` only as a fallback.
+- This machine **cannot run** aa-studies optimization/backtest scripts — they require data mounting that is not present here. Do not attempt them.
+- **Administrative/provisional work in the checkout is allowed**: board cards, docs, skills, and read-only analysis of committed artifacts.
+- Reference aa-studies by path; never copy private research outputs, prompts, or secrets into this repository.
+
 ## Planning Direction
 
 - `wiki/` contains architecture and version-direction documents.
