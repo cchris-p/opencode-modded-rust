@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -83,3 +83,19 @@ durable trace, and the next turn repeats work or resumes from the wrong point.
 - Relevant files: `crates/opencode-server/src/routes.rs` (`run_prompt_turn`,
   `apply_session_snapshot`, `persist_sessions_if_enabled`),
   `crates/opencode-session/src/session.rs`, `crates/opencode-storage/`.
+## Dev Notes - 2026-09-26
+
+- `crates/opencode-server/src/routes.rs`: the per-turn `update_task` in `run_prompt_turn` now calls
+  `persist_sessions_if_enabled` whenever a snapshot adds a message (assistant step or tool result),
+  so turn progress is durable before the next provider request instead of only at turn end. The
+  end-of-turn flush remains.
+
+## Verification - 2026-09-26
+
+- Covered by `opencode-server` tests (64 + 3 integration passed) and `cargo check --workspace` clean.
+- Live check pending: after a stalled/interrupted run, confirm the DB contains the latest produced
+  parts rather than only the last user prompt (`BUG-044` continuation should then resume correctly).
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/118
+  (branch `bug/BUG-043-047-run-terminal-state-persistence`, base `development`, handoff H-012 Pass B).
