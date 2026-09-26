@@ -355,4 +355,37 @@ mod tests {
             "nothing should render on the first row when the prompt is near the bottom"
         );
     }
+
+    #[test]
+    fn provider_query_renders_one_provider_settings_entry() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut popup = SlashCommandPopup::new();
+        popup.open();
+        for c in "provider".chars() {
+            popup.handle_input(c);
+        }
+
+        let theme = Theme::default();
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).expect("terminal");
+        terminal
+            .draw(|frame| popup.render(frame, frame.size(), &theme))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer.get(x, y).symbol());
+            }
+            text.push('\n');
+        }
+
+        assert_eq!(
+            text.matches("Open Provider Settings").count(),
+            1,
+            "provider settings should render exactly once:\n{text}"
+        );
+    }
 }

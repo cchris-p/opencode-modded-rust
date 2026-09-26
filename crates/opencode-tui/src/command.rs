@@ -63,7 +63,6 @@ pub enum CommandAction {
     SwitchModel,
     SwitchAgent,
     ManageMcp,
-    ConnectProvider,
     CycleVariant,
     // Display
     SwitchTheme,
@@ -309,21 +308,10 @@ impl CommandRegistry {
         });
 
         self.register(SlashCommand {
-            name: "/connect".to_string(),
-            aliases: vec![],
+            name: "/settings".to_string(),
+            aliases: vec!["/provider".to_string(), "/connect".to_string()],
             title: "Open Provider Settings".to_string(),
             description: "Open the authoritative provider setup screen".to_string(),
-            category: CommandCategory::ModelAgent,
-            keybind: None,
-            suggested: false,
-            action: CommandAction::ConnectProvider,
-        });
-
-        self.register(SlashCommand {
-            name: "/settings".to_string(),
-            aliases: vec!["/provider".to_string()],
-            title: "Open Provider Settings".to_string(),
-            description: "Open Settings > Provider".to_string(),
             category: CommandCategory::Navigation,
             keybind: None,
             suggested: true,
@@ -664,5 +652,33 @@ mod tests {
 
         assert!(matches!(primary.action, CommandAction::TogglePrompt));
         assert!(matches!(alias.action, CommandAction::TogglePrompt));
+    }
+
+    #[test]
+    fn provider_settings_surface_exactly_one_entry() {
+        let registry = CommandRegistry::new();
+
+        for query in ["provider", "settings", "connect"] {
+            let matches: Vec<_> = registry
+                .search(query)
+                .into_iter()
+                .filter(|cmd| cmd.title == "Open Provider Settings")
+                .collect();
+
+            assert_eq!(
+                matches.len(),
+                1,
+                "query `{query}` should surface exactly one provider settings entry"
+            );
+        }
+
+        let connect = registry
+            .get("/connect")
+            .expect("/connect should remain a discoverable alias");
+        assert!(
+            matches!(connect.action, CommandAction::OpenSettings),
+            "/connect should route into Settings > Provider"
+        );
+        assert_eq!(connect.title, "Open Provider Settings");
     }
 }

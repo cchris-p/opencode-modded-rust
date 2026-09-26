@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-22"
 ---
 
@@ -132,4 +132,8 @@ by the provider-list change.
 
 ## PR / Merge
 
-- PR: (recorded on creation)
+- PR #114 (`bug/BUG-037-slash-menu-freeze`) merged into `development` via merge commit `c6fb3af`
+  (2026-09-26); the remote and local feature branches were deleted.
+- The PR also merged `origin/development` to resolve a conflict with BUG-042 in the slash-menu
+  test module; the merged tree reran `cargo test -p opencode-tui` — 159 passed, 0 failed.
+- Item remains in `qa` until a QA report is recorded or completion is explicitly directed.

@@ -2023,9 +2023,6 @@ impl App {
                 self.context.toggle_semantic_highlight();
             }
             CommandAction::ExternalEditor => {}
-            CommandAction::ConnectProvider => {
-                self.open_provider_settings();
-            }
             CommandAction::ShareSession => {
                 self.handle_share_session();
             }
