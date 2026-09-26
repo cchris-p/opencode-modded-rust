@@ -109,6 +109,7 @@ pub struct AppContext {
     pub show_header: RwLock<bool>,
     pub show_scrollbar: RwLock<bool>,
     pub tips_hidden: RwLock<bool>,
+    pub prompt_hidden: RwLock<bool>,
     pub sidebar_mode: RwLock<SidebarMode>,
     pub animations_enabled: RwLock<bool>,
     pub pending_permissions: RwLock<usize>,
@@ -183,6 +184,12 @@ impl AppContext {
                 tui.and_then(|t| t.tips_hidden),
                 DEFAULT_TIPS_HIDDEN,
             )),
+            prompt_hidden: RwLock::new(seed_bool(
+                &ui_kv,
+                "prompt_hidden",
+                tui.and_then(|t| t.prompt_hidden),
+                false,
+            )),
             sidebar_mode: RwLock::new(SidebarMode::Auto),
             animations_enabled: RwLock::new(true),
             pending_permissions: RwLock::new(0),
@@ -248,6 +255,12 @@ impl AppContext {
         let mut hidden = self.tips_hidden.write();
         *hidden = !*hidden;
         self.ui_kv.write().set_bool("tips_hidden", *hidden);
+    }
+
+    pub fn toggle_prompt_hidden(&self) {
+        let mut hidden = self.prompt_hidden.write();
+        *hidden = !*hidden;
+        self.ui_kv.write().set_bool("prompt_hidden", *hidden);
     }
 
     pub fn set_model(&self, model: String, provider: String) {
@@ -603,6 +616,50 @@ mod tests {
         assert!(DEFAULT_TIPS_HIDDEN);
         let kv = UiKv::default();
         assert_eq!(kv.get_bool_opt("tips_hidden"), None);
+    }
+
+    #[test]
+    fn prompt_defaults_to_visible_when_unset() {
+        let context = AppContext::from_ui_kv(UiKv::default(), None);
+        assert!(!*context.prompt_hidden.read());
+    }
+
+    #[test]
+    fn prompt_hidden_seeds_from_config_when_kv_is_absent() {
+        let tui = tui_with(|tui| tui.prompt_hidden = Some(true));
+        let context = AppContext::from_ui_kv(UiKv::default(), Some(&tui));
+        assert!(*context.prompt_hidden.read());
+    }
+
+    #[test]
+    fn persisted_prompt_hidden_beats_config_startup_default() {
+        let mut kv = UiKv::default();
+        kv.values.insert("prompt_hidden".to_string(), json!(true));
+        let tui = tui_with(|tui| tui.prompt_hidden = Some(false));
+
+        let context = AppContext::from_ui_kv(kv, Some(&tui));
+
+        assert!(*context.prompt_hidden.read());
+    }
+
+    #[test]
+    fn toggle_prompt_hidden_flips_and_persists_to_ui_kv() {
+        let context = AppContext::from_ui_kv(UiKv::default(), None);
+        assert!(!*context.prompt_hidden.read());
+
+        context.toggle_prompt_hidden();
+        assert!(*context.prompt_hidden.read());
+        assert_eq!(
+            context.ui_kv.read().get_bool_opt("prompt_hidden"),
+            Some(true)
+        );
+
+        context.toggle_prompt_hidden();
+        assert!(!*context.prompt_hidden.read());
+        assert_eq!(
+            context.ui_kv.read().get_bool_opt("prompt_hidden"),
+            Some(false)
+        );
     }
 
     #[test]

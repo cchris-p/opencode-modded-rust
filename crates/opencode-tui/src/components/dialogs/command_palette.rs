@@ -114,6 +114,12 @@ impl CommandPalette {
                 category: "View".to_string(),
             },
             Command {
+                action: CommandAction::TogglePrompt,
+                title: "Hide prompt".to_string(),
+                keybind: Some("ctrl+t".to_string()),
+                category: "View".to_string(),
+            },
+            Command {
                 action: CommandAction::ToggleThinking,
                 title: "Toggle thinking".to_string(),
                 keybind: None,
@@ -304,6 +310,7 @@ impl CommandPalette {
         show_header: bool,
         show_scrollbar: bool,
         tips_hidden: bool,
+        prompt_hidden: bool,
     ) {
         for command in &mut self.commands {
             if matches!(&command.action, CommandAction::ToggleHeader) {
@@ -325,6 +332,13 @@ impl CommandPalette {
                     "Show tips".to_string()
                 } else {
                     "Hide tips".to_string()
+                };
+            }
+            if matches!(&command.action, CommandAction::TogglePrompt) {
+                command.title = if prompt_hidden {
+                    "Show prompt".to_string()
+                } else {
+                    "Hide prompt".to_string()
                 };
             }
             if matches!(&command.action, CommandAction::ToggleThinking) {

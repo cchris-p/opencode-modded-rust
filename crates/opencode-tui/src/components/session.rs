@@ -220,7 +220,8 @@ impl SessionView {
         };
         let near_bottom =
             self.scroll_offset.saturating_add(viewport_height) >= self.rendered_line_count;
-        let show_prompt = !prompt_empty || near_bottom;
+        let prompt_hidden = *self.context.prompt_hidden.read();
+        let show_prompt = !prompt_hidden && (!prompt_empty || near_bottom);
         let prompt_height = if show_prompt {
             desired_prompt_height.min(available_after_header_footer)
         } else {
@@ -2040,5 +2041,46 @@ mod tests {
     fn wrap_spans_preserves_explicit_newlines() {
         let lines = wrap_spans(vec![Span::raw("one\ntwo")], 10);
         assert_eq!(joined(&lines), vec!["one", "two"]);
+    }
+
+    fn draw_session(prompt_hidden: bool) -> (Option<Rect>, String) {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        *context.prompt_hidden.write() = prompt_hidden;
+        let mut prompt = Prompt::new(context.clone());
+        prompt.set_input("pending draft".to_string());
+        let mut session = SessionView::new(context.clone(), "test-session".to_string());
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+        let mut prompt_area = None;
+        terminal
+            .draw(|frame| {
+                prompt_area = session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        let draft = prompt.get_input().to_string();
+        (prompt_area, draft)
+    }
+
+    #[test]
+    fn hidden_prompt_reserves_zero_rows_with_a_non_empty_draft() {
+        let (prompt_area, draft) = draw_session(true);
+        assert!(
+            prompt_area.is_none(),
+            "hidden prompt must not reserve a render area"
+        );
+        assert_eq!(draft, "pending draft");
+    }
+
+    #[test]
+    fn visible_prompt_reserves_rows_with_a_non_empty_draft() {
+        let (prompt_area, draft) = draw_session(false);
+        assert!(
+            prompt_area.is_some(),
+            "visible prompt must reserve a render area"
+        );
+        assert_eq!(draft, "pending draft");
     }
 }

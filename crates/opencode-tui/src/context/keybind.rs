@@ -196,6 +196,8 @@ impl KeybindRegistry {
         self.register("session_background", Keybind::ctrl(KeyCode::Char('b')));
 
         self.register("sidebar_toggle", Keybind::ctrl(KeyCode::Char('s')));
+        // FEAT-064: visually hide/show the session prompt box without disabling input.
+        self.register("prompt_toggle", Keybind::ctrl(KeyCode::Char('t')));
         self.register("help_toggle", Keybind::ctrl(KeyCode::Char('h')));
 
         self.register("editor_open", Keybind::ctrl(KeyCode::Char('e')));

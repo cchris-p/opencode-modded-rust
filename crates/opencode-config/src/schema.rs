@@ -366,6 +366,8 @@ pub struct TuiConfig {
     pub scrollbar: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tips_hidden: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_hidden: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1004,6 +1006,7 @@ impl DeepMerge for TuiConfig {
         merge_option_replace(&mut self.scroll_speed, other.scroll_speed);
         merge_option_replace(&mut self.scroll_acceleration, other.scroll_acceleration);
         merge_option_replace(&mut self.diff_style, other.diff_style);
+        merge_option_replace(&mut self.prompt_hidden, other.prompt_hidden);
     }
 }
 
