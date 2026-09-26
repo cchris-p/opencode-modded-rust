@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-22"
 ---
 
@@ -137,3 +137,28 @@ by the provider-list change.
 - The PR also merged `origin/development` to resolve a conflict with BUG-042 in the slash-menu
   test module; the merged tree reran `cargo test -p opencode-tui` — 159 passed, 0 failed.
 - Item remains in `qa` until a QA report is recorded or completion is explicitly directed.
+
+## QA Report (agent, 2026-09-26)
+
+Performed by the agent on the merged `development` tree; no human testing.
+
+- Artifact: `development` @ `fbe3e7d` (contains BUG-037 merge `c6fb3af`).
+  Binary: `$HOME/worktrees/opencode-modded-rust/.shared-target/debug/opencode`
+  (built with `cargo build -p opencode-cli --no-default-features`, `SCOPEMUX_SKIP_NATIVE_BUILD=1`;
+  the native feature is offline-only and untouched by this TUI change).
+- Deterministic signal: `cargo test -p opencode-tui` on the merged tree — 159 passed, 0 failed,
+  including the new `slash_command::tests::popup_renders_above_the_prompt_area` render-anchor test.
+  (A first run showed 2 pre-existing `prompt` test flakes: an ordering-sensitive
+  `tab_autocomplete_uses_first_candidate` mismatch, plus a poisoned env-mutex cascade in
+  `utf8_backspace_delete_and_cursor_are_char_safe`. The flaky test passes in isolation and the
+  full suite passes on re-run; both are unrelated to this change.)
+- Interactive corroboration on the built binary (tmux 120x40, home surface):
+  - `/` opens the menu directly above the prompt — top border at row 29, prompt input at row 41,
+    nothing at row 1 (previously pinned to row 1).
+  - Typing filters the menu (`h` -> `Help`).
+  - `Esc` closes the menu and returns focus; typing `qa037` lands in the prompt input.
+  - `Ctrl-C` closes the menu and clears the prompt.
+  - `Ctrl-D` exits the TUI while the menu is open (pane returned to the shell).
+- Result: PASS. iTerm2 itself was not available in this environment, but the defect (frame-level
+  anchoring plus app-level key routing) is terminal-independent and was reproduced and fixed
+  locally.
