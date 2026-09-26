@@ -90,11 +90,25 @@ fn main() {
     assert!(build.success(), "scopemux-core parser_core build failed");
 
     // scopemux-core resolves Tree-sitter query files from SCMU_QUERIES_DIR at
-    // runtime. Bake the built source's queries path so the provider can set it.
-    println!(
-        "cargo:rustc-env=SCOPEMUX_QUERIES_DIR={}",
-        source_dir.join("queries").display()
-    );
+    // runtime (see `lib.rs`). Copy the source queries into OUT_DIR and bake that
+    // path, so the built binary does not depend on the source checkout still
+    // existing (important for worktrees and for re-fetching the core).
+    let queries_src = source_dir.join("queries");
+    println!("cargo:rerun-if-changed={}", queries_src.display());
+    let queries_dst = out_dir.join("queries");
+    if queries_src.is_dir() {
+        let _ = std::fs::remove_dir_all(&queries_dst);
+        copy_dir(&queries_src, &queries_dst).expect("failed to copy scopemux-core queries");
+        println!(
+            "cargo:rustc-env=SCOPEMUX_QUERIES_DIR={}",
+            queries_dst.display()
+        );
+    } else {
+        println!(
+            "cargo:rustc-env=SCOPEMUX_QUERIES_DIR={}",
+            queries_src.display()
+        );
+    }
 
     // Static libraries live in the build tree and the Tree-sitter library dir.
     println!(
@@ -127,4 +141,20 @@ fn main() {
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=dylib=c++");
     }
+}
+
+/// Recursively copy a directory tree, creating `dst` as needed.
+fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
