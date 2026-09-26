@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-25"
 ---
 
@@ -173,3 +173,41 @@ Current behavior and evidence:
   `/sidebar`, `/header`, `/scrollbar`.
 - Scope is the session prompt surface only; the home prompt stays visible.
 
+## Dev Notes
+
+Implemented on `feature/FEAT-064-hide-prompt-ctrl-t` (branch off `development`).
+
+- `AppContext.prompt_hidden: RwLock<bool>` added beside `tips_hidden`, seeded with the
+  `kv.json > TuiConfig.prompt_hidden > false` precedence, plus `toggle_prompt_hidden()` persisting the
+  `prompt_hidden` ui key.
+- `TuiConfig.prompt_hidden: Option<bool>` added with its `DeepMerge` line.
+- `prompt_toggle` registered as `Ctrl+T`; dispatched in the main key handler beside `sidebar_toggle`
+  and before input handling, so it toggles regardless of draft content. The `Ctrl+X` leader sub-key
+  `Char('t')` (`SwitchTheme`) is untouched.
+- `CommandAction::TogglePrompt` added with slash command `/prompt` (alias `/prompt.toggle`) and a
+  `View`-category palette entry (`ctrl+t`). `sync_visibility_labels` now takes `prompt_hidden` and
+  flips the palette title between `Hide prompt` / `Show prompt`.
+- `render_main` gates the prompt with `!prompt_hidden && (!prompt_empty || near_bottom)`; the existing
+  zero-height layout branch and `show_prompt && layout[3].height > 0` guard skip `Prompt::render`
+  entirely, so no cursor is placed and the transcript grows into the freed rows.
+- Input path intentionally unchanged: no `prompt_hidden` check was added to the Home/Session route key
+  match, so typing, paste, history, newline, clear, and `Enter` submit stay live while hidden.
+
+Verification run:
+
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-tui -p opencode-config` — clean.
+- `cargo test -p opencode-tui --lib` — 164 passed (adds prompt default/config-seed/kv-override/toggle
+  persistence tests, session-layout tests asserting zero prompt rows while hidden and reserved rows
+  while visible with a non-empty draft, and a `/prompt` alias-resolution test).
+- `cargo test -p opencode-config --lib` — 64 passed.
+- `cargo fmt --all` applied.
+
+Notes:
+
+- A full-app "submit while hidden" integration test was not added because the `App` has no headless
+  test harness; input independence is instead guaranteed by leaving the route key match unmodified.
+  The session-layout tests also assert the draft survives a hidden render.
+- Only `prompt_hidden` was added to `TuiConfig`'s `DeepMerge` per this card; the earlier FEAT-053
+  display flags still lack merge lines (pre-existing, out of scope).
+- Pending human QA: `ort-build` then `ort`, press `Ctrl+T`, confirm collapse/expand, blind typing and
+  submit, draft/cursor survival, restart persistence, and `/prompt.toggle` + palette agreement.

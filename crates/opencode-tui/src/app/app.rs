@@ -697,6 +697,10 @@ impl App {
                     self.context.toggle_sidebar();
                     return Ok(());
                 }
+                if self.matches_keybind("prompt_toggle", *key) {
+                    self.context.toggle_prompt_hidden();
+                    return Ok(());
+                }
                 if self.matches_keybind("display_thinking", *key) {
                     self.context.toggle_thinking();
                     return Ok(());
@@ -1976,6 +1980,9 @@ impl App {
             }
             CommandAction::ToggleTips => {
                 self.context.toggle_tips_hidden();
+            }
+            CommandAction::TogglePrompt => {
+                self.context.toggle_prompt_hidden();
             }
             CommandAction::SwitchModel => {
                 self.refresh_model_dialog();
@@ -4347,6 +4354,7 @@ impl App {
         let show_header = *self.context.show_header.read();
         let show_scrollbar = *self.context.show_scrollbar.read();
         let tips_hidden = *self.context.tips_hidden.read();
+        let prompt_hidden = *self.context.prompt_hidden.read();
         self.command_palette.sync_visibility_labels(
             show_thinking,
             show_tool_calls,
@@ -4356,6 +4364,7 @@ impl App {
             show_header,
             show_scrollbar,
             tips_hidden,
+            prompt_hidden,
         );
     }
 

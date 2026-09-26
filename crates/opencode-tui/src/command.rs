@@ -83,6 +83,7 @@ pub enum CommandAction {
     ToggleSidebar,
     ToggleMcp,
     ToggleTips,
+    TogglePrompt,
     ToggleCommandPalette,
     // Navigation
     OpenSettings,
@@ -418,6 +419,17 @@ impl CommandRegistry {
         });
 
         self.register(SlashCommand {
+            name: "/prompt".to_string(),
+            aliases: vec!["/prompt.toggle".to_string()],
+            title: "Hide prompt".to_string(),
+            description: "Show/hide the session prompt box".to_string(),
+            category: CommandCategory::Display,
+            keybind: None,
+            suggested: false,
+            action: CommandAction::TogglePrompt,
+        });
+
+        self.register(SlashCommand {
             name: "/thinking".to_string(),
             aliases: vec!["/toggle-thinking".to_string()],
             title: "Toggle Thinking".to_string(),
@@ -637,5 +649,20 @@ mod tests {
         assert!(new_session.keybind.is_none());
         assert_eq!(switch_session.title, "Switch Session");
         assert!(switch_session.keybind.is_none());
+    }
+
+    #[test]
+    fn prompt_toggle_command_and_alias_resolve_to_toggle_prompt() {
+        let registry = CommandRegistry::new();
+
+        let primary = registry
+            .get("/prompt")
+            .expect("/prompt command should exist");
+        let alias = registry
+            .get("/prompt.toggle")
+            .expect("/prompt.toggle alias should exist");
+
+        assert!(matches!(primary.action, CommandAction::TogglePrompt));
+        assert!(matches!(alias.action, CommandAction::TogglePrompt));
     }
 }
