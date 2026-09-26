@@ -111,8 +111,7 @@ Final QA evidence (binary `0908c5b`, server `127.0.0.1:4096`, model
   `run_interfile_tests` ALL TESTS PASSED (project context 12/12).
 
 Still open (non-blocking): `impl`/trait method scoping and dynamic dispatch in
-`scopemux-core` (`WI-030`), and the product binary still emits a duplicate
-`tree-sitter` linker warning (harmless now that ABIs match).
+`scopemux-core` (`WI-030`).
 
 - Invariants: `providers.md` and `integration-scope.md` record the activation
   scope; `AGENTS.md` records the build prerequisite and activation rule.
@@ -125,3 +124,16 @@ with real candidates for both `@sample.rs` (20) and `@sample.c` (16) under
 `ollama/qwen3:30b`. Core-side fix in `scopemux-core` PR #23 (`e93df08`); product
 pin at that commit. `ort-qwen` launcher added to the shared `opencode-config`
 starts Ollama and the TUI on `ollama/qwen3:30b`. Card moved to `done`.
+
+## Follow-up (2026-09-26)
+
+The duplicate `tree-sitter` diagnostic recorded above was not harmless: on Linux
+(GNU ld/rust-lld) it was a hard link error (`duplicate symbol: ts_*`) that
+blocked every native build, so `opencode-cli` could not link outside macOS. The
+native provider now links a single tree-sitter runtime: the product's
+`tree-sitter` crate supplies `ts_*` and the scopemux-core bundled copy is no
+longer linked (`fcf6352`). `scripts/fetch-scopemux-core.sh` also provisions
+Python development headers (`python3.11-dev`) so scopemux-core's `find_package(Python
+...)` configures on a clean Linux host (`669a369`). Verified on Linux:
+`cargo build -p opencode-cli` succeeds and `opencode-scopemux` native tests pass
+10/10.
