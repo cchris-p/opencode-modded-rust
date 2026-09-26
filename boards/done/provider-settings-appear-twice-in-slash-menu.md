@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -127,5 +127,15 @@ result: PASS
 ## QA Handoff
 
 - PR branch `bug/BUG-042-provider-settings-appear-twice`; awaiting merge closeout.
+
+## Closeout
+
+- PR #113 (`fix(tui): surface a single provider settings slash command`) merged into `development` at
+  merge commit `b826091`.
+- Code/task completeness: the PR removes the duplicate provider-settings command surface and adds both
+  registry-level and render-level regression tests, matching this card's scope.
+- QA report recorded above and passing; card promoted from `qa` to `done`.
+- Branch `bug/BUG-042-provider-settings-appear-twice` and the temporary worktree were cleaned up.
+
 
 
