@@ -112,3 +112,9 @@ reference has a total turn/step bound, so this is a real robustness gap for reas
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/119
   (branch `bug/BUG-046-044-provider-bound-and-continuation`, base `development`, handoff H-012 Pass C).
+
+## Classification - 2026-09-26
+
+The captured recurrence was a **panic** (`BUG-048`), not an endless provider stream. This bound is
+therefore not the root cause of that stall, but remains valid hardening for a never-idle stream; keep
+it.

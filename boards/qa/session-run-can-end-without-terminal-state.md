@@ -244,3 +244,16 @@ implementation guarantees this contract; aligning with it removes the silent wed
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/118
   (branch `bug/BUG-043-047-run-terminal-state-persistence`, base `development`, handoff H-012 Pass B).
+
+## Classification - 2026-09-26 (Phase 0 resolved)
+
+The recurrence was a **panic**, not a parked await or endless stream. The `BUG-045` hook captured it
+in `…/traces/server.log`:
+
+- `[PANIC] range end index 2 out of range for slice of length 1` at
+  `crates/opencode-permission/src/arity.rs:10:30`, unwinding through
+  `BashArity::prefix` → `BashTool::execute` → `execute_tool_calls` → `drain_session_queue`.
+- Root cause filed and fixed as `BUG-048` (arity slice not clamped to token count).
+- On the build that produced this (pre-`BUG-043`), the panicking run never finalized, leaving the
+  session `busy` - exactly this card's mechanism. With `BUG-043`, the same panic is contained and the
+  run finalizes; `BUG-048` removes the panic entirely.
