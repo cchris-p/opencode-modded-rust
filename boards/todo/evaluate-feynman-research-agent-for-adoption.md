@@ -21,23 +21,23 @@ The immediate and currently only concrete use case is research work against the 
 
 `feynman` is a separate, upstream TypeScript research agent that overlaps with the "research/planning" surface this product already gestures at (skills, subagents, verification). `cchris-p/feynman-modded` is a custom fork that is synced periodically from upstream, so it is a moving target and not a dependency. Before treating any of it as a source of product direction, we need one grounded write-up of what it offers and a small, real evaluation against `aa-studies`.
 
-This item also records and exercises a standing verification habit: external-project facts must be checked with `gh` rather than trusted from memory or stale local checkouts.
+This item also records and exercises a standing verification habit: inspect Feynman from the local fork checkout, and use `gh` for the private `aa-studies` repository when it is not available locally.
 
-## Standard practice: verify external projects with `gh`
+## How to inspect and verify
 
-All facts about `feynman`, its fork, and the use-case repos must be verified through the GitHub API via `gh`, and the exact command plus observed result recorded in this item. Do not rely on the README, local checkout, memory, or a stale branch for external-project claims.
+Feynman is examined from its local checkout, not through `gh`. The fork is the working copy and the source of truth for what the tool does:
 
-- Existence, visibility, and ownership: `gh repo view <owner>/<repo>`.
-- Fork relationship and lineage: confirm `isFork` and `parent` (do not assume the fork tracks the repo named in its README).
-- Activity and freshness: `updatedAt`, latest release/tag, and default branch.
-- Upstream license before any adoption discussion: `licenseInfo`.
-- The use-case repo must be verified as reachable by the authenticated `gh` user (`cchris-p`).
-- Record the command and its observed output (or a tight summary) at the point of each claim; re-verify when this item is revisited, since the fork is synced periodically.
+- Local fork checkout: `/home/admin-xx/repos/feynman-modded` (fork `cchris-p/feynman-modded`, synced periodically). Read `README.md`, `skills/`, `prompts/`, `.feynman/`, and `src/` directly.
+- Version is read from the local `package.json`, not from a remote lookup.
+
+`gh` is used for the use-case repository, because `aa-studies` is private and remote:
+
+- If `aa-studies` is not present locally, use `gh` to confirm it exists and is reachable by the authenticated user, and to read its metadata: `gh repo view cchris-p/aa-studies --json name,isPrivate,defaultBranchRef,url`.
+- Record the `gh` command and its observed result at the point of the claim; re-verify when this item is revisited.
 
 Facts verified for this item on 2026-09-26 (re-verify before reuse):
 
-- `gh repo view Companion-Inc/feynman --json name,url,description,stargazerCount,licenseInfo,updatedAt` → upstream "The open source AI research agent.", MIT, ~9,795 stars, active.
-- `gh repo view cchris-p/feynman-modded --json name,isFork,parent,url,description,updatedAt` → `isFork: true`, parent `Companion-Inc/feynman`; local checkout version `0.5.8`.
+- Local fork `/home/admin-xx/repos/feynman-modded`: package `@companion-ai/feynman` version `0.5.8`; skills include deep-research, literature-review, paper-code-audit, replication, ml-training-recipe, source-comparison, and others; agents are researcher/reviewer/writer/verifier.
 - `gh repo view cchris-p/aa-studies --json name,isPrivate,defaultBranchRef,url` → private, default branch `main`; the current sole use case.
 - `gh auth status` → authenticated as `cchris-p` with `repo` and `read:org` scopes.
 
@@ -70,12 +70,12 @@ Facts verified for this item on 2026-09-26 (re-verify before reuse):
 - At least one `aa-studies` research run is documented end to end, with the exact command and observed outputs.
 - A capability map against `ort` and a clear adopt/partial/watch/no-action recommendation exist.
 - Any adoption candidate is either split into its own board item or explicitly deferred.
-- Every external-project claim carries a `gh` command and observed result.
+- Feynman claims cite the local checkout; any `aa-studies` claim carries a `gh` command and observed result.
 
 ## Recommended verification
 
-- Re-run the `gh repo view` commands above and confirm the fork is still `isFork: true` with parent `Companion-Inc/feynman` and the use-case repo is still reachable.
-- Confirm the local `cchris-p/feynman-modded` checkout matches the recorded version and that `ort` capabilities were read from this repo, not assumed.
+- Confirm the local `/home/admin-xx/repos/feynman-modded` checkout matches the recorded version and that `ort` capabilities were read from this repo, not assumed.
+- If `aa-studies` is not local, re-run `gh repo view cchris-p/aa-studies` and confirm it is still reachable.
 - Smoke-test one Feynman workflow against `aa-studies` and confirm outputs are usable before drawing any adoption conclusion.
 
 ## Related Items
