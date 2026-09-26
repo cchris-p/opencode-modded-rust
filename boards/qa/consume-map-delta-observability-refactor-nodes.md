@@ -125,3 +125,22 @@ Still open / follow-ups:
 - `WI-034`/`WI-035` parsed observability blocks and richer duplicate signals only become
   available when the pin advances past `e93df08`; at this pin `Observability` resolves
   observability plan nodes and `Duplicates` uses the `WI-036` heuristic clustering.
+
+## QA (2026-09-26, agent self-QA)
+
+Integrated attach/detach harness; the agent ran QA, no human testing.
+
+- commit `41cfa15`; binary
+  `$HOME/worktrees/opencode-modded-rust/.shared-target/debug/opencode` (native build with
+  the pinned core `e93df08`); server `http://127.0.0.1:4096`, workspace
+  `$HOME/worktrees/scopemux-qa`, model `ollama/qwen3:30b`.
+- `scripts/scopemux-qa-check.sh --file sample.rs --expect scopemux` -> `provider=scopemux
+  representation=Search candidates=20`, PASS. Log: `/tmp/scopemux-qa-server.log`.
+  This confirms the response-shape and stage-derivation changes did not regress provider
+  activation, and that the new representation signal flows to the log/metadata.
+- Non-`Search` slices are covered by provider-level integration with the real core:
+  `cargo test -p opencode-scopemux --features native` 14/14 (delta, duplicates,
+  observability, composed review) plus the session threshold/boundary tests.
+- Caveat: the HTTP API has no route to set or advance a session task, so a stage-specific
+  representation (`Delta`/`Review`/`Impact`) cannot be driven through the harness without
+  adding a task-bearing session route. That is out of scope for this card.
