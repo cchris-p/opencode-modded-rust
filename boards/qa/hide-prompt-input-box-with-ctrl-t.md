@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "done"
+status: "qa"
 created: "2026-09-25"
 ---
 
@@ -118,9 +118,8 @@ Current behavior and evidence:
   for the visible case. The new toggle is an additional layer, not a replacement.
 - Changing submit, clear, newline, paste, history, or cursor semantics.
 - Adding a persistent "input hidden" indicator, badge, or hint line.
-- Hiding the prompt on the home/landing screen; the home prompt stays visible. Hiding the only
-  affordance on an otherwise empty screen has no benefit and the toggle is scoped to the session
-  surface.
+- Hiding the prompt on the home/landing screen was originally out of scope; revised after QA feedback to
+  apply the same `Ctrl+T` toggle on the first/home screen (see QA Feedback Follow-up).
 - Making the toggle keybind itself a display-only behavior change; this is a layout toggle, not an
   input-mode switch.
 
@@ -171,7 +170,8 @@ Current behavior and evidence:
   `KeybindsConfig` is not yet applied to the runtime registry.
 - Slash command is `/prompt` (alias `/prompt.toggle`), matching the short display-toggle names
   `/sidebar`, `/header`, `/scrollbar`.
-- Scope is the session prompt surface only; the home prompt stays visible.
+- Scope now covers both the session prompt and the home/first screen prompt after QA feedback; the
+  same `prompt_hidden` state gates both surfaces.
 
 ## Dev Notes
 
@@ -241,3 +241,29 @@ QA: FEAT-064 — Ctrl+T prompt visibility toggle with input kept live.
 
 Merged closeout: PR #115 merged into `development`; remote and local feature branches deleted; local
 `development` fast-forwarded to the merge commit.
+
+## QA Feedback Follow-up
+
+Operator QA feedback: the `Ctrl+T` prompt hide must also apply to the first/home screen, not just the
+session surface.
+
+Change (committed directly on `development`):
+
+- `HomeView::render_with_prompt` now reads `context.prompt_hidden`; when hidden it collapses the prompt
+  constraint to `Length(0)` and skips `Prompt::render` entirely, so no terminal cursor is placed and
+  the freed rows go to the top content area. The home layout keeps the tips and footer rows.
+- `HomeView::render` / `render_with_prompt` now return `Option<Rect>` (matching `SessionView::render`)
+  so a hidden prompt reports no render area; the three `app.rs` home call sites assign the option
+  directly and the slash menu falls back to the bottom edge when there is no anchor.
+- Input stays live on home: the Home/Session route key match is unchanged, so typing and `Enter`
+  submit still work while the home prompt is hidden.
+
+Verification run:
+
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-tui` — clean.
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tui --lib` — 168 passed (adds
+  `hidden_prompt_reserves_zero_rows_on_home` and `visible_prompt_reserves_rows_on_home`, asserting the
+  draft survives a hidden home render).
+- `cargo fmt --all` applied.
+
+Status: returned to `qa` for operator verification on `development`.

@@ -4421,14 +4421,14 @@ impl App {
             match route_for_draw {
                 Route::Home => {
                     let home = HomeView::new(context.clone());
-                    prompt_anchor = Some(home.render_with_prompt(frame, area, prompt));
+                    prompt_anchor = home.render_with_prompt(frame, area, prompt);
                 }
                 Route::Session { .. } => {
                     if let Some(view) = session_view {
                         prompt_anchor = view.render(frame, area, prompt);
                     } else {
                         let home = HomeView::new(context.clone());
-                        prompt_anchor = Some(home.render_with_prompt(frame, area, prompt));
+                        prompt_anchor = home.render_with_prompt(frame, area, prompt);
                     }
                 }
                 Route::Settings => {
@@ -4436,7 +4436,7 @@ impl App {
                 }
                 _ => {
                     let home = HomeView::new(context.clone());
-                    prompt_anchor = Some(home.render_with_prompt(frame, area, prompt));
+                    prompt_anchor = home.render_with_prompt(frame, area, prompt);
                 }
             }
 
