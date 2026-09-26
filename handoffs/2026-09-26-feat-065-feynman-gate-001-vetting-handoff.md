@@ -1,7 +1,7 @@
 ---
 id: "H-013"
 title: "FEAT-065 Feynman GATE-001 result-vetting handoff"
-status: "ready"
+status: "in_progress"
 created: "2026-09-26"
 updated: "2026-09-26"
 owner: ""
@@ -178,3 +178,12 @@ artifact still exists (may be stale). Record the decision on the card.
   GATE-001 result-vetting review; aa-studies cloned to `$HOME/repos/aa-studies`
   (`development`); `AGENTS.md` updated with the aa-studies workflow.
 - No work started. Next agent begins at Phase 0.
+- 2026-09-26: Phases 0–5 executed. Arm A (Feynman 0.5.8) and Arm B
+  (opencode/`ort`) ran the same read-only task on aa-studies `development`
+  @ `e7abe68` with the same model (`deepseek/deepseek-flash`; Feynman's default
+  Anthropic model had no credits). Verdict: **EQUAL for vetting, EQUAL for
+  improvement-finding — null result confirmed**. Both arms left aa-studies clean;
+  no gate disposition changed. Sanitized note:
+  `docs/research/FEAT-065-feynman-gate-001-vetting.md`. `FEAT-065` moved to `qa`.
+  Branch `research/FEAT-065-feynman-gate-001-vetting`; PR open for review (not
+  merged). Handoff remains `in_progress` until the user reviews/merges.
