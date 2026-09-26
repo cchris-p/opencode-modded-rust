@@ -12,7 +12,9 @@
 //! Without the `native` feature this script does nothing, so default builds
 //! never require CMake or a C toolchain.
 
+use std::collections::hash_map::DefaultHasher;
 use std::env;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -54,7 +56,17 @@ fn main() {
     println!("cargo:rerun-if-changed={}", source_dir.display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let build_dir = out_dir.join("scopemux-core-build");
+
+    // Scope the CMake build tree to the resolved source path. The same OUT_DIR is
+    // reused when SCOPEMUX_CORE_DIR changes (for example switching between a local
+    // checkout and third_party/scopemux-core), and reusing a CMake cache generated
+    // for a different source directory fails configuration.
+    let source_tag = {
+        let mut hasher = DefaultHasher::new();
+        source_dir.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+    let build_dir = out_dir.join(format!("scopemux-core-build-{source_tag}"));
 
     // scopemux-core is developed and CI-tested with GCC, where implicit
     // function declarations and some pointer-type mismatches are warnings.
