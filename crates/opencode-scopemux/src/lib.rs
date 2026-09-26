@@ -9,6 +9,13 @@
 use opencode_retrieval::RetrievalProvider;
 use opencode_types::RetrievalRequest;
 
+// Link the `tree-sitter` crate's bundled C runtime (its `cc` build emits
+// `rustc-link-lib=static=tree-sitter`). The Rust API is unused here; the import
+// only exists so the native C core resolves its `ts_*` symbols against the
+// single runtime the rest of the product already links.
+#[cfg(feature = "native")]
+use tree_sitter as _;
+
 /// Select the retrieval provider for the runtime.
 ///
 /// Native builds prefer the scopemux provider; if it is unavailable or errors,

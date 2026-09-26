@@ -106,9 +106,15 @@ fn main() {
         build_dir.join("tree-sitter-libs").display()
     );
 
+    // The tree-sitter C runtime is intentionally not linked here. The product
+    // already depends on the `tree-sitter` crate (via `opencode-tool`), and
+    // linking scopemux-core's separate copy produces duplicate `ts_*` symbols
+    // (a hard link error with GNU ld/rust-lld). The crate's runtime fulfils
+    // parser_core and the grammar archives; the `native` feature depends on it
+    // for standalone builds. Only the grammar archives and parser_core are
+    // linked from the scopemux-core build tree.
     for lib in [
         "parser_core",
-        "tree-sitter",
         "tree-sitter-c",
         "tree-sitter-cpp",
         "tree-sitter-python",
