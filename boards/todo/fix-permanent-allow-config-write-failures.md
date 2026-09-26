@@ -1,5 +1,5 @@
 ---
-id: "BUG-044"
+id: "BUG-050"
 title: "Permanent-allow permission grants sometimes fail to write the project opencode config"
 priority: "P2"
 type: "bug"
@@ -195,6 +195,9 @@ Directory-resolution context:
   opencode project directory. Framed as an investigation card because the failure is intermittent;
   root cause is not confirmed. Prime suspects are the non-atomic, unserialized read-modify-write in
   `update_config` and the empty-directory fallback in `reply_permission`.
+- 2026-09-26: Re-IDed from a duplicate `BUG-044` to `BUG-050`. The cluster card `BUG-044`
+  (`session-continuation-resumes-from-stale-prompt-not-latest-tool-call`, qa) already owned that ID;
+  this permission-persistence card is unrelated to the run terminal-state cluster.
 - The current failure is fail-safe from a security standpoint (the action is still approved just for
   this request), but it is not safe from a trust standpoint: the user is told the grant is durable
   when it may not be.

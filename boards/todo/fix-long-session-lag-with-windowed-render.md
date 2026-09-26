@@ -1,5 +1,5 @@
 ---
-id: "BUG-043"
+id: "BUG-049"
 title: "Fix long-session lag with a bounded render window that still allows timeline jumps to old messages"
 priority: "P1"
 type: "bug"
@@ -178,6 +178,9 @@ History is available in full (the fix must stay a render concern, not a data con
   allows timeline navigation to old messages. Chosen as a `BUG` (responsiveness defect) rather than
   a feature. The recurrence of `BUG-027` (updates) and `BUG-041` (timeline completeness) makes the
   render window the remaining long-session bottleneck to address.
+- 2026-09-26: Re-IDed from a duplicate `BUG-043` to `BUG-049`. The cluster card `BUG-043`
+  (`session-run-can-end-without-terminal-state`, qa) already owned that ID; this render-performance
+  card is unrelated to the run terminal-state cluster.
 - Current code evidence to revisit at implementation time: `render_messages` builds a flat
   whole-session `lines` buffer (`session.rs:591-1098`), `rendered_line_count`/`max_scroll_offset`
   are full-session (`session.rs:1107`, `:1273`), and `scroll_to_message` depends on
