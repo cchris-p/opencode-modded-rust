@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "docs/provider-setup.md"
-status: "qa"
+status: "doing"
 created: "2026-09-23"
 ---
 
@@ -180,3 +180,71 @@ Tests: `crates/opencode-tui/src/components/settings.rs` covers method-list propa
 - Merged into `development` via PR #84 (merge commit `0382393`).
 - Feature branch `feature/START-032-codex-auth-parity` deleted remotely and locally; local checkout is back on `development`.
 - Remains in `qa`: no QA report is recorded yet. Promote to the completed lane only after live headless/browser login verification (per the QA Handoff section) or explicit user direction.
+
+## Reopened - 2026-09-26
+
+Reopened from `qa` to `doing`. Live ChatGPT browser auth still fails after PR #84 merged, so the acceptance criteria ("ChatGPT Plus/Pro browser login works end-to-end") are not met.
+
+### Reported failures (user, 2026-09-26)
+
+1. Browser/Codex login, after entering the code in the browser, the TUI shows:
+
+   `OpenAI auth failed: Failed to complete provider auth for openai: 400 Bad Request - {"error":{"message":"OAuth callback failed","type":"bad_request"}}`
+
+2. After restarting, selecting `openai/gpt-5.5` and sending a prompt returns:
+
+   `Provider error: Provider error: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.`
+
+The user's read is that the provider is still using `OPENAI_API_KEY`, which is why browser OAuth needs to work.
+
+### Evidence gathered
+
+- The Rust auth store `~/Library/Application Support/opencode/data/auth.json` currently contains only `openai: {type: "api", key: "sk-proj-…"}` (164-char project key). Its mtime is 2026-09-23 04:14, predating the failed attempt, and there is no `type: "oauth"` entry. The browser OAuth flow did not persist anything.
+- The visible error is generated in Rust, not by the plugin: `AuthError::OauthCallbackFailed` renders exactly `OAuth callback failed` (`crates/opencode-provider/src/auth.rs:177`), and `oauth_callback` maps any `AuthError` to `400 Bad Request` (`crates/opencode-server/src/routes.rs:4826-4829`).
+- `ProviderAuth::callback` throws the real cause away with `map_err(|_| AuthError::OauthCallbackFailed)?` (`crates/opencode-server/src/oauth.rs:79-82`), returns the same error when the plugin result is not `type: "success"` (`oauth.rs:84-87`), and again when access/refresh are empty (`oauth.rs:123-125`). The plugin host's real string (`auth.callback failed: …`, `No pending auth callback`, `Token exchange failed: <status>`, `OAuth callback timeout`) never reaches the TUI.
+- The `auth.callback` RPC is bounded by a fixed 30s subprocess timeout (`crates/opencode-plugin/src/subprocess/client.rs:181`, applied in `call()` at `client.rs:440-442`). Both OpenAI `method: "auto"` flows block inside this RPC until a human finishes: browser waits on the localhost:1455 callback (`codex-auth.ts:294-305`), headless polls the device endpoint at an ~8s interval (`codex-auth.ts:333-388`). A slow login exceeds 30s, becomes a timeout, and is collapsed into `OAuth callback failed`. The plugin's internal browser timeout is 5 minutes (`codex-auth.ts:265`), far longer than the RPC budget.
+- Custom fetch (which rewrites `/v1/responses` to `https://chatgpt.com/backend-api/codex/responses` and injects the OAuth bearer) is registered only after a successful callback plus `auth.load` (`crates/opencode-server/src/routes.rs:4831-4851`, `crates/opencode-server/src/server.rs:86-110`). Because the callback failed, no proxy was registered and the OpenAI provider used its stored `sk-proj-…` API key (`bootstrap.rs:2854-2865`, `bootstrap.rs:2799-2810`). The `gpt-5.5` "no credits remaining" message is the standard API billing error, so failure 2 is a downstream symptom of failure 1, not a separate bug.
+- The Rust product and vanilla OpenCode keep separate auth stores: `~/Library/Application Support/opencode/data/auth.json` (Rust) vs `~/.local/share/opencode/auth.json` (vanilla). Vanilla currently holds a valid `openai` OAuth credential (mtime 2026-09-24) that the Rust product does not read. Expected by design, but a source of "why is it still using the key" confusion.
+
+### Root-cause assessment
+
+- Confirmed: the Rust auth callback did not persist an OAuth credential, so the runtime used the stored API key and produced the "no credits" error.
+- Primary hypothesis for the callback failure: the 30s `auth.callback` RPC timeout is shorter than the human-driven `auto` login, so the RPC times out and the real error is masked. This fits the absence of any persisted OAuth credential.
+- Not-yet-excluded alternatives (cannot be distinguished while the underlying error is discarded): token exchange `400` from `https://auth.openai.com/oauth/token` (`codex-auth.ts:118-138`), the localhost:1455 redirect not reaching the plugin-host server, or `pendingAuthCallback` being cleared/overwritten between authorize and callback (a single global in `plugin-host.ts:168,499-533`).
+
+### Planned Fixes
+
+These are the implementation scope for the reopen. Fix 3 is guarded and only applies if the real error survives Fixes 1-2.
+
+#### Fix 1 - Preserve and surface the real auth error
+
+The TUI already prints whatever the server returns (`crates/opencode-tui/src/api.rs:776-781`, `crates/opencode-tui/src/app/app.rs:3004-3008`), and the server already serializes `AuthError` text (`crates/opencode-server/src/routes.rs:4826-4829`). The loss happens inside `ProviderAuth`.
+
+- `crates/opencode-provider/src/auth.rs:177`: replace the unit `OauthCallbackFailed` with a detail-carrying variant, e.g. `OauthCallbackFailed { message: String }` (or add `OauthCallbackRejected(String)` / `OauthCallbackTimedOut`). Only `crates/opencode-server/src/oauth.rs` consumes it, so blast radius is small.
+- `crates/opencode-server/src/oauth.rs:55,82`: stop using `.map_err(|_| ...)`; map `PluginAuthError` to the detail-carrying error, preserving the plugin message (`auth.callback failed: …`, `No pending auth callback`, `Token exchange failed: <status>`, `OAuth callback timeout`).
+- `crates/opencode-server/src/oauth.rs:84-87`: when the plugin result type is not `success`, include the returned `type` (headless returns `{type: "failed"}`) in the error text.
+- `crates/opencode-server/src/oauth.rs:123-125`: include a specific "empty access/refresh from plugin" reason.
+- Tests: add server-side tests that a bridge error message and a non-`success` plugin result are preserved in the returned error; keep existing `opencode-provider` auth tests compiling against the changed variant.
+
+#### Fix 2 - Give `auto` OAuth flows a human-scale timeout at both layers
+
+Both 30s bounds are shorter than a real login and must be raised for the auth RPC only; the plugin's own browser budget is 5 minutes (`codex-auth.ts:265`) and headless polls until the device is approved.
+
+- `crates/opencode-plugin/src/subprocess/client.rs`: add `call_with_timeout(method, params, timeout)`; keep the 30s default (`client.rs:181`) for normal hooks, and use a dedicated auth timeout (at least the plugin's 5-minute browser budget plus margin, e.g. 10 minutes) for `auth_authorize` (`client.rs:231-241`) and `auth_callback` (`client.rs:244-247`).
+- `crates/opencode-tui/src/api.rs:405-406`: the TUI reqwest client is also fixed at 30s. Apply a matching per-request `.timeout(...)` override in `start_provider_oauth` (`api.rs:734-758`) and `complete_provider_oauth` (`api.rs:760-785`) instead of the client default.
+- Document the TUI blocking concern: `complete_provider_oauth` runs synchronously on the event loop, so a multi-minute wait freezes input and prevents Esc-cancel. Minimal scope is a bounded long timeout; preferred is to await the callback off the event loop with a "waiting for browser/device" state and a cancel path. Record whichever is implemented.
+- Tests: unit-test that `call_with_timeout` honors the override; add/adjust TUI API tests if a timeout override helper is introduced.
+
+#### Fix 3 (guarded) - Only re-address transport if a real error recurs
+
+- After Fixes 1-2, re-run the browser and headless flows with `OPENAI_API_KEY` unset for the launched `ort` process and plugin logging on.
+- If the surfaced error is a token-exchange `400` (`codex-auth.ts:118-138`), a localhost:1455 redirect that never reaches the plugin host, or a cleared/overwritten `pendingAuthCallback` (`plugin-host.ts:168,499-533`), fix that specific path using the now-visible error.
+- Do not change transport or Codex endpoint behavior speculatively while the error is still masked.
+
+### Verification Plan
+
+1. Rebuild with `ort-build`; launch `ort` from the intended workspace with `OPENAI_API_KEY` unset.
+2. `Settings > Provider` -> `openai` -> `l` -> choose browser and headless in turn; confirm any failure now shows the real plugin message, not generic `OAuth callback failed`.
+3. Confirm a successful callback writes an `oauth` entry to `~/Library/Application Support/opencode/data/auth.json` and `GET /auth/openai` reports `auth_type: "oauth"`.
+4. Confirm the custom fetch proxy is active (request reaches `chatgpt.com/backend-api/codex/responses`) and that `openai/gpt-5.5` runs without the API-key "no credits remaining" error.
+5. Run `cargo test -p opencode-plugin -p opencode-server -p opencode-tui` for the touched crates.
