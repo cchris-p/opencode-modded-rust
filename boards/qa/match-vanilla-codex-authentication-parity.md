@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "docs/provider-setup.md"
-status: "doing"
+status: "qa"
 created: "2026-09-23"
 ---
 
@@ -248,3 +248,35 @@ Both 30s bounds are shorter than a real login and must be raised for the auth RP
 3. Confirm a successful callback writes an `oauth` entry to `~/Library/Application Support/opencode/data/auth.json` and `GET /auth/openai` reports `auth_type: "oauth"`.
 4. Confirm the custom fetch proxy is active (request reaches `chatgpt.com/backend-api/codex/responses`) and that `openai/gpt-5.5` runs without the API-key "no credits remaining" error.
 5. Run `cargo test -p opencode-plugin -p opencode-server -p opencode-tui` for the touched crates.
+
+## Implementation Notes - 2026-09-26
+
+Branch `bug/START-032-codex-auth-callback-failure`.
+
+Fix 1 - surface the real auth error:
+
+- `AuthError::OauthCallbackFailed` now carries a `String`, and a new `AuthError::OauthAuthorizeFailed(String)` covers the authorize path (`crates/opencode-provider/src/auth.rs:177-181`).
+- `ProviderAuth::authorize`/`callback` no longer discard the `PluginAuthError`; the plugin/bridge message (`plugin RPC error (...)`, `plugin response timeout`, `auth.callback failed: …`, `No pending auth callback`) is now included in the 400 response (`crates/opencode-server/src/oauth.rs:52-55,79-85`).
+- Non-`success` plugin results report the returned type or "no auth result type"; empty tokens report "plugin returned no access or refresh token".
+- Extracted `parse_callback_auth` so these paths are unit testable without a live plugin host; 5 tests added in `crates/opencode-server/src/oauth.rs`.
+
+Fix 2 - human-scale auth timeouts:
+
+- Plugin RPC: added `call_with_timeout` and a dedicated `AUTH_FLOW_TIMEOUT = 330s` for `auth.authorize`/`auth.callback`; every other hook keeps the 30s default (`crates/opencode-plugin/src/subprocess/client.rs:54-60,247-257,443-465`).
+- TUI HTTP: a matching `AUTH_FLOW_TIMEOUT = 360s` is applied to `start_provider_oauth`/`complete_provider_oauth` so the 30s client default no longer cuts off headless device polling (`crates/opencode-tui/src/api.rs:9-10,747,775`). The TUI budget is intentionally larger than the RPC budget so the server's detailed timeout error reaches the UI first.
+
+Known limitation (tracked, not fixed here): `complete_provider_oauth` still runs synchronously on the TUI event loop, so pressing Enter before completing the browser/device step freezes input until the flow resolves or the 360s timeout elapses. The intended UX ("complete the flow, then press Enter") avoids it. Moving the `auto` callback off the event loop with a cancel path is the preferred follow-up.
+
+Verification:
+
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-provider -p opencode-plugin -p opencode-server -p opencode-tui` passed.
+- `cargo test -p opencode-provider -p opencode-plugin -p opencode-server -p opencode-tui` passed: provider 103 + 7 integration, plugin 3, server 64 + 3 route, tui 156.
+- `cargo fmt --all --check` passed.
+- Disk prerequisite: the build volume was full; the shared worktree cache (`~/worktrees/opencode-modded-rust/.shared-target`) was removed to complete the test run.
+- Live ChatGPT browser/headless login still requires human QA with a real account. With Fix 1 in place, a further failure now shows the actual plugin error instead of generic `OAuth callback failed`.
+
+QA handoff:
+
+- Run `ort-build` then `ort`, open `Settings > Provider`, select `openai`, press `l`, and try the browser and/or headless method.
+- If auth fails, the toast/`GET /auth/openai` response should now include the real cause (token exchange status, timeout, no pending callback, etc.).
+- On success, confirm an `oauth` entry appears in `~/Library/Application Support/opencode/data/auth.json` and `gpt-5.5` runs without the API-key "no credits" error.
