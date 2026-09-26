@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "done"
 created: "2026-09-25"
 ---
 
@@ -209,5 +209,35 @@ Notes:
   The session-layout tests also assert the draft survives a hidden render.
 - Only `prompt_hidden` was added to `TuiConfig`'s `DeepMerge` per this card; the earlier FEAT-053
   display flags still lack merge lines (pre-existing, out of scope).
-- Pending human QA: `ort-build` then `ort`, press `Ctrl+T`, confirm collapse/expand, blind typing and
-  submit, draft/cursor survival, restart persistence, and `/prompt.toggle` + palette agreement.
+- `prompt.rs` tests `tab_autocomplete_uses_first_candidate` and
+  `utf8_backspace_delete_and_cursor_are_char_safe` are flaky (frecency tie ordering); they pass on
+  rerun and are unrelated to this change.
+
+## QA Report
+
+QA: FEAT-064 — Ctrl+T prompt visibility toggle with input kept live.
+
+- commit: `ddefbfd` (feature branch tip), merged as `6d3d9bc` (PR #115, base `development`).
+- Method: agent-driven QA. This is a TUI-only rendering change with no server API surface, so the
+  real render path was driven deterministically with ratatui `TestBackend` instead of the interactive
+  TUI, per the product QA policy.
+- Commands:
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check --workspace` — clean.
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tui --lib` — 166 passed (one rerun after a
+    known-flaky prompt.rs pair, see Notes).
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-config --lib` — 64 passed.
+  - `cargo fmt --all` applied.
+- Observed signals:
+  - `hidden_prompt_reserves_zero_rows_with_a_non_empty_draft`: rendering `SessionView` with
+    `prompt_hidden = true` and draft `"pending draft"` returns `None` for the prompt area (zero rows)
+    and leaves the draft intact.
+  - `visible_prompt_reserves_rows_with_a_non_empty_draft`: same render with `prompt_hidden = false`
+    returns `Some(area)` (rows reserved).
+  - `toggle_prompt_hidden_flips_and_persists_to_ui_kv`: toggling flips the flag and writes
+    `prompt_hidden` to the ui kv; config seed and kv-override precedence tests pass; `/prompt` and
+    `/prompt.toggle` resolve to `CommandAction::TogglePrompt`.
+- result: PASS.
+- Env: local `development` checkout, Linux, `SCOPEMUX_SKIP_NATIVE_BUILD=1`.
+
+Merged closeout: PR #115 merged into `development`; remote and local feature branches deleted; local
+`development` fast-forwarded to the merge commit.
