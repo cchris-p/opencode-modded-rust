@@ -65,13 +65,13 @@ impl HomeView {
         Self { context }
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect) -> Rect {
         let prompt = Prompt::new(self.context.clone())
             .with_placeholder("Ask anything... \"Fix a TODO in the codebase\"");
-        self.render_with_prompt(frame, area, &prompt);
+        self.render_with_prompt(frame, area, &prompt)
     }
 
-    pub fn render_with_prompt(&self, frame: &mut Frame, area: Rect, prompt: &Prompt) {
+    pub fn render_with_prompt(&self, frame: &mut Frame, area: Rect, prompt: &Prompt) -> Rect {
         let area = Rect {
             x: area.x.saturating_add(HOME_OUTER_H_PADDING),
             y: area.y.saturating_add(HOME_OUTER_V_PADDING),
@@ -83,7 +83,7 @@ impl HomeView {
                 .saturating_sub(HOME_OUTER_V_PADDING.saturating_mul(2)),
         };
         if area.width == 0 || area.height == 0 {
-            return;
+            return Rect::default();
         }
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -111,6 +111,8 @@ impl HomeView {
         }
 
         self.render_footer(frame, layout[3]);
+
+        prompt_area
     }
 
     fn render_tips(&self, frame: &mut Frame, area: Rect) {

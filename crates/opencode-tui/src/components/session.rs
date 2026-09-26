@@ -75,7 +75,7 @@ impl SessionView {
         }
     }
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, prompt: &Prompt) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, prompt: &Prompt) -> Option<Rect> {
         let show_sidebar = *self.context.show_sidebar.read();
         let sidebar_mode = self.context.sidebar_mode.read().clone();
         // Determine effective sidebar visibility (overlay on all widths)
@@ -88,13 +88,15 @@ impl SessionView {
         // Always render main content full-width; sidebar floats above it.
         if effective_show {
             self.sidebar_open_button_area = None;
-            self.render_main(frame, area, prompt);
+            let prompt_area = self.render_main(frame, area, prompt);
             self.render_sidebar_overlay(frame, area);
+            prompt_area
         } else {
             self.sidebar_state.reset_hidden();
             self.sidebar_close_button_area = None;
-            self.render_main(frame, area, prompt);
+            let prompt_area = self.render_main(frame, area, prompt);
             self.render_sidebar_open_button(frame, area);
+            prompt_area
         }
     }
 
@@ -166,7 +168,7 @@ impl SessionView {
         frame.render_widget(glyph, button);
     }
 
-    fn render_main(&mut self, frame: &mut Frame, area: Rect, prompt: &Prompt) {
+    fn render_main(&mut self, frame: &mut Frame, area: Rect, prompt: &Prompt) -> Option<Rect> {
         // Apply breathing boundary padding
         let area = Rect {
             x: area.x + 2,
@@ -175,7 +177,7 @@ impl SessionView {
             height: area.height.saturating_sub(2),
         };
         if area.width == 0 || area.height == 0 {
-            return;
+            return None;
         }
 
         let show_header = {
@@ -276,6 +278,9 @@ impl SessionView {
         }
         if show_prompt && layout[3].height > 0 {
             prompt.render(frame, layout[3]);
+            Some(layout[3])
+        } else {
+            None
         }
     }
 

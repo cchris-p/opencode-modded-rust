@@ -537,6 +537,7 @@ impl App {
                         self.copy_selection();
                         return Ok(());
                     }
+                    self.slash_popup.close();
                     self.prompt.clear();
                     return Ok(());
                 }
@@ -977,7 +978,11 @@ impl App {
         Ok(())
     }
 
-    fn has_open_dialog_layer(&self) -> bool {
+    /// Dialog layers that should render a full-screen modal backdrop. The inline slash
+    /// command menu is intentionally excluded: it is a lightweight completion popup, not
+    /// a modal, and dimming the whole screen while it is open makes the prompt look
+    /// disabled and the app look frozen.
+    fn has_modal_dialog_layer(&self) -> bool {
         self.alert_dialog.is_open()
             || self.help_dialog.is_open()
             || self.status_dialog.is_open()
@@ -985,7 +990,6 @@ impl App {
             || self.session_export_dialog.is_open()
             || self.prompt_stash_dialog.is_open()
             || self.skill_list_dialog.is_open()
-            || self.slash_popup.is_open()
             || self.command_palette.is_open()
             || self.model_select.is_open()
             || self.agent_select.is_open()
@@ -996,6 +1000,10 @@ impl App {
             || self.fork_dialog.is_open()
             || self.provider_dialog.is_open()
             || self.tag_dialog.is_open()
+    }
+
+    fn has_open_dialog_layer(&self) -> bool {
+        self.has_modal_dialog_layer() || self.slash_popup.is_open()
     }
 
     fn close_top_dialog(&mut self) -> bool {
@@ -1463,6 +1471,12 @@ impl App {
         }
 
         if self.slash_popup.is_open() {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                // Let global control shortcuts (Ctrl-C clear, Ctrl-D quit, ...) keep
+                // working while the inline menu is open; swallowing them made the TUI
+                // look hard-locked with no way out.
+                return Ok(false);
+            }
             match key.code {
                 KeyCode::Esc => self.slash_popup.close(),
                 KeyCode::Up => self.slash_popup.move_up(),
@@ -4357,7 +4371,7 @@ impl App {
         let context = self.context.clone();
         let prompt = &self.prompt;
         let route_for_draw = route.clone();
-        let show_modal_overlay = self.has_open_dialog_layer()
+        let show_modal_overlay = self.has_modal_dialog_layer()
             || self.permission_prompt.is_open
             || self.question_prompt.is_open;
         let session_view = self.session_view.as_mut();
@@ -4394,17 +4408,18 @@ impl App {
                 return;
             }
 
+            let mut prompt_anchor: Option<ratatui::layout::Rect> = None;
             match route_for_draw {
                 Route::Home => {
                     let home = HomeView::new(context.clone());
-                    home.render_with_prompt(frame, area, prompt);
+                    prompt_anchor = Some(home.render_with_prompt(frame, area, prompt));
                 }
                 Route::Session { .. } => {
                     if let Some(view) = session_view {
-                        view.render(frame, area, prompt);
+                        prompt_anchor = view.render(frame, area, prompt);
                     } else {
                         let home = HomeView::new(context.clone());
-                        home.render_with_prompt(frame, area, prompt);
+                        prompt_anchor = Some(home.render_with_prompt(frame, area, prompt));
                     }
                 }
                 Route::Settings => {
@@ -4412,7 +4427,7 @@ impl App {
                 }
                 _ => {
                     let home = HomeView::new(context.clone());
-                    home.render_with_prompt(frame, area, prompt);
+                    prompt_anchor = Some(home.render_with_prompt(frame, area, prompt));
                 }
             }
 
@@ -4422,7 +4437,13 @@ impl App {
                 frame.render_widget(modal_backdrop, area);
             }
 
-            slash_popup.render(frame, area, &theme);
+            // Anchor the inline slash menu to the prompt it was opened from. When the
+            // prompt is not rendered (e.g. hidden while scrolled up), fall back to the
+            // bottom edge so the menu stays near the input.
+            let slash_anchor = prompt_anchor.unwrap_or_else(|| {
+                ratatui::layout::Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1)
+            });
+            slash_popup.render(frame, slash_anchor, &theme);
             command_palette.render(frame, area, &theme);
             model_select.render(frame, area, &theme);
             agent_select.render(frame, area, &theme);

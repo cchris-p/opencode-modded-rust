@@ -155,18 +155,33 @@ impl SlashCommandPopup {
         }
     }
 
+    /// Render the menu directly above `area`, which is expected to be the prompt/input
+    /// rect it was opened from. Anchoring to the prompt keeps the menu where the user is
+    /// looking; anchoring to the window instead pushes it to the top of the screen and
+    /// makes a typed query look like lost input.
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         if !self.open || self.filtered.is_empty() {
             return;
         }
 
-        let width = 50.min(area.width.saturating_sub(4));
+        let screen = frame.size();
+        let width = 50.min(area.width.saturating_sub(4)).min(screen.width);
+        if width < 4 || screen.height < 3 {
+            return;
+        }
         let height = (10.min(self.filtered.len()) as u16).saturating_add(2);
 
-        let x = area.x + (area.width - width) / 2;
-        let y = area.y.saturating_sub(height + 1);
+        let x =
+            (area.x + area.width.saturating_sub(width) / 2).min(screen.width.saturating_sub(width));
+        // Prefer the menu directly above the prompt; if there is no room above, place it
+        // below the prompt so it never lands on top of the input it belongs to.
+        let y = if area.y > height {
+            area.y.saturating_sub(height + 1)
+        } else {
+            (area.y + area.height + 1).min(screen.height.saturating_sub(height))
+        };
 
-        let popup_area = Rect::new(x.max(1), y.max(1), width, height);
+        let popup_area = Rect::new(x, y.max(1), width, height);
 
         let query_line = Line::from(vec![
             Span::raw("/"),
@@ -281,6 +296,64 @@ mod tests {
             Some(CommandAction::InsertSkill(name)) if name == "review-pr"
         ));
         assert!(!popup.is_open());
+    }
+
+    #[test]
+    fn bare_slash_lists_suggested_commands() {
+        let mut popup = SlashCommandPopup::new();
+        popup.open();
+        assert!(
+            !popup.filtered.is_empty(),
+            "bare `/` must offer suggested commands, not an empty menu"
+        );
+        let expected = popup.registry.suggested_commands();
+        assert_eq!(popup.filtered.len(), expected.len());
+        assert!(popup.filtered.iter().all(|name| name.starts_with('/')));
+    }
+
+    #[test]
+    fn reopening_resets_query_and_selection() {
+        let mut popup = popup_with_skills();
+        popup.open();
+        popup.handle_input('z');
+        popup.move_down();
+        popup.close();
+
+        popup.open();
+        assert!(popup.is_open());
+        assert_eq!(popup.query(), "");
+        assert_eq!(popup.state.selected(), Some(0));
+        assert!(popup.take_action().is_none());
+    }
+
+    #[test]
+    fn popup_renders_above_the_prompt_area() {
+        use ratatui::backend::TestBackend;
+        use ratatui::layout::Rect;
+        use ratatui::Terminal;
+
+        let mut popup = SlashCommandPopup::new();
+        popup.open();
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).expect("terminal");
+        let prompt_area = Rect::new(5, 18, 50, 3);
+        terminal
+            .draw(|frame| popup.render(frame, prompt_area, &Theme::default()))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer();
+        let bottom_border_row =
+            (0..24).find(|&y| (0..60).any(|x| buffer.get(x, y).symbol() == "└"));
+
+        assert_eq!(
+            bottom_border_row,
+            Some(prompt_area.y - 2),
+            "the menu must sit directly above the prompt, not at the top of the screen"
+        );
+        assert!(
+            (0..60).all(|x| buffer.get(x, 0).symbol() == " "),
+            "nothing should render on the first row when the prompt is near the bottom"
+        );
     }
 
     #[test]
