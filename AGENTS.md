@@ -51,6 +51,8 @@
 - macOS: `~/Library/Application Support/opencode/opencode.db`.
 - Linux: `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode/opencode.db`).
 - This is the Rust product's database only. Do not confuse it with vanilla OpenCode, whose `xdg-basedir` storage resolves to `~/.local/share/opencode/opencode.db` even on macOS.
+- The TUI-spawned local server writes stdout/stderr (including panic message, location, and backtrace) to `dirs::data_local_dir()/opencode/traces/server.log`; locate it with `opencode debug paths` (`server-log`) or `opencode session inspect <id>` (`Server log:`). Set `OPENCODE_SERVER_LOG` to override the path or to `0`/`false`/`off` to disable it.
+- Runtime bounds: `OPENCODE_RUN_TIMEOUT_MS` (default 30 minutes) and `OPENCODE_STREAM_BUDGET_MS` (default 15 minutes) are documented under "Runtime bounds and server logs" in `README.md`; both use `0` to disable.
 
 ## Local Launchers
 

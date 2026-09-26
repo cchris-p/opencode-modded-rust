@@ -12,3 +12,8 @@
 - A model that is not capable of tool calling must be gated explicitly and visibly; it must not cause a coding session to silently run without tools or environment context.
 - Tool-call execution must remain reachable end-to-end: once tools are declared on a request, the registry must be able to execute them and return results into the same session.
 - The session prompt loop is a single source of truth for agentic request construction; duplicate parallel loops that drift in behavior are a defect.
+- Every run must reach a terminal state: a run may never leave a session indefinitely `busy`/`active` without a durable terminal record. This holds for normal completion, provider error, abort, wall-clock timeout, and a panicking run.
+- Abort must interrupt the in-flight run even when it is parked on an await that does not observe the prompt token; the run is cancelled and finalized rather than left wedged.
+- A run that ends abnormally must resolve every tool call that never produced a result into a durable error result, so the transcript stays provider-valid and resumable.
+- A single provider step and a whole run must each be bounded in wall-clock time, so a stream that never goes idle cannot run without limit.
+- Bash permission parsing must be total: parsing any command, including malformed or very short command nodes, must never panic.

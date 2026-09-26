@@ -7,7 +7,10 @@ impl BashArity {
         for len in (1..=tokens.len()).rev() {
             let prefix: String = tokens[..len].join(" ");
             if let Some(&arity) = ARITY.get(prefix.as_str()) {
-                return tokens[..arity].to_vec();
+                // A tree-sitter command node can be shorter than the command's
+                // configured arity (for example a heredoc-only `python`), so clamp
+                // to the tokens we actually have instead of panicking.
+                return tokens[..arity.min(tokens.len())].to_vec();
             }
         }
 
@@ -162,4 +165,36 @@ lazy_static::lazy_static! {
         m.insert("yarn run", 3);
         m
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefix_does_not_panic_when_arity_exceeds_token_count() {
+        // "python"/"git"/... map to arity 2, but a tree-sitter command node can
+        // contain only the command name (for example a heredoc-only invocation).
+        assert_eq!(
+            BashArity::prefix(&["python".to_string()]),
+            vec!["python".to_string()]
+        );
+        assert_eq!(
+            BashArity::prefix(&["git".to_string()]),
+            vec!["git".to_string()]
+        );
+        assert_eq!(BashArity::prefix(&[]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn prefix_keeps_multi_token_arity() {
+        assert_eq!(
+            BashArity::prefix(&["git".to_string(), "commit".to_string()]),
+            vec!["git".to_string(), "commit".to_string()]
+        );
+        assert_eq!(
+            BashArity::prefix(&["npm".to_string(), "run".to_string(), "build".to_string()]),
+            vec!["npm".to_string(), "run".to_string(), "build".to_string()]
+        );
+    }
 }

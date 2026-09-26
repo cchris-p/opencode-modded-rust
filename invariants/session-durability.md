@@ -8,3 +8,5 @@
 - Replacing a session's message history must be atomic, so an interrupted save cannot leave a partially written session.
 - Persistent session and task state must outlive any individual server process, server restart, model turn, or TUI exit.
 - Resuming a session must reconstruct it from durable state and must fail visibly when the requested session does not exist, rather than presenting an empty session.
+- A turn's progress (assistant steps, in-flight assistant output, and tool results) must be persisted incrementally as it is produced, throttled but not deferred until turn end, so a stalled, aborted, or exited run keeps the latest chunk and can be resumed.
+- A resumed or partial turn must be repaired into a provider-valid state (unresolved tool calls resolved with error results) and continuation must build from the latest persisted part, not an older user prompt.
