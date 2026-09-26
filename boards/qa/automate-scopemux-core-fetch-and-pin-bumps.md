@@ -75,19 +75,34 @@ prerequisite self-healing and the pin observable.
   the new `OUT_DIR/.../queries` tree contains all six language query sets and
   `libparser_core.a` plus the tree-sitter libs were built.
 
+## Follow-up fix (2026-09-26)
+
+Verifying on `development` surfaced a second, pre-existing bug: the CMake build
+tree was fixed at `OUT_DIR/scopemux-core-build`, so switching the core source path
+(a local `SCOPEMUX_CORE_DIR` versus `third_party/scopemux-core`) reused a CMake
+cache generated for a different source and failed with "does not match the source
+... used to generate cache". The build directory is now scoped by a hash of the
+resolved source path (`scopemux-core-build-<hash>`), so each source keeps its own
+cache. Verified by building with both sources in sequence with no `cargo clean`.
+
 ## Open items / QA focus
 
-- End-to-end `ort-build` on a checkout without `third_party` to confirm the
-  launcher auto-fetch path.
-- The full CLI link was not run here (disk was ~16 GB free) to avoid the
-  `INFRA-001` disk-exhaustion case; run `ort-build` to link and launch.
-- Candidate follow-up: advance `PINNED_REV` from `e93df08` to current core `main`
-  (`656f22f`); it is 22 commits ahead and includes the `WI-028` cleanup double-free
-  fix. Pin-bump only after native tests pass at that revision.
+- End-to-end `ort-build` verified on `development`: the launcher auto-fetched
+  `third_party/scopemux-core`, the CLI built, and `opencode version` printed
+  `OpenCode 0.1.0`. Disk was ~14 GB free afterward, so future builds may trip the
+  `INFRA-001` disk warning.
+- Duplicate-symbol warning observed on macOS: linking the native provider warns
+  about duplicate `_ts_*` symbols between the crate's vendored tree-sitter and the
+  `tree-sitter` Rust crate. The link succeeds on macOS (ld64 warning); confirm
+  whether Linux `ld` treats it as an error before relying on native builds there.
+- Candidate follow-up: advance `PINNED_REV` from `e93df08` to core `main`
+  (`656f22f`) (22 commits ahead; includes the `WI-028` cleanup double-free fix).
+  Pin-bump only after native tests pass at that revision.
 
 ## PR
 
-- [#122](https://github.com/cchris-p/opencode-modded-rust/pull/122) into `development`.
+- [#122](https://github.com/cchris-p/opencode-modded-rust/pull/122) into `development` (launcher preflight, pin-aware fetch, bump helper, query copy).
+- Source-scoped CMake build dir: second PR (number added after push).
 - Launcher change committed separately in `~/standards` `main` as `783e871` (local, not pushed).
 
 ## Related Items
