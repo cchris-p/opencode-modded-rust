@@ -1290,7 +1290,7 @@ impl SessionPrompt {
             // sending without closing the connection cannot wedge the turn
             // forever. Without this, a mid-turn stall never reaches a terminal
             // state and the session stays `active` indefinitely (BUG-038).
-            let mut stream = with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT);
+            let stream = with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT);
             // Also bound the whole step: an idle timeout resets on every event,
             // so a provider that keeps streaming (endless reasoning) would never
             // trip it (BUG-046).

@@ -128,3 +128,10 @@ this symptom may disappear.
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/119
   (branch `bug/BUG-046-044-provider-bound-and-continuation`, base `development`, handoff H-012 Pass C).
+## Reopened - 2026-09-26 (not actually fixed)
+
+The earlier closure attributed this to `BUG-047` plus the pre-loop tool-call repair, but persistence
+only flushed on new messages, so the **in-flight** assistant chunk was still lost on exit/resume -
+which is the exact "session begins before the chunk that hadn't outputted" symptom. `BUG-047` has
+been reopened and strengthened (fingerprint + throttled flush of in-flight content). This card stays
+open until a resumed session demonstrably continues from the latest persisted chunk.

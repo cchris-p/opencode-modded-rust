@@ -99,3 +99,28 @@ durable trace, and the next turn repeats work or resumes from the wrong point.
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/118
   (branch `bug/BUG-043-047-run-terminal-state-persistence`, base `development`, handoff H-012 Pass B).
+## Reopened - 2026-09-26 (the first fix was insufficient)
+
+The first fix persisted only when the message **count** changed. Streamed assistant content (text and
+reasoning) and tool calls are written **in place** into the last assistant message, so they were not
+durable until a new message was appended or the turn ended. A live session confirmed it:
+`opencode session inspect` reported 120 in-memory and 120 DB messages, but *"the last assistant
+message has no persisted parts"* - the in-flight chunk was missing. On exit/resume that chunk is
+lost, which is the "resumes before the chunk that hadn't outputted yet" symptom on `BUG-044`.
+
+## Dev Notes - 2026-09-26 (reopened)
+
+- `crates/opencode-server/src/routes.rs`: `update_task` now computes a cheap
+  `session_content_fingerprint` (message count, part count, text/reasoning bytes) and persists when
+  the fingerprint changes, throttled to `STREAM_PERSIST_INTERVAL` (1s). New messages still persist
+  immediately. This flushes in-flight assistant output during a run.
+
+## Verification - 2026-09-26 (reopened)
+
+- New tests: `fingerprint_changes_when_in_flight_text_grows`,
+  `fingerprint_changes_when_message_count_grows`.
+- `cargo test -p opencode-server` -> 66 + 3 integration passed; `cargo test -p opencode-session`
+  166 passed (2 pre-existing unrelated failures); `cargo check --workspace` and `cargo fmt --all`
+  clean.
+- Pending live confirmation: after a mid-turn exit, `opencode session inspect` should show the last
+  assistant message's parts persisted (not "no persisted parts").
