@@ -102,7 +102,7 @@ cache. Verified by building with both sources in sequence with no `cargo clean`.
 ## PR
 
 - [#122](https://github.com/cchris-p/opencode-modded-rust/pull/122) into `development` (launcher preflight, pin-aware fetch, bump helper, query copy).
-- Source-scoped CMake build dir: second PR (number added after push).
+- Source-scoped CMake build dir: [#123](https://github.com/cchris-p/opencode-modded-rust/pull/123).
 - Launcher change committed separately in `~/standards` `main` as `783e871` (local, not pushed).
 
 ## Related Items
