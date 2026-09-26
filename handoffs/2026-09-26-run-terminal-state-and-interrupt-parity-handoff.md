@@ -216,8 +216,15 @@ dependency order; do not start C until B is merged into `development`.
   `…/traces/server.log`. Pass B verification therefore uses a deterministic fault-injection harness
   rather than waiting for live reproduction.
 
-### Pass B - BUG-043 + BUG-047 - in progress
+### Pass B - BUG-043 + BUG-047 - implemented, in `qa`
 
 - Branch: `bug/BUG-043-047-run-terminal-state-persistence` (target `development`).
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/118
+- Delivered: `finalize_incomplete_turn`; `drain_session_queue` selects each run against a run-scoped
+  cancel token, a hard run budget (`OPENCODE_RUN_TIMEOUT_MS`, default 30 min), and `catch_unwind`,
+  finalizing on abort/timeout/panic; `abort` cancels the run token; incremental persistence on each
+  new message.
+- Verification: `opencode-session` 166 passed (2 pre-existing unrelated failures); `opencode-server`
+  64 + 3 integration passed; `cargo check --workspace` and `cargo fmt --all` clean.
 
 ### Pass C - BUG-046 + BUG-044 - not started

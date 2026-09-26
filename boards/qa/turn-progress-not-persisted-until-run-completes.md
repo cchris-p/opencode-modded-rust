@@ -95,3 +95,7 @@ durable trace, and the next turn repeats work or resumes from the wrong point.
 - Covered by `opencode-server` tests (64 + 3 integration passed) and `cargo check --workspace` clean.
 - Live check pending: after a stalled/interrupted run, confirm the DB contains the latest produced
   parts rather than only the last user prompt (`BUG-044` continuation should then resume correctly).
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/118
+  (branch `bug/BUG-043-047-run-terminal-state-persistence`, base `development`, handoff H-012 Pass B).

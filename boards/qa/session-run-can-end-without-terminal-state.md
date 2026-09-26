@@ -240,3 +240,7 @@ implementation guarantees this contract; aligning with it removes the silent wed
 - Not run here: live `ort` reproduction (emergent; see Reproduction notes). Fault-injection coverage
   for the drain paths is at the finalize level plus existing server tests; the live recurrence is QA
   evidence captured with the `BUG-045` server log.
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/118
+  (branch `bug/BUG-043-047-run-terminal-state-persistence`, base `development`, handoff H-012 Pass B).
