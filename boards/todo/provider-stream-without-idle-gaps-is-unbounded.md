@@ -81,3 +81,14 @@ reference has a total turn/step bound, so this is a real robustness gap for reas
 - Captured stall: `ses_2c1168ee88f644f49315ca1736064d20` (2026-09-26).
 - Relevant files: `crates/opencode-provider/src/stream.rs`, `crates/opencode-provider/src/deepseek.rs`,
   `crates/opencode-session/src/prompt.rs`.
+
+## Reproduction notes (user-reported, 2026-09-26)
+
+- Emergent, not deterministic: not tied to a specific command; it reappears only after starting a
+  **fresh session** and letting the agent run for a while. Cannot be reproduced on demand.
+- The model "self-correcting" (for example wrapping commands in `timeout`) is not a fix; this bound
+  must live at the provider/runtime layer and not depend on model behavior or memory.
+- Verification is by fault injection (a mock stream that keeps emitting and never finishes is stopped
+  at the configured budget), not by waiting for a live recurrence. Live recurrence is QA evidence,
+  classified later with the `BUG-045` server log.
+

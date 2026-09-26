@@ -199,19 +199,25 @@ dependency order; do not start C until B is merged into `development`.
 
 ## Execution Progress
 
-### Pass A - BUG-045 (server diagnostics) - implemented, in `qa`
+### Pass A - BUG-045 (server diagnostics) - merged into `development`
 
-- Branch: `bug/BUG-045-server-runtime-diagnostics` (target `development`).
-- PR: https://github.com/cchris-p/opencode-modded-rust/pull/117
+- Branch: `bug/BUG-045-server-runtime-diagnostics` (merged and deleted).
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/117 - merged into `development`
+  (`29bbeb6`).
 - Delivered: durable server log at `dirs::data_local_dir()/opencode/traces/server.log`
   (`OPENCODE_SERVER_LOG` override; `0`/`false`/`off`/empty disables), TUI spawn redirects server
   stdout/stderr to it instead of `/dev/null`, global panic hook appends message + location +
   backtrace, and `debug paths` / `session inspect` surface the path.
 - Verification: `cargo test -p opencode-cli` 10 passed; `cargo check --workspace` clean;
   `cargo fmt --all` clean; live serve smoke test captured stderr to the sink.
-- Remaining for Phase 0 exit gate: with the merged diagnostic build, reproduce the deepseek stall
-  and classify it as panic / parked await / endless stream, then record the result on `BUG-043`.
+- Remaining for Phase 0 exit gate: deferred to live recurrence. The stall is emergent (fresh
+  session, after time; not tied to a specific command), so the user will export a transcript when it
+  reappears and it will be classified as panic / parked await / endless stream using the merged
+  `…/traces/server.log`. Pass B verification therefore uses a deterministic fault-injection harness
+  rather than waiting for live reproduction.
 
-### Pass B - BUG-043 + BUG-047 - not started
+### Pass B - BUG-043 + BUG-047 - in progress
+
+- Branch: `bug/BUG-043-047-run-terminal-state-persistence` (target `development`).
 
 ### Pass C - BUG-046 + BUG-044 - not started

@@ -29,6 +29,29 @@ that the run has **no guaranteed terminal state** — matching a divergence from
 - No error is shown and the session never returns to idle.
 - `Esc`/abort does not recover it; the user must abandon the session.
 - In the captured case the user could not get the runtime to move on to the next conversation step.
+- The two normal escape hatches are both unreliable (user-reported, 2026-09-26):
+  - Interrupt fails while stuck, so the user resolves to exiting the TUI.
+  - On reopening the session, it resumes from a point **before** the chunk that had not even been
+    output yet — i.e. the displayed/output progress is ahead of what gets persisted and resumed.
+  - Net effect: neither interrupt nor continue works as a recovery path.
+- The model "self-correcting" on a later turn (for example wrapping commands in `timeout`) is **not**
+  an acceptable fix: it depends on the model remembering to behave, which is not durable across
+  sessions and does not address the runtime defect.
+
+## Reproduction notes (user-reported, 2026-09-26)
+
+- Emergent, not deterministic: it has not been tied to a specific command. It reappears only after
+  starting a **fresh session** and letting the agent run for a while. A current session may complete
+  or self-correct, so it cannot be reproduced on demand.
+- Because it is not reliably reproducible, the fix must not depend on reproducing it by hand:
+  verification uses a deterministic fault-injection harness (hang a tool/await, panic the detached
+  run task, never-idle stream) that asserts the terminal-state and interrupt guarantees.
+- Live recurrence is QA evidence, classified later: when it appears, export the transcript and use
+  the Pass A server log (`…/traces/server.log`, `BUG-045`) to classify panic vs. parked await vs.
+  endless stream.
+- Captured recurrence to date: session `ses_2c1168ee88f644f49315ca1736064d20` (export
+  `docs/transcripts/deepseek-flp-skill-hang-session.md`); user re-confirmed the interrupt→exit→resume
+  loss pattern after rebuilding.
 
 ## Evidence
 
