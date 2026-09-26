@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "START"
 spec: "invariants/providers.md"
-status: "todo"
+status: "qa"
 created: "2026-09-22"
 ---
 
@@ -76,6 +76,50 @@ Vanilla refreshes: it applies a 5-minute TTL to its cached catalog, schedules a 
 - `crates/opencode-provider/src/bootstrap.rs`
 - `invariants/providers.md`
 - `docs/provider-setup.md`
+
+## Dev Notes
+
+Implemented the freshness policy in `crates/opencode-provider/src/models.rs`:
+
+- Added `MODELS_DEV_TTL` (5 minutes, mirroring vanilla's `Duration.minutes(5)`) and
+  `cache_mtime_is_fresh`, a pure mtime-age predicate (future mtimes count as fresh so clock
+  skew never forces a refetch loop).
+- `ModelsRegistry` now carries the TTL and source URL. `load()` serves a fresh parsed cache,
+  but refetches when the cache is stale; on fetch failure it falls back to the existing parsed
+  cache instead of emptying the catalog.
+- `fetch()` now returns `Option<ModelsData>` so failure is distinguishable from an empty
+  catalog, and `refresh(force: bool) -> bool` re-fetches only when stale or when forced.
+- Added `refresh_models_dev_cache()` for the forced CLI path; `ensure_models_dev_cache()` is
+  now TTL-aware and used by bootstrap.
+
+Wiring:
+
+- `crates/opencode-cli/src/main.rs` `list_models` calls `refresh_models_dev_cache()` on
+  `--refresh` and reports success/failure instead of the old parity-note stub, then rebuilds
+  the registry from the refreshed cache via `setup_providers`.
+- `crates/opencode-server/src/server.rs` adds `MODELS_DEV_REFRESH_INTERVAL` (60 minutes,
+  mirroring vanilla's `Schedule.spaced("60 minutes")`) and `spawn_models_dev_refresh`, spawned
+  by `run_server`/`run_server_with_state`; it calls `refresh_providers()` (TTL-aware refetch +
+  registry rebuild) so long-running servers pick up new models without a restart.
+
+Docs/invariants: added a freshness invariant to `invariants/providers.md` and a "Model catalog
+freshness" section to `docs/provider-setup.md`.
+
+Verification performed:
+
+- `cargo test -p opencode-provider` (all tests pass, including new staleness/refresh-failure
+  tests in `models::tests`).
+- `cargo check --workspace` (with `SCOPEMUX_SKIP_NATIVE_BUILD=1`) passes.
+- `scripts/compare-openai-model-parity.sh` passes: "OpenAI model list matches vanilla models.dev
+  catalog (55 models)."
+- Manual stale-cache check: seeded a 2-hour-old cache; `opencode models openai` refetched it
+  (mtime advanced, stale marker gone).
+- Manual `--refresh` check: seeded a fresh bogus cache; `opencode models --refresh openai`
+  printed "Model catalog refreshed from models.dev." and replaced the cache.
+
+Known limits: atomic temp-write/rename and cross-process file locking from vanilla were not
+added; the existing direct write remains. The scheduled server refresh runs only in
+`run_server`/`run_server_with_state`, which is the single product server path.
 
 ## Related Items
 

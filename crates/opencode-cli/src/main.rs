@@ -3922,9 +3922,11 @@ async fn list_models(
     verbose: bool,
 ) -> anyhow::Result<()> {
     if refresh {
-        eprintln!(
-            "Note: model cache refresh is parsed for parity, but Rust rewrite currently loads providers directly from runtime env."
-        );
+        if opencode_provider::refresh_models_dev_cache().await {
+            eprintln!("Model catalog refreshed from models.dev.");
+        } else {
+            eprintln!("Model catalog refresh failed; using the existing cached catalog.");
+        }
     }
 
     let current_dir = std::env::current_dir()?;
