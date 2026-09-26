@@ -1712,6 +1712,12 @@ impl SessionPrompt {
     }
 
     fn mark_aborted(session: &mut Session) {
+        Self::mark_finished(session, "aborted", "aborted", "Aborted by user.");
+    }
+
+    /// Mark the session's last assistant turn as finished with the given reason
+    /// and error, ensuring it carries provider-valid content.
+    fn mark_finished(session: &mut Session, finish_reason: &str, error: &str, fallback_text: &str) {
         let assistant = session
             .messages
             .iter_mut()
@@ -1729,10 +1735,11 @@ impl SessionPrompt {
 
         assistant
             .metadata
-            .insert("error".to_string(), serde_json::json!("aborted"));
-        assistant
-            .metadata
-            .insert("finish_reason".to_string(), serde_json::json!("aborted"));
+            .insert("error".to_string(), serde_json::json!(error));
+        assistant.metadata.insert(
+            "finish_reason".to_string(),
+            serde_json::json!(finish_reason),
+        );
         // Only real assistant output (text or a tool call) makes the message a
         // valid provider turn. A run interrupted during its thinking phase can
         // hold nothing but reasoning, and reasoning is not serialized as
@@ -1744,8 +1751,18 @@ impl SessionPrompt {
             _ => false,
         });
         if !has_valid_content {
-            assistant.add_text("Aborted by user.");
+            assistant.add_text(fallback_text);
         }
+    }
+
+    /// Force a run that ended without a terminal state (abort, panic, or
+    /// timeout) into a durable, provider-valid terminal state: mark the last
+    /// assistant turn finished with an error and resolve any tool calls that
+    /// never produced a result.
+    pub fn finalize_incomplete_turn(session: &mut Session, finish_reason: &str, error: &str) {
+        let message = format!("Run ended before completion: {}", error);
+        Self::mark_finished(session, finish_reason, error, &message);
+        Self::resolve_pending_tool_calls(session, &message);
     }
 
     /// Mark any tool calls that lack a corresponding tool result as aborted.
@@ -1800,6 +1817,10 @@ impl SessionPrompt {
     }
 
     fn abort_pending_tool_calls(session: &mut Session) {
+        Self::resolve_pending_tool_calls(session, "Tool execution aborted");
+    }
+
+    fn resolve_pending_tool_calls(session: &mut Session, content: &str) {
         let pending_calls = Self::unresolved_tool_call_ids(session);
 
         if pending_calls.is_empty() {
@@ -1808,12 +1829,12 @@ impl SessionPrompt {
 
         tracing::info!(
             count = pending_calls.len(),
-            "Marking pending tool calls as aborted"
+            "Resolving pending tool calls with error results"
         );
 
         let mut result_message = SessionMessage::assistant(session.id.clone());
         for call_id in pending_calls {
-            result_message.add_tool_result(call_id, "Tool execution aborted", true);
+            result_message.add_tool_result(call_id, content.to_string(), true);
         }
         session.messages.push(result_message);
     }
@@ -5230,6 +5251,56 @@ mod tests {
             .collect();
 
         assert_eq!(error_results.len(), 1, "call_2 should have an error result");
+    }
+
+    #[test]
+    fn finalize_incomplete_turn_marks_terminal_and_resolves_calls() {
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "do something"));
+
+        let mut assistant = SessionMessage::assistant(sid.clone());
+        assistant.add_tool_call("call_1", "bash", serde_json::json!({"command": "echo a"}));
+        assistant.add_tool_call("call_2", "read_file", serde_json::json!({"path": "foo.rs"}));
+        assistant.add_tool_result("call_1", "output a", false);
+        session.messages.push(assistant);
+
+        SessionPrompt::finalize_incomplete_turn(
+            &mut session,
+            "error",
+            "internal error (run panicked)",
+        );
+
+        let marked = session
+            .messages
+            .iter()
+            .find(|m| m.metadata.get("finish_reason").is_some())
+            .expect("a terminal assistant message");
+        assert_eq!(
+            marked.metadata.get("finish_reason"),
+            Some(&serde_json::json!("error"))
+        );
+        assert_eq!(
+            marked.metadata.get("error"),
+            Some(&serde_json::json!("internal error (run panicked)"))
+        );
+
+        let last_assistant = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| matches!(m.role, MessageRole::Assistant))
+            .unwrap();
+        let resolved = last_assistant.parts.iter().any(|p| {
+            matches!(
+                &p.part_type,
+                PartType::ToolResult { tool_call_id, is_error, .. }
+                    if tool_call_id == "call_2" && *is_error
+            )
+        });
+        assert!(resolved, "call_2 should be resolved with an error result");
     }
 
     #[test]

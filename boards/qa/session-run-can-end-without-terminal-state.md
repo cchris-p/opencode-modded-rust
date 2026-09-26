@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -209,3 +209,34 @@ implementation guarantees this contract; aligning with it removes the silent wed
   (loop, abort handling), and the tool implementations under `crates/opencode-tool/`.
 - Reference: `packages/opencode/src/session/processor.ts` at `f54ce313b…` (`cleanup`, `halt`,
   `Effect.onInterrupt`, `Effect.ensuring`).
+## Dev Notes - 2026-09-26
+
+- `opencode-session` (`crates/opencode-session/src/prompt.rs`):
+  - Refactored abort marking into `mark_finished` and added
+    `pub fn finalize_incomplete_turn(session, finish_reason, error)` which marks the last assistant
+    turn terminal (error + finish_reason, provider-valid content) and resolves any tool calls that
+    never produced a result.
+- `opencode-server` (`crates/opencode-server/src/routes.rs`):
+  - `SessionQueue` gains a run-scoped `run_cancel` token. `drain_session_queue` now selects the run
+    future against `run_cancel`, a hard run budget (`OPENCODE_RUN_TIMEOUT_MS`, default 30 min; `0`
+    disables), and `catch_unwind`. On abort/timeout/panic it drops the run future (cancelling it at
+    its await point) and calls `finalize_run_without_terminal`, which marks the turn terminal,
+    resolves pending tool calls, clears `ACTIVE_PROMPTS`, broadcasts, and persists.
+  - `abort_active_session_prompt` now also cancels `run_cancel`, so abort drops a run parked on an
+    await that ignores the prompt token instead of leaving it wedged.
+- This mirrors the reference `processor.ts` contract (`onInterrupt`/`catch(halt)`/`ensuring(cleanup)`)
+  using drop-to-cancel plus a backstop budget; the budget is an implementation detail, not the
+  product behavior.
+
+## Verification - 2026-09-26
+
+- New test `opencode-session`: `finalize_incomplete_turn_marks_terminal_and_resolves_calls` passes;
+  existing abort/mark tests still pass.
+- `cargo test -p opencode-session` -> 166 passed, 2 failed
+  (`instruction::tests::{test_find_up_stops_at_stop_dir,test_find_up_walks_parents}`, pre-existing and
+  unrelated; also noted in `BUG-016`).
+- `cargo test -p opencode-server` -> 64 + 3 integration passed, 0 failed.
+- `cargo check --workspace` clean; `cargo fmt --all` clean.
+- Not run here: live `ort` reproduction (emergent; see Reproduction notes). Fault-injection coverage
+  for the drain paths is at the finalize level plus existing server tests; the live recurrence is QA
+  evidence captured with the `BUG-045` server log.
