@@ -11,8 +11,9 @@ use futures::StreamExt;
 use opencode_plugin::{HookContext, HookEvent};
 use opencode_provider::transform::{apply_caching, ProviderType};
 use opencode_provider::{
-    get_model_context_limit, with_idle_timeout, ChatRequest, ChatResponse, Content, ContentPart,
-    Message, Provider, Role, StreamEvent, ToolDefinition, DEFAULT_STREAM_IDLE_TIMEOUT,
+    get_model_context_limit, stream_budget_from_env, with_idle_timeout, with_stream_budget,
+    ChatRequest, ChatResponse, Content, ContentPart, Message, Provider, Role, StreamEvent,
+    ToolDefinition, DEFAULT_STREAM_IDLE_TIMEOUT,
 };
 
 use crate::compaction::{
@@ -1146,6 +1147,16 @@ impl SessionPrompt {
             Self::emit_session_update(update_hook.as_ref(), session);
         }
 
+        // A resumed session may have been persisted mid-tool-turn (crash, kill,
+        // or abort before cleanup ran), leaving an assistant tool call with no
+        // result. Repair those with durable error results so the next request is
+        // provider-valid and continuation proceeds from the latest persisted
+        // state instead of replaying an older prompt (BUG-044).
+        Self::append_missing_tool_results(
+            session,
+            "Tool execution did not complete before the previous run ended".to_string(),
+        );
+
         loop {
             if token.is_cancelled() {
                 tracing::info!("Prompt loop cancelled for session {}", session_id);
@@ -1280,6 +1291,10 @@ impl SessionPrompt {
             // forever. Without this, a mid-turn stall never reaches a terminal
             // state and the session stays `active` indefinitely (BUG-038).
             let mut stream = with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT);
+            // Also bound the whole step: an idle timeout resets on every event,
+            // so a provider that keeps streaming (endless reasoning) would never
+            // trip it (BUG-046).
+            let mut stream = with_stream_budget(stream, stream_budget_from_env());
 
             // Create assistant message placeholder before consuming the stream so
             // callers can observe incremental output updates.

@@ -227,4 +227,12 @@ dependency order; do not start C until B is merged into `development`.
 - Verification: `opencode-session` 166 passed (2 pre-existing unrelated failures); `opencode-server`
   64 + 3 integration passed; `cargo check --workspace` and `cargo fmt --all` clean.
 
-### Pass C - BUG-046 + BUG-044 - not started
+### Pass C - BUG-046 + BUG-044 - implemented, in `qa`
+
+- Branch: `bug/BUG-046-044-provider-bound-and-continuation` (target `development`).
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/119
+- Delivered: `with_stream_budget` / `DEFAULT_STREAM_BUDGET` / `OPENCODE_STREAM_BUDGET_MS` bound a
+  whole provider step regardless of events; pre-loop repair of unresolved tool calls on resume;
+  stale-resume root cause confirmed as the `BUG-047` persistence gap.
+- Verification: `opencode-provider` 104 + 7 passed; `opencode-session` 166 passed (2 pre-existing
+  unrelated failures); `cargo check --workspace` and `cargo fmt --all` clean.

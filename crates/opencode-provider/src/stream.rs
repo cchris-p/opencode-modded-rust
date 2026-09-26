@@ -169,6 +169,72 @@ pub fn with_idle_timeout(stream: StreamResult, idle_timeout: std::time::Duration
     Box::pin(stream)
 }
 
+/// Maximum wall-clock time a single provider step may run, regardless of how
+/// many events it emits.
+///
+/// The idle timeout resets on every event, so a provider that keeps streaming
+/// (for example an endless reasoning loop) never trips it. This budget bounds
+/// the whole step and ends it with a [`StreamEvent::Error`] (BUG-046). `0`
+/// disables the bound.
+pub const DEFAULT_STREAM_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Resolve the per-step stream budget. `OPENCODE_STREAM_BUDGET_MS` overrides
+/// the default; `0` disables the bound.
+pub fn stream_budget_from_env() -> std::time::Duration {
+    std::env::var("OPENCODE_STREAM_BUDGET_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(DEFAULT_STREAM_BUDGET)
+}
+
+/// Wrap a provider event stream so it ends with a [`StreamEvent::Error`] once
+/// its total wall-clock budget is exceeded, even if it keeps emitting events.
+///
+/// This complements [`with_idle_timeout`]: a stream that never goes idle is
+/// still bounded (BUG-046). A zero budget is a no-op.
+pub fn with_stream_budget(stream: StreamResult, budget: std::time::Duration) -> StreamResult {
+    use futures::StreamExt;
+
+    if budget.is_zero() {
+        return stream;
+    }
+
+    let deadline = tokio::time::Instant::now() + budget;
+    let stream = futures::stream::unfold(
+        (stream, deadline, false),
+        move |(mut stream, deadline, finished)| async move {
+            if finished {
+                return None;
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Some((
+                    Ok(StreamEvent::Error(format!(
+                        "Provider step exceeded its {}s budget",
+                        budget.as_secs()
+                    ))),
+                    (stream, deadline, true),
+                ));
+            }
+            match tokio::time::timeout(remaining, stream.next()).await {
+                Ok(Some(Ok(event))) => Some((Ok(event), (stream, deadline, false))),
+                Ok(Some(Err(error))) => Some((Err(error), (stream, deadline, true))),
+                Ok(None) => None,
+                Err(_) => Some((
+                    Ok(StreamEvent::Error(format!(
+                        "Provider step exceeded its {}s budget",
+                        budget.as_secs()
+                    ))),
+                    (stream, deadline, true),
+                )),
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
 /// Build a provider event stream from a raw SSE byte stream.
 ///
 /// Raw HTTP chunk boundaries do not align with SSE frame boundaries: a single
@@ -661,6 +727,27 @@ mod idle_timeout_tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], Ok(StreamEvent::TextDelta(_))));
         assert!(matches!(events[1], Ok(StreamEvent::Done)));
+    }
+
+    #[tokio::test]
+    async fn never_idle_stream_is_stopped_by_budget() {
+        // Emits continuously (never idle) but slowly, so the idle timeout alone
+        // would never fire.
+        let inner: StreamResult = Box::pin(futures::stream::unfold((), |_| async {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            Some((Ok(StreamEvent::TextDelta("x".to_string())), ()))
+        }));
+        let stream = with_stream_budget(inner, std::time::Duration::from_millis(20));
+
+        let events: Vec<_> =
+            tokio::time::timeout(std::time::Duration::from_secs(2), stream.collect())
+                .await
+                .expect("budget should terminate the stream");
+
+        assert!(
+            matches!(events.last(), Some(Ok(StreamEvent::Error(message))) if message.contains("budget")),
+            "stream should end with a budget error, got {events:?}"
+        );
     }
 }
 

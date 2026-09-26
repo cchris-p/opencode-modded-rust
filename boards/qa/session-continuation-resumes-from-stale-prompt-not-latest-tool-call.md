@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -105,3 +105,26 @@ this symptom may disappear.
 - Relevant files likely include the session continuation/queue path
   (`crates/opencode-session/src/prompt.rs`) and the server queue drain
   (`crates/opencode-server/src/routes.rs`).
+## Dev Notes - 2026-09-26
+
+- Confirmed the stale `Yes` resume point was caused by the persistence gap: the post-`Yes` turn was
+  never durable, so the last persisted message was the `Yes` user prompt.
+- Fixed by `BUG-047` (PR #118): turn progress (assistant steps and tool results) is now persisted as
+  it is produced, so continuation builds its request from the latest persisted parts instead of an
+  older user prompt.
+- Hardening in `crates/opencode-session/src/prompt.rs`: before the prompt loop, unresolved tool calls
+  in a resumed/partial turn are repaired with durable error results (reusing
+  `append_missing_tool_results`), so a session persisted mid-tool-turn is provider-valid and
+  continues from the latest state.
+
+## Verification - 2026-09-26
+
+- `append_missing_tool_results_repairs_unresolved_calls` passes (existing);
+  `finalize_incomplete_turn_marks_terminal_and_resolves_calls` passes.
+- `cargo test -p opencode-session` -> 166 passed, 2 pre-existing unrelated failures.
+- Live confirmation pending (emergent stall): after the `BUG-047` build, a stalled/continued session
+  should resume from the latest persisted part. Confirm during QA.
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/119
+  (branch `bug/BUG-046-044-provider-bound-and-continuation`, base `development`, handoff H-012 Pass C).
