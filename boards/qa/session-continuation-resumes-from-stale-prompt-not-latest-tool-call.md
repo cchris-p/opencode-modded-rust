@@ -124,3 +124,7 @@ this symptom may disappear.
 - `cargo test -p opencode-session` -> 166 passed, 2 pre-existing unrelated failures.
 - Live confirmation pending (emergent stall): after the `BUG-047` build, a stalled/continued session
   should resume from the latest persisted part. Confirm during QA.
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/119
+  (branch `bug/BUG-046-044-provider-bound-and-continuation`, base `development`, handoff H-012 Pass C).

@@ -108,3 +108,7 @@ reference has a total turn/step bound, so this is a real robustness gap for reas
   budget error).
 - `cargo test -p opencode-provider` -> 104 lib + 7 integration passed, 0 failed.
 - `cargo check --workspace` clean; `cargo fmt --all` clean.
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/119
+  (branch `bug/BUG-046-044-provider-bound-and-continuation`, base `development`, handoff H-012 Pass C).
