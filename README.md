@@ -205,6 +205,31 @@ During a stall, `draws=0` and `keys=0` with `sync_ms` close to the sample
 `dt` point at the blocking refetch path; a large `draw_ms` with small `sync_ms`
 points at rendering.
 
+### Runtime bounds and server logs
+
+Every run is bounded and must always reach a terminal state:
+
+- `OPENCODE_RUN_TIMEOUT_MS` - hard wall-clock budget for one queued run
+  (default `1800000`, 30 minutes; `0` disables). On expiry the run is cancelled
+  and the session is finalized with a durable error instead of staying `busy`.
+- `OPENCODE_STREAM_BUDGET_MS` - wall-clock budget for a single provider step
+  (default `900000`, 15 minutes; `0` disables). It complements the 90s stream
+  idle timeout, which only fires when the stream goes silent; the step budget
+  also stops a stream that keeps emitting forever.
+
+Aborting a run (`Esc`) cancels it even when it is parked on an await that does
+not observe the prompt token, so the session returns to idle instead of wedging.
+
+The local server's stdout/stderr is written to
+`dirs::data_local_dir()/opencode/traces/server.log` (macOS:
+`~/Library/Application Support/opencode/traces/server.log`) instead of being
+discarded, and a panic hook appends the panic message, source location, and
+backtrace there. Set `OPENCODE_SERVER_LOG` to override the path, or to
+`0`/`false`/`off` to disable the durable sink. Find it with
+`opencode debug paths` (`server-log`) or `opencode session inspect <id>`
+(`Server log:`). Turn progress is persisted incrementally (throttled to ~1s) so
+exiting, stalling, or aborting mid-turn keeps the latest chunk for resume.
+
 ## Documentation
 
 - User guide: `USER_GUIDE.md`
