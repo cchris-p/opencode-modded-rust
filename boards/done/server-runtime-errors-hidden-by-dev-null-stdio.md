@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -114,3 +114,24 @@ investigator is reduced to OS-thread sampling, which cannot see parked async tas
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/117
   (branch `bug/BUG-045-server-runtime-diagnostics`, base `development`, handoff H-012 Pass A).
+
+## QA Report (self-QA) - 2026-09-26
+
+QA: BUG-045 — durable server log sink, panic hook, and discoverability.
+
+- commit: `34bc972` (`development`); binary `target/debug/opencode` (built 2026-09-26 14:43).
+- Commands / observed:
+  - `cargo test -p opencode-cli panic_hook` -> `panic_hook_writes_message_and_location_to_sink`
+    PASS (a caught panic creates the durable sink and writes the `[PANIC]` entry with location).
+  - `cargo test -p opencode-cli server_log` -> `server_log_path_respects_override_and_disable`
+    PASS (`OPENCODE_SERVER_LOG` override; `0`/`false`/`off`/empty disable; default enabled).
+  - `opencode debug paths` -> `server-log  …/Application Support/opencode/traces/server.log`.
+  - `opencode session inspect <id>` -> prints `Server log: <path>`.
+  - End-to-end proof already exists in this cluster: the merged hook captured the real
+    `[PANIC] range end index 2 out of range for slice of length 1` at
+    `crates/opencode-permission/src/arity.rs:10:30` in `…/traces/server.log` (see `BUG-043`
+    Classification).
+- result: PASS.
+
+Merged closeout: PR #117 merged into `development` on 2026-09-26; card moved to `done` after
+self-QA.

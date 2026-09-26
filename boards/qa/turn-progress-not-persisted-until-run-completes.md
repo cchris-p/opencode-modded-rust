@@ -124,3 +124,20 @@ lost, which is the "resumes before the chunk that hadn't outputted yet" symptom 
   clean.
 - Pending live confirmation: after a mid-turn exit, `opencode session inspect` should show the last
   assistant message's parts persisted (not "no persisted parts").
+
+## QA Report (self-QA) - 2026-09-26 - PARTIAL
+
+QA: BUG-047 — in-flight assistant output is persisted during a run.
+
+- commit: `34bc972` (`development`); model `deepseek/deepseek-flash`; measured against the DB
+  (`messages.data`) and the API.
+- Tests (PASS): `fingerprint_changes_when_in_flight_text_grows`,
+  `fingerprint_changes_when_message_count_grows`.
+- Live (partial): 4s into a streaming turn, the DB assistant row had no parts (`[]`) in 3/3 measured
+  runs, even when the API already showed a reasoning part; the reasoning part only appeared in the DB
+  after the abort. Post-abort the assistant row did contain the reasoning part (so not "no persisted
+  parts"), but the appended terminal text is subject to the `BUG-043` clobber race and the
+  `error`/`finish` metadata is never persisted (see `BUG-043` QA Report).
+- result: **PARTIAL** — the narrow "parts exist after a mid-turn exit" ask held in these runs, but
+  timely in-flight flushing was not demonstrated and terminal progress can still be lost. Keep open
+  alongside `BUG-043`.
