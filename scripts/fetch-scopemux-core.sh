@@ -25,7 +25,7 @@ run_as_root() {
     elif [ -n "${SUDO_ASKPASS:-}" ]; then
         sudo -A "$@"
     else
-        echo "[fetch-scopemux-core] cmake install requires sudo; rerun from a terminal or install cmake manually" >&2
+        echo "[fetch-scopemux-core] installing native build dependencies requires sudo; rerun from a terminal or install them manually" >&2
         exit 1
     fi
 }
@@ -53,7 +53,57 @@ ensure_cmake() {
     fi
 }
 
+have_python_dev() {
+    local py="${PYTHON:-python3}"
+    command -v "${py}" >/dev/null 2>&1 || return 1
+    "${py}" - <<'PY' >/dev/null 2>&1
+import glob
+import os
+import sysconfig
+
+include = sysconfig.get_path("include")
+if not include or not os.path.exists(os.path.join(include, "Python.h")):
+    raise SystemExit(1)
+
+libdir = sysconfig.get_config_var("LIBDIR")
+if libdir and not glob.glob(os.path.join(libdir, "libpython*")):
+    raise SystemExit(1)
+PY
+}
+
+ensure_python_dev() {
+    if have_python_dev; then
+        return
+    fi
+
+    echo "[fetch-scopemux-core] Python development files not found; installing native build dependency"
+    local py_version
+    py_version="$("${PYTHON:-python3}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+
+    if command -v apt-get >/dev/null 2>&1; then
+        run_as_root apt-get update
+        if [ -n "${py_version}" ]; then
+            run_as_root apt-get install -y "python${py_version}-dev" ||
+                run_as_root apt-get install -y python3-dev
+        else
+            run_as_root apt-get install -y python3-dev
+        fi
+    elif command -v dnf >/dev/null 2>&1; then
+        run_as_root dnf install -y python3-devel
+    elif command -v yum >/dev/null 2>&1; then
+        run_as_root yum install -y python3-devel
+    elif command -v pacman >/dev/null 2>&1; then
+        run_as_root pacman -Sy --needed --noconfirm python
+    elif command -v brew >/dev/null 2>&1; then
+        brew install python@3.11
+    else
+        echo "[fetch-scopemux-core] Unable to install Python development files automatically; install them and rerun this script" >&2
+        exit 1
+    fi
+}
+
 ensure_cmake
+ensure_python_dev
 
 if [ -d "${DEST}/.git" ]; then
     if [ "${1:-}" != "--force" ]; then
