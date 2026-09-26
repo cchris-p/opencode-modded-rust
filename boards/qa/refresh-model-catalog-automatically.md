@@ -121,6 +121,12 @@ Known limits: atomic temp-write/rename and cross-process file locking from vanil
 added; the existing direct write remains. The scheduled server refresh runs only in
 `run_server`/`run_server_with_state`, which is the single product server path.
 
+## Merge Notes
+
+- PR #112 merged into `development` (merge commit `116161c`); the remote and local feature
+  branches were deleted.
+- Item remains in `qa` pending a recorded QA report or explicit completion.
+
 ## Related Items
 
 - `START-030` Match vanilla OpenAI model retrieval parity
