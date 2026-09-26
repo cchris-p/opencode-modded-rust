@@ -105,6 +105,12 @@ cache. Verified by building with both sources in sequence with no `cargo clean`.
 - Source-scoped CMake build dir: [#123](https://github.com/cchris-p/opencode-modded-rust/pull/123).
 - Launcher change committed separately in `~/standards` `main` as `783e871` (local, not pushed).
 
+## Closeout
+
+- `#122` merged into `development` as `c8a4246`; `#123` merged as `f2e50b6`. Feature branches deleted remotely and locally.
+- Verified on `development`: `ort-build` auto-fetched the core and produced a working binary (`opencode version` → `OpenCode 0.1.0`).
+- Remains in `qa` pending a recorded QA report or explicit completion.
+
 ## Related Items
 
 - `INFRA-001` build and disk hygiene (shared launcher preflight pattern).
