@@ -257,3 +257,37 @@ in `…/traces/server.log`:
 - On the build that produced this (pre-`BUG-043`), the panicking run never finalized, leaving the
   session `busy` - exactly this card's mechanism. With `BUG-043`, the same panic is contained and the
   run finalizes; `BUG-048` removes the panic entirely.
+
+## QA Report (self-QA) - 2026-09-26 - FAIL
+
+QA: BUG-043 — guaranteed terminal state and interrupt on abort.
+
+- commit: `34bc972` (`development`); binary `target/debug/opencode`; model `deepseek/deepseek-flash`;
+  headless server + HTTP API (ports 3598/3599).
+- Tests (PASS): `cargo test -p opencode-session finalize_incomplete_turn_marks_terminal_and_resolves_calls`;
+  `cargo test -p opencode-server fingerprint_changes_when`.
+- Live abort (PASS): stream a long turn, `POST /session/{id}/prompt/abort`, poll `GET /session/status`
+  -> `busy=false`/`idle=true` within ~4s. The stuck-Busy wedge is gone.
+- Live durable terminal record (FAIL, nondeterministic). Across 4 abort runs:
+  - 2/4: after idle, both `/session/{id}/message` (in-memory) and the DB had no terminal record — the
+    last assistant message was a reasoning part only, `error`/`finish` absent, with no
+    `Run ended before completion: aborted` / `Aborted by user.` text.
+  - 1/4: the DB transiently held `Run ended before completion: aborted`, then a follow-up
+    continuation overwrote it back to reasoning-only.
+  - 1/4: terminal text persisted and stabilized in the DB, but the API still reported `error`/`finish`
+    as null.
+- Likely mechanism: `run_prompt_turn` spawns the `BUG-047` `update_task`, which keeps applying
+  buffered `Session` snapshots to `state.sessions` and persisting them. On abort, `drain_session_queue`
+  drops the run future and `finalize_run_without_terminal` writes the terminal state; the still-draining
+  `update_task` then re-applies a stale pre-finalize snapshot (`merge_session_snapshot` does
+  `*existing = snapshot`) and persists it, clobbering the terminal record. The `time.updated` freshness
+  guard in `sync_sessions_to_storage` does not reliably prevent this because the stale snapshot can
+  carry a newer update time.
+- Deterministic storage gap (contributes): message metadata (`error`, `finish_reason`, `completed_at`)
+  is never written to storage — `MessageRepository::upsert` / `replace_for_session` serialize only
+  `message.parts` (`crates/opencode-storage/src/repository.rs:592,621,811`) and `list_for_session`
+  rebuilds messages with `metadata: HashMap::new()` (`repository.rs:701`). So no terminal record can
+  survive a reload/restart, and `opencode session inspect` mislabels an aborted-but-finalized turn as
+  "stalled" (its heuristic only recognizes ToolResult/StepFinish/Compaction parts).
+- result: **FAIL**. Idle is guaranteed, but "always ends with a durable terminal record" is not met.
+  Reopened for implementation.

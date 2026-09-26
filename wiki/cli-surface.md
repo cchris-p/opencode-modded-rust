@@ -9,7 +9,7 @@ touched the same behavior are history and are cited only as lineage.
 This document states (1) what the product does today and (2) the target behavior the `CLI-*` series
 is driving toward.
 
-## Current Behavior (as of 2026-09-23)
+## Current Behavior (as of 2026-09-26)
 
 ### TUI launch
 
@@ -62,14 +62,15 @@ is driving toward.
 | `CLI-006` | CLI status visibility over `GET /session/status` (`idle|busy|queued|retry|error`), plain text plus `--json`. Delivered 2026-09-23 (PR #81, fix `BUG-036` PR #82). |
 | `CLI-002` | Route `opencode run` through the canonical session runtime; retire the parallel `AgentExecutor` loop. |
 | `CLI-009` | CLI/direct-run question and ask/approval parity; blocked by `CLI-001`/`CLI-006`, `CLI-002`, and `GATE-002`. |
-| `CLI-010` | Subagent/child-session surface on the CLI; blocked by `GATE-004`. |
+| `CLI-010` | Subagent/child-session surface on the CLI; `GATE-004` done, card in `qa` (covered by `H-009`). |
 | `CLI-005` | Human decision on same-workspace attach/reuse; must not reintroduce implicit server discovery. |
 | `CLI-004` | Explicit `/detach` command (done). |
 | `FEAT-033` | Resume hint on normal TUI exit (done); adjacent exit UX, not detach. |
 
-Binding rules: `invariants/cli-task-targeting.md`, `invariants/message-queuing.md`, and
-`invariants/runtime-lifecycle.md` (leaving a session view must not cancel active execution; a user
-must be able to leave and revisit a running session).
+Binding rules (the "CLI invariants" group): `invariants/cli-task-targeting.md`,
+`invariants/message-queuing.md`, and `invariants/runtime-lifecycle.md` (leaving a session view must not
+cancel active execution; a user must be able to leave and revisit a running session). Index:
+`invariants/README.md`.
 
 ## Intended Headless (Cline-like) Workflow
 
@@ -118,7 +119,7 @@ same canonical path.
 | CLI-007 | done | Default task target selection (PR #37; QA done 2026-09-23) |
 | CLI-008 | archive | Queue CLI sends (delivered by `GATE-001`) |
 | CLI-009 | hold | Direct-run question and ask/approval parity (gated) |
-| CLI-010 | hold | CLI subagent surface (gated) |
+| CLI-010 | qa | CLI subagent surface (`GATE-004` done; covered by `H-009`) |
 
 ## Lineage (history only)
 

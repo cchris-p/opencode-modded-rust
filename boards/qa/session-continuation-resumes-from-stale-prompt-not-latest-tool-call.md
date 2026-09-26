@@ -135,3 +135,18 @@ only flushed on new messages, so the **in-flight** assistant chunk was still los
 which is the exact "session begins before the chunk that hadn't outputted" symptom. `BUG-047` has
 been reopened and strengthened (fingerprint + throttled flush of in-flight content). This card stays
 open until a resumed session demonstrably continues from the latest persisted chunk.
+
+## QA Report (self-QA) - 2026-09-26 - NOT PASSED
+
+QA: BUG-044 — continuation resumes from the latest persisted chunk.
+
+- commit: `34bc972` (`development`); model `deepseek/deepseek-flash`.
+- Not passed: blocked by the `BUG-043` persistence defect. After abort, the last persisted assistant
+  message can be reasoning-only with no terminal record (see `BUG-043` QA Report), so a resume cannot
+  be shown to continue from the latest chunk; the pre-loop `append_missing_tool_results` repair also
+  has no durable tool-call state to act on in the abort scenario tested.
+- A post-abort continuation did create the next user turn and start a run, but a deterministic
+  resume-point assertion (request built from the latest persisted part, not an earlier user prompt)
+  was not achieved with the current persisted state.
+- result: **NOT PASSED** — re-QA after the `BUG-043` `update_task`/finalize race and the
+  metadata-persistence gap are fixed.
