@@ -19,7 +19,7 @@ unresolved decision are marked **target** and must remain true if and when that 
     `handle_task_status` at `:3208`)
   - `crates/opencode-server/src/routes.rs` (`accept_prompt` at `:2478`, `SESSION_QUEUE_LIMIT = 32`
     at `:394`, `POST /{id}/prompt/cancel` at `:148`)
-  - Board items `CLI-001`/`CLI-006`/`CLI-007` (`done`), `CLI-002`/`CLI-005`/`CLI-009` (`hold`)
+  - Board items `CLI-001`/`CLI-005`/`CLI-006`/`CLI-007` (`done`), `CLI-002`/`CLI-009` (`hold`)
   - `wiki/cli-surface.md`
 
 ## Invariants
@@ -58,7 +58,10 @@ unresolved decision are marked **target** and must remain true if and when that 
 
 - `opencode run` does not yet use the canonical session runtime (`CLI-002`, `hold`), so the
   "canonical path" invariant currently holds for `opencode task`, not for `opencode run`.
-- Same-workspace server attach/reuse remains an open human decision (`CLI-005`, `hold`); no reuse
-  behavior may be introduced until that card resolves.
+- Same-workspace server attach/reuse is resolved **NO-GO** (`CLI-005`, done 2026-09-26). The
+  invariant that a selected target "must not cause normal `ort` TUI launches to auto-attach to or
+  reuse a server" is permanent, not conditional. Rationale: the Cline-copied contract is
+  explicit-target, and `CLI-003` removed the persisted server record any auto-detect path would
+  require after it caused stale-server QA traps (`FEAT-002`/`FEAT-014` lineage).
 - CLI question/approval parity (`CLI-009`) and subagent surface parity (`CLI-010`) are separate
   stories; `CLI-010` is in `qa`, `CLI-009` is on `hold`.

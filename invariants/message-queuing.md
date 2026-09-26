@@ -252,7 +252,8 @@ The TUI and CLI behavior below is implemented; the API item is implemented throu
 - **Handoffs:** `handoffs/archive/2026-09-21-session-prompt-queue-gate-handoff.md` (`H-004`, closed and
   archived 2026-09-22; satisfied by `GATE-001`). The reactivated `CLI-001`/`CLI-006` were delivered by
   `H-006` (`handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md`, `complete`); its
-  deferred CLI dependents (`CLI-002`, `CLI-005`, `CLI-009`, `CLI-010`) have no follow-up handoff yet.
+  deferred CLI dependents (`CLI-002`, `CLI-009`, `CLI-010`) have no follow-up handoff yet
+  (`CLI-005` was resolved no-go on 2026-09-26 and needs no implementation handoff).
   `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md` (`H-003`) is superseded and folded into
   `H-004` (2026-09-22).
 - **Canonical behavior doc:** `wiki/cli-surface.md` (current + target CLI task and TUI lifecycle behavior).
