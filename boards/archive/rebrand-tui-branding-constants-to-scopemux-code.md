@@ -5,12 +5,16 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "todo"
+status: "archived"
 created: "2026-09-21"
-attention: "Open question: exact logo art and short-name value not finalized"
+updated: "2026-09-26"
 ---
 
 # Rebrand TUI branding constants to scopemux-code
+
+## Archived
+
+Archived 2026-09-26 at user request. This was a draft card whose blocking open question (exact logo art and `APP_SHORT_NAME` value) was never finalized, so it was never implementation-ready. Kept for later; not scheduled.
 
 ## Summary
 
