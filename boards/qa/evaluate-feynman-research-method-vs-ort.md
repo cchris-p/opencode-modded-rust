@@ -142,7 +142,9 @@ Facts recorded 2026-09-26 (re-verify before reuse):
 ### 2026-09-26 — comparison executed; verdict EQUAL (null)
 
 Executed handoff `H-013` end to end (Phases 0–5). Companion sanitized note:
-`docs/research/FEAT-065-feynman-gate-001-vetting.md`.
+`docs/research/FEAT-065-feynman-gate-001-vetting.md`. PR:
+https://github.com/cchris-p/opencode-modded-rust/pull/125 (into `development`,
+kept open for review).
 
 **Environment / exact commands**
 

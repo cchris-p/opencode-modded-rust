@@ -187,3 +187,4 @@ artifact still exists (may be stale). Record the decision on the card.
   `docs/research/FEAT-065-feynman-gate-001-vetting.md`. `FEAT-065` moved to `qa`.
   Branch `research/FEAT-065-feynman-gate-001-vetting`; PR open for review (not
   merged). Handoff remains `in_progress` until the user reviews/merges.
+  PR: https://github.com/cchris-p/opencode-modded-rust/pull/125
