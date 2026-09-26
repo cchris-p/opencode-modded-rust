@@ -280,3 +280,10 @@ QA handoff:
 - Run `ort-build` then `ort`, open `Settings > Provider`, select `openai`, press `l`, and try the browser and/or headless method.
 - If auth fails, the toast/`GET /auth/openai` response should now include the real cause (token exchange status, timeout, no pending callback, etc.).
 - On success, confirm an `oauth` entry appears in `~/Library/Application Support/opencode/data/auth.json` and `gpt-5.5` runs without the API-key "no credits" error.
+
+## Merge Closeout - 2026-09-26
+
+- Merged into `development` via PR #116 (merge commit `e06da50`).
+- Branch `bug/START-032-codex-auth-callback-failure` deleted remotely and locally; local checkout is back on `development` and in sync.
+- Card judged code-complete against the reopen scope: Fix 1 (surface the real plugin/bridge error) and Fix 2 (330s plugin / 360s TUI auth timeouts) are now on `development`.
+- Remains in `qa`: no QA report is recorded and live browser/headless login has not been verified. Promote to the completed lane only after live verification or explicit user direction.

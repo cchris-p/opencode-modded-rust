@@ -51,11 +51,13 @@
 - macOS: `~/Library/Application Support/opencode/opencode.db`.
 - Linux: `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode/opencode.db`).
 - This is the Rust product's database only. Do not confuse it with vanilla OpenCode, whose `xdg-basedir` storage resolves to `~/.local/share/opencode/opencode.db` even on macOS.
+- The TUI-spawned local server writes stdout/stderr (including panic message, location, and backtrace) to `dirs::data_local_dir()/opencode/traces/server.log`; locate it with `opencode debug paths` (`server-log`) or `opencode session inspect <id>` (`Server log:`). Set `OPENCODE_SERVER_LOG` to override the path or to `0`/`false`/`off` to disable it.
+- Runtime bounds: `OPENCODE_RUN_TIMEOUT_MS` (default 30 minutes) and `OPENCODE_STREAM_BUDGET_MS` (default 15 minutes) are documented under "Runtime bounds and server logs" in `README.md`; both use `0` to disable.
 
 ## Local Launchers
 
 - `ort-build` builds the Rust TUI/CLI binary from `$HOME/repos/opencode-modded-rust`.
-- The default `opencode` binary now compiles the native ScopeMux provider (`scopemux-native` is a default feature on `opencode-cli`). Before the first build on a clone, run `scripts/fetch-scopemux-core.sh` (populates `third_party/scopemux-core` at the pinned revision) or set `SCOPEMUX_CORE_DIR` to a `scopemux-core` checkout; `cargo check --workspace` can avoid the C build with `SCOPEMUX_SKIP_NATIVE_BUILD=1`.
+- The default `opencode` binary compiles the native ScopeMux provider (`scopemux-native` is a default feature on `opencode-cli`), so a build needs a `scopemux-core` source tree. `ort-build` ensures it automatically: it fetches the pinned revision into `third_party/scopemux-core` (via `scripts/fetch-scopemux-core.sh`) when missing and warns when an existing checkout drifts from the pin (set `OPENCODE_RUST_REFRESH_CORE=1` to refresh). Set `SCOPEMUX_CORE_DIR` to use a different `scopemux-core` checkout, or `SCOPEMUX_SKIP_NATIVE_BUILD=1` to skip the C build for `cargo check --workspace`. The source tree is no longer needed at runtime: `build.rs` copies `queries/` into `OUT_DIR` and bakes that path. Advance the pin with `scripts/bump-scopemux-pin.sh <rev>` and verify a checkout with `scripts/fetch-scopemux-core.sh --check`.
 - `ort` launches the most recently built Rust TUI binary without rebuilding first.
 - `ort` runs the TUI in the directory it was activated from, so that directory is the workspace (config search root and displayed working directory).
 - `ort` always starts a fresh local TUI server for that workspace. It never reuses, rotates, or attaches to a previously recorded server, so a stale or other-workspace server can never serve the TUI. Use `opencode attach <url>` for intentional re-attachment.

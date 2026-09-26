@@ -12,7 +12,9 @@
 //! Without the `native` feature this script does nothing, so default builds
 //! never require CMake or a C toolchain.
 
+use std::collections::hash_map::DefaultHasher;
 use std::env;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -54,7 +56,17 @@ fn main() {
     println!("cargo:rerun-if-changed={}", source_dir.display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let build_dir = out_dir.join("scopemux-core-build");
+
+    // Scope the CMake build tree to the resolved source path. The same OUT_DIR is
+    // reused when SCOPEMUX_CORE_DIR changes (for example switching between a local
+    // checkout and third_party/scopemux-core), and reusing a CMake cache generated
+    // for a different source directory fails configuration.
+    let source_tag = {
+        let mut hasher = DefaultHasher::new();
+        source_dir.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+    let build_dir = out_dir.join(format!("scopemux-core-build-{source_tag}"));
 
     // scopemux-core is developed and CI-tested with GCC, where implicit
     // function declarations and some pointer-type mismatches are warnings.
@@ -90,11 +102,25 @@ fn main() {
     assert!(build.success(), "scopemux-core parser_core build failed");
 
     // scopemux-core resolves Tree-sitter query files from SCMU_QUERIES_DIR at
-    // runtime. Bake the built source's queries path so the provider can set it.
-    println!(
-        "cargo:rustc-env=SCOPEMUX_QUERIES_DIR={}",
-        source_dir.join("queries").display()
-    );
+    // runtime (see `lib.rs`). Copy the source queries into OUT_DIR and bake that
+    // path, so the built binary does not depend on the source checkout still
+    // existing (important for worktrees and for re-fetching the core).
+    let queries_src = source_dir.join("queries");
+    println!("cargo:rerun-if-changed={}", queries_src.display());
+    let queries_dst = out_dir.join("queries");
+    if queries_src.is_dir() {
+        let _ = std::fs::remove_dir_all(&queries_dst);
+        copy_dir(&queries_src, &queries_dst).expect("failed to copy scopemux-core queries");
+        println!(
+            "cargo:rustc-env=SCOPEMUX_QUERIES_DIR={}",
+            queries_dst.display()
+        );
+    } else {
+        println!(
+            "cargo:rustc-env=SCOPEMUX_QUERIES_DIR={}",
+            queries_src.display()
+        );
+    }
 
     // Static libraries live in the build tree and the Tree-sitter library dir.
     println!(
@@ -106,9 +132,15 @@ fn main() {
         build_dir.join("tree-sitter-libs").display()
     );
 
+    // The tree-sitter C runtime is intentionally not linked here. The product
+    // already depends on the `tree-sitter` crate (via `opencode-tool`), and
+    // linking scopemux-core's separate copy produces duplicate `ts_*` symbols
+    // (a hard link error with GNU ld/rust-lld). The crate's runtime fulfils
+    // parser_core and the grammar archives; the `native` feature depends on it
+    // for standalone builds. Only the grammar archives and parser_core are
+    // linked from the scopemux-core build tree.
     for lib in [
         "parser_core",
-        "tree-sitter",
         "tree-sitter-c",
         "tree-sitter-cpp",
         "tree-sitter-python",
@@ -127,4 +159,20 @@ fn main() {
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=dylib=c++");
     }
+}
+
+/// Recursively copy a directory tree, creating `dst` as needed.
+fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }

@@ -10,7 +10,10 @@ build = "build.rs"
 default = []
 # Enable the native scopemux-core FFI provider. Requires a scopemux-core
 # checkout (SCOPEMUX_CORE_DIR or third_party/scopemux-core) and a C toolchain.
-native = []
+# `dep:tree-sitter` is pulled in as a link-time dependency only: its bundled C
+# runtime is the single `ts_*` definition in the final binary, so build.rs does
+# not link scopemux-core's own tree-sitter copy (which would collide).
+native = ["dep:tree-sitter"]
 
 [dependencies]
 opencode-types = { path = "../opencode-types" }
@@ -18,6 +21,7 @@ opencode-retrieval = { path = "../opencode-retrieval" }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+tree-sitter = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -1117,6 +1117,84 @@ fn find_available_port(host: &str, base_port: u16) -> anyhow::Result<u16> {
     )
 }
 
+/// Resolve the durable server log path.
+///
+/// `OPENCODE_SERVER_LOG` overrides the default path. Set it to `0`, `false`,
+/// `off`, or an empty string to disable the durable sink entirely.
+fn resolve_server_log_path(override_value: Option<&str>) -> Option<PathBuf> {
+    if let Some(value) = override_value {
+        let trimmed = value.trim();
+        if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("0")
+            || trimmed.eq_ignore_ascii_case("false")
+            || trimmed.eq_ignore_ascii_case("off")
+        {
+            return None;
+        }
+        return Some(PathBuf::from(trimmed));
+    }
+    let dir = dirs::data_local_dir()?.join("opencode").join("traces");
+    Some(dir.join("server.log"))
+}
+
+/// Resolve the server log path from the environment.
+fn server_log_path() -> Option<PathBuf> {
+    resolve_server_log_path(std::env::var("OPENCODE_SERVER_LOG").ok().as_deref())
+}
+
+/// Format a panic record containing the message, source location, and backtrace.
+fn format_panic_entry(
+    message: &str,
+    location: Option<&std::panic::Location<'_>>,
+    backtrace: &str,
+) -> String {
+    let location = location
+        .map(|location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        })
+        .unwrap_or_else(|| "<unknown>".to_string());
+    format!("\n[PANIC] {message}\n  at {location}\n{backtrace}\n")
+}
+
+/// Install a panic hook that appends panic message, location, and backtrace to
+/// `path`. The hook is process-global, so panics in detached tasks are captured
+/// too. This is durable even when the server is launched with stdio discarded.
+fn install_panic_hook_at(path: PathBuf) {
+    std::panic::set_hook(Box::new(move |info| {
+        let message = if let Some(message) = info.payload().downcast_ref::<&str>() {
+            (*message).to_string()
+        } else if let Some(message) = info.payload().downcast_ref::<String>() {
+            message.clone()
+        } else {
+            "panic with non-string payload".to_string()
+        };
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let entry = format_panic_entry(&message, info.location(), &backtrace.to_string());
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = file.write_all(entry.as_bytes());
+        }
+    }));
+}
+
+/// Ensure the serve process has a durable panic sink. Called at server start.
+fn install_server_panic_hook() {
+    if let Some(path) = server_log_path() {
+        install_panic_hook_at(path);
+    }
+}
+
 fn spawn_detached_tui_server(
     cwd: &Path,
     port: u16,
@@ -1133,9 +1211,32 @@ fn spawn_detached_tui_server(
         .arg(port.to_string())
         .arg("--hostname")
         .arg(hostname)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdin(Stdio::null());
+
+    // BUG-045: route the server's stdout/stderr to a durable log instead of
+    // `/dev/null`, so tracing errors and panic output are not discarded.
+    let server_log = server_log_path().and_then(|path| {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::File::create(&path).ok().map(|file| (path, file))
+    });
+    match server_log {
+        Some((path, file)) => {
+            match file.try_clone() {
+                Ok(stderr) => {
+                    cmd.stdout(Stdio::from(file)).stderr(Stdio::from(stderr));
+                }
+                Err(_) => {
+                    cmd.stdout(Stdio::from(file)).stderr(Stdio::null());
+                }
+            }
+            eprintln!("Server log: {}", path.display());
+        }
+        None => {
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
 
     if mdns {
         cmd.arg("--mdns").arg("--mdns-domain").arg(mdns_domain);
@@ -2221,6 +2322,13 @@ async fn run_server_command(
 ) -> anyhow::Result<()> {
     if std::env::var("OPENCODE_SERVER_PASSWORD").is_err() {
         eprintln!("Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.");
+    }
+
+    // BUG-045: guarantee a durable record of server errors and panics even when
+    // stdout/stderr are discarded by the launcher.
+    install_server_panic_hook();
+    if let Some(path) = server_log_path() {
+        eprintln!("Server errors are logged to {}", path.display());
     }
 
     let bind_host = if mdns && hostname == "127.0.0.1" {
@@ -4437,6 +4545,9 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
                     trace, session.id, trace
                 );
             }
+            if let Some(server_log) = server_log_path() {
+                println!("  Server log: {}", server_log.display());
+            }
             println!(
                 "  Created: {} ({})",
                 format_session_time(session.time.created),
@@ -4976,6 +5087,13 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
                 dirs::cache_dir()
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "<none>".to_string())
+            );
+            println!(
+                "  {:<12} {}",
+                "server-log",
+                server_log_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<disabled>".to_string())
             );
         }
         DebugCommands::Config => {
@@ -7229,5 +7347,64 @@ mod tests {
         assert!(child.contains("ses_root"));
 
         assert!(session_table_header().contains("Parent"));
+    }
+
+    static PANIC_HOOK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn server_log_path_respects_override_and_disable() {
+        assert_eq!(
+            resolve_server_log_path(Some("/tmp/custom-server.log")),
+            Some(PathBuf::from("/tmp/custom-server.log"))
+        );
+        for disabled in ["", "0", "false", "off", "OFF"] {
+            assert_eq!(
+                resolve_server_log_path(Some(disabled)),
+                None,
+                "value {disabled:?} should disable the sink"
+            );
+        }
+        assert!(
+            resolve_server_log_path(None).is_some(),
+            "default path should be enabled"
+        );
+    }
+
+    #[test]
+    fn format_panic_entry_includes_message_location_and_backtrace() {
+        let entry = format_panic_entry("boom", None, "STACK-DUMMY");
+        assert!(entry.contains("[PANIC] boom"), "missing message: {entry}");
+        assert!(entry.contains("<unknown>"), "missing location: {entry}");
+        assert!(entry.contains("STACK-DUMMY"), "missing backtrace: {entry}");
+    }
+
+    #[test]
+    fn panic_hook_writes_message_and_location_to_sink() {
+        let _guard = PANIC_HOOK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("opencode-bug045-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("server.log");
+        let _ = std::fs::remove_file(&path);
+
+        let previous = std::panic::take_hook();
+        install_panic_hook_at(path.clone());
+        let result = std::panic::catch_unwind(|| panic!("bug045-panic-marker"));
+        std::panic::set_hook(previous);
+
+        assert!(result.is_err(), "closure should have panicked");
+        assert!(path.exists(), "panic hook should create the durable sink");
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(contents.contains("[PANIC]"), "missing header: {contents}");
+        assert!(
+            contents.contains("bug045-panic-marker"),
+            "missing message: {contents}"
+        );
+        assert!(
+            contents.contains("main.rs:"),
+            "missing location: {contents}"
+        );
     }
 }
