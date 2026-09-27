@@ -77,19 +77,36 @@ fn main() {
          -Wno-incompatible-pointer-types \
          -Wno-int-conversion";
 
-    let configure = Command::new("cmake")
+    // scopemux-core's CMake requires Python 3.10 or 3.11 (its range is
+    // `3.10...<3.12`). The interpreter on PATH is often newer (a pyenv 3.12
+    // virtualenv, a distro 3.12+ default), which CMake rejects and then
+    // replaces with a system Python that lacks the development package. Resolve
+    // a compatible interpreter here and pass it explicitly so the native build
+    // does not depend on PATH ordering or pyenv state.
+    let python_interpreter = resolve_python_interpreter();
+
+    let mut configure = Command::new("cmake");
+    configure
         .arg("-S")
         .arg(&source_dir)
         .arg("-B")
         .arg(&build_dir)
         .arg("-DSCOPEMUX_BUILD_TESTS=OFF")
         .arg("-DCMAKE_BUILD_TYPE=Release")
-        .arg(format!("-DCMAKE_C_FLAGS={relaxed_c_flags}"))
+        .arg(format!("-DCMAKE_C_FLAGS={relaxed_c_flags}"));
+    if let Some(python) = &python_interpreter {
+        configure.arg(format!("-DPython_EXECUTABLE={}", python.display()));
+    }
+
+    let configure = configure
         .status()
         .expect("failed to run cmake (is it installed?)");
     assert!(
         configure.success(),
-        "scopemux-core CMake configuration failed"
+        "scopemux-core CMake configuration failed.\n\
+         scopemux-core requires Python 3.10 or 3.11 with development headers.\n\
+         Run scripts/fetch-scopemux-core.sh to provision them, or set \
+         SCOPEMUX_PYTHON to a compatible interpreter."
     );
 
     let build = Command::new("cmake")
@@ -159,6 +176,73 @@ fn main() {
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=dylib=c++");
     }
+}
+
+/// Python program that exits 0 only when the interpreter it runs under is in
+/// scopemux-core's supported range and has the development files CMake needs.
+const PYTHON_PROBE: &str = r#"
+import glob, os, sys, sysconfig
+
+if not ((3, 10) <= sys.version_info[:2] < (3, 12)):
+    raise SystemExit(1)
+include = sysconfig.get_path("include")
+if not include or not os.path.exists(os.path.join(include, "Python.h")):
+    raise SystemExit(1)
+libdir = sysconfig.get_config_var("LIBDIR")
+if libdir and not glob.glob(os.path.join(libdir, "libpython*")):
+    raise SystemExit(1)
+"#;
+
+/// Resolve a Python interpreter acceptable to scopemux-core's CMake.
+///
+/// `SCOPEMUX_PYTHON` wins when set. Otherwise this checks versioned binaries
+/// first, then `python3`, then pyenv version directories (which carry dev
+/// headers but are not always reachable as a bare `python3.11` on PATH).
+fn resolve_python_interpreter() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(explicit) = env::var_os("SCOPEMUX_PYTHON") {
+        candidates.push(PathBuf::from(explicit));
+    }
+    for name in ["python3.11", "python3.10", "python3"] {
+        candidates.push(PathBuf::from(name));
+    }
+
+    let pyenv_root = env::var_os("PYENV_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".pyenv")));
+    if let Some(root) = pyenv_root {
+        if let Ok(entries) = std::fs::read_dir(root.join("versions")) {
+            let mut versions: Vec<PathBuf> = entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|dir| {
+                    let name = dir.file_name().unwrap_or_default().to_string_lossy();
+                    name.starts_with("3.11.") || name.starts_with("3.10.")
+                })
+                .collect();
+            versions.sort();
+            for dir in versions {
+                candidates.push(dir.join("bin").join("python3"));
+            }
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(|candidate| python_is_usable(candidate))
+}
+
+/// Whether `python` satisfies [`PYTHON_PROBE`].
+fn python_is_usable(python: &Path) -> bool {
+    Command::new(python)
+        .arg("-c")
+        .arg(PYTHON_PROBE)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Recursively copy a directory tree, creating `dst` as needed.
