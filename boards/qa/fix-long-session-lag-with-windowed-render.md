@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "todo"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -157,6 +157,71 @@ History is available in full (the fix must stay a render concern, not a data con
   so the thumb does not jump unexpectedly on re-anchor.
 - Interaction with `was_near_bottom`/follow and with queued/pending assistant boundaries computed
   from the full message list (`session.rs:644-659`) when only a window is rendered.
+
+## Implementation Notes
+
+Implemented on branch `bug/BUG-049-windowed-session-render` (PR into `development`).
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/129
+
+### What changed
+
+- `crates/opencode-tui/src/components/session.rs`
+  - Per-message rendering extracted into `render_message_body`, which returns the
+    message's lines plus toggle-hit indices relative to that message.
+  - Added a per-message height cache (`CachedMessageLayout { sig, height }`) keyed by
+    message id. `message_sig` covers content, width, toggles, follow/pending boundary,
+    footer, and spacing inputs. Only messages whose signature changed are laid out in a
+    frame; the rest reuse the cached line count. In-flight messages (assistant without
+    completion, user without completion) additionally hash full content; completed
+    messages use cheap length/metadata signatures.
+  - `render_messages` computes a virtual whole-session line total from the cached
+    heights (so `max_scroll`, follow, and the scrollbar stay whole-session), then lays
+    out only a window around the viewport and passes the `Paragraph` a window-relative
+    scroll. This also fixes ratatui `Paragraph` wrapping every line from 0 up to
+    `scroll + height` regardless of the viewport.
+  - `scroll_to_message` re-anchors via `message_first_line`, which sums cached heights
+    for all preceding messages, so a timeline jump to any pre-cutoff message lands and
+    renders.
+  - Stopped pruning `collapsed_reasoning`/`expanded_tool_calls` by window visibility;
+    pruning by visibility silently dropped a user's collapse/expand choice once the
+    block scrolled out of the window.
+  - `last_messages_area` is still set each frame so click hit-testing keeps working;
+    toggle hits are stored as absolute line indices.
+
+### Decisions on open questions
+
+- Window sizing: viewport height plus one viewport of overscan on each side.
+- The window is recomputed every frame from `scroll_offset` (cheap cursor walk); only
+  the window and signature-changed messages are laid out. No full re-layout in steady
+  state.
+- Paging above the window is automatic (the window is derived from `scroll_offset`
+  each frame); no explicit "load older" affordance.
+- Scrollbar keeps whole-session semantics (virtual total line count), so the thumb does
+  not jump on window re-anchor.
+- Follow/tail and queued/pending boundaries are preserved; they feed the signature.
+
+### Tests
+
+- `per_frame_layout_is_bounded_by_the_window_not_history_size` (2000 messages; asserts
+  per-frame layout stays under a window-sized bound while `rendered_line_count` still
+  reflects the whole session).
+- `timeline_jump_to_pre_cutoff_message_renders_it` (jumps to a mid-history message and
+  the oldest message, both outside the window before the jump).
+- `scrolling_up_pages_in_older_content_under_windowing`.
+- `follow_tail_keeps_newest_content_visible_under_windowing`.
+- `windowed_toggle_click_hits_visible_block`.
+
+### Verification
+
+- `cargo fmt --all -- --check`, `cargo clippy -p opencode-tui --all-targets`, and
+  `cargo test -p opencode-tui -- --test-threads=1` pass (174 tests).
+- Note: `components::prompt::tests::tab_autocomplete_uses_first_candidate` is
+  pre-existing flaky (it also fails in isolation on an unmodified checkout) and is
+  unrelated to this card.
+- Live `ort` before/after timings on a real long session are still pending human QA.
 
 ## Related Items
 

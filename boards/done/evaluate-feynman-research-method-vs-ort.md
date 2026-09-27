@@ -1,9 +1,9 @@
 ---
-id: "FEAT-065"
+id: "RESEARCH-001"
 title: "Use Feynman to vet GATE-001 results and improve the ideal strategy and param sets"
 priority: "P2"
 type: "research"
-area: "FEAT"
+area: "RESEARCH"
 spec: ""
 status: "done"
 created: "2026-09-26"
@@ -17,7 +17,7 @@ created: "2026-09-26"
 
 This is a **pre-completion evaluation/review step** for aa-studies `GATE-001`: Feynman is declared capable of analyzing GATE-001 progress now, with **no dependency on the gate being complete**. The review is expected to be **repeated** as the gate matures. "Ideal set" here means the **current** set, framed as a late-stage review lens rather than a one-shot post-gate audit.
 
-This is deliberately scoped to one topic so it can be resolved in a dedicated session with full focus. The pipeline mechanics (how chunks are produced and dispatched to `ort`) are split out to `FEAT-066`.
+This is deliberately scoped to one topic so it can be resolved in a dedicated session with full focus. The pipeline mechanics (how chunks are produced and dispatched to `ort`) are split out to `RESEARCH-002`.
 
 ## Settled model (context, not in question)
 
@@ -25,7 +25,7 @@ This is deliberately scoped to one topic so it can be resolved in a dedicated se
 - Feynman's role is to run its research methods and produce **workable chunks** — self-contained, independently executable units of work.
 - A workable chunk is represented as a **board item**.
 - The operator processes those chunks **concurrently using `ort`** (one session per chunk; the runtime allows one active run per session and concurrency across sessions).
-- The process is **manual for now**; automation via the CLI is `FEAT-066`.
+- The process is **manual for now**; automation via the CLI is `RESEARCH-002`.
 - Feynman may analyze aa-studies `GATE-001` progress at any time; this evaluation does **not** wait for the gate to close.
 - The review is designed to run **repeatedly** as the gate nears completion, not once.
 
@@ -68,7 +68,7 @@ Null result is valid: if opencode/`ort` alone is as strong, record that and clos
 
 ## Non-goals
 
-- Building the Feynman→`ort` automation (`FEAT-066`).
+- Building the Feynman→`ort` automation (`RESEARCH-002`).
 - Folding Feynman features into `ort` (decided against).
 - Editing aa-studies, opening/closing `GATE-001`, or changing any gate disposition — Feynman findings inform; the gate's own rules remain authoritative.
 - Making `feynman` a dependency of either product.
@@ -118,7 +118,7 @@ Facts recorded 2026-09-26 (re-verify before reuse):
 
 ## Related Items
 
-- `FEAT-066` Automate the Feynman-to-ort workable-chunk pipeline via the CLI
+- `RESEARCH-002` Automate the Feynman-to-ort workable-chunk pipeline via the CLI
 - `CLI-001`/`CLI-006` CLI task send/view/status (chunk execution surface)
 - `CLI-002` Route `opencode run` through the canonical session runtime
 - `FEAT-031` Investigate the builtin "general" agent and decide whether to remove it
@@ -142,7 +142,7 @@ Facts recorded 2026-09-26 (re-verify before reuse):
 ### 2026-09-26 — comparison executed; verdict EQUAL (null)
 
 Executed handoff `H-013` end to end (Phases 0–5). Companion sanitized note:
-`docs/research/FEAT-065-feynman-gate-001-vetting.md`. PR:
+`docs/research/RESEARCH-001-feynman-gate-001-vetting.md`. PR:
 https://github.com/cchris-p/opencode-modded-rust/pull/125 (into `development`,
 kept open for review).
 
@@ -214,11 +214,11 @@ kept open for review).
   shown).
 - **aa-studies improvement candidates**: advisory, operator-owned. Consolidated
   list recorded in the companion note
-  (`docs/research/FEAT-065-feynman-gate-001-vetting.md`). On user direction the
+  (`docs/research/RESEARCH-001-feynman-gate-001-vetting.md`). On user direction the
   two concrete gate-affecting findings were filed as aa-studies board cards
   (`MHAL-006`, `DOCS-025`; aa-studies PR #162), the MQL5 clause deferred to
   `VERS-007`. No gate disposition was changed.
-- **`FEAT-066`** (Feynman→`ort` chunk pipeline) remains out of scope and
+- **`RESEARCH-002`** (Feynman→`ort` chunk pipeline) remains out of scope and
   unaffected.
 
 ### Closeout
@@ -226,7 +226,7 @@ kept open for review).
 - 2026-09-26: PR
   [#125](https://github.com/cchris-p/opencode-modded-rust/pull/125) merged into
   `development` (merge commit `f223e20`). Branch
-  `research/FEAT-065-feynman-gate-001-vetting` deleted remotely and locally.
+  `research/RESEARCH-001-feynman-gate-001-vetting` deleted remotely and locally.
   Card remains in `qa` pending post-merge QA / explicit completion; the merge
   alone does not move it out of `qa`. Handoff `H-013` archived.
 
@@ -249,7 +249,7 @@ Post-merge verification against the card's Done-when (`development` @ `80fd43c`)
       exists but has no Feynman references.
 - [x] Follow-ups split or explicitly deferred: method adoption deferred; further
       Feynman work on this objective deferred; aa-studies improvement candidates
-      advisory/operator-owned; `FEAT-066` out of scope.
+      advisory/operator-owned; `RESEARCH-002` out of scope.
 
 **Limitation (recorded, not blocking).** The comparison was single-model
 (`deepseek/deepseek-flash`; Feynman's default `anthropic/claude-opus-5-5` was
@@ -269,7 +269,7 @@ now **out of date** and has been moved to
 banner (aa-studies `development`, commit `eb468fd`). Its premise — Feynman as the
 coding/verification copilot for the walkforward optimization loop — is obsolete
 given this card's null result. The canonical artifacts for the Feynman question
-are `FEAT-065` and `FEAT-066`; the archived aa-studies doc is retained for
+are `RESEARCH-001` and `RESEARCH-002`; the archived aa-studies doc is retained for
 provenance only.
 
 ## Addendum — 2026-09-27 external-artifact scope boundary
@@ -277,7 +277,7 @@ provenance only.
 The EQUAL/null result recorded above is scoped to one objective: **reasoning
 over the local canonical corpus** (the aa-studies checkout). The comparison task
 only exercised local artifacts; Feynman's literature/web tools were unused by
-design of the test (`docs/research/FEAT-065-feynman-gate-001-vetting.md`).
+design of the test (`docs/research/RESEARCH-001-feynman-gate-001-vetting.md`).
 
 The **external/remote-artifact objective was not tested here** and remains open:
 whether an external evidence layer (papers, literature databases, web sources)
@@ -288,7 +288,7 @@ web/PDF tooling; a source-verifying agent) was therefore never evaluated for thi
 project.
 
 This does **not** reverse the recorded verdict; it bounds its claim. The
-external-evidence question is tracked by `FEAT-067`, and the durable principle is
+external-evidence question is tracked by `RESEARCH-003`, and the durable principle is
 canonized in `invariants/research-department.md`.
 
 ## Addendum — 2026-09-27 model-independence of the department boundary
@@ -298,3 +298,17 @@ but the department boundary it bears on is **concern-based, not model-based**. T
 null result was produced single-model by necessity; it is not a claim that the
 Research Department requires a distinct or stronger model. One model can operate
 both departments. See `invariants/research-department.md`.
+
+## Addendum — 2026-09-27 Feynman utilization surface (partial supersession)
+
+The non-goal "Folding Feynman features into `ort` (decided against)" is
+**partially superseded** by `RESEARCH-004`: the product provides the
+**utility/standard surface** that makes instantiating the Research Department —
+with Feynman as the reference harness — easy in any workspace. This does not
+vendor the Feynman application or make it a runtime dependency, and external
+evidence stays advisory (`invariants/research-department.md`). The original
+local-vetting null result stands.
+
+This card is tracked under the `RESEARCH` area (formerly `FEAT-065`); the
+external-evidence evaluation is `RESEARCH-003` and the pipeline automation is
+`RESEARCH-002`.

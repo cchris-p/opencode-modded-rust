@@ -9,3 +9,4 @@
 - Separation of concern is what makes the Research Department safe to consult: advisory external evidence must never silently become local canonical truth.
 - The department boundary and its authority rules hold regardless of how the department is operated (an external research harness or product-native tooling).
 - This invariant does not make any specific research harness, model, or provider a dependency; which tooling serves the department is a separate, evidence-gated decision.
+- The product may provide the **utilities and standards** that make instantiating the department easy in any workspace (for example skills/source plumbing, retrieval-provider integration, and an instantiation standard). Providing that surface does not make a research harness a runtime dependency or grant it canonical authority.

@@ -1,9 +1,9 @@
 ---
-id: "FEAT-066"
+id: "RESEARCH-002"
 title: "Automate the Feynman-to-ort workable-chunk pipeline via the CLI"
 priority: "P2"
 type: "feature"
-area: "FEAT"
+area: "RESEARCH"
 spec: "wiki/cli-surface.md"
 status: "hold"
 created: "2026-09-26"
@@ -13,7 +13,7 @@ created: "2026-09-26"
 
 ## Summary
 
-Automate the manual workflow in which Feynman produces **workable chunks** (represented as board items) and the operator processes them **concurrently using `ort`**. This item covers the pipeline mechanics only; whether Feynman's research method is worth using at all is `FEAT-065`.
+Automate the manual workflow in which Feynman produces **workable chunks** (represented as board items) and the operator processes them **concurrently using `ort`**. This item covers the pipeline mechanics only; whether Feynman's research method is worth using at all is `RESEARCH-001`.
 
 **Status:** the mechanism is resolved below. The process is manual today; this card tracks building the automation.
 
@@ -57,7 +57,7 @@ The automation is a dispatcher that rides the **canonical `opencode task` CLI pa
 
 ## Non-goals
 
-- Deciding whether Feynman's research method is worth it (`FEAT-065`).
+- Deciding whether Feynman's research method is worth it (`RESEARCH-001`).
 - Folding Feynman features into `ort`.
 - Changing the `ort` CLI/task/queue runtime; this rides existing surfaces.
 - Editing aa-studies or syncing `feynman-modded`.
@@ -79,7 +79,7 @@ The automation is a dispatcher that rides the **canonical `opencode task` CLI pa
 
 ## Related Items
 
-- `FEAT-065` Evaluate whether Feynman's research method beats opencode/ort alone
+- `RESEARCH-001` Evaluate whether Feynman's research method beats opencode/ort alone
 - `CLI-001` CLI task send (canonical path)
 - `CLI-006` CLI status visibility
 - `CLI-002` Route `opencode run` through the canonical session runtime (hold; why we avoid `run`)
@@ -91,12 +91,12 @@ The automation is a dispatcher that rides the **canonical `opencode task` CLI pa
 - The mechanism is intentionally "straightforward": existing `serve` + `task` surfaces already support concurrent per-session work; this card only wires chunks to them.
 - Keep the human in the loop for orchestration gates; this automates dispatch and tracking, not merge/completion decisions.
 
-## Re-triage — 2026-09-26 (FEAT-065 null result)
+## Re-triage — 2026-09-26 (RESEARCH-001 null result)
 
-`FEAT-065` completed with a **null result**: Feynman's research method was not
+`RESEARCH-001` completed with a **null result**: Feynman's research method was not
 stronger than opencode/`ort` alone for vetting `GATE-001` or finding
 improvements, at ~3x latency and higher operational complexity
-(`docs/research/FEAT-065-feynman-gate-001-vetting.md`).
+(`docs/research/RESEARCH-001-feynman-gate-001-vetting.md`).
 
 This card's premise — automating a Feynman→`ort` chunk pipeline — assumes
 Feynman produces chunks worth dispatching. With no demonstrated Feynman
@@ -114,6 +114,6 @@ research advantage (e.g. a general chunk-dispatch need).
 `aa-studies/docs/feynman_role_for_optimization.md` is now out of date and
 archived at `aa-studies/docs/archive/feynman_role_for_optimization.md` with an
 ARCHIVED banner (aa-studies `development`, commit `eb468fd`). This card
-(`FEAT-066`) and `FEAT-065` are the canonical artifacts for the Feynman
+(`RESEARCH-002`) and `RESEARCH-001` are the canonical artifacts for the Feynman
 role/pipeline question; the archived aa-studies doc is retained for provenance
 only. This does not change the `hold` status or the reopen condition above.
