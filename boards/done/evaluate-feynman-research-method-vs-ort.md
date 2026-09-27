@@ -259,3 +259,15 @@ optional retest with Feynman's intended model is not required to complete this
 card.
 
 **Result:** QA passed; card promoted to `done`.
+
+## Addendum — 2026-09-27 canonical-replacement decision
+
+Corrects the "supplement, not supersede" doc-relationship call recorded in the
+Dev Notes and QA Report. `aa-studies/docs/feynman_role_for_optimization.md` is
+now **out of date** and has been moved to
+`aa-studies/docs/archive/feynman_role_for_optimization.md` with an ARCHIVED
+banner (aa-studies `development`, commit `eb468fd`). Its premise — Feynman as the
+coding/verification copilot for the walkforward optimization loop — is obsolete
+given this card's null result. The canonical artifacts for the Feynman question
+are `FEAT-065` and `FEAT-066`; the archived aa-studies doc is retained for
+provenance only.

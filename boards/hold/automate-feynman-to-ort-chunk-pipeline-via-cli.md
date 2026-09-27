@@ -108,3 +108,12 @@ reopen.
 method demonstrably beats opencode/`ort` alone), or an independent need to
 orchestrate board-item chunks through `ort` that does not depend on Feynman's
 research advantage (e.g. a general chunk-dispatch need).
+
+## Addendum — 2026-09-27 canonical-replacement decision
+
+`aa-studies/docs/feynman_role_for_optimization.md` is now out of date and
+archived at `aa-studies/docs/archive/feynman_role_for_optimization.md` with an
+ARCHIVED banner (aa-studies `development`, commit `eb468fd`). This card
+(`FEAT-066`) and `FEAT-065` are the canonical artifacts for the Feynman
+role/pipeline question; the archived aa-studies doc is retained for provenance
+only. This does not change the `hold` status or the reopen condition above.
