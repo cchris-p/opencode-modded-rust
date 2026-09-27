@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "doing"
 created: "2026-09-26"
 ---
 
@@ -299,3 +299,33 @@ A live two-session capture (see `BUG-051`) found the observed `deepseek/deepseek
 count advanced). It also directly observed the mechanism this card's QA Report hypothesizes: the
 in-memory `state.sessions[...]` list alternated between a forward run snapshot and a reverted
 persisted snapshot. Dated context only; this card's `qa` status and scope are unchanged.
+
+## Dev Notes - 2026-09-27 (reopened root-cause fix, H-014)
+
+- Confirmed root cause: `merge_session_snapshot` did `*existing = snapshot`
+  (`crates/opencode-server/src/routes.rs`), so the still-draining `update_task` re-applied a stale
+  pre-finalize run snapshot over the finalized shared session and `persist_sessions_if_enabled` wrote
+  it back out, erasing the terminal record.
+- Fix: `merge_session_snapshot` is now monotonic and keyed by message id. It never reduces the message
+  count, keeps a newer terminal record, advances streamed parts without regressing them, preserves
+  ordering, and does not resurrect intentionally removed messages. `Session::remove_message` now
+  records a durable tombstone (`deleted_message_ids`) that the merge honors.
+- Storage now persists and restores message metadata (`error` / `finish_reason` / `completed_at`):
+  `messages.data` stores parts plus metadata and reads accept the legacy bare-array form
+  (`crates/opencode-storage/src/repository.rs`). `finalize_incomplete_turn` also stamps `completed_at`.
+- `opencode session inspect` now recognizes a persisted terminal record instead of reporting a
+  finalized-without-terminal run as stalled (`crates/opencode-cli/src/main.rs`).
+
+## Verification - 2026-09-27
+
+- New tests: `merge_session_snapshot_preserves_terminal_record`, `..._never_regresses_message_count`,
+  `..._appends_new_run_progress`, `..._advances_streamed_text_without_regressing`,
+  `..._does_not_resurrect_deleted_message`; `message_metadata_round_trips`,
+  `legacy_parts_only_data_loads_with_empty_metadata`; `diagnostic_verdict_recognizes_persisted_terminal_metadata`.
+- `cargo test -p opencode-server` -> 71 + 3 integration passed; `cargo test -p opencode-storage` -> 3
+  passed; `cargo check --workspace` and `cargo fmt --all -- --check` clean.
+- Live (isolated HOME, no shared DB): abort a streaming run -> idle; reload from storage -> assistant
+  message carries `error=aborted`, `finish_reason=aborted`, `completed_at` set; inspect no longer
+  reports it as stalled.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/127
+  (branch `bug/BUG-043-047-051-snapshot-merge-and-metadata`, base `development`, handoff H-014).

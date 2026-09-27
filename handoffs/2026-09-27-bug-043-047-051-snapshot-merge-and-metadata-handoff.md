@@ -1,7 +1,7 @@
 ---
 id: "H-014"
 title: "BUG-043/047/051 snapshot-merge clobber and terminal-metadata root cause - Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-09-27"
 updated: "2026-09-27"
 owner: ""
@@ -185,3 +185,22 @@ Key files: `crates/opencode-server/src/routes.rs` (`merge_session_snapshot`,
 - TUI-only masking of snapshot regressions (explicitly rejected; fix the server state instead).
 - `BUG-044` stale-resume selection (already addressed; re-verify only if it recurs).
 - Production/`main` deployment.
+
+## Execution Notes - 2026-09-27
+
+- Branch `bug/BUG-043-047-051-snapshot-merge-and-metadata` from `development`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/127 (single PR, base `development`).
+- Implemented: monotonic, id-keyed `merge_session_snapshot` plus helpers in
+  `crates/opencode-server/src/routes.rs`; deleted-message tombstones in
+  `crates/opencode-session/src/session.rs`; `completed_at` on finalize in `prompt.rs`; message
+  metadata persistence in `crates/opencode-storage/src/repository.rs`; terminal-record
+  recognition in `opencode session inspect` (`crates/opencode-cli/src/main.rs`); TUI single-render
+  test in `crates/opencode-tui/src/components/session.rs`.
+- Cards moved `qa`/`todo -> doing` for the reopened pass (`BUG-043`, `BUG-047`, `BUG-051`).
+- Verification: server 71 + 3 integration / storage 3 / new tests pass; session has only the two
+  pre-existing `instruction::test_find_up_*` failures; `cargo check --workspace` and `cargo fmt`
+  clean. Live isolated-HOME probes: monotonic list PASS; abort-then-reload carries
+  `error`/`finish_reason`/`completed_at` and does not read as stalled.
+- Remaining: local QA on the PR branch, then explicit user direction to merge into `development`;
+  after merge, post-merge QA on `development`, move cards to `qa`, delete the branch, archive this
+  handoff.

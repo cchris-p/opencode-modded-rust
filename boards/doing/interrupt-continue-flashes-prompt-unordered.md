@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "doing"
 created: "2026-09-26"
 ---
 
@@ -141,3 +141,22 @@ in implementation, but the two-snapshot alternation is directly observed.
 - Likely files: `crates/opencode-server/src/routes.rs` (`update_task`, `merge_session_snapshot`,
   `sync_sessions_to_storage`, `drain_session_queue`), and
   `crates/opencode-tui/src/context/session_context.rs` / `app/app.rs` (message store reconciliation).
+
+## Dev Notes - 2026-09-27 (H-014)
+
+- Confirmed this is the same stale-snapshot clobber as `BUG-043`/`BUG-047`: `merge_session_snapshot`
+  did `*existing = snapshot`, so a stale run snapshot reverted the shared list (observed `n=54`
+  forward vs `n=40` reverted) and every TUI poll rendered a different list.
+- Fix: monotonic, id-keyed `merge_session_snapshot` (`crates/opencode-server/src/routes.rs`) never
+  reduces the message count or reverts the last message; it advances streamed parts and keeps newer
+  terminal state. No TUI-side masking was added, per the handoff.
+
+## Verification - 2026-09-27
+
+- Live (isolated HOME, no shared DB) interrupt-then-continue probe: polled `GET /session/{id}/message`
+  every second across two turns; message count was non-decreasing (`1 -> 2 -> 3 -> 4`) with no
+  last-id reversion.
+- TUI regression test `components::session::tests::continuation_prompt_renders_once_in_order_and_stays_put`
+  asserts the sent prompt renders exactly once, after the answer, at a stable row across frames.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/127
+  (branch `bug/BUG-043-047-051-snapshot-merge-and-metadata`, base `development`, handoff H-014).
