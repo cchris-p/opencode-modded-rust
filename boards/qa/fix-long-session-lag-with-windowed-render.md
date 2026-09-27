@@ -217,7 +217,7 @@ Implemented on branch `bug/BUG-049-windowed-session-render` (PR into `developmen
 ### Verification
 
 - `cargo fmt --all -- --check`, `cargo clippy -p opencode-tui --all-targets`, and
-  `cargo test -p opencode-tui -- --test-threads=1` pass (172 tests).
+  `cargo test -p opencode-tui -- --test-threads=1` pass (174 tests).
 - Note: `components::prompt::tests::tab_autocomplete_uses_first_candidate` is
   pre-existing flaky (it also fails in isolation on an unmodified checkout) and is
   unrelated to this card.
