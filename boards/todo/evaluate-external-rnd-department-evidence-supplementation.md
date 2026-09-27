@@ -1,9 +1,9 @@
 ---
-id: "FEAT-067"
+id: "RESEARCH-003"
 title: "Evaluate the external R&D department's evidence supplementation"
 priority: "P2"
 type: "research"
-area: "FEAT"
+area: "RESEARCH"
 spec: "invariants/research-department.md"
 status: "todo"
 created: "2026-09-27"
@@ -17,7 +17,7 @@ Test whether the **Research Department** — consulting external/remote evidence
 (papers, literature databases, web sources) — measurably improves research,
 vetting, and evaluation over local-canonical-only reasoning.
 
-This is the untested half of the Feynman question. `FEAT-065` returned a null
+This is the untested half of the Feynman question. `RESEARCH-001` returned a null
 result, but it explicitly tested only **reasoning over a local canonical corpus**;
 its own note records that the literature/web tools were unused. This card tests
 the other objective: does an **advisory external evidence layer** add value by
@@ -33,7 +33,7 @@ tooling serves the department stays an evidence-gated decision.
   as a set they can become heavy for a single agent to hold.
 - External evidence is a **separate department of insight** that can be layered
   onto the research step conducted over those local sources.
-- `FEAT-065` never exercised that department, so its null result cannot settle it.
+- `RESEARCH-001` never exercised that department, so its null result cannot settle it.
 - The department is **cross-domain** (not only finance). aa-studies is used here
   only because it is the one live workflow with real vetting questions.
 - The alternative to using an external harness is to own a remote-evidence store
@@ -62,7 +62,7 @@ external-evidence questions** that matter to the live workflow:
 - **Arm B** — `ort` with its own web/URL tooling on the same questions.
 - The question must genuinely require **outside** evidence (e.g. a robustness or
   selection-bias methodology decision), not something answerable from the local
-  corpus — otherwise it repeats `FEAT-065`.
+  corpus — otherwise it repeats `RESEARCH-001`.
 
 Headline criterion: does the external layer **change or sharpen an advisory
 recommendation** a local-only pass would miss?
@@ -87,7 +87,7 @@ change.
 - Making Feynman (or any harness/model/provider) a dependency.
 - Folding Feynman features into `ort`.
 - Editing aa-studies, opening/closing `GATE-001`, or changing any disposition.
-- Building the Feynman→`ort` chunk pipeline (`FEAT-066`) or an owned remote
+- Building the Feynman→`ort` chunk pipeline (`RESEARCH-002`) or an owned remote
   evidence store/provider (separate, gated card).
 - Committing private aa-studies content, prompts, or secrets.
 
@@ -113,8 +113,8 @@ change.
 
 ## Related Items
 
-- `FEAT-065` Evaluate whether Feynman's research method beats opencode/ort alone (local-corpus null result; predecessor)
-- `FEAT-066` Automate the Feynman-to-ort workable-chunk pipeline via the CLI (hold)
+- `RESEARCH-001` Evaluate whether Feynman's research method beats opencode/ort alone (local-corpus null result; predecessor)
+- `RESEARCH-002` Automate the Feynman-to-ort workable-chunk pipeline via the CLI (hold)
 - `SKILLS-002` Plan URL-backed skills parity (product-native external-source path)
 - `START-025` Add retrieval-provider boundary for task context assembly
 - `invariants/research-department.md`, `invariants/retrieval.md`, `wiki/scopemux-integration-plan.md`
