@@ -255,3 +255,6 @@ Implemented on branch `bug/BUG-049-windowed-session-render` (PR into `developmen
   timeline jump to an old prompt will fail by design; that is the specific regression to test for.
 - Keep the server/storage unlimited. If a payload limit is ever introduced for other reasons,
   timeline navigation and the window re-anchor must still fetch the older target explicitly.
+- 2026-09-27: Merged into `development` via PR #129 (merge commit `357aa86`); remote and local
+  `bug/BUG-049-windowed-session-render` branches deleted. Remains in `qa` until a QA report is
+  recorded or a human explicitly completes it.
