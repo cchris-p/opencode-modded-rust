@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "hold"
+status: "doing"
 created: "2026-09-27"
 ---
 
@@ -119,3 +119,34 @@ the failure is logged and dropped.
   of V1 robustness hardening. The fix is small and low-risk (WAL + `busy_timeout`/retry on
   `SQLITE_BUSY`).
 - Not archived: this is a silent write-loss path, not a non-issue.
+
+## Dev Notes (2026-09-27)
+
+- Reactivated `hold` -> `doing` to land the low-risk concurrency hardening described above.
+- Root cause: `Database` opened the shared `opencode.db` as a bare `sqlite:<path>?mode=rwc` URL,
+  which leaves the default rollback journal in place and installs no busy handler. A second writer
+  therefore returned `SQLITE_BUSY` (code 5, `database is locked`) immediately instead of waiting.
+- Fix in `crates/opencode-storage/src/database.rs`:
+  - open with `SqliteConnectOptions` instead of a raw URL
+  - `journal_mode=WAL` so readers do not block behind a writer
+  - `synchronous=NORMAL` (the WAL-appropriate durability setting)
+  - `busy_timeout=30s` so a concurrent writer waits for the lock to clear instead of failing
+  - added `Database::open(path)` (used by `Database::new`) so tests can point multiple connections
+    at one file.
+- No retry wrapper was added: the busy timeout lets the existing `sync_sessions_to_storage` write
+  wait out a transient lock rather than error, which is the smaller correct change for this card.
+
+## Verification (2026-09-27)
+
+Environment: isolated git worktree `~/worktrees/opencode-modded-rust/bug-052` on
+`bug/BUG-052-sqlite-busy-timeout-wal`, based on `development` at `bceebcd`, Linux.
+
+- `cargo test -p opencode-storage -p opencode-server` - pass (storage 5/5, server 71/71, skill-route 3/3).
+- `cargo check --workspace` - pass.
+- `database::tests::shared_database_uses_wal_and_busy_timeout` asserts `PRAGMA journal_mode=wal`
+  and `PRAGMA busy_timeout=30000` on a live connection.
+- `database::tests::concurrent_writer_waits_for_lock_instead_of_failing` holds a write transaction
+  on one connection and proves a second connection's insert waits for the lock and succeeds rather
+  than returning `SQLITE_BUSY`.
+- Live two-server reproduction (two TUI/serve pairs writing the shared DB) was not run in this
+  environment; the deterministic concurrent-connection test covers the same lock-contention path.
