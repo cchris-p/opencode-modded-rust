@@ -141,3 +141,10 @@ QA: BUG-047 — in-flight assistant output is persisted during a run.
 - result: **PARTIAL** — the narrow "parts exist after a mid-turn exit" ask held in these runs, but
   timely in-flight flushing was not demonstrated and terminal progress can still be lost. Keep open
   alongside `BUG-043`.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) showed the latest assistant message's persisted `data`
+bytes growing monotonically (`130 -> ... -> 1185`) during a streaming turn, i.e. in-flight content
+*was* flushed; at the same time the in-memory session list alternated with a reverted snapshot.
+Dated context only; `qa` status and scope unchanged.

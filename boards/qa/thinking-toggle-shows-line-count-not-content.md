@@ -157,3 +157,10 @@ the collapsed count line rather than content.
 - Merged into `development` via PR #103 (merge commit `21d7d55`).
 - Feature branch `feature/tui-display-cluster` deleted (remote and local); local checkout returned to `development`.
 - Remains in `qa` pending a QA report or explicit completion.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) confirmed a `deepseek/deepseek-flash` reasoning turn was
+actively streaming (persisted reasoning bytes growing) while the operator could not tell whether it
+was alive — the exact "count/opaque display hides a live stream" problem this card addresses.
+Dated context only; `qa` status and scope unchanged.

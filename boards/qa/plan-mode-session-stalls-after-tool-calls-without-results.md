@@ -145,3 +145,9 @@ Potential regression target:
 
 - Moved to `qa` on 2026-09-19 for continued observation.
 - Per user request, PR #44 is intended to merge directly into `development` while the card remains in `qa` until the issue is observed again or considered stable.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) of the current deepseek behavior found the runs slowly
+progressing rather than stalled, so no new plan-mode-stall reproduction was recorded. Dated context
+only; `qa` status and scope unchanged.

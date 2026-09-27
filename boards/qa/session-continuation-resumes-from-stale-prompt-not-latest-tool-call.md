@@ -150,3 +150,10 @@ QA: BUG-044 — continuation resumes from the latest persisted chunk.
   was not achieved with the current persisted state.
 - result: **NOT PASSED** — re-QA after the `BUG-043` `update_task`/finalize race and the
   metadata-persistence gap are fixed.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) observed a continuation prompt repeatedly reappearing /
+re-ordering while the run was in fact progressing; the session's in-memory message list alternated
+between two snapshots. Supports this card's continuation/persistence instability. Dated context
+only; `qa` status and scope unchanged.

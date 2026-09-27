@@ -291,3 +291,11 @@ QA: BUG-043 — guaranteed terminal state and interrupt on abort.
   "stalled" (its heuristic only recognizes ToolResult/StepFinish/Compaction parts).
 - result: **FAIL**. Idle is guaranteed, but "always ends with a durable terminal record" is not met.
   Reopened for implementation.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) found the observed `deepseek/deepseek-flash` runs were
+**slowly progressing, not hard-wedged** (persisted assistant `data` grew monotonically, message
+count advanced). It also directly observed the mechanism this card's QA Report hypothesizes: the
+in-memory `state.sessions[...]` list alternated between a forward run snapshot and a reverted
+persisted snapshot. Dated context only; this card's `qa` status and scope are unchanged.
