@@ -4258,20 +4258,24 @@ fn diagnostic_verdict(session: &Session, messages: &[SessionMessage]) -> String 
                 .to_string()
         }
         MessageRole::Assistant => {
-            if last.parts.is_empty() {
+            let has_terminal_metadata = last.metadata.contains_key("finish_reason")
+                || last.metadata.contains_key("error")
+                || last.metadata.contains_key("completed_at");
+            if last.parts.is_empty() && !has_terminal_metadata {
                 return "Session is active; the last assistant message has no persisted parts. \
                         The turn may have stalled before writing any output."
                     .to_string();
             }
 
-            let has_terminal = last.parts.iter().any(|part| {
-                matches!(
-                    part.part_type,
-                    PartType::ToolResult { .. }
-                        | PartType::StepFinish { .. }
-                        | PartType::Compaction { .. }
-                )
-            });
+            let has_terminal = has_terminal_metadata
+                || last.parts.iter().any(|part| {
+                    matches!(
+                        part.part_type,
+                        PartType::ToolResult { .. }
+                            | PartType::StepFinish { .. }
+                            | PartType::Compaction { .. }
+                    )
+                });
             let output_tokens = session.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
 
             if !has_terminal && output_tokens == 0 {
@@ -7347,6 +7351,24 @@ mod tests {
         assert!(child.contains("ses_root"));
 
         assert!(session_table_header().contains("Parent"));
+    }
+
+    #[test]
+    fn diagnostic_verdict_recognizes_persisted_terminal_metadata() {
+        let session = test_session("ses_term", None);
+        let mut assistant = SessionMessage::assistant("ses_term");
+        assistant
+            .metadata
+            .insert("finish_reason".to_string(), serde_json::json!("aborted"));
+        assistant
+            .metadata
+            .insert("error".to_string(), serde_json::json!("aborted"));
+
+        let verdict = diagnostic_verdict(&session, &[assistant]);
+        assert!(
+            verdict.contains("persisted output"),
+            "a finalized turn must not be reported as stalled: {verdict}"
+        );
     }
 
     static PANIC_HOOK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

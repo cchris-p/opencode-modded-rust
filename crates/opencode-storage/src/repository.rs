@@ -579,6 +579,54 @@ fn deserialize_string_list(value: String) -> Vec<String> {
     serde_json::from_str(&value).unwrap_or_default()
 }
 
+/// Serialize a message's durable payload (parts plus metadata) for the
+/// `messages.data` column.
+///
+/// The payload is stored as a JSON object `{ "parts": [...], "metadata": {...} }`.
+/// Persisting `metadata` is what makes terminal state (`error`, `finish_reason`,
+/// `completed_at`) survive a reload/restart (BUG-043, BUG-047).
+fn serialize_message_data(message: &SessionMessage) -> Result<String, DatabaseError> {
+    serde_json::to_string(&serde_json::json!({
+        "parts": message.parts,
+        "metadata": message.metadata,
+    }))
+    .map_err(|e| DatabaseError::QueryError(e.to_string()))
+}
+
+/// Read a message's durable payload, accepting both the current object form and
+/// the legacy bare-array form (parts only, no metadata). Missing metadata loads
+/// as empty rather than an error.
+fn deserialize_message_data(
+    data: Option<String>,
+) -> (Vec<MessagePart>, HashMap<String, serde_json::Value>) {
+    let Some(raw) = data else {
+        return (Vec::new(), HashMap::new());
+    };
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return (Vec::new(), HashMap::new());
+    };
+
+    match value {
+        serde_json::Value::Array(_) => (
+            serde_json::from_value(value).unwrap_or_default(),
+            HashMap::new(),
+        ),
+        serde_json::Value::Object(ref object) => {
+            let parts = object
+                .get("parts")
+                .and_then(|parts| serde_json::from_value(parts.clone()).ok())
+                .unwrap_or_default();
+            let metadata = object
+                .get("metadata")
+                .and_then(|metadata| serde_json::from_value(metadata.clone()).ok())
+                .unwrap_or_default();
+            (parts, metadata)
+        }
+        _ => (Vec::new(), HashMap::new()),
+    }
+}
+
 pub struct MessageRepository {
     pool: SqlitePool,
 }
@@ -589,8 +637,7 @@ impl MessageRepository {
     }
 
     pub async fn create(&self, message: &SessionMessage) -> Result<(), DatabaseError> {
-        let data_json = serde_json::to_string(&message.parts)
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+        let data_json = serialize_message_data(message)?;
 
         let role_str = match message.role {
             MessageRole::User => "user",
@@ -618,8 +665,7 @@ impl MessageRepository {
     }
 
     pub async fn upsert(&self, message: &SessionMessage) -> Result<(), DatabaseError> {
-        let data_json = serde_json::to_string(&message.parts)
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+        let data_json = serialize_message_data(message)?;
 
         let role_str = match message.role {
             MessageRole::User => "user",
@@ -684,10 +730,7 @@ impl MessageRepository {
                     _ => return None,
                 };
 
-                let parts: Vec<MessagePart> = row
-                    .data
-                    .and_then(|c| serde_json::from_str(&c).ok())
-                    .unwrap_or_default();
+                let (parts, metadata) = deserialize_message_data(row.data);
 
                 let created =
                     DateTime::from_timestamp_millis(row.created_at).unwrap_or_else(Utc::now);
@@ -698,7 +741,7 @@ impl MessageRepository {
                     role: msg_role,
                     parts,
                     created_at: created,
-                    metadata: HashMap::new(),
+                    metadata,
                 })
             })
             .collect();
@@ -735,10 +778,7 @@ impl MessageRepository {
                     _ => return Ok(None),
                 };
 
-                let parts: Vec<MessagePart> = row
-                    .data
-                    .and_then(|c| serde_json::from_str(&c).ok())
-                    .unwrap_or_default();
+                let (parts, metadata) = deserialize_message_data(row.data);
 
                 let created =
                     DateTime::from_timestamp_millis(row.created_at).unwrap_or_else(Utc::now);
@@ -749,7 +789,7 @@ impl MessageRepository {
                     role: msg_role,
                     parts,
                     created_at: created,
-                    metadata: HashMap::new(),
+                    metadata,
                 }))
             }
             None => Ok(None),
@@ -798,8 +838,7 @@ impl MessageRepository {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
         for message in messages {
-            let data_json = serde_json::to_string(&message.parts)
-                .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+            let data_json = serialize_message_data(message)?;
 
             let role_str = match message.role {
                 MessageRole::User => "user",
@@ -1289,5 +1328,109 @@ mod tests {
             .expect("list ses_2 should succeed");
         assert_eq!(ses_2.len(), 1);
         assert_eq!(ses_2[0].id, "msg_other");
+    }
+
+    #[tokio::test]
+    async fn message_metadata_round_trips() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        session_repo
+            .create(&session("ses_md"))
+            .await
+            .expect("create ses_md");
+        let repo = MessageRepository::new(pool);
+
+        let mut message = SessionMessage::assistant("ses_md");
+        message.id = "msg_md".to_string();
+        message
+            .metadata
+            .insert("error".to_string(), serde_json::json!("aborted"));
+        message
+            .metadata
+            .insert("finish_reason".to_string(), serde_json::json!("aborted"));
+        message
+            .metadata
+            .insert("completed_at".to_string(), serde_json::json!(123));
+        repo.upsert(&message).await.expect("upsert message");
+
+        let loaded = repo
+            .get("msg_md")
+            .await
+            .expect("get message")
+            .expect("message exists");
+        assert_eq!(
+            loaded
+                .metadata
+                .get("error")
+                .and_then(|value| value.as_str()),
+            Some("aborted")
+        );
+        assert_eq!(
+            loaded
+                .metadata
+                .get("finish_reason")
+                .and_then(|value| value.as_str()),
+            Some("aborted")
+        );
+        assert_eq!(
+            loaded
+                .metadata
+                .get("completed_at")
+                .and_then(|value| value.as_i64()),
+            Some(123)
+        );
+
+        let listed = repo.list_for_session("ses_md").await.expect("list ses_md");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0]
+                .metadata
+                .get("finish_reason")
+                .and_then(|value| value.as_str()),
+            Some("aborted")
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_parts_only_data_loads_with_empty_metadata() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        session_repo
+            .create(&session("ses_legacy"))
+            .await
+            .expect("create ses_legacy");
+
+        let legacy_parts = serde_json::json!([{
+            "id": "prt_1",
+            "part_type": { "type": "text", "text": "legacy" },
+            "created_at": Utc::now().to_rfc3339(),
+        }]);
+        sqlx::query(
+            "INSERT INTO messages (id, session_id, role, created_at, data) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("msg_legacy")
+        .bind("ses_legacy")
+        .bind("assistant")
+        .bind(Utc::now().timestamp_millis())
+        .bind(legacy_parts.to_string())
+        .execute(&pool)
+        .await
+        .expect("insert legacy row");
+
+        let repo = MessageRepository::new(pool);
+        let loaded = repo
+            .get("msg_legacy")
+            .await
+            .expect("get legacy message")
+            .expect("legacy message exists");
+        assert!(loaded.metadata.is_empty());
+        assert_eq!(loaded.parts.len(), 1);
+        assert_eq!(loaded.get_text(), "legacy");
     }
 }

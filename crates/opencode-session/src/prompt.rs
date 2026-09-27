@@ -1754,6 +1754,12 @@ impl SessionPrompt {
             "finish_reason".to_string(),
             serde_json::json!(finish_reason),
         );
+        // Stamp completion so a finalized-without-terminal run carries the same
+        // durable terminal record shape as a normal finish (BUG-043).
+        assistant.metadata.insert(
+            "completed_at".to_string(),
+            serde_json::json!(chrono::Utc::now().timestamp_millis()),
+        );
         // Only real assistant output (text or a tool call) makes the message a
         // valid provider turn. A run interrupted during its thinking phase can
         // hold nothing but reasoning, and reasoning is not serialized as

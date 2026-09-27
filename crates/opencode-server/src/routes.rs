@@ -13,7 +13,7 @@ use axum::{
 use futures::stream::Stream;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1717,6 +1717,139 @@ mod session_queue_tests {
         );
     }
 
+    #[test]
+    fn merge_session_snapshot_never_regresses_message_count() {
+        let mut shared = opencode_session::Session::new("proj", ".");
+        shared.add_user_message_with_id("msg_one", "one");
+        let assistant = shared.add_assistant_message();
+        assistant.add_text("partial");
+        shared.add_user_message_with_id("msg_two", "two");
+        let last_id = shared.messages.last().unwrap().id.clone();
+
+        // A stale snapshot cloned before the newest messages appeared.
+        let mut stale = opencode_session::Session::new("proj", ".");
+        stale.id = shared.id.clone();
+        stale.add_user_message_with_id("msg_one", "one");
+
+        merge_session_snapshot(&mut shared, stale);
+
+        assert_eq!(
+            shared.messages.len(),
+            3,
+            "merge must not reduce message count"
+        );
+        assert_eq!(
+            shared.messages.last().unwrap().id,
+            last_id,
+            "the last message must not revert to an older snapshot"
+        );
+    }
+
+    #[test]
+    fn merge_session_snapshot_appends_new_run_progress() {
+        let mut shared = opencode_session::Session::new("proj", ".");
+        shared.add_user_message_with_id("msg_one", "one");
+
+        let mut snapshot = opencode_session::Session::new("proj", ".");
+        snapshot.id = shared.id.clone();
+        snapshot.add_user_message_with_id("msg_one", "one");
+        snapshot.add_assistant_message().add_text("answer");
+
+        merge_session_snapshot(&mut shared, snapshot);
+
+        assert_eq!(shared.messages.len(), 2);
+        assert_eq!(shared.messages.last().unwrap().get_text(), "answer");
+    }
+
+    #[test]
+    fn merge_session_snapshot_preserves_terminal_record() {
+        let mut shared = opencode_session::Session::new("proj", ".");
+        shared.add_user_message_with_id("msg_one", "hi");
+        let assistant = shared.add_assistant_message();
+        let assistant_id = assistant.id.clone();
+        assistant
+            .metadata
+            .insert("error".to_string(), serde_json::json!("aborted"));
+        assistant
+            .metadata
+            .insert("finish_reason".to_string(), serde_json::json!("aborted"));
+
+        // A stale snapshot of the same assistant message taken before finalize.
+        let mut stale = opencode_session::Session::new("proj", ".");
+        stale.id = shared.id.clone();
+        stale.add_user_message_with_id("msg_one", "hi");
+        let stale_assistant = stale.add_assistant_message();
+        stale_assistant.id = assistant_id.clone();
+        stale_assistant.add_text("partial");
+
+        merge_session_snapshot(&mut shared, stale);
+
+        let merged = shared.get_message(&assistant_id).unwrap();
+        assert_eq!(
+            merged.metadata.get("error").and_then(|v| v.as_str()),
+            Some("aborted"),
+            "finalize must survive a stale snapshot"
+        );
+        assert_eq!(
+            merged
+                .metadata
+                .get("finish_reason")
+                .and_then(|v| v.as_str()),
+            Some("aborted"),
+            "terminal finish reason must survive a stale snapshot"
+        );
+        assert_eq!(merged.get_text(), "partial", "streamed content is retained");
+    }
+
+    #[test]
+    fn merge_session_snapshot_advances_streamed_text_without_regressing() {
+        let mut shared = opencode_session::Session::new("proj", ".");
+        shared.add_user_message_with_id("msg_one", "hi");
+        let assistant = shared.add_assistant_message();
+        let assistant_id = assistant.id.clone();
+        assistant.add_text("hello world");
+        let part_id = assistant.parts[0].id.clone();
+
+        let mut snapshot = opencode_session::Session::new("proj", ".");
+        snapshot.id = shared.id.clone();
+        snapshot.add_user_message_with_id("msg_one", "hi");
+        let stale_assistant = snapshot.add_assistant_message();
+        stale_assistant.id = assistant_id.clone();
+        stale_assistant.add_text("hello");
+        stale_assistant.parts[0].id = part_id;
+
+        merge_session_snapshot(&mut shared, snapshot);
+
+        assert_eq!(
+            shared.get_message(&assistant_id).unwrap().get_text(),
+            "hello world",
+            "merge must keep the longer streamed text"
+        );
+    }
+
+    #[test]
+    fn merge_session_snapshot_does_not_resurrect_deleted_message() {
+        let mut shared = opencode_session::Session::new("proj", ".");
+        shared.add_user_message_with_id("msg_keep", "keep");
+        shared.add_user_message_with_id("msg_doomed", "delete me");
+        shared.remove_message("msg_doomed");
+        assert!(shared.get_message("msg_doomed").is_none());
+
+        let mut snapshot = opencode_session::Session::new("proj", ".");
+        snapshot.id = shared.id.clone();
+        snapshot.add_user_message_with_id("msg_keep", "keep");
+        snapshot.add_user_message_with_id("msg_doomed", "delete me");
+
+        merge_session_snapshot(&mut shared, snapshot);
+
+        assert!(
+            shared.get_message("msg_doomed").is_none(),
+            "a stale snapshot must not resurrect a deleted message"
+        );
+        assert!(shared.get_message("msg_keep").is_some());
+        assert_eq!(shared.messages.len(), 1);
+    }
+
     #[tokio::test]
     async fn session_prompt_reports_started_then_queued_and_serializes_turns() {
         let state = Arc::new(ServerState::new());
@@ -2751,28 +2884,169 @@ async fn drain_session_queue(state: Arc<ServerState>, session_id: String) {
     }
 }
 
-/// Merge a runner snapshot into the shared session without dropping accepted
-/// queued user messages that the active runner has not observed yet.
+/// Whether a message is a queued-but-not-yet-consumed user prompt.
+fn is_queued_pending(message: &opencode_session::SessionMessage) -> bool {
+    message
+        .metadata
+        .get("queued_pending")
+        .and_then(|value| value.as_bool())
+        == Some(true)
+}
+
+fn part_text_len(part_type: &opencode_session::PartType) -> usize {
+    use opencode_session::PartType;
+    match part_type {
+        PartType::Text { text, .. } => text.len(),
+        PartType::Reasoning { text } => text.len(),
+        _ => 0,
+    }
+}
+
+/// Adopt the snapshot's copy of a part unless it would regress streamed output.
+fn advance_part(
+    existing: &mut opencode_session::MessagePart,
+    snapshot: &opencode_session::MessagePart,
+) {
+    use opencode_session::PartType;
+    let both_streamed = matches!(
+        (&existing.part_type, &snapshot.part_type),
+        (PartType::Text { .. }, PartType::Text { .. })
+            | (PartType::Reasoning { .. }, PartType::Reasoning { .. })
+    );
+    if both_streamed && part_text_len(&snapshot.part_type) < part_text_len(&existing.part_type) {
+        return;
+    }
+    existing.part_type = snapshot.part_type.clone();
+}
+
+/// Merge message metadata without dropping a newer terminal record.
+fn merge_message_metadata(
+    existing: &mut HashMap<String, serde_json::Value>,
+    snapshot: &HashMap<String, serde_json::Value>,
+) {
+    // A run that consumed a queued prompt removes this marker; its absence in
+    // the snapshot is authoritative, so let the snapshot clear it.
+    if !snapshot.contains_key("queued_pending") {
+        existing.remove("queued_pending");
+    }
+
+    let has_terminal_record = existing.contains_key("error");
+    for (key, value) in snapshot {
+        // Once a message carries a terminal record (finalize/abort), a stale
+        // snapshot must not overwrite it with an earlier, non-terminal value.
+        if has_terminal_record && (key == "error" || key == "finish_reason") {
+            continue;
+        }
+        existing.insert(key.clone(), value.clone());
+    }
+}
+
+/// Advance `existing` in place to at least the progress held by `snapshot`.
+///
+/// Both messages share an id. The snapshot is a copy taken by the run, so
+/// neither side is guaranteed to be newer: the snapshot may carry more streamed
+/// text, while `existing` may carry a terminal record written after the
+/// snapshot was taken. Keep the union of progress.
+fn merge_message_progress(
+    existing: &mut opencode_session::SessionMessage,
+    snapshot: &opencode_session::SessionMessage,
+) {
+    let mut part_index: HashMap<String, usize> = existing
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(position, part)| (part.id.clone(), position))
+        .collect();
+
+    for part in &snapshot.parts {
+        match part_index.get(&part.id) {
+            Some(&position) => advance_part(&mut existing.parts[position], part),
+            None => {
+                part_index.insert(part.id.clone(), existing.parts.len());
+                existing.parts.push(part.clone());
+            }
+        }
+    }
+
+    merge_message_metadata(&mut existing.metadata, &snapshot.metadata);
+    if existing.usage.is_none() {
+        existing.usage = snapshot.usage.clone();
+    }
+}
+
+/// Merge a runner snapshot into the shared session without regressing it.
+///
+/// The snapshot is derived from a clone taken at run start, so it may be
+/// missing messages produced by other writers (a queued prompt, another
+/// server, a finalize record) and it may hold older copies of messages the
+/// shared state has since advanced or removed. The shared session is
+/// authoritative: a snapshot may only add new messages or advance existing
+/// ones, never roll state back (BUG-043, BUG-047, BUG-051).
 fn merge_session_snapshot(
     existing: &mut opencode_session::Session,
     snapshot: opencode_session::Session,
 ) {
-    let snapshot_ids: Vec<&str> = snapshot.messages.iter().map(|m| m.id.as_str()).collect();
-    let pending: Vec<opencode_session::SessionMessage> = existing
-        .messages
+    let deleted = existing.deleted_message_ids();
+
+    // Queued-but-unobserved prompts sit after the in-flight assistant message;
+    // keep them aside so run progress is inserted ahead of them.
+    let mut queued: Vec<opencode_session::SessionMessage> = Vec::new();
+    let mut merged: Vec<opencode_session::SessionMessage> =
+        Vec::with_capacity(existing.messages.len());
+    for message in existing.messages.drain(..) {
+        if is_queued_pending(&message) {
+            queued.push(message);
+        } else {
+            merged.push(message);
+        }
+    }
+
+    let mut index: HashMap<String, usize> = merged
         .iter()
-        .filter(|message| {
-            message
-                .metadata
-                .get("queued_pending")
-                .and_then(|value| value.as_bool())
-                == Some(true)
-        })
-        .filter(|message| !snapshot_ids.contains(&message.id.as_str()))
-        .cloned()
+        .enumerate()
+        .map(|(position, message)| (message.id.clone(), position))
         .collect();
-    *existing = snapshot;
-    existing.messages.extend(pending);
+
+    let mut snapshot_ids: HashSet<String> = HashSet::with_capacity(snapshot.messages.len());
+    for message in &snapshot.messages {
+        snapshot_ids.insert(message.id.clone());
+        if let Some(&position) = index.get(&message.id) {
+            merge_message_progress(&mut merged[position], message);
+            continue;
+        }
+        if deleted.contains(&message.id) {
+            continue;
+        }
+        index.insert(message.id.clone(), merged.len());
+        merged.push(message.clone());
+    }
+
+    for message in queued {
+        if !snapshot_ids.contains(&message.id) {
+            merged.push(message);
+        }
+    }
+
+    existing.messages = merged;
+
+    // The shared session stays authoritative for identity and title, so only
+    // adopt run-produced state the shared view may not have yet.
+    if snapshot.summary.is_some() {
+        existing.summary = snapshot.summary;
+    }
+    if snapshot.usage.is_some() {
+        existing.usage = snapshot.usage;
+    }
+    for (key, value) in snapshot.metadata {
+        if key == "title_auto" || key == "deleted_message_ids" {
+            continue;
+        }
+        existing.metadata.entry(key).or_insert(value);
+    }
+    // Never let a stale snapshot move the session's freshness backwards, or the
+    // storage freshness guard would reject the newer shared state.
+    existing.time.updated = existing.time.updated.max(snapshot.time.updated);
+    existing.time.created = existing.time.created.min(snapshot.time.created);
 }
 
 async fn apply_session_snapshot(
