@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "wiki/v1.md"
-status: "doing"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -161,6 +161,10 @@ History is available in full (the fix must stay a render concern, not a data con
 ## Implementation Notes
 
 Implemented on branch `bug/BUG-049-windowed-session-render` (PR into `development`).
+
+### PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/129
 
 ### What changed
 
