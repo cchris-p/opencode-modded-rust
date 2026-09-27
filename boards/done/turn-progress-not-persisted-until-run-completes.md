@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -173,3 +173,17 @@ Dated context only; `qa` status and scope unchanged.
 - Merged into `development` as PR #127 (merge commit `dc41ce3`); branch
   `bug/BUG-043-047-051-snapshot-merge-and-metadata` deleted (remote then local).
 - Remains in `qa` until a post-merge QA report is recorded on `development`.
+
+## QA Report (post-merge self-QA) - 2026-09-27 - PASS
+
+QA: BUG-047 — in-flight assistant progress/metadata is persisted and survives a reload on `development`.
+commit: `7377827` (fix `875e5e7`, merge `dc41ce3`)   binary: `target/debug/opencode`
+harness: `scripts/qa/bug-043-047-051-snapshot-merge-qa.sh` (isolated HOME/DB)
+
+- `cargo test -p opencode-storage` metadata round-trip + legacy-format load pass.
+- Live (isolated HOME): after a streaming turn (including an aborted turn) and a server restart, the
+  assistant messages are served from storage with their parts intact (`assistant_parts=1`, non-zero
+  text) and `completed_at` present — progress/metadata are durable, not reset to `HashMap::new()`.
+- Raw storage `messages.data` carries `parts` plus `metadata` (`finish_reason`/`completed_at`) for the
+  persisted assistant turns.
+- result: **PASS**.

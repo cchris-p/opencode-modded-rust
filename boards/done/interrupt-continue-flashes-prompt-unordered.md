@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -166,3 +166,18 @@ in implementation, but the two-snapshot alternation is directly observed.
 - Merged into `development` as PR #127 (merge commit `dc41ce3`); branch
   `bug/BUG-043-047-051-snapshot-merge-and-metadata` deleted (remote then local).
 - Remains in `qa` until a post-merge QA report is recorded on `development`.
+
+## QA Report (post-merge self-QA) - 2026-09-27 - PASS
+
+QA: BUG-051 — the session message list stays stable across a streaming turn and interrupt-then-continue.
+commit: `7377827` (fix `875e5e7`, merge `dc41ce3`)   binary: `target/debug/opencode`
+harness: `scripts/qa/bug-043-047-051-snapshot-merge-qa.sh` (isolated HOME/DB, no shared DB)
+
+- Live: polled `GET /session/{id}/message` every 0.5s across a long streaming turn, an abort, and a
+  continuation prompt. 90 samples; the message count was non-decreasing (`min=1`, `max=4`) and the
+  last message id never reverted to an earlier id (no two-snapshot flip-flop).
+- The continuation prompt (`CONTINUE-MARKER-7F3A...`) rendered exactly once in every post-send sample —
+  no flashing/duplication.
+- TUI regression `components::session::tests::continuation_prompt_renders_once_in_order_and_stays_put`
+  passes (`cargo test -p opencode-tui components::session` -> 28 passed).
+- result: **PASS**.
