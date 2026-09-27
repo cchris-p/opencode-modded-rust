@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SKILLS"
 spec: "wiki/skills-parity-audit.md"
-status: "qa"
+status: "done"
 created: "2026-09-25"
 ---
 
@@ -155,3 +155,14 @@ Constraints:
 - Closeout: merged via PR #111 into `development` (merge commit `0203159`); the remote and local
   feature branches were deleted. The card remains in `qa` until a QA report is recorded or completion
   is explicitly directed.
+
+## QA Report - 2026-09-27 (user)
+
+QA: SKILLS-006 — skills surface in the slash-command menu as annotated `· skill` entries.
+Merged code: `development` (PR #111, merge commit `0203159`).
+
+- User-confirmed PASS in the TUI: typing `/` plus a query surfaces matching loaded skills with the
+  muted `· skill` suffix; selecting one inserts `/name ` (trailing space) and closes the popup without
+  opening the skill picker; pressing `/` alone still lists only built-in commands.
+- The `/skills` browse dialog and `/skill` inline completion continue to work.
+- result: **PASS**; card closed to `done` on 2026-09-27.

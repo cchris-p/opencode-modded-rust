@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "hold"
 created: "2026-09-27"
 ---
 
@@ -106,3 +106,16 @@ the failure is logged and dropped.
 - Likely files: `crates/opencode-server/src/routes.rs` (`sync_sessions_to_storage`,
   `persist_sessions_if_enabled`) and `crates/opencode-storage/src/database.rs` (connection setup,
   pragmas).
+
+## Hold Decision (2026-09-27)
+
+- Moved `todo` -> `hold` by user direction. The defect is real and still un-fixed: the SQLite pool
+  opens with default journal mode and no `busy_timeout` (`crates/opencode-storage/src/database.rs:43-45`),
+  so a concurrent writer still returns `SQLITE_BUSY`. It is distinct from `BUG-025` (snapshot
+  overwrite) and from the `BUG-043`/`BUG-047`/`BUG-051` snapshot-merge fixes.
+- It only fires when **two or more local servers write the shared `opencode.db` at the same time**.
+  The current single-workspace daily-driver flow does not routinely create that topology.
+- Reactivation trigger: before any multi-workspace / concurrent-server daily-driver use, or as part
+  of V1 robustness hardening. The fix is small and low-risk (WAL + `busy_timeout`/retry on
+  `SQLITE_BUSY`).
+- Not archived: this is a silent write-loss path, not a non-issue.
