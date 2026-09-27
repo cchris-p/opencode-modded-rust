@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "qa"
 created: "2026-09-26"
 ---
 
@@ -167,3 +167,9 @@ Dated context only; `qa` status and scope unchanged.
   its parts and `completed_at` (persisted, not `metadata: HashMap::new()`).
 - PR: https://github.com/cchris-p/opencode-modded-rust/pull/127
   (branch `bug/BUG-043-047-051-snapshot-merge-and-metadata`, base `development`, handoff H-014).
+
+## Closeout - 2026-09-27
+
+- Merged into `development` as PR #127 (merge commit `dc41ce3`); branch
+  `bug/BUG-043-047-051-snapshot-merge-and-metadata` deleted (remote then local).
+- Remains in `qa` until a post-merge QA report is recorded on `development`.

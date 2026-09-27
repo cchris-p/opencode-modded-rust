@@ -1,7 +1,7 @@
 ---
 id: "H-014"
 title: "BUG-043/047/051 snapshot-merge clobber and terminal-metadata root cause - Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-09-27"
 updated: "2026-09-27"
 owner: ""
@@ -204,3 +204,12 @@ Key files: `crates/opencode-server/src/routes.rs` (`merge_session_snapshot`,
 - Remaining: local QA on the PR branch, then explicit user direction to merge into `development`;
   after merge, post-merge QA on `development`, move cards to `qa`, delete the branch, archive this
   handoff.
+
+## Completed with PR #127 - 2026-09-27
+
+- Merged PR #127 (`bug/BUG-043-047-051-snapshot-merge-and-metadata`) into `development` as merge
+  commit `dc41ce3ef08cae3b6c355d4d165d95407c317d06`.
+- Branch deleted remotely and locally.
+- Cards `BUG-043`, `BUG-047`, `BUG-051` moved `doing -> qa`; they remain in `qa` until a post-merge
+  QA report is recorded on `development`.
+- This is the handoff's single PR; the handoff is complete and archived.
