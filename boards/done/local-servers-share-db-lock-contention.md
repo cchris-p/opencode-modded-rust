@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "done"
 created: "2026-09-27"
 ---
 
@@ -150,3 +150,10 @@ Environment: isolated git worktree `~/worktrees/opencode-modded-rust/bug-052` on
   than returning `SQLITE_BUSY`.
 - Live two-server reproduction (two TUI/serve pairs writing the shared DB) was not run in this
   environment; the deterministic concurrent-connection test covers the same lock-contention path.
+
+## Closeout (2026-09-27)
+
+- Merged via PR #130 (merge commit `11156d7`) into `development`.
+- Branch `bug/BUG-052-sqlite-busy-timeout-wal` deleted both remotely and locally.
+- This resolves the 2026-09-27 hold decision: the same low-risk hardening scoped there (WAL +
+  `busy_timeout` on the shared `opencode.db`) was implemented and verified.
