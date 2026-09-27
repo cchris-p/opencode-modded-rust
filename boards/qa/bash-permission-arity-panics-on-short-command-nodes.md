@@ -92,3 +92,9 @@ The permission layer must tolerate short nodes; a panic here is fatal to the run
   (`range end index 2 out of range for slice of length 1` at `arity.rs:10:30`).
 - After fix: `cargo test -p opencode-permission --lib` -> 16 passed, 0 failed.
 - `cargo check --workspace` clean; `cargo fmt --all` clean.
+
+## Live Context - 2026-09-26 (shared observation)
+
+Live observation of two concurrent `deepseek/deepseek-flash` sessions (see `BUG-051`) found them
+slowly progressing rather than wedged, consistent with this panic having been the root cause of the
+earlier hard stall (already fixed here). Dated context only; `qa` status and scope unchanged.

@@ -2083,4 +2083,104 @@ mod tests {
         );
         assert_eq!(draft, "pending draft");
     }
+
+    fn message(id: &str, role: MessageRole, text: &str, completed: bool) -> Message {
+        Message {
+            id: id.to_string(),
+            role,
+            content: text.to_string(),
+            created_at: chrono::Utc::now(),
+            agent: None,
+            model: None,
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: completed.then(chrono::Utc::now),
+            cost: 0.0,
+            tokens: Default::default(),
+            parts: vec![MessagePart::Text {
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    fn row_containing(
+        terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+        needle: &str,
+    ) -> Vec<usize> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .filter(|&y| {
+                let mut row = String::new();
+                for x in 0..buffer.area.width {
+                    row.push_str(buffer.get(x, y).symbol());
+                }
+                row.contains(needle)
+            })
+            .map(usize::from)
+            .collect()
+    }
+
+    #[test]
+    fn continuation_prompt_renders_once_in_order_and_stays_put() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "test-session".to_string();
+        // The interrupt-then-continue shape: a completed turn, the sent
+        // continuation prompt, then the in-flight assistant reply.
+        context.session.write().set_messages(
+            &session_id,
+            vec![
+                message("m1", MessageRole::User, "start", true),
+                message("m2", MessageRole::Assistant, "first answer", true),
+                message("m3", MessageRole::User, "continuation prompt", true),
+                message("m4", MessageRole::Assistant, "partial", false),
+            ],
+        );
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+
+        // Warm-up draws settle the follow-content layout (rendered line count).
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+
+        let measure = |terminal: &ratatui::Terminal<TestBackend>| {
+            let prompt_rows = row_containing(terminal, "continuation prompt");
+            assert_eq!(
+                prompt_rows.len(),
+                1,
+                "continuation prompt must render exactly once"
+            );
+            let answer_rows = row_containing(terminal, "first answer");
+            assert!(
+                answer_rows
+                    .last()
+                    .is_some_and(|answer| prompt_rows[0] > *answer),
+                "continuation prompt must render after the answer"
+            );
+            prompt_rows[0]
+        };
+
+        let first_row = measure(&terminal);
+
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        let second_row = measure(&terminal);
+        assert_eq!(
+            first_row, second_row,
+            "continuation prompt must not move across frames"
+        );
+    }
 }

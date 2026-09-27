@@ -578,11 +578,46 @@ impl Session {
     pub fn remove_message(&mut self, id: &str) -> Option<SessionMessage> {
         if let Some(pos) = self.messages.iter().position(|m| m.id == id) {
             let msg = self.messages.remove(pos);
+            self.mark_message_deleted(id);
             self.touch();
             Some(msg)
         } else {
             None
         }
+    }
+
+    /// Session metadata key holding the ids of messages explicitly removed from
+    /// this session. Kept as metadata so it persists with the session.
+    const DELETED_MESSAGES_METADATA_KEY: &'static str = "deleted_message_ids";
+
+    /// Record that a message was explicitly removed from this session.
+    ///
+    /// A detached run replays snapshots cloned before the removal; the merge
+    /// path consults these tombstones so a stale snapshot cannot resurrect a
+    /// message the shared session intentionally dropped (BUG-051).
+    pub fn mark_message_deleted(&mut self, id: &str) {
+        let entry = self
+            .metadata
+            .entry(Self::DELETED_MESSAGES_METADATA_KEY.to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(ids) = entry.as_array_mut() {
+            if !ids.iter().any(|existing| existing.as_str() == Some(id)) {
+                ids.push(serde_json::json!(id));
+            }
+        }
+    }
+
+    /// Ids of messages explicitly removed from this session.
+    pub fn deleted_message_ids(&self) -> std::collections::HashSet<String> {
+        self.metadata
+            .get(Self::DELETED_MESSAGES_METADATA_KEY)
+            .and_then(|value| value.as_array())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| id.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     // ========================================================================

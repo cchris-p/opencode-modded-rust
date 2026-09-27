@@ -133,3 +133,9 @@ QA: BUG-046 — a never-idle provider step is bounded by wall clock.
 
 Merged closeout: PR #119 merged into `development` on 2026-09-26; card moved to `done` after
 self-QA.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) found the observed streams bounded/slow, not endless,
+consistent with this hardening rather than a new never-idle case. Dated note only; `done` status
+unchanged.

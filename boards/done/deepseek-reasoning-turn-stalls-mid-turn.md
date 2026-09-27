@@ -190,3 +190,9 @@ Implemented a provider-stream idle timeout (2026-09-23).
 - Card moved `todo -> qa -> done` with the cluster closeout.
 - Automated QA recorded above; live `ort` reproduction was not available in the headless environment
   and remains advisable as a post-merge sanity check.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) observed deepseek reasoning turns streaming slowly rather
+than hard-stalling (the 90s idle timeout did not trigger), providing the overdue post-merge sanity
+context. Dated note only; `done` status unchanged.

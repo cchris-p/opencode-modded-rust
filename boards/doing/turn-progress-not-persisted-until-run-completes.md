@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "doing"
 created: "2026-09-26"
 ---
 
@@ -141,3 +141,29 @@ QA: BUG-047 — in-flight assistant output is persisted during a run.
 - result: **PARTIAL** — the narrow "parts exist after a mid-turn exit" ask held in these runs, but
   timely in-flight flushing was not demonstrated and terminal progress can still be lost. Keep open
   alongside `BUG-043`.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) showed the latest assistant message's persisted `data`
+bytes growing monotonically (`130 -> ... -> 1185`) during a streaming turn, i.e. in-flight content
+*was* flushed; at the same time the in-memory session list alternated with a reverted snapshot.
+Dated context only; `qa` status and scope unchanged.
+
+## Dev Notes - 2026-09-27 (reopened, H-014)
+
+- The remaining gap was on the persist/merge path, not the flush trigger: `merge_session_snapshot`
+  replaced the shared session wholesale, so a stale run snapshot could drop the latest in-flight
+  parts; and storage serialized only `message.parts`, so metadata (`error` / `finish_reason` /
+  `completed_at`) could never be restored on reload.
+- Fix: the merge is now monotonic and per-message/per-part, so streamed progress is never rolled
+  back; `messages.data` now stores parts plus metadata and reads accept the legacy bare-array form
+  (`crates/opencode-storage/src/repository.rs`). The existing fingerprint flush and end-of-turn
+  flush are unchanged.
+
+## Verification - 2026-09-27
+
+- `cargo test -p opencode-storage` -> metadata round-trip + legacy-format load pass.
+- Live (isolated HOME): after a streaming turn and a reload, the last assistant message still carries
+  its parts and `completed_at` (persisted, not `metadata: HashMap::new()`).
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/127
+  (branch `bug/BUG-043-047-051-snapshot-merge-and-metadata`, base `development`, handoff H-014).
