@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-25"
 ---
 
@@ -267,3 +267,6 @@ Verification run:
 - `cargo fmt --all` applied.
 
 Status: returned to `qa` for operator verification on `development`.
+
+Operator QA pass (2026-09-27): the home-screen `Ctrl+T` prompt-hide follow-up is confirmed passing on
+local `development` (commit `8ea1b90`, already merged into `origin/development`).
