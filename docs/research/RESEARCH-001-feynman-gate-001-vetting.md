@@ -1,10 +1,10 @@
-# FEAT-065 — Feynman vs opencode/ort for vetting aa-studies `GATE-001`
+# RESEARCH-001 — Feynman vs opencode/ort for vetting aa-studies `GATE-001`
 
-Companion note to the `FEAT-065` card. This is a **sanitized** record of a
+Companion note to the `RESEARCH-001` card. This is a **sanitized** record of a
 read-only research comparison; it contains no private aa-studies artifact
 contents, prompts, or secrets. External documents are referenced by path only.
 
-- Item: `FEAT-065` ("Use Feynman to vet GATE-001 results and improve the ideal
+- Item: `RESEARCH-001` ("Use Feynman to vet GATE-001 results and improve the ideal
   strategy and param sets")
 - Handoff: `H-013`
   (`handoffs/archive/2026-09-26-feat-065-feynman-gate-001-vetting-handoff.md`)
@@ -130,7 +130,7 @@ operational complexity.
 
 **Supplement, not supersede.** That doc scopes Feynman for the walkforward
 optimization loop (coding/verification copilot) and already rules out
-alphaXiv/literature for that objective. `FEAT-065` covers a **different**
+alphaXiv/literature for that objective. `RESEARCH-001` covers a **different**
 objective (GATE-001 result vetting) and reaches a parallel conclusion: the
 research/literature tooling adds nothing, and the separate harness is not
 justified by the vetting output. It does not replace the optimization-copilot

@@ -22,7 +22,7 @@
 
 ## aa-studies Workflow (Live Research Repo)
 
-- `$HOME/repos/aa-studies` (private `cchris-p/aa-studies`) is the live research repo behind the only active production workflow and the `GATE-001` V1 Readiness Gate. `FEAT-065`/`FEAT-066` operate against it.
+- `$HOME/repos/aa-studies` (private `cchris-p/aa-studies`) is the live research repo behind the only active production workflow and the `GATE-001` V1 Readiness Gate. `RESEARCH-001`/`RESEARCH-002` operate against it.
 - Clone it locally if absent: `git clone --branch development git@github.com:cchris-p/aa-studies.git "$HOME/repos/aa-studies"` (private; auth required).
 - **Always work and read on the `development` branch, never `main`.** `main` is behind. Fetch first: `git -C "$HOME/repos/aa-studies" fetch origin development`. Prefer reading the local project directory directly; use `gh api repos/cchris-p/aa-studies/contents/<path>?ref=development` only as a fallback.
 - This machine **cannot run** aa-studies optimization/backtest scripts — they require data mounting that is not present here. Do not attempt them.
