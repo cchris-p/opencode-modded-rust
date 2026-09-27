@@ -65,13 +65,18 @@ impl HomeView {
         Self { context }
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect) -> Rect {
+    pub fn render(&self, frame: &mut Frame, area: Rect) -> Option<Rect> {
         let prompt = Prompt::new(self.context.clone())
             .with_placeholder("Ask anything... \"Fix a TODO in the codebase\"");
         self.render_with_prompt(frame, area, &prompt)
     }
 
-    pub fn render_with_prompt(&self, frame: &mut Frame, area: Rect, prompt: &Prompt) -> Rect {
+    pub fn render_with_prompt(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        prompt: &Prompt,
+    ) -> Option<Rect> {
         let area = Rect {
             x: area.x.saturating_add(HOME_OUTER_H_PADDING),
             y: area.y.saturating_add(HOME_OUTER_V_PADDING),
@@ -83,13 +88,15 @@ impl HomeView {
                 .saturating_sub(HOME_OUTER_V_PADDING.saturating_mul(2)),
         };
         if area.width == 0 || area.height == 0 {
-            return Rect::default();
+            return None;
         }
+        let prompt_hidden = *self.context.prompt_hidden.read();
+        let prompt_height = if prompt_hidden { 0 } else { 8 };
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(1),
-                Constraint::Length(8),
+                Constraint::Length(prompt_height),
                 Constraint::Length(4),
                 Constraint::Length(3),
             ])
@@ -104,7 +111,9 @@ impl HomeView {
             height: layout[1].height,
         };
 
-        prompt.render(frame, prompt_area);
+        if !prompt_hidden && prompt_area.height > 0 && prompt_area.width > 0 {
+            prompt.render(frame, prompt_area);
+        }
 
         if self.should_show_tips() {
             self.render_tips(frame, layout[2]);
@@ -112,7 +121,11 @@ impl HomeView {
 
         self.render_footer(frame, layout[3]);
 
-        prompt_area
+        if prompt_hidden {
+            None
+        } else {
+            Some(prompt_area)
+        }
     }
 
     fn render_tips(&self, frame: &mut Frame, area: Rect) {
@@ -321,11 +334,56 @@ fn parse_tip_highlights(tip: &str, theme: &crate::theme::Theme) -> Vec<Span<'sta
 
 #[cfg(test)]
 mod tests {
-    use super::tips_visible;
+    use super::{tips_visible, HomeView};
+    use crate::components::Prompt;
+    use crate::context::AppContext;
+    use ratatui::layout::Rect;
+    use std::sync::Arc;
 
     #[test]
     fn tips_are_only_visible_when_not_hidden() {
         assert!(!tips_visible(true));
         assert!(tips_visible(false));
+    }
+
+    fn draw_home(prompt_hidden: bool) -> (Option<Rect>, String) {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        *context.prompt_hidden.write() = prompt_hidden;
+        let mut prompt = Prompt::new(context.clone());
+        prompt.set_input("pending draft".to_string());
+        let home = HomeView::new(context.clone());
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+        let mut prompt_area = None;
+        terminal
+            .draw(|frame| {
+                prompt_area = home.render_with_prompt(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        let draft = prompt.get_input().to_string();
+        (prompt_area, draft)
+    }
+
+    #[test]
+    fn hidden_prompt_reserves_zero_rows_on_home() {
+        let (prompt_area, draft) = draw_home(true);
+        assert!(
+            prompt_area.is_none(),
+            "hidden home prompt must not reserve a render area"
+        );
+        assert_eq!(draft, "pending draft");
+    }
+
+    #[test]
+    fn visible_prompt_reserves_rows_on_home() {
+        let (prompt_area, draft) = draw_home(false);
+        assert!(
+            prompt_area.is_some(),
+            "visible home prompt must reserve a render area"
+        );
+        assert_eq!(draft, "pending draft");
     }
 }

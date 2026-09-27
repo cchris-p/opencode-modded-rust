@@ -31,6 +31,7 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `runtime-lifecycle.md` defines task lifecycle expectations.
 - `session-durability.md` defines durable session/message ownership, additive persistence, explicit deletion, and resume integrity.
 - `retrieval.md` defines retrieval expectations.
+- `research-department.md` defines departments as separation-of-concern areas and the Research Department's advisory, non-canonical external-evidence role.
 - `coding-session-behavior.md` defines agentic coding-session request requirements (agent identity, system prompt, environment context, tool attachment).
 - `plan-mode.md` defines plan-mode plan-file path, permissions, reminder injection, and tools.
 - `cli-task-targeting.md` defines CLI task target selection and queued cross-client send requirements.
@@ -40,6 +41,19 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.
 - `integration-scope.md` defines that ScopeMux integration work includes the `scopemux-core` and `scopemux-notes` development it depends on.
 - Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
+
+## CLI invariants group
+
+The CLI surface invariants are referenced as this group:
+
+- `cli-task-targeting.md` - CLI task target selection and `task new|send|view|status` rules.
+- `message-queuing.md` - per-session prompt ordering, queue-aware status, abort/cancel, and the shared
+  queued-send contract the CLI task client obeys.
+- `runtime-lifecycle.md` - CLI/TUI launch, detach, attach, and session lifecycle constraints.
+
+`coding-session-behavior.md` also constrains the CLI prompt path (it must attach the agent system
+prompt, environment context, and tools like the TUI path), but it is shared with the TUI rather than
+being exclusive to the CLI group.
 
 ## Cross-repo boundary
 

@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use opencode_types::{
-    RetrievalCandidate, RetrievalCandidateKind, RetrievalConfidence, RetrievalRequest,
-    RetrievalResponse,
+    RetrievalCandidate, RetrievalCandidateKind, RetrievalConfidence, RetrievalRepresentation,
+    RetrievalRequest, RetrievalResponse,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +61,21 @@ impl RetrievalProvider for GenericRepositoryProvider {
         &self,
         request: &RetrievalRequest,
     ) -> Result<RetrievalResponse, RetrievalError> {
+        // The generic provider has no map, so slices that only a map can build
+        // return no candidates. The runtime still completes; this is the
+        // explicit fallback the stage table expects.
+        if matches!(
+            request.representation,
+            RetrievalRepresentation::Reconcile
+                | RetrievalRepresentation::Observability
+                | RetrievalRepresentation::Duplicates
+        ) {
+            return Ok(RetrievalResponse::empty_for(
+                self.name(),
+                request.representation,
+            ));
+        }
+
         let root = Path::new(&request.workspace_root);
         let mut candidates = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
@@ -123,6 +138,7 @@ impl RetrievalProvider for GenericRepositoryProvider {
         Ok(RetrievalResponse {
             candidates,
             provider: self.name().to_string(),
+            representation: request.representation,
             plan_signals: Vec::new(),
         })
     }
@@ -149,7 +165,7 @@ fn resolve(root: &Path, path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opencode_types::{RetrievalRole, SessionTask, TaskStage};
+    use opencode_types::{MapRole, SessionTask, TaskStage};
 
     fn request(workspace_root: &Path) -> RetrievalRequest {
         RetrievalRequest {
@@ -159,9 +175,11 @@ mod tests {
             seed_files: Vec::new(),
             seed_symbols: Vec::new(),
             changed_files: Vec::new(),
-            role: RetrievalRole::Implementing,
+            role: MapRole::Project,
+            representation: RetrievalRepresentation::Delta,
             token_budget: None,
             task_id: None,
+            reopen_reason: None,
             plan_nodes: Vec::new(),
         }
     }
@@ -227,12 +245,13 @@ mod tests {
     #[test]
     fn request_from_task_carries_authoritative_fields() {
         let task = SessionTask::new("ship the boundary", vec!["done".into()], "/tmp/ws", vec![]);
-        let req = RetrievalRequest::from_task(&task, RetrievalRole::Reviewing);
+        let req = RetrievalRequest::from_task(&task);
 
         assert_eq!(req.objective, "ship the boundary");
         assert_eq!(req.workspace_root, "/tmp/ws");
         assert_eq!(req.stage, TaskStage::Selected);
-        assert_eq!(req.role, RetrievalRole::Reviewing);
+        assert_eq!(req.role, MapRole::Locate);
+        assert_eq!(req.representation, RetrievalRepresentation::Search);
     }
 
     #[test]
@@ -240,5 +259,21 @@ mod tests {
         let response = RetrievalResponse::empty("generic");
         assert!(response.candidates.is_empty());
         assert_eq!(response.provider, "generic");
+    }
+
+    #[tokio::test]
+    async fn map_only_representations_return_no_generic_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "").unwrap();
+
+        let provider = GenericRepositoryProvider::new();
+        let mut req = request(dir.path());
+        req.seed_files.push("a.rs".to_string());
+        req.representation = RetrievalRepresentation::Duplicates;
+
+        let response = provider.retrieve(&req).await.unwrap();
+
+        assert!(response.candidates.is_empty());
+        assert_eq!(response.representation, RetrievalRepresentation::Duplicates);
     }
 }

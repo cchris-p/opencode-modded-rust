@@ -3,9 +3,31 @@
 Canonical current/target behavior for the CLI/TUI launch, detach, attach, and session lifecycle:
 `wiki/cli-surface.md`.
 
+## Scope
+
+- Covers runtime ownership of lifecycle state, explicit stage transitions, and the rule that leaving a
+  session view never cancels background execution.
+- Covers `ort` TUI launch and the explicit `/detach` + `opencode attach` reattachment paths.
+- Sources: `crates/opencode-cli/src/main.rs` (`LocalTuiServer`, `:959-989,973-976`),
+  `crates/opencode-tui/src/app/app.rs:345-346`, `crates/opencode-tui/src/command.rs:382-389`,
+  board items `CLI-003`/`CLI-004`/`CLI-005` (`done`), and `wiki/cli-surface.md`.
+
+## Invariants
+
 - The runtime owns lifecycle state transitions.
 - The model may make bounded decisions inside the runtime, but it does not control the overall workflow.
 - Tasks move through explicit system-defined stages.
 - Exiting a session view must not implicitly cancel active session execution.
 - A user must be able to leave and later revisit a running session while the runtime continues advancing that session in the background.
 - Completion state may only be reached through explicit verification.
+- Every `ort` launch starts a fresh local server for the activated workspace; a prior server must not be
+  implicitly reused, and reattachment is explicit (`opencode attach <url>` / `ort --attach <url>`).
+- Only an explicit user detach leaves the launched server alive; normal exit terminates it.
+- Same-workspace server attach/reuse is resolved **NO-GO** (`CLI-005`, done 2026-09-26):
+  reattachment is always explicit. This is permanent, not conditional. Rationale: the Cline-copied
+  CLI contract is explicit-target (`CLI-001` forbids implicit discovery/start/reuse); the headless
+  workflow already works via `opencode serve`/`/detach` + `opencode task target select --server` +
+  `opencode attach <url>`; and every auto-detect/prompt variant needs the persisted server record
+  `CLI-003` deleted after `FEAT-002`/`FEAT-014` caused stale-server QA traps (`BUG-003`/`BUG-011`).
+  Do not reintroduce implicit discovery or reuse.
+

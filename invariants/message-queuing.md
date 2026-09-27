@@ -26,17 +26,17 @@ Terminology:
 
 ---
 
-## Current Behavior (implemented by `GATE-001`)
+## Current Behavior
 
-> **Implementation status (2026-09-21, `GATE-001` / PR `feature/GATE-001-session-prompt-queue`):**
-> The invariants below are implemented on the server and in the TUI: a shared per-session FIFO queue
-> with a single drain loop, accept-time materialization with single ownership, a `Queued` run status,
-> abort-active plus explicit queued cancel, `prompt_async` aliased to the queued path, and the vanilla
-> `QUEUED` TUI badge. Beyond the invariants, the CLI task client rules stay target until `CLI-001`/
-> `CLI-006` land. The one deliberate partial is the CLI run-footer "Manage queued prompts" surface,
-> which is conditional on a CLI interactive run surface existing.
+> **Implementation status (updated 2026-09-26):** The queuing invariants are implemented on the
+> server, in the TUI, and in the CLI task surface (`GATE-001` queue; CLI client `CLI-001`/`CLI-006`,
+> both `done` 2026-09-23). A shared per-session FIFO queue with a single drain loop, accept-time
+> materialization with single ownership, a `Queued` run status, abort-active plus explicit queued
+> cancel, and `prompt_async` aliased to the queued path are all live. The one deliberate partial is
+> the CLI run-footer "Manage queued prompts" surface, which is conditional on an interactive
+> `opencode run` surface existing (`CLI-002`, `hold`).
 
-### Historical Pre-implementation Baseline
+### Historical Pre-implementation Baseline (pre-`GATE-001`)
 
 ### Endpoints
 
@@ -101,9 +101,9 @@ because they are not represented anywhere.
   (`crates/opencode-tui/src/api.rs:533`).
 - TUI `submit_prompt` (`crates/opencode-tui/src/app/app.rs:2297`) has **no busy guard**; a
   user can press Enter while a prompt is running and fire a second `/prompt`.
-- The `opencode task` CLI surface is not implemented yet; `CLI-007` only added target
-  selection. The generated route docs list `sessionPromptAsync` (`crates/opencode-cli/src/main.rs:3322`),
-  but no client uses it as a queue.
+- The `opencode task` CLI surface (`new`/`send`/`view`/`status`) submits through the canonical
+  `/session/{id}/prompt` path and reports `started`/`queued` with queue position/depth
+  (`CLI-001`/`CLI-006`, `done`; `crates/opencode-cli/src/main.rs:2942-2975`).
 - The TUI prompt stash (`crates/opencode-tui/src/components/prompt.rs:659`) and the server's
   `TUI_REQUEST_QUEUE` (`routes.rs:4260`) are unrelated to prompt queuing (draft storage and
   server-to-TUI control injection respectively).
@@ -121,9 +121,9 @@ because they are not represented anywhere.
 
 ## Binding Invariants
 
-Approved 2026-09-21 via `GATE-001`. Implementation status: 1-9 and 11 are implemented; 10 is partially
-implemented (in-memory queue plus transcript persistence, no resume); 12 remains target for the CLI
-client pending `CLI-001`/`CLI-006`; 13 holds (no lifecycle changes).
+Approved 2026-09-21 via `GATE-001`. Implementation status: 1-9, 11, and 12 are implemented; 10 is
+partially implemented (in-memory queue plus transcript persistence, no resume); 13 holds (no
+lifecycle changes).
 
 1. **One active run per session.** A session executes at most one agentic prompt at a time.
    Concurrency across different sessions is allowed and independent.
@@ -203,19 +203,21 @@ This is the shape implemented by `GATE-001`; exact types are implementation deta
 - **Bound.** A configurable per-session maximum (proposed default 32) rejects new sends with
   a clear "queue full" error once reached.
 
-## Client Behavior (target)
+## Client Behavior
 
-The TUI behavior below is implemented; the CLI/API items remain target until `CLI-001`/`CLI-006`.
+The TUI and CLI behavior below is implemented; the API item is implemented through the queue-aware
+`/prompt` endpoint and the `prompt_async` alias.
 
 - **TUI.** May keep its optimistic user message; a queued message renders as pending and is
   reconciled when `session.updated`/status shows it active or complete. The TUI may also
   queue locally before the server ack, but the server queue is authoritative.
 - **CLI.** `task send`/`task new` return target session plus `started`/`queued` and queue
   position. `task view`/status show queued entries. `--stream` follows the request when it
-  starts; while queued it reports queued status instead of pretending to stream.
-- **API.** `/session/{id}/prompt` is queue-aware. `prompt_async` is either removed, aliased
-  to `/prompt` with fire-and-forget semantics, or made the explicit queued endpoint; it must
-  execute for real.
+  starts; while queued it reports queued status instead of pretending to stream. Implemented by
+  `CLI-001`/`CLI-006` (`done`); evidence `crates/opencode-cli/src/main.rs:2942-2975`, `:3011-3046`.
+- **API.** `/session/{id}/prompt` is queue-aware. `prompt_async` is aliased to the canonical queued
+  path and executes for real; the old message-append stub is gone
+  (`crates/opencode-server/src/routes.rs:4579-4632`).
 
 ---
 
@@ -228,7 +230,7 @@ The TUI behavior below is implemented; the CLI/API items remain target until `CL
 5. **Restart policy:** the queue is in-memory; accepted-but-unstarted messages persist in the transcript and are never auto-executed or silently deleted. No resume in V1.
 6. **Queue bound and overflow:** per-session default 32 with an explicit `queue is full` rejection.
 7. **TUI queued-message rendering:** pending `QUEUED` badge plus explicit cancel; no reorder in V1.
-8. **`--stream` while queued:** return queued immediately (session, message id, position); `--stream` follows once active. Target for `CLI-001`.
+8. **`--stream` while queued:** return queued immediately (session, message id, position); `--stream` follows once active. Implemented in `CLI-001` (`done`).
 9. **Status vocabulary:** `idle | busy | queued` with position/depth; `retry` retained.
 
 ---
@@ -238,19 +240,22 @@ The TUI behavior below is implemented; the CLI/API items remain target until `CL
 - **Board items (queuing-related):**
   - `GATE-001` Gate: prompt queuing and queue display must match vanilla OpenCode exactly
     (primary and sole owner; `done` - implemented the per-session queue and the vanilla `QUEUED` badge).
-  - `CLI-007` Add default task target selection for CLI sends (routing into the queue; merged in PR #37,
-    in `qa`; the target input consumed by `CLI-001`).
-  - `CLI-001` Copy Cline-style CLI task send conventions (reactivated 2026-09-22; canonical CLI task send
-    surface and prerequisite gate for the remaining `CLI-*` stories).
-  - `CLI-006` Add CLI status visibility for tasks and background sessions (reactivated 2026-09-22; surfaces
-    queued state; co-prerequisite gate).
+  - `CLI-007` Add default task target selection for CLI sends (routing into the queue; `done` 2026-09-23,
+    PR #37; the target input consumed by `CLI-001`).
+  - `CLI-001` Copy Cline-style CLI task send conventions (`done` 2026-09-23; PR #80, post-merge fix
+    `BUG-036` PR #82; canonical CLI task send surface).
+  - `CLI-006` Add CLI status visibility for tasks and background sessions (`done` 2026-09-23; PR #81,
+    post-merge fix `BUG-036` PR #82; surfaces queued state).
   - `CLI-008` Queue CLI task sends while TUI session is open (archived 2026-09-21; queue delivered by `GATE-001`).
   - `FEAT-007` Add advanced coding-session polling (waiting on session state; related but distinct)
   - `FEAT-036` Persist and recall typed input-box messages (hold; local drafts, not a queue)
 - **Handoffs:** `handoffs/archive/2026-09-21-session-prompt-queue-gate-handoff.md` (`H-004`, closed and
-  archived 2026-09-22; satisfied by `GATE-001`; the reactivated `CLI-001`/`CLI-006` are now owned by `H-006`,
-  `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md`). `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md`
-  (`H-003`) is superseded and folded into `H-004` (2026-09-22).
+  archived 2026-09-22; satisfied by `GATE-001`). The reactivated `CLI-001`/`CLI-006` were delivered by
+  `H-006` (`handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md`, `complete`); its
+  deferred CLI dependents (`CLI-002`, `CLI-009`, `CLI-010`) have no follow-up handoff yet
+  (`CLI-005` was resolved no-go on 2026-09-26 and needs no implementation handoff).
+  `handoffs/archive/2026-09-16-cli-task-targeting-handoff.md` (`H-003`) is superseded and folded into
+  `H-004` (2026-09-22).
 - **Canonical behavior doc:** `wiki/cli-surface.md` (current + target CLI task and TUI lifecycle behavior).
 - **Existing invariants:** `invariants/cli-task-targeting.md` (targeting rules; its enqueue
   rule references this doc), `invariants/coding-session-behavior.md` (canonical session path),

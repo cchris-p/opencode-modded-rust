@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -118,3 +118,24 @@ reference has a total turn/step bound, so this is a real robustness gap for reas
 The captured recurrence was a **panic** (`BUG-048`), not an endless provider stream. This bound is
 therefore not the root cause of that stall, but remains valid hardening for a never-idle stream; keep
 it.
+
+## QA Report (self-QA) - 2026-09-26
+
+QA: BUG-046 — a never-idle provider step is bounded by wall clock.
+
+- commit: `34bc972` (`development`); binary `target/debug/opencode`.
+- Command: `cargo test -p opencode-provider never_idle_stream_is_stopped_by_budget` -> PASS (a
+  never-ending, never-idle stream ends with a budget error; 103 other provider tests unaffected).
+- The classification above establishes the captured recurrence was the `BUG-048` panic, not an
+  endless stream, so this is hardening rather than the incident root cause; it remains valid and
+  tested.
+- result: PASS.
+
+Merged closeout: PR #119 merged into `development` on 2026-09-26; card moved to `done` after
+self-QA.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) found the observed streams bounded/slow, not endless,
+consistent with this hardening rather than a new never-idle case. Dated note only; `done` status
+unchanged.

@@ -272,3 +272,9 @@ impossible to mistake for a complete one.
   remotely and locally, and the local checkout is back on `development`.
 - Remains in `qa` pending a recorded QA report or explicit user direction to complete. No live
   plan-mode reproduction result has been recorded on this card yet.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) found the current deepseek runs slowly progressing, not
+stalled, so this card still has no live plan-mode reproduction. Dated context only; `qa` status and
+scope unchanged.

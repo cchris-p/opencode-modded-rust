@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -257,3 +257,100 @@ in `…/traces/server.log`:
 - On the build that produced this (pre-`BUG-043`), the panicking run never finalized, leaving the
   session `busy` - exactly this card's mechanism. With `BUG-043`, the same panic is contained and the
   run finalizes; `BUG-048` removes the panic entirely.
+
+## QA Report (self-QA) - 2026-09-26 - FAIL
+
+QA: BUG-043 — guaranteed terminal state and interrupt on abort.
+
+- commit: `34bc972` (`development`); binary `target/debug/opencode`; model `deepseek/deepseek-flash`;
+  headless server + HTTP API (ports 3598/3599).
+- Tests (PASS): `cargo test -p opencode-session finalize_incomplete_turn_marks_terminal_and_resolves_calls`;
+  `cargo test -p opencode-server fingerprint_changes_when`.
+- Live abort (PASS): stream a long turn, `POST /session/{id}/prompt/abort`, poll `GET /session/status`
+  -> `busy=false`/`idle=true` within ~4s. The stuck-Busy wedge is gone.
+- Live durable terminal record (FAIL, nondeterministic). Across 4 abort runs:
+  - 2/4: after idle, both `/session/{id}/message` (in-memory) and the DB had no terminal record — the
+    last assistant message was a reasoning part only, `error`/`finish` absent, with no
+    `Run ended before completion: aborted` / `Aborted by user.` text.
+  - 1/4: the DB transiently held `Run ended before completion: aborted`, then a follow-up
+    continuation overwrote it back to reasoning-only.
+  - 1/4: terminal text persisted and stabilized in the DB, but the API still reported `error`/`finish`
+    as null.
+- Likely mechanism: `run_prompt_turn` spawns the `BUG-047` `update_task`, which keeps applying
+  buffered `Session` snapshots to `state.sessions` and persisting them. On abort, `drain_session_queue`
+  drops the run future and `finalize_run_without_terminal` writes the terminal state; the still-draining
+  `update_task` then re-applies a stale pre-finalize snapshot (`merge_session_snapshot` does
+  `*existing = snapshot`) and persists it, clobbering the terminal record. The `time.updated` freshness
+  guard in `sync_sessions_to_storage` does not reliably prevent this because the stale snapshot can
+  carry a newer update time.
+- Deterministic storage gap (contributes): message metadata (`error`, `finish_reason`, `completed_at`)
+  is never written to storage — `MessageRepository::upsert` / `replace_for_session` serialize only
+  `message.parts` (`crates/opencode-storage/src/repository.rs:592,621,811`) and `list_for_session`
+  rebuilds messages with `metadata: HashMap::new()` (`repository.rs:701`). So no terminal record can
+  survive a reload/restart, and `opencode session inspect` mislabels an aborted-but-finalized turn as
+  "stalled" (its heuristic only recognizes ToolResult/StepFinish/Compaction parts).
+- result: **FAIL**. Idle is guaranteed, but "always ends with a durable terminal record" is not met.
+  Reopened for implementation.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) found the observed `deepseek/deepseek-flash` runs were
+**slowly progressing, not hard-wedged** (persisted assistant `data` grew monotonically, message
+count advanced). It also directly observed the mechanism this card's QA Report hypothesizes: the
+in-memory `state.sessions[...]` list alternated between a forward run snapshot and a reverted
+persisted snapshot. Dated context only; this card's `qa` status and scope are unchanged.
+
+## Dev Notes - 2026-09-27 (reopened root-cause fix, H-014)
+
+- Confirmed root cause: `merge_session_snapshot` did `*existing = snapshot`
+  (`crates/opencode-server/src/routes.rs`), so the still-draining `update_task` re-applied a stale
+  pre-finalize run snapshot over the finalized shared session and `persist_sessions_if_enabled` wrote
+  it back out, erasing the terminal record.
+- Fix: `merge_session_snapshot` is now monotonic and keyed by message id. It never reduces the message
+  count, keeps a newer terminal record, advances streamed parts without regressing them, preserves
+  ordering, and does not resurrect intentionally removed messages. `Session::remove_message` now
+  records a durable tombstone (`deleted_message_ids`) that the merge honors.
+- Storage now persists and restores message metadata (`error` / `finish_reason` / `completed_at`):
+  `messages.data` stores parts plus metadata and reads accept the legacy bare-array form
+  (`crates/opencode-storage/src/repository.rs`). `finalize_incomplete_turn` also stamps `completed_at`.
+- `opencode session inspect` now recognizes a persisted terminal record instead of reporting a
+  finalized-without-terminal run as stalled (`crates/opencode-cli/src/main.rs`).
+
+## Verification - 2026-09-27
+
+- New tests: `merge_session_snapshot_preserves_terminal_record`, `..._never_regresses_message_count`,
+  `..._appends_new_run_progress`, `..._advances_streamed_text_without_regressing`,
+  `..._does_not_resurrect_deleted_message`; `message_metadata_round_trips`,
+  `legacy_parts_only_data_loads_with_empty_metadata`; `diagnostic_verdict_recognizes_persisted_terminal_metadata`.
+- `cargo test -p opencode-server` -> 71 + 3 integration passed; `cargo test -p opencode-storage` -> 3
+  passed; `cargo check --workspace` and `cargo fmt --all -- --check` clean.
+- Live (isolated HOME, no shared DB): abort a streaming run -> idle; reload from storage -> assistant
+  message carries `error=aborted`, `finish_reason=aborted`, `completed_at` set; inspect no longer
+  reports it as stalled.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/127
+  (branch `bug/BUG-043-047-051-snapshot-merge-and-metadata`, base `development`, handoff H-014).
+
+## Closeout - 2026-09-27
+
+- Merged into `development` as PR #127 (merge commit `dc41ce3`); branch
+  `bug/BUG-043-047-051-snapshot-merge-and-metadata` deleted (remote then local).
+- Remains in `qa` until a post-merge QA report is recorded on `development`.
+
+## QA Report (post-merge self-QA) - 2026-09-27 - PASS
+
+QA: BUG-043 — an aborted run keeps a durable terminal record across a reload on `development`.
+commit: `7377827` (fix `875e5e7`, merge `dc41ce3`)   binary: `target/debug/opencode`
+harness: `scripts/qa/bug-043-047-051-snapshot-merge-qa.sh` (isolated HOME/DB, server 127.0.0.1:4197)
+
+- `cargo test -p opencode-server` 71 + 3 passed; `-p opencode-storage` 3 passed; `-p opencode-tui`
+  `continuation_prompt_renders_once_in_order_and_stays_put` passed; `cargo check --workspace` and
+  `cargo fmt --all -- --check` clean. (`opencode-session` has 2 pre-existing
+  `instruction::tests::test_find_up_*` failures from `e937c3c`; `instruction.rs` is untouched by
+  this fix — unrelated macOS path-symlink issue.)
+- Live (isolated HOME): streaming turn -> abort -> idle -> restart server -> `GET /session/{id}/message`
+  returns the aborted assistant with `error=aborted`, `finish=aborted`, `completed_at` set.
+- Raw storage: `sqlite3 messages.data` for the aborted assistant contains
+  `{"metadata":{"completed_at":...,"error":"aborted","finish_reason":"aborted"},...}` — metadata
+  survives reload (not `HashMap::new()`).
+- `opencode session inspect <id>` reports persisted output and does not say `stalled`.
+- result: **PASS**.

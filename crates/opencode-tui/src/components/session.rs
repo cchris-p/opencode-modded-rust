@@ -26,6 +26,11 @@ const MESSAGE_BLOCK_RIGHT_PADDING: usize = 1;
 const SIDEBAR_CLOSE_BUTTON_WIDTH: u16 = 3;
 const SIDEBAR_OPEN_BUTTON_WIDTH: u16 = 3;
 
+/// Test-only counter used to prove that per-frame layout is bounded by the
+/// render window instead of growing with the session history.
+#[cfg(test)]
+static LAYOUT_RENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 struct ThinkingToggleHit {
     line_index: usize,
     reasoning_id: String,
@@ -34,6 +39,48 @@ struct ThinkingToggleHit {
 struct ToolToggleHit {
     line_index: usize,
     tool_id: String,
+}
+
+/// Cached per-message layout height. Only the line *count* is retained, not the
+/// rendered lines, so a long session does not keep a second copy of the whole
+/// transcript in memory. `sig` covers every input that can change the height.
+#[derive(Clone, Copy)]
+struct CachedMessageLayout {
+    sig: u64,
+    height: usize,
+}
+
+/// The rendered lines for a single message plus toggle hit indices that are
+/// relative to the start of `lines`.
+#[derive(Default)]
+struct RenderedBody {
+    lines: Vec<Line<'static>>,
+    thinking_hits: Vec<ThinkingToggleHit>,
+    tool_hits: Vec<ToolToggleHit>,
+}
+
+/// Everything a single message needs to be laid out, borrowed for one frame.
+struct MessageRenderCtx<'a> {
+    messages: &'a [Message],
+    last_assistant_idx: Option<usize>,
+    pending_assistant_idx: Option<usize>,
+    fallback_model: Option<&'a str>,
+    theme: &'a crate::theme::Theme,
+    user_bg: Color,
+    assistant_bg: Color,
+    thinking_bg: Color,
+    assistant_border: Color,
+    thinking_border: Color,
+    show_thinking: bool,
+    show_timestamps: bool,
+    show_tool_calls: bool,
+    show_tool_details: bool,
+    semantic_hl: bool,
+    collapsed_reasoning: &'a HashSet<String>,
+    expanded_tool_calls: &'a HashSet<String>,
+    keybind: &'a crate::context::KeybindRegistry,
+    include_background_subagents: bool,
+    content_width: usize,
 }
 
 pub struct SessionView {
@@ -48,7 +95,8 @@ pub struct SessionView {
     tool_toggle_hits: Vec<ToolToggleHit>,
     last_messages_area: Option<Rect>,
     line_to_message: Vec<Option<String>>,
-    message_first_lines: HashMap<String, usize>,
+    layout_cache: HashMap<String, CachedMessageLayout>,
+    revert_layout: Option<(u64, usize)>,
     sidebar_state: SidebarState,
     sidebar_close_button_area: Option<Rect>,
     sidebar_open_button_area: Option<Rect>,
@@ -68,7 +116,8 @@ impl SessionView {
             tool_toggle_hits: Vec::new(),
             last_messages_area: None,
             line_to_message: Vec::new(),
-            message_first_lines: HashMap::new(),
+            layout_cache: HashMap::new(),
+            revert_layout: None,
             sidebar_state: SidebarState::default(),
             sidebar_close_button_area: None,
             sidebar_open_button_area: None,
@@ -593,8 +642,9 @@ impl SessionView {
             self.last_messages_area = None;
             self.rendered_line_count = 0;
             self.messages_viewport_height = 0;
+            self.thinking_toggle_hits.clear();
+            self.tool_toggle_hits.clear();
             self.line_to_message.clear();
-            self.message_first_lines.clear();
             return;
         }
 
@@ -622,28 +672,28 @@ impl SessionView {
             width: 1,
             height: area.height,
         });
+        self.last_messages_area = Some(messages_area);
         let content_width = usize::from(messages_area.width.saturating_sub(1));
-        let session_ctx = self.context.session.read();
         let show_thinking = *self.context.show_thinking.read();
         let show_timestamps = *self.context.show_timestamps.read();
         let show_tool_calls = *self.context.show_tool_calls.read();
         let show_tool_details = *self.context.show_tool_details.read();
         let semantic_hl = *self.context.semantic_highlight.read();
         let fallback_model = self.context.current_model.read().clone();
+        let include_background_subagents = self.context.experimental_background_subagents();
+        let keybind = self.context.keybind.read();
 
+        let session_ctx = self.context.session.read();
+        let empty_messages: Vec<Message> = Vec::new();
         let messages = session_ctx
             .messages
             .get(&self.session_id)
-            .cloned()
-            .unwrap_or_default();
+            .unwrap_or(&empty_messages);
         let revert_info = session_ctx.revert.get(&self.session_id).cloned();
+
         let last_assistant_idx = messages
             .iter()
             .rposition(|m| matches!(m.role, MessageRole::Assistant));
-
-        // Vanilla queued boundary: `completed` is the last assistant message
-        // with a completion timestamp; `pending` is the last assistant after it
-        // that is still in flight. User messages after `pending` are queued.
         let completed_assistant_idx = messages
             .iter()
             .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
@@ -658,461 +708,202 @@ impl SessionView {
             .map(|(idx, _)| idx)
             .last();
 
-        let message_gap_lines = 1usize;
+        let mut globals_hasher = DefaultHasher::new();
+        content_width.hash(&mut globals_hasher);
+        show_thinking.hash(&mut globals_hasher);
+        show_timestamps.hash(&mut globals_hasher);
+        show_tool_calls.hash(&mut globals_hasher);
+        show_tool_details.hash(&mut globals_hasher);
+        semantic_hl.hash(&mut globals_hasher);
+        include_background_subagents.hash(&mut globals_hasher);
+        fallback_model.hash(&mut globals_hasher);
+        last_assistant_idx.hash(&mut globals_hasher);
+        pending_assistant_idx.hash(&mut globals_hasher);
+        revert_info.is_some().hash(&mut globals_hasher);
+        toggle_state_hash(&self.collapsed_reasoning, &self.expanded_tool_calls)
+            .hash(&mut globals_hasher);
+        keybind
+            .leader_chord("session_child_first")
+            .hash(&mut globals_hasher);
+        let globals_hash = globals_hasher.finish();
 
-        self.last_messages_area = Some(messages_area);
-        self.thinking_toggle_hits.clear();
-        self.tool_toggle_hits.clear();
-        let mut visible_reasoning_ids = HashSet::new();
-        let mut visible_tool_ids = HashSet::new();
+        let ctx = MessageRenderCtx {
+            messages,
+            last_assistant_idx,
+            pending_assistant_idx,
+            fallback_model: fallback_model.as_deref(),
+            theme: &theme,
+            user_bg,
+            assistant_bg,
+            thinking_bg,
+            assistant_border,
+            thinking_border,
+            show_thinking,
+            show_timestamps,
+            show_tool_calls,
+            show_tool_details,
+            semantic_hl,
+            collapsed_reasoning: &self.collapsed_reasoning,
+            expanded_tool_calls: &self.expanded_tool_calls,
+            keybind: &keybind,
+            include_background_subagents,
+            content_width,
+        };
 
-        let mut lines = Vec::new();
+        // Revert card: rendered only when its inputs change, otherwise reused.
+        if revert_info.is_none() {
+            self.revert_layout = None;
+        }
+        let mut revert_height = 0usize;
+        if let Some(revert) = revert_info.as_ref() {
+            let sig = hash_revert(revert, content_width);
+            revert_height = match self.revert_layout {
+                Some((cached_sig, cached_height)) if cached_sig == sig => cached_height,
+                _ => {
+                    let card = super::revert_card::render_revert_card(revert, &theme);
+                    let painted = paint_block_lines(
+                        card,
+                        theme.background_panel,
+                        theme.warning,
+                        content_width,
+                    );
+                    let height = painted.len();
+                    self.revert_layout = Some((sig, height));
+                    height
+                }
+            };
+        }
+
+        // Pass 1: ensure every message has a valid cached height. Only messages
+        // whose rendering inputs changed are laid out here; the rest reuse the
+        // cached line count. This is what keeps per-frame layout bounded.
+        let mut heights: Vec<usize> = Vec::with_capacity(messages.len());
+        for (idx, msg) in messages.iter().enumerate() {
+            let sig = message_sig(&ctx, msg, idx, globals_hash);
+            let height = match self.layout_cache.get(&msg.id) {
+                Some(cached) if cached.sig == sig => cached.height,
+                _ => {
+                    let body = render_message_body(&ctx, msg, idx);
+                    let height = body.lines.len();
+                    self.layout_cache
+                        .insert(msg.id.clone(), CachedMessageLayout { sig, height });
+                    height
+                }
+            };
+            heights.push(height);
+        }
+        if self.layout_cache.len() > messages.len() {
+            let live: HashSet<&str> = messages.iter().map(|m| m.id.as_str()).collect();
+            self.layout_cache.retain(|id, _| live.contains(id.as_str()));
+        }
+
+        // Virtual whole-session line total so scroll, follow and scrollbar keep
+        // whole-session semantics even though only a window is laid out.
+        let mut total_lines = 0usize;
+        if revert_info.is_some() {
+            total_lines += revert_height;
+            if !messages.is_empty() {
+                total_lines += 1;
+            }
+        }
+        for (idx, _msg) in messages.iter().enumerate() {
+            total_lines += leading_spacing(messages, idx) + heights[idx];
+        }
+        self.rendered_line_count = total_lines;
+        self.messages_viewport_height = usize::from(messages_area.height);
+
+        let max_scroll = self.max_scroll_offset();
+        if was_near_bottom || self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
+        }
+
+        // Bounded render window around the viewport (plus overscan) so the
+        // Paragraph only ever wraps window-relative lines.
+        let viewport = usize::from(messages_area.height);
+        let overscan = viewport.max(1);
+        let window_start = self.scroll_offset.saturating_sub(overscan);
+        let window_end = self
+            .scroll_offset
+            .saturating_add(viewport)
+            .saturating_add(overscan);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
         let mut line_to_message: Vec<Option<String>> = Vec::new();
-        let mut message_first_lines: HashMap<String, usize> = HashMap::new();
+        let mut thinking_hits: Vec<ThinkingToggleHit> = Vec::new();
+        let mut tool_hits: Vec<ToolToggleHit> = Vec::new();
+        let mut window_start_line = 0usize;
+        let mut started = false;
+        let mut cursor = 0usize;
 
         if let Some(revert) = revert_info.as_ref() {
-            let card_lines = super::revert_card::render_revert_card(revert, &theme);
-            let painted = paint_block_lines(
-                card_lines,
-                theme.background_panel,
-                theme.warning,
-                content_width,
-            );
-            append_non_message_lines(&mut lines, &mut line_to_message, painted);
+            if cursor < window_end && cursor + revert_height > window_start {
+                if !started {
+                    window_start_line = cursor;
+                    started = true;
+                }
+                let card = super::revert_card::render_revert_card(revert, &theme);
+                let painted =
+                    paint_block_lines(card, theme.background_panel, theme.warning, content_width);
+                append_non_message_lines(&mut lines, &mut line_to_message, painted);
+            }
+            cursor += revert_height;
             if !messages.is_empty() {
-                push_spacing_lines(&mut lines, &mut line_to_message, message_gap_lines);
+                if cursor < window_end && cursor + 1 > window_start {
+                    if !started {
+                        window_start_line = cursor;
+                        started = true;
+                    }
+                    push_spacing_lines(&mut lines, &mut line_to_message, 1);
+                }
+                cursor += 1;
             }
         }
 
         for (idx, msg) in messages.iter().enumerate() {
-            // Smart spacing: role transitions always get a blank line;
-            // cozy mode adds an extra blank line for breathing room
-            if idx > 0 {
-                let prev_role = &messages[idx - 1].role;
-                if *prev_role != msg.role || matches!(msg.role, MessageRole::User) {
-                    push_spacing_lines(&mut lines, &mut line_to_message, message_gap_lines);
+            let spacing = leading_spacing(messages, idx);
+            if spacing > 0 {
+                if cursor < window_end && cursor + spacing > window_start {
+                    if !started {
+                        window_start_line = cursor;
+                        started = true;
+                    }
+                    push_spacing_lines(&mut lines, &mut line_to_message, spacing);
                 }
+                cursor += spacing;
             }
-            message_first_lines
-                .entry(msg.id.clone())
-                .or_insert(lines.len());
-
-            match msg.role {
-                MessageRole::User => {
-                    let message_bg = user_bg;
-                    let message_border = user_border_color_for_agent(msg.agent.as_deref(), &theme);
-                    let is_queued = pending_assistant_idx.is_some_and(|pending| idx > pending);
-                    let user_lines = super::session_message::render_user_message(
-                        msg,
-                        &theme,
-                        show_timestamps,
-                        msg.agent.as_deref(),
-                        is_queued,
-                    );
-                    append_message_lines(
-                        &mut lines,
-                        &mut line_to_message,
-                        &msg.id,
-                        paint_block_lines(user_lines, message_bg, message_border, content_width),
-                    );
+            let body_end = cursor + heights[idx];
+            if cursor < window_end && body_end > window_start {
+                if !started {
+                    window_start_line = cursor;
+                    started = true;
                 }
-                MessageRole::Assistant => {
-                    let message_bg = assistant_bg;
-                    let message_border = assistant_border;
-                    let message_thinking_bg = thinking_bg;
-                    let message_thinking_border = thinking_border;
-                    let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
-                    for part in &msg.parts {
-                        if let MessagePart::ToolResult {
-                            id,
-                            result,
-                            is_error,
-                        } = part
-                        {
-                            tool_results.insert(id.clone(), (result.clone(), *is_error));
-                        }
-                    }
-                    let is_active_assistant = last_assistant_idx == Some(idx)
-                        && msg.finish.is_none()
-                        && msg.error.is_none();
-                    let assistant_marker = assistant_marker_color(msg.agent.as_deref(), &theme);
-                    let unresolved_tool_calls = msg
-                        .parts
-                        .iter()
-                        .filter_map(|part| match part {
-                            MessagePart::ToolCall { id, .. } if !tool_results.contains_key(id) => {
-                                Some(id.as_str())
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    let running_tool_call = if is_active_assistant {
-                        unresolved_tool_calls.first().copied()
-                    } else {
-                        None
-                    };
-
-                    if msg.parts.is_empty() {
-                        let mut text_lines = super::session_text::render_text_part(
-                            &msg.content,
-                            &theme,
-                            assistant_marker,
-                        );
-                        if semantic_hl {
-                            text_lines =
-                                super::semantic_highlight::highlight_lines(text_lines, &theme);
-                        }
-                        append_message_lines(
-                            &mut lines,
-                            &mut line_to_message,
-                            &msg.id,
-                            paint_block_lines(
-                                text_lines,
-                                message_bg,
-                                message_border,
-                                content_width,
-                            ),
-                        );
-                    } else {
-                        let mut prev_was_text = false;
-                        let mut prev_was_tool = false;
-                        let mut part_idx = 0;
-                        while part_idx < msg.parts.len() {
-                            let part = &msg.parts[part_idx];
-                            match part {
-                                MessagePart::Text { text } => {
-                                    // Add margin when transitioning from tool back to text
-                                    if prev_was_tool {
-                                        append_message_lines(
-                                            &mut lines,
-                                            &mut line_to_message,
-                                            &msg.id,
-                                            vec![Line::from("")],
-                                        );
-                                    }
-                                    let mut text_lines = super::session_text::render_text_part(
-                                        text,
-                                        &theme,
-                                        assistant_marker,
-                                    );
-                                    if semantic_hl {
-                                        text_lines = super::semantic_highlight::highlight_lines(
-                                            text_lines, &theme,
-                                        );
-                                    }
-                                    append_message_lines(
-                                        &mut lines,
-                                        &mut line_to_message,
-                                        &msg.id,
-                                        paint_block_lines(
-                                            text_lines,
-                                            message_bg,
-                                            message_border,
-                                            content_width,
-                                        ),
-                                    );
-                                    prev_was_text = true;
-                                    prev_was_tool = false;
-                                }
-                                MessagePart::Reasoning { text } => {
-                                    if show_thinking {
-                                        if prev_was_text || prev_was_tool {
-                                            append_message_lines(
-                                                &mut lines,
-                                                &mut line_to_message,
-                                                &msg.id,
-                                                vec![Line::from("")],
-                                            );
-                                        }
-                                        let reasoning_id = format!("{}:{part_idx}", msg.id);
-                                        // BUG-022: expanded by default; collapse is an
-                                        // explicit per-block action stored in the set.
-                                        let collapsed =
-                                            self.collapsed_reasoning.contains(&reasoning_id);
-                                        let start_line = lines.len();
-                                        let rendered = super::session_text::render_reasoning_part(
-                                            text, &theme, collapsed,
-                                        );
-                                        if !rendered.lines.is_empty() {
-                                            let painted = paint_block_lines(
-                                                rendered.lines,
-                                                message_thinking_bg,
-                                                message_thinking_border,
-                                                content_width,
-                                            );
-                                            append_message_lines(
-                                                &mut lines,
-                                                &mut line_to_message,
-                                                &msg.id,
-                                                painted,
-                                            );
-                                            if rendered.collapsible {
-                                                let end_line = lines.len().saturating_sub(1);
-                                                visible_reasoning_ids.insert(reasoning_id.clone());
-                                                self.thinking_toggle_hits.push(ThinkingToggleHit {
-                                                    line_index: start_line,
-                                                    reasoning_id: reasoning_id.clone(),
-                                                });
-                                                if end_line > start_line {
-                                                    self.thinking_toggle_hits.push(
-                                                        ThinkingToggleHit {
-                                                            line_index: end_line,
-                                                            reasoning_id,
-                                                        },
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        prev_was_text = false;
-                                        prev_was_tool = false;
-                                    }
-                                }
-                                MessagePart::ToolCall {
-                                    id,
-                                    name,
-                                    arguments,
-                                } => {
-                                    // Add margin when transitioning from text to tool
-                                    if prev_was_text {
-                                        append_message_lines(
-                                            &mut lines,
-                                            &mut line_to_message,
-                                            &msg.id,
-                                            vec![Line::from("")],
-                                        );
-                                    }
-                                    if !show_tool_calls {
-                                        let run_start = part_idx;
-                                        let mut run_end = run_start;
-                                        while matches!(
-                                            msg.parts.get(run_end),
-                                            Some(MessagePart::ToolCall { .. })
-                                        ) {
-                                            run_end += 1;
-                                        }
-                                        let run_id = format!("{}:tools:{run_start}", msg.id);
-                                        let expanded_run =
-                                            self.expanded_tool_calls.contains(&run_id);
-                                        let summary = tool_run_summary(
-                                            &msg.parts[run_start..run_end],
-                                            &tool_results,
-                                            running_tool_call,
-                                        );
-                                        let start_line = lines.len();
-                                        append_message_lines(
-                                            &mut lines,
-                                            &mut line_to_message,
-                                            &msg.id,
-                                            vec![super::session_tool::render_tool_run_summary(
-                                                summary.count,
-                                                summary.state,
-                                                summary.denied,
-                                                expanded_run,
-                                                &theme,
-                                            )],
-                                        );
-                                        visible_tool_ids.insert(run_id.clone());
-                                        self.tool_toggle_hits.push(ToolToggleHit {
-                                            line_index: start_line,
-                                            tool_id: run_id,
-                                        });
-
-                                        if expanded_run {
-                                            for run_part in &msg.parts[run_start..run_end] {
-                                                if let MessagePart::ToolCall {
-                                                    id,
-                                                    name,
-                                                    arguments,
-                                                } = run_part
-                                                {
-                                                    let start_line = lines.len();
-                                                    let rendered = render_tool_call_part(
-                                                        id,
-                                                        name,
-                                                        arguments,
-                                                        &tool_results,
-                                                        running_tool_call,
-                                                        self.expanded_tool_calls.contains(id),
-                                                        show_tool_details,
-                                                        content_width,
-                                                        &theme,
-                                                    );
-                                                    append_rendered_tool_call(
-                                                        rendered,
-                                                        id,
-                                                        &msg.id,
-                                                        start_line,
-                                                        message_bg,
-                                                        message_border,
-                                                        content_width,
-                                                        &mut visible_tool_ids,
-                                                        &mut self.tool_toggle_hits,
-                                                        &mut lines,
-                                                        &mut line_to_message,
-                                                    );
-                                                }
-                                            }
-                                        }
-
-                                        part_idx = run_end;
-                                    } else {
-                                        let start_line = lines.len();
-                                        let rendered = render_tool_call_part(
-                                            id,
-                                            name,
-                                            arguments,
-                                            &tool_results,
-                                            running_tool_call,
-                                            self.expanded_tool_calls.contains(id),
-                                            show_tool_details,
-                                            content_width,
-                                            &theme,
-                                        );
-                                        append_rendered_tool_call(
-                                            rendered,
-                                            id,
-                                            &msg.id,
-                                            start_line,
-                                            message_bg,
-                                            message_border,
-                                            content_width,
-                                            &mut visible_tool_ids,
-                                            &mut self.tool_toggle_hits,
-                                            &mut lines,
-                                            &mut line_to_message,
-                                        );
-                                        part_idx += 1;
-                                    }
-                                    prev_was_text = false;
-                                    prev_was_tool = true;
-                                    continue;
-                                }
-                                MessagePart::ToolResult { .. } => {}
-                                MessagePart::File { path, mime } => {
-                                    let file_line = Line::from(vec![
-                                        Span::styled("▸ ", Style::default().fg(assistant_marker)),
-                                        Span::styled("[file] ", Style::default().fg(theme.info)),
-                                        Span::styled(path.clone(), Style::default().fg(theme.text)),
-                                        Span::styled(
-                                            format!(" ({})", mime),
-                                            Style::default().fg(theme.text_muted),
-                                        ),
-                                    ]);
-                                    append_message_lines(
-                                        &mut lines,
-                                        &mut line_to_message,
-                                        &msg.id,
-                                        paint_block_lines(
-                                            vec![file_line],
-                                            message_bg,
-                                            message_border,
-                                            content_width,
-                                        ),
-                                    );
-                                }
-                                MessagePart::Image { url } => {
-                                    let image_line = Line::from(vec![
-                                        Span::styled("▸ ", Style::default().fg(assistant_marker)),
-                                        Span::styled("[image] ", Style::default().fg(theme.info)),
-                                        Span::styled(
-                                            url.clone(),
-                                            Style::default().fg(theme.text_muted),
-                                        ),
-                                    ]);
-                                    append_message_lines(
-                                        &mut lines,
-                                        &mut line_to_message,
-                                        &msg.id,
-                                        paint_block_lines(
-                                            vec![image_line],
-                                            message_bg,
-                                            message_border,
-                                            content_width,
-                                        ),
-                                    );
-                                }
-                            }
-                            part_idx += 1;
-                        }
-                    }
-
-                    if let Some(footer) = assistant_footer(
-                        &messages,
-                        idx,
-                        last_assistant_idx,
-                        msg,
-                        fallback_model.as_deref(),
-                        &theme,
-                    ) {
-                        append_message_lines(
-                            &mut lines,
-                            &mut line_to_message,
-                            &msg.id,
-                            paint_block_lines(
-                                vec![footer],
-                                message_bg,
-                                message_border,
-                                content_width,
-                            ),
-                        );
-                    }
-
-                    // Reference parity: surface the "view subagents" hint once
-                    // per assistant message that contains a `task` tool part.
-                    let has_task_part = msg.parts.iter().any(
-                        |part| matches!(part, MessagePart::ToolCall { name, .. } if name == "task"),
-                    );
-                    if has_task_part {
-                        let hint = task_view_subagents_line(
-                            &theme,
-                            &self.context.keybind.read(),
-                            self.context.experimental_background_subagents(),
-                        );
-                        append_message_lines(
-                            &mut lines,
-                            &mut line_to_message,
-                            &msg.id,
-                            paint_block_lines(
-                                vec![Line::from(""), hint],
-                                message_bg,
-                                message_border,
-                                content_width,
-                            ),
-                        );
-                    }
+                let body = render_message_body(&ctx, msg, idx);
+                let base = window_start_line + lines.len();
+                for hit in &body.thinking_hits {
+                    thinking_hits.push(ThinkingToggleHit {
+                        line_index: base + hit.line_index,
+                        reasoning_id: hit.reasoning_id.clone(),
+                    });
                 }
-                MessageRole::System => {
-                    let system_lines: Vec<Line<'static>> = msg
-                        .content
-                        .lines()
-                        .map(|line_text| {
-                            Line::from(Span::styled(
-                                line_text.to_string(),
-                                Style::default().fg(theme.text_muted),
-                            ))
-                        })
-                        .collect();
-                    append_message_lines(&mut lines, &mut line_to_message, &msg.id, system_lines);
+                for hit in &body.tool_hits {
+                    tool_hits.push(ToolToggleHit {
+                        line_index: base + hit.line_index,
+                        tool_id: hit.tool_id.clone(),
+                    });
                 }
+                append_message_lines(&mut lines, &mut line_to_message, &msg.id, body.lines);
             }
+            cursor = body_end;
         }
 
-        self.collapsed_reasoning
-            .retain(|id| visible_reasoning_ids.contains(id));
-        self.expanded_tool_calls
-            .retain(|id| visible_tool_ids.contains(id));
         self.line_to_message = line_to_message;
-        self.message_first_lines = message_first_lines;
+        self.thinking_toggle_hits = thinking_hits;
+        self.tool_toggle_hits = tool_hits;
 
-        self.rendered_line_count = lines.len();
-        self.messages_viewport_height = usize::from(messages_area.height);
-        let max_scroll = self.max_scroll_offset();
-        if was_near_bottom {
-            self.scroll_offset = max_scroll;
-        } else if self.scroll_offset > max_scroll {
-            self.scroll_offset = max_scroll;
-        }
-
+        let window_scroll = self
+            .scroll_offset
+            .saturating_sub(window_start_line)
+            .min(u16::MAX as usize) as u16;
         let paragraph = Paragraph::new(lines)
             .block(
                 Block::default()
@@ -1120,7 +911,7 @@ impl SessionView {
                     .border_style(Style::default().fg(theme.border)),
             )
             .style(Style::default().bg(theme.background_panel))
-            .scroll((self.scroll_offset as u16, 0));
+            .scroll((window_scroll, 0));
 
         frame.render_widget(paragraph, messages_area);
         if let Some(scroll_area) = scrollbar_area {
@@ -1252,22 +1043,33 @@ impl SessionView {
     }
 
     pub fn scroll_to_message(&mut self, message_id: &str) {
-        if let Some(first_line) = self.message_first_lines.get(message_id).copied() {
+        if let Some(first_line) = self.message_first_line(message_id) {
             self.scroll_offset = first_line.min(self.max_scroll_offset());
-            return;
         }
+    }
 
+    /// Absolute first line of a message's body, computed from the cached
+    /// per-message heights so that a jump to a message outside the current
+    /// render window still re-anchors the window on the next frame.
+    fn message_first_line(&self, message_id: &str) -> Option<usize> {
         let session_ctx = self.context.session.read();
-        if let Some(messages) = session_ctx.messages.get(&self.session_id) {
-            if let Some(idx) = messages.iter().position(|m| m.id == message_id) {
-                // Approximate: each message takes ~3 lines, scroll to that position
-                self.scroll_offset = idx.saturating_mul(3);
-                let max_scroll = self.max_scroll_offset();
-                if self.scroll_offset > max_scroll {
-                    self.scroll_offset = max_scroll;
-                }
-            }
+        let messages = session_ctx.messages.get(&self.session_id)?;
+        let idx = messages.iter().position(|m| m.id == message_id)?;
+
+        let mut total = 0usize;
+        if session_ctx.revert.contains_key(&self.session_id) {
+            total += self.revert_layout.map(|(_, height)| height).unwrap_or(0);
+            total += 1;
         }
+        for (j, msg) in messages.iter().enumerate().take(idx) {
+            total += leading_spacing(messages, j);
+            total += self
+                .layout_cache
+                .get(&msg.id)
+                .map(|cached| cached.height)
+                .unwrap_or(0);
+        }
+        Some(total + leading_spacing(messages, idx))
     }
 
     fn max_scroll_offset(&self) -> usize {
@@ -1278,6 +1080,586 @@ impl SessionView {
     fn is_near_bottom(&self, tolerance_lines: usize) -> bool {
         self.max_scroll_offset().saturating_sub(self.scroll_offset) <= tolerance_lines
     }
+}
+
+fn leading_spacing(messages: &[Message], idx: usize) -> usize {
+    if idx == 0 {
+        return 0;
+    }
+    let prev_role = &messages[idx - 1].role;
+    let role = &messages[idx].role;
+    if *prev_role != *role || matches!(role, MessageRole::User) {
+        1
+    } else {
+        0
+    }
+}
+
+fn role_tag(role: &MessageRole) -> u8 {
+    match role {
+        MessageRole::User => 0,
+        MessageRole::Assistant => 1,
+        MessageRole::System => 2,
+    }
+}
+
+/// Hashes cheap length/metadata fields. Two messages with equal length fields
+/// are assumed to render identically for non-mutable (completed) messages.
+fn hash_message_len_fields(msg: &Message, h: &mut DefaultHasher) {
+    msg.content.len().hash(h);
+    msg.parts.len().hash(h);
+    for part in &msg.parts {
+        match part {
+            MessagePart::Text { text } => {
+                0u8.hash(h);
+                text.len().hash(h);
+            }
+            MessagePart::Reasoning { text } => {
+                1u8.hash(h);
+                text.len().hash(h);
+            }
+            MessagePart::File { path, mime } => {
+                2u8.hash(h);
+                path.len().hash(h);
+                mime.len().hash(h);
+            }
+            MessagePart::Image { url } => {
+                3u8.hash(h);
+                url.len().hash(h);
+            }
+            MessagePart::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
+                4u8.hash(h);
+                id.len().hash(h);
+                name.hash(h);
+                arguments.len().hash(h);
+            }
+            MessagePart::ToolResult {
+                id,
+                result,
+                is_error,
+            } => {
+                5u8.hash(h);
+                id.len().hash(h);
+                result.len().hash(h);
+                is_error.hash(h);
+            }
+        }
+    }
+    msg.completed_at.is_some().hash(h);
+    msg.finish.hash(h);
+    msg.error.as_ref().map(|e| e.len()).hash(h);
+    msg.agent.hash(h);
+    msg.model.hash(h);
+    msg.mode.hash(h);
+    msg.tokens.input.hash(h);
+    msg.tokens.output.hash(h);
+    msg.tokens.reasoning.hash(h);
+    msg.tokens.cache_read.hash(h);
+    msg.tokens.cache_write.hash(h);
+    msg.cost.to_bits().hash(h);
+}
+
+/// Full content hash, used for messages that can still mutate in place
+/// (in-flight assistants and user messages without a completion timestamp).
+fn hash_message_full_content(msg: &Message, h: &mut DefaultHasher) {
+    msg.content.hash(h);
+    for part in &msg.parts {
+        match part {
+            MessagePart::Text { text } => {
+                0u8.hash(h);
+                text.hash(h);
+            }
+            MessagePart::Reasoning { text } => {
+                1u8.hash(h);
+                text.hash(h);
+            }
+            MessagePart::File { path, mime } => {
+                2u8.hash(h);
+                path.hash(h);
+                mime.hash(h);
+            }
+            MessagePart::Image { url } => {
+                3u8.hash(h);
+                url.hash(h);
+            }
+            MessagePart::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
+                4u8.hash(h);
+                id.hash(h);
+                name.hash(h);
+                arguments.hash(h);
+            }
+            MessagePart::ToolResult {
+                id,
+                result,
+                is_error,
+            } => {
+                5u8.hash(h);
+                id.hash(h);
+                result.hash(h);
+                is_error.hash(h);
+            }
+        }
+    }
+}
+
+fn message_sig(ctx: &MessageRenderCtx, msg: &Message, idx: usize, globals_hash: u64) -> u64 {
+    let mut h = DefaultHasher::new();
+    globals_hash.hash(&mut h);
+    msg.id.hash(&mut h);
+    role_tag(&msg.role).hash(&mut h);
+    hash_message_len_fields(msg, &mut h);
+
+    let prev_role = if idx == 0 {
+        None
+    } else {
+        Some(role_tag(&ctx.messages[idx - 1].role))
+    };
+    prev_role.hash(&mut h);
+
+    let is_queued = matches!(msg.role, MessageRole::User)
+        && ctx
+            .pending_assistant_idx
+            .is_some_and(|pending| idx > pending);
+    is_queued.hash(&mut h);
+
+    let is_active = matches!(msg.role, MessageRole::Assistant)
+        && ctx.last_assistant_idx == Some(idx)
+        && msg.finish.is_none()
+        && msg.error.is_none();
+    is_active.hash(&mut h);
+    (ctx.last_assistant_idx == Some(idx)).hash(&mut h);
+
+    if msg.completed_at.is_none() || ctx.last_assistant_idx == Some(idx) {
+        hash_message_full_content(msg, &mut h);
+    }
+    h.finish()
+}
+
+/// Order-independent hash of the collapse/expand toggle sets.
+fn toggle_state_hash(collapsed: &HashSet<String>, expanded: &HashSet<String>) -> u64 {
+    let mut acc: u64 =
+        (collapsed.len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (expanded.len() as u64);
+    for id in collapsed {
+        let mut h = DefaultHasher::new();
+        id.hash(&mut h);
+        acc ^= h.finish();
+    }
+    for id in expanded {
+        let mut h = DefaultHasher::new();
+        id.hash(&mut h);
+        acc ^= h.finish();
+    }
+    acc
+}
+
+fn hash_revert(revert: &crate::context::RevertInfo, content_width: usize) -> u64 {
+    let mut h = DefaultHasher::new();
+    revert.message_id.hash(&mut h);
+    revert.part_id.hash(&mut h);
+    revert.snapshot.hash(&mut h);
+    revert.diff.hash(&mut h);
+    content_width.hash(&mut h);
+    h.finish()
+}
+
+fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> RenderedBody {
+    #[cfg(test)]
+    LAYOUT_RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    let mut out = RenderedBody::default();
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut line_to_message: Vec<Option<String>> = Vec::new();
+    let mut visible_tool_ids: HashSet<String> = HashSet::new();
+
+    match msg.role {
+        MessageRole::User => {
+            let message_bg = ctx.user_bg;
+            let message_border = user_border_color_for_agent(msg.agent.as_deref(), ctx.theme);
+            let is_queued = ctx
+                .pending_assistant_idx
+                .is_some_and(|pending| idx > pending);
+            let user_lines = super::session_message::render_user_message(
+                msg,
+                ctx.theme,
+                ctx.show_timestamps,
+                msg.agent.as_deref(),
+                is_queued,
+            );
+            append_message_lines(
+                &mut lines,
+                &mut line_to_message,
+                &msg.id,
+                paint_block_lines(user_lines, message_bg, message_border, ctx.content_width),
+            );
+        }
+        MessageRole::Assistant => {
+            let message_bg = ctx.assistant_bg;
+            let message_border = ctx.assistant_border;
+            let message_thinking_bg = ctx.thinking_bg;
+            let message_thinking_border = ctx.thinking_border;
+            let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
+            for part in &msg.parts {
+                if let MessagePart::ToolResult {
+                    id,
+                    result,
+                    is_error,
+                } = part
+                {
+                    tool_results.insert(id.clone(), (result.clone(), *is_error));
+                }
+            }
+            let is_active_assistant =
+                ctx.last_assistant_idx == Some(idx) && msg.finish.is_none() && msg.error.is_none();
+            let assistant_marker = assistant_marker_color(msg.agent.as_deref(), ctx.theme);
+            let unresolved_tool_calls = msg
+                .parts
+                .iter()
+                .filter_map(|part| match part {
+                    MessagePart::ToolCall { id, .. } if !tool_results.contains_key(id) => {
+                        Some(id.as_str())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let running_tool_call = if is_active_assistant {
+                unresolved_tool_calls.first().copied()
+            } else {
+                None
+            };
+
+            if msg.parts.is_empty() {
+                let mut text_lines = super::session_text::render_text_part(
+                    &msg.content,
+                    ctx.theme,
+                    assistant_marker,
+                );
+                if ctx.semantic_hl {
+                    text_lines = super::semantic_highlight::highlight_lines(text_lines, ctx.theme);
+                }
+                append_message_lines(
+                    &mut lines,
+                    &mut line_to_message,
+                    &msg.id,
+                    paint_block_lines(text_lines, message_bg, message_border, ctx.content_width),
+                );
+            } else {
+                let mut prev_was_text = false;
+                let mut prev_was_tool = false;
+                let mut part_idx = 0;
+                while part_idx < msg.parts.len() {
+                    let part = &msg.parts[part_idx];
+                    match part {
+                        MessagePart::Text { text } => {
+                            if prev_was_tool {
+                                append_message_lines(
+                                    &mut lines,
+                                    &mut line_to_message,
+                                    &msg.id,
+                                    vec![Line::from("")],
+                                );
+                            }
+                            let mut text_lines = super::session_text::render_text_part(
+                                text,
+                                ctx.theme,
+                                assistant_marker,
+                            );
+                            if ctx.semantic_hl {
+                                text_lines = super::semantic_highlight::highlight_lines(
+                                    text_lines, ctx.theme,
+                                );
+                            }
+                            append_message_lines(
+                                &mut lines,
+                                &mut line_to_message,
+                                &msg.id,
+                                paint_block_lines(
+                                    text_lines,
+                                    message_bg,
+                                    message_border,
+                                    ctx.content_width,
+                                ),
+                            );
+                            prev_was_text = true;
+                            prev_was_tool = false;
+                        }
+                        MessagePart::Reasoning { text } => {
+                            if ctx.show_thinking {
+                                if prev_was_text || prev_was_tool {
+                                    append_message_lines(
+                                        &mut lines,
+                                        &mut line_to_message,
+                                        &msg.id,
+                                        vec![Line::from("")],
+                                    );
+                                }
+                                let reasoning_id = format!("{}:{part_idx}", msg.id);
+                                let collapsed = ctx.collapsed_reasoning.contains(&reasoning_id);
+                                let start_line = lines.len();
+                                let rendered = super::session_text::render_reasoning_part(
+                                    text, ctx.theme, collapsed,
+                                );
+                                if !rendered.lines.is_empty() {
+                                    let painted = paint_block_lines(
+                                        rendered.lines,
+                                        message_thinking_bg,
+                                        message_thinking_border,
+                                        ctx.content_width,
+                                    );
+                                    append_message_lines(
+                                        &mut lines,
+                                        &mut line_to_message,
+                                        &msg.id,
+                                        painted,
+                                    );
+                                    if rendered.collapsible {
+                                        let end_line = lines.len().saturating_sub(1);
+                                        out.thinking_hits.push(ThinkingToggleHit {
+                                            line_index: start_line,
+                                            reasoning_id: reasoning_id.clone(),
+                                        });
+                                        if end_line > start_line {
+                                            out.thinking_hits.push(ThinkingToggleHit {
+                                                line_index: end_line,
+                                                reasoning_id,
+                                            });
+                                        }
+                                    }
+                                }
+                                prev_was_text = false;
+                                prev_was_tool = false;
+                            }
+                        }
+                        MessagePart::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => {
+                            if prev_was_text {
+                                append_message_lines(
+                                    &mut lines,
+                                    &mut line_to_message,
+                                    &msg.id,
+                                    vec![Line::from("")],
+                                );
+                            }
+                            if !ctx.show_tool_calls {
+                                let run_start = part_idx;
+                                let mut run_end = run_start;
+                                while matches!(
+                                    msg.parts.get(run_end),
+                                    Some(MessagePart::ToolCall { .. })
+                                ) {
+                                    run_end += 1;
+                                }
+                                let run_id = format!("{}:tools:{run_start}", msg.id);
+                                let expanded_run = ctx.expanded_tool_calls.contains(&run_id);
+                                let summary = tool_run_summary(
+                                    &msg.parts[run_start..run_end],
+                                    &tool_results,
+                                    running_tool_call,
+                                );
+                                let start_line = lines.len();
+                                append_message_lines(
+                                    &mut lines,
+                                    &mut line_to_message,
+                                    &msg.id,
+                                    vec![super::session_tool::render_tool_run_summary(
+                                        summary.count,
+                                        summary.state,
+                                        summary.denied,
+                                        expanded_run,
+                                        ctx.theme,
+                                    )],
+                                );
+                                visible_tool_ids.insert(run_id.clone());
+                                out.tool_hits.push(ToolToggleHit {
+                                    line_index: start_line,
+                                    tool_id: run_id,
+                                });
+
+                                if expanded_run {
+                                    for run_part in &msg.parts[run_start..run_end] {
+                                        if let MessagePart::ToolCall {
+                                            id,
+                                            name,
+                                            arguments,
+                                        } = run_part
+                                        {
+                                            let start_line = lines.len();
+                                            let rendered = render_tool_call_part(
+                                                id,
+                                                name,
+                                                arguments,
+                                                &tool_results,
+                                                running_tool_call,
+                                                ctx.expanded_tool_calls.contains(id),
+                                                ctx.show_tool_details,
+                                                ctx.content_width,
+                                                ctx.theme,
+                                            );
+                                            append_rendered_tool_call(
+                                                rendered,
+                                                id,
+                                                &msg.id,
+                                                start_line,
+                                                message_bg,
+                                                message_border,
+                                                ctx.content_width,
+                                                &mut visible_tool_ids,
+                                                &mut out.tool_hits,
+                                                &mut lines,
+                                                &mut line_to_message,
+                                            );
+                                        }
+                                    }
+                                }
+
+                                part_idx = run_end;
+                            } else {
+                                let start_line = lines.len();
+                                let rendered = render_tool_call_part(
+                                    id,
+                                    name,
+                                    arguments,
+                                    &tool_results,
+                                    running_tool_call,
+                                    ctx.expanded_tool_calls.contains(id),
+                                    ctx.show_tool_details,
+                                    ctx.content_width,
+                                    ctx.theme,
+                                );
+                                append_rendered_tool_call(
+                                    rendered,
+                                    id,
+                                    &msg.id,
+                                    start_line,
+                                    message_bg,
+                                    message_border,
+                                    ctx.content_width,
+                                    &mut visible_tool_ids,
+                                    &mut out.tool_hits,
+                                    &mut lines,
+                                    &mut line_to_message,
+                                );
+                                part_idx += 1;
+                            }
+                            prev_was_text = false;
+                            prev_was_tool = true;
+                            continue;
+                        }
+                        MessagePart::ToolResult { .. } => {}
+                        MessagePart::File { path, mime } => {
+                            let file_line = Line::from(vec![
+                                Span::styled("▸ ", Style::default().fg(assistant_marker)),
+                                Span::styled("[file] ", Style::default().fg(ctx.theme.info)),
+                                Span::styled(path.clone(), Style::default().fg(ctx.theme.text)),
+                                Span::styled(
+                                    format!(" ({})", mime),
+                                    Style::default().fg(ctx.theme.text_muted),
+                                ),
+                            ]);
+                            append_message_lines(
+                                &mut lines,
+                                &mut line_to_message,
+                                &msg.id,
+                                paint_block_lines(
+                                    vec![file_line],
+                                    message_bg,
+                                    message_border,
+                                    ctx.content_width,
+                                ),
+                            );
+                        }
+                        MessagePart::Image { url } => {
+                            let image_line = Line::from(vec![
+                                Span::styled("▸ ", Style::default().fg(assistant_marker)),
+                                Span::styled("[image] ", Style::default().fg(ctx.theme.info)),
+                                Span::styled(
+                                    url.clone(),
+                                    Style::default().fg(ctx.theme.text_muted),
+                                ),
+                            ]);
+                            append_message_lines(
+                                &mut lines,
+                                &mut line_to_message,
+                                &msg.id,
+                                paint_block_lines(
+                                    vec![image_line],
+                                    message_bg,
+                                    message_border,
+                                    ctx.content_width,
+                                ),
+                            );
+                        }
+                    }
+                    part_idx += 1;
+                }
+            }
+
+            if let Some(footer) = assistant_footer(
+                ctx.messages,
+                idx,
+                ctx.last_assistant_idx,
+                msg,
+                ctx.fallback_model,
+                ctx.theme,
+            ) {
+                append_message_lines(
+                    &mut lines,
+                    &mut line_to_message,
+                    &msg.id,
+                    paint_block_lines(vec![footer], message_bg, message_border, ctx.content_width),
+                );
+            }
+
+            let has_task_part = msg
+                .parts
+                .iter()
+                .any(|part| matches!(part, MessagePart::ToolCall { name, .. } if name == "task"));
+            if has_task_part {
+                let hint = task_view_subagents_line(
+                    ctx.theme,
+                    ctx.keybind,
+                    ctx.include_background_subagents,
+                );
+                append_message_lines(
+                    &mut lines,
+                    &mut line_to_message,
+                    &msg.id,
+                    paint_block_lines(
+                        vec![Line::from(""), hint],
+                        message_bg,
+                        message_border,
+                        ctx.content_width,
+                    ),
+                );
+            }
+        }
+        MessageRole::System => {
+            let system_lines: Vec<Line<'static>> = msg
+                .content
+                .lines()
+                .map(|line_text| {
+                    Line::from(Span::styled(
+                        line_text.to_string(),
+                        Style::default().fg(ctx.theme.text_muted),
+                    ))
+                })
+                .collect();
+            append_message_lines(&mut lines, &mut line_to_message, &msg.id, system_lines);
+        }
+    }
+
+    out.lines = lines;
+    out
 }
 
 fn push_spacing_lines(
@@ -2082,5 +2464,390 @@ mod tests {
             "visible prompt must reserve a render area"
         );
         assert_eq!(draft, "pending draft");
+    }
+
+    fn message(id: &str, role: MessageRole, text: &str, completed: bool) -> Message {
+        Message {
+            id: id.to_string(),
+            role,
+            content: text.to_string(),
+            created_at: chrono::Utc::now(),
+            agent: None,
+            model: None,
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: completed.then(chrono::Utc::now),
+            cost: 0.0,
+            tokens: Default::default(),
+            parts: vec![MessagePart::Text {
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    fn row_containing(
+        terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+        needle: &str,
+    ) -> Vec<usize> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .filter(|&y| {
+                let mut row = String::new();
+                for x in 0..buffer.area.width {
+                    row.push_str(buffer.get(x, y).symbol());
+                }
+                row.contains(needle)
+            })
+            .map(usize::from)
+            .collect()
+    }
+
+    #[test]
+    fn continuation_prompt_renders_once_in_order_and_stays_put() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "test-session".to_string();
+        // The interrupt-then-continue shape: a completed turn, the sent
+        // continuation prompt, then the in-flight assistant reply.
+        context.session.write().set_messages(
+            &session_id,
+            vec![
+                message("m1", MessageRole::User, "start", true),
+                message("m2", MessageRole::Assistant, "first answer", true),
+                message("m3", MessageRole::User, "continuation prompt", true),
+                message("m4", MessageRole::Assistant, "partial", false),
+            ],
+        );
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+
+        // Warm-up draws settle the follow-content layout (rendered line count).
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+
+        let measure = |terminal: &ratatui::Terminal<TestBackend>| {
+            let prompt_rows = row_containing(terminal, "continuation prompt");
+            assert_eq!(
+                prompt_rows.len(),
+                1,
+                "continuation prompt must render exactly once"
+            );
+            let answer_rows = row_containing(terminal, "first answer");
+            assert!(
+                answer_rows
+                    .last()
+                    .is_some_and(|answer| prompt_rows[0] > *answer),
+                "continuation prompt must render after the answer"
+            );
+            prompt_rows[0]
+        };
+
+        let first_row = measure(&terminal);
+
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        let second_row = measure(&terminal);
+        assert_eq!(
+            first_row, second_row,
+            "continuation prompt must not move across frames"
+        );
+    }
+
+    fn long_session(session_id: &str, context: &Arc<AppContext>, count: usize) {
+        let messages: Vec<Message> = (0..count)
+            .map(|i| {
+                let role = if i % 2 == 0 {
+                    MessageRole::User
+                } else {
+                    MessageRole::Assistant
+                };
+                message(
+                    &format!("m{i}"),
+                    role,
+                    &format!("message body number {i}"),
+                    true,
+                )
+            })
+            .collect();
+        context.session.write().set_messages(session_id, messages);
+    }
+
+    #[test]
+    fn per_frame_layout_is_bounded_by_the_window_not_history_size() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use std::sync::atomic::Ordering;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "long-session".to_string();
+        long_session(&session_id, &context, 2000);
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+
+        // Warm-up draws seed the per-message height cache (one full layout).
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+        assert!(
+            session.rendered_line_count > 2000,
+            "scroll semantics must still use the whole-session line total"
+        );
+
+        LAYOUT_RENDERS.store(0, Ordering::Relaxed);
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        let laid_out = LAYOUT_RENDERS.load(Ordering::Relaxed);
+
+        assert!(laid_out > 0, "the visible window must still be laid out");
+        assert!(
+            laid_out < 100,
+            "per-frame layout must be bounded by the window, laid out {laid_out} of 2000 messages"
+        );
+    }
+
+    #[test]
+    fn timeline_jump_to_pre_cutoff_message_renders_it() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "jump-session".to_string();
+        let mut messages = vec![message("m0", MessageRole::User, "OLDEST-MARKER", true)];
+        for i in 1..200 {
+            let role = if i % 2 == 0 {
+                MessageRole::User
+            } else {
+                MessageRole::Assistant
+            };
+            messages.push(message(
+                &format!("m{i}"),
+                role,
+                &format!("filler body number {i}"),
+                true,
+            ));
+        }
+        messages[50] = message("m50", MessageRole::Assistant, "MIDDLE-CUTOFF-MARKER", true);
+        context.session.write().set_messages(&session_id, messages);
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+
+        // Move to the newest message so older messages fall outside the window.
+        session.scroll_to_message("m199");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        assert!(
+            row_containing(&terminal, "OLDEST-MARKER").is_empty(),
+            "oldest message must be outside the render window before the jump"
+        );
+        assert!(
+            row_containing(&terminal, "MIDDLE-CUTOFF-MARKER").is_empty(),
+            "middle message must be outside the render window before the jump"
+        );
+
+        // A timeline jump to a mid-history message must re-anchor the window and
+        // display that message, not merely move an abstract offset.
+        session.scroll_to_message("m50");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        assert!(
+            !row_containing(&terminal, "MIDDLE-CUTOFF-MARKER").is_empty(),
+            "timeline jump must render the pre-cutoff message"
+        );
+
+        // A jump to the very oldest message must also render it.
+        session.scroll_to_message("m0");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        assert!(
+            !row_containing(&terminal, "OLDEST-MARKER").is_empty(),
+            "timeline jump to the top must render the oldest message"
+        );
+    }
+
+    #[test]
+    fn follow_tail_keeps_newest_content_visible_under_windowing() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "follow-session".to_string();
+        long_session(&session_id, &context, 80);
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+        for _ in 0..3 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+
+        // While pinned near the bottom, newly streamed content must stay visible.
+        context.session.write().add_message(
+            &session_id,
+            message("m80", MessageRole::Assistant, "NEWEST-TAIL-MARKER", true),
+        );
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+        assert!(
+            !row_containing(&terminal, "NEWEST-TAIL-MARKER").is_empty(),
+            "follow must keep the newest content pinned at the bottom"
+        );
+    }
+
+    #[test]
+    fn scrolling_up_pages_in_older_content_under_windowing() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "scroll-session".to_string();
+        let mut messages = vec![message("m0", MessageRole::User, "OLDEST-MARKER", true)];
+        for i in 1..200 {
+            let role = if i % 2 == 0 {
+                MessageRole::User
+            } else {
+                MessageRole::Assistant
+            };
+            messages.push(message(
+                &format!("m{i}"),
+                role,
+                &format!("filler body number {i}"),
+                true,
+            ));
+        }
+        context.session.write().set_messages(&session_id, messages);
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+        assert!(
+            row_containing(&terminal, "OLDEST-MARKER").is_empty(),
+            "oldest message starts outside the window at the bottom"
+        );
+
+        session.scroll_up_by(10_000);
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        assert!(
+            !row_containing(&terminal, "OLDEST-MARKER").is_empty(),
+            "scrolling up must page older content into the window"
+        );
+    }
+
+    #[test]
+    fn windowed_toggle_click_hits_visible_block() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        *context.show_thinking.write() = true;
+        let session_id = "click-session".to_string();
+        let reasoning = "thinking line\n".repeat(40);
+        let msg = Message {
+            id: "m0".to_string(),
+            role: MessageRole::Assistant,
+            content: String::new(),
+            created_at: chrono::Utc::now(),
+            agent: None,
+            model: None,
+            mode: None,
+            finish: Some("stop".to_string()),
+            error: None,
+            completed_at: Some(chrono::Utc::now()),
+            cost: 0.0,
+            tokens: Default::default(),
+            parts: vec![
+                MessagePart::Reasoning { text: reasoning },
+                MessagePart::Text {
+                    text: "answer".to_string(),
+                },
+            ],
+        };
+        context.session.write().set_messages(&session_id, vec![msg]);
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+
+        let area = session.last_messages_area.expect("messages area");
+        let top = session.scroll_offset;
+        let bottom = top + usize::from(area.height);
+        let hit = session
+            .thinking_toggle_hits
+            .iter()
+            .find(|hit| hit.line_index >= top && hit.line_index < bottom)
+            .expect("a visible reasoning toggle hit");
+        let row = area.y + (hit.line_index - top) as u16;
+
+        assert!(
+            session.handle_click(area.x + 1, row),
+            "click on a windowed toggle line must still toggle the block"
+        );
     }
 }
