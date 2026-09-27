@@ -271,3 +271,30 @@ coding/verification copilot for the walkforward optimization loop — is obsolet
 given this card's null result. The canonical artifacts for the Feynman question
 are `FEAT-065` and `FEAT-066`; the archived aa-studies doc is retained for
 provenance only.
+
+## Addendum — 2026-09-27 external-artifact scope boundary
+
+The EQUAL/null result recorded above is scoped to one objective: **reasoning
+over the local canonical corpus** (the aa-studies checkout). The comparison task
+only exercised local artifacts; Feynman's literature/web tools were unused by
+design of the test (`docs/research/FEAT-065-feynman-gate-001-vetting.md`).
+
+The **external/remote-artifact objective was not tested here** and remains open:
+whether an external evidence layer (papers, literature databases, web sources)
+measurably improves vetting/evaluation by supplementing — not replacing — the
+local canonical sources. Feynman's remote surface (alphaXiv; Semantic Scholar,
+OpenAlex, arXiv, PubMed, Europe PMC, bioRxiv/medRxiv, Crossref; Hugging Face Hub;
+web/PDF tooling; a source-verifying agent) was therefore never evaluated for this
+project.
+
+This does **not** reverse the recorded verdict; it bounds its claim. The
+external-evidence question is tracked by `FEAT-067`, and the durable principle is
+canonized in `invariants/research-department.md`.
+
+## Addendum — 2026-09-27 model-independence of the department boundary
+
+The separate-harness/complexity cost recorded above remains accurate as observed,
+but the department boundary it bears on is **concern-based, not model-based**. The
+null result was produced single-model by necessity; it is not a claim that the
+Research Department requires a distinct or stronger model. One model can operate
+both departments. See `invariants/research-department.md`.
