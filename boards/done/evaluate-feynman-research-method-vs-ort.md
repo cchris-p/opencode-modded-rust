@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -124,7 +124,7 @@ Facts recorded 2026-09-26 (re-verify before reuse):
 - `FEAT-031` Investigate the builtin "general" agent and decide whether to remove it
 - `SKILLS-002` Plan URL-backed skills parity
 - `START-004` Assess current Rust state
-- `H-013` `handoffs/2026-09-26-feat-065-feynman-gate-001-vetting-handoff.md` - next-agent runbook for this item
+- `H-013` `handoffs/archive/2026-09-26-feat-065-feynman-gate-001-vetting-handoff.md` - executed runbook for this item
 - aa-studies `GATE-001`, `docs/v1-readiness-gate.md`, `docs/strategy-readiness.md`, `docs/strategy-registry.md`, `docs/feynman_role_for_optimization.md` (external, private)
 
 ## Notes
@@ -226,3 +226,33 @@ kept open for review).
   `research/FEAT-065-feynman-gate-001-vetting` deleted remotely and locally.
   Card remains in `qa` pending post-merge QA / explicit completion; the merge
   alone does not move it out of `qa`. Handoff `H-013` archived.
+
+## QA Report — 2026-09-26
+
+Post-merge verification against the card's Done-when (`development` @ `80fd43c`):
+
+- [x] A real aa-studies `GATE-001` vetting task was run through Feynman and
+      through opencode/`ort` alone with exact commands and observed outputs
+      recorded, and is repeatable (commands + task rubric are in the Dev Notes
+      and the companion note).
+- [x] A clear verdict exists: **EQUAL** for vetting `GATE-001` and **EQUAL** for
+      finding improvements (null result).
+- [x] Value-carrying method components identified: local-file reasoning +
+      review-artifact discipline carry value; explicit-invocation provenance is
+      marginal; literature/alphaXiv and multi-agent/verifier add no demonstrated
+      value for this objective.
+- [x] Relationship to `docs/feynman_role_for_optimization.md` stated:
+      **supplement** (not supersede); old session artifact `session-ses_fd61.md`
+      exists but has no Feynman references.
+- [x] Follow-ups split or explicitly deferred: method adoption deferred; further
+      Feynman work on this objective deferred; aa-studies improvement candidates
+      advisory/operator-owned; `FEAT-066` out of scope.
+
+**Limitation (recorded, not blocking).** The comparison was single-model
+(`deepseek/deepseek-flash`; Feynman's default `anthropic/claude-opus-5-5` was
+unavailable for lack of credits), n=1 task, and no Feynman multi-agent/verifier
+pass was observable. The null result is scoped to that configuration; an
+optional retest with Feynman's intended model is not required to complete this
+card.
+
+**Result:** QA passed; card promoted to `done`.

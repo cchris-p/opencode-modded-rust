@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "wiki/cli-surface.md"
-status: "todo"
+status: "hold"
 created: "2026-09-26"
 ---
 
@@ -90,3 +90,21 @@ The automation is a dispatcher that rides the **canonical `opencode task` CLI pa
 
 - The mechanism is intentionally "straightforward": existing `serve` + `task` surfaces already support concurrent per-session work; this card only wires chunks to them.
 - Keep the human in the loop for orchestration gates; this automates dispatch and tracking, not merge/completion decisions.
+
+## Re-triage — 2026-09-26 (FEAT-065 null result)
+
+`FEAT-065` completed with a **null result**: Feynman's research method was not
+stronger than opencode/`ort` alone for vetting `GATE-001` or finding
+improvements, at ~3x latency and higher operational complexity
+(`docs/research/FEAT-065-feynman-gate-001-vetting.md`).
+
+This card's premise — automating a Feynman→`ort` chunk pipeline — assumes
+Feynman produces chunks worth dispatching. With no demonstrated Feynman
+advantage, the automation has no established value case, so this card is moved
+to `hold`. The resolved mechanism/contract above is retained for a future
+reopen.
+
+**Reopen condition:** a concrete Feynman value case (a task where Feynman's
+method demonstrably beats opencode/`ort` alone), or an independent need to
+orchestrate board-item chunks through `ort` that does not depend on Feynman's
+research advantage (e.g. a general chunk-dispatch need).

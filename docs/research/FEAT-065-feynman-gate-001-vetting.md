@@ -7,7 +7,7 @@ contents, prompts, or secrets. External documents are referenced by path only.
 - Item: `FEAT-065` ("Use Feynman to vet GATE-001 results and improve the ideal
   strategy and param sets")
 - Handoff: `H-013`
-  (`handoffs/2026-09-26-feat-065-feynman-gate-001-vetting-handoff.md`)
+  (`handoffs/archive/2026-09-26-feat-065-feynman-gate-001-vetting-handoff.md`)
 - Date: 2026-09-26
 - Target: aa-studies `development` @ `e7abe68` (private repo, read-only)
 
