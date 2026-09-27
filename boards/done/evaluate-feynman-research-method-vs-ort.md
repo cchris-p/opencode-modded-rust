@@ -212,9 +212,12 @@ kept open for review).
   research output to a file.
 - **Further Feynman work on this objective**: explicitly deferred (no advantage
   shown).
-- **aa-studies improvement candidates**: advisory only, operator-owned,
-  aa-studies not edited. Consolidated list recorded in the companion note
-  (`docs/research/FEAT-065-feynman-gate-001-vetting.md`).
+- **aa-studies improvement candidates**: advisory, operator-owned. Consolidated
+  list recorded in the companion note
+  (`docs/research/FEAT-065-feynman-gate-001-vetting.md`). On user direction the
+  two concrete gate-affecting findings were filed as aa-studies board cards
+  (`MHAL-006`, `DOCS-025`; aa-studies PR #162), the MQL5 clause deferred to
+  `VERS-007`. No gate disposition was changed.
 - **`FEAT-066`** (Feynman→`ort` chunk pipeline) remains out of scope and
   unaffected.
 
