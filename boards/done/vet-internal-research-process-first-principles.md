@@ -5,7 +5,7 @@ priority: "P1"
 type: "research"
 area: "RESEARCH"
 spec: "invariants/research-department.md"
-status: "todo"
+status: "done"
 created: "2026-09-27"
 ---
 
@@ -160,3 +160,26 @@ Companion note: `docs/research/RESEARCH-005-internal-research-process-vetting.md
   the testbed yet; `BALKE-021` #1 (volatility-expansion momentum ignition) is the
   recorded default recommendation.
 - No aa-studies disposition changed; no run, no `.set`, no MT spend.
+
+### 2026-09-28 — A/B run executed; verdict recorded
+
+Full results: `docs/research/RESEARCH-005-ab-run-results.md`.
+
+- **Testbed:** `BALKE-021` #1 volatility-expansion momentum ignition; audited
+  27-symbol universe, M5, `v1.00`, thin harness `1.1.0` (next-open, on-bar).
+- **Arms:** Arm A derivation-first single global rule (compression→expansion
+  close-location continuation, expansion×trailing-median(ATR)); Arm B incumbent
+  range-breakout conditioned on an expansion gate (`vexp_k` grid, selected).
+- **Observed:** both `park`. Arm A: OOS net +0.0008, breadth 13/27, gross/cost
+  1.29, D1 0.009, 498 trades (fails P3/P4/P5/P7/T1/T2/E1/D1/B2). Arm B: OOS net
+  −0.42, breadth 0/27, gross/cost −1.32, 87,535 trades (fails P1/P2/P3/P4/P5/T1/
+  T2/E1/D1/B1).
+- **Verdict:** Arm A **stronger** on D1 (different rule), D2 (correctly scoped
+  negative — weak fragile pre-cost signal vs blunt "no edge"), D3 (fewer wasted
+  iterations). Derivation changed the decision content, not the outcome.
+- **Invariant decision (draft, surfaced):** KEEP
+  `invariants/research-department.md` as amended; no new invariant.
+- **Unblock recommendation (advisory):** adopt the derivation-first step;
+  re-confirm Balke `park` (weak fragile signal, no robust edge). `GATE-AUX-*` /
+  MTHR / `RESEARCH-003` not evaluated here.
+- No aa-studies disposition changed; testbed ran in `/tmp`; no `.set`, no MT spend.

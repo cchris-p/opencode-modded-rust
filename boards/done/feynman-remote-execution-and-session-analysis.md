@@ -5,7 +5,7 @@ priority: "P1"
 type: "gate"
 area: "RESEARCH"
 spec: "invariants/research-department.md"
-status: "todo"
+status: "done"
 created: "2026-09-28"
 ---
 
@@ -79,3 +79,25 @@ Two hard prerequisites, tracked as one gate:
 
 - Model is not the variable; Feynman is the reference harness, not a required one.
 - Keep the human in the loop; findings are advisory.
+
+## Dev Notes
+
+### 2026-09-28 — remote execution (no TUI) + session analysis verified
+
+Both hard prerequisites demonstrated from a non-TTY parent (`stdout.isTTY =
+false`), each exiting `0` with empty stderr and writing a session JSONL under
+`~/.feynman/sessions/`:
+
+- **Remote execution.** `feynman --model deepseek/deepseek-flash --prompt "..."`
+  (one-shot `-p` print mode) returned the answer plus a terminal
+  `DISPOSITION:` line; `--mode rpc` booted the programmatic JSON-RPC surface
+  (`node scripts/check-pi-rpc.mjs` -> `pi rpc ok: 77 commands, empty stderr`);
+  `--mode json` emitted newline-delimited events ending `agent_settled`.
+- **Session analysis.** The one-shot run's full transcript is at
+  `~/.feynman/sessions/<timestamp>_<uuid>.jsonl`; the disposition contract
+  (`support`/`refute`/`ambiguous`/`nothing`/`error`) is readable from stdout and
+  from the transcript.
+
+Node floor: the host system `node` is v20; invoke with a supported Node
+(v22.22+/v24) on `PATH`. Canonical invocation/output-access spec:
+`feynman/AGENTS.md` "Invoking Feynman from opencode".
