@@ -88,6 +88,7 @@ pub struct SessionView {
     session_id: String,
     scroll_offset: usize,
     rendered_line_count: usize,
+    measured_line_count: usize,
     messages_viewport_height: usize,
     collapsed_reasoning: HashSet<String>,
     thinking_toggle_hits: Vec<ThinkingToggleHit>,
@@ -109,6 +110,7 @@ impl SessionView {
             session_id,
             scroll_offset: 0,
             rendered_line_count: 0,
+            measured_line_count: 0,
             messages_viewport_height: 0,
             collapsed_reasoning: HashSet::new(),
             thinking_toggle_hits: Vec::new(),
@@ -262,6 +264,16 @@ impl SessionView {
         let available_after_header_footer =
             available_after_header.saturating_sub(session_footer_height);
         let prompt_empty = prompt.get_input().trim().is_empty();
+        // BUG-054: measure the current transcript before sizing the messages
+        // pane. `desired_messages_height` below reads `self.measured_line_count`;
+        // if that value is a frame stale, the pane is one line shorter than the
+        // content while the transcript is shorter than the pane, and the
+        // one-line scroll offset shifts every visible queued row on each stream
+        // event. Measuring first keeps the pane height, the virtual total, and
+        // the viewport consistent within one frame. `rendered_line_count` is
+        // still updated by the paint pass so follow/scroll behavior is
+        // unchanged.
+        self.render_messages(frame, area, true);
         let viewport_height = if self.messages_viewport_height == 0 {
             usize::from(available_after_header_footer)
         } else {
@@ -303,7 +315,7 @@ impl SessionView {
         } else {
             // Follow content: prompt sits directly below rendered messages.
             let max_messages_height = available_after_header_footer.saturating_sub(prompt_height);
-            let desired_messages_height = (self.rendered_line_count as u16)
+            let desired_messages_height = (self.measured_line_count as u16)
                 .max(1)
                 .min(max_messages_height);
 
@@ -322,7 +334,7 @@ impl SessionView {
         if show_header && layout[0].height > 0 {
             self.render_header(frame, layout[0]);
         }
-        self.render_messages(frame, layout[1]);
+        self.render_messages(frame, layout[1], false);
         if layout[2].height > 0 {
             self.render_session_footer(frame, layout[2]);
         }
@@ -637,10 +649,18 @@ impl SessionView {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_messages(&mut self, frame: &mut Frame, area: Rect) {
+    /// Render the messages pane.
+    ///
+    /// When `measure_only` is set, only the per-message layout cache and
+    /// `self.measured_line_count` are updated; nothing is painted and the
+    /// viewport/scroll state is left untouched. `render` calls this once in
+    /// measure-only mode so the pane can be sized from the current transcript
+    /// instead of the previous frame's total (BUG-054).
+    fn render_messages(&mut self, frame: &mut Frame, area: Rect, measure_only: bool) {
         if area.height == 0 || area.width == 0 {
             self.last_messages_area = None;
             self.rendered_line_count = 0;
+            self.measured_line_count = 0;
             self.messages_viewport_height = 0;
             self.thinking_toggle_hits.clear();
             self.tool_toggle_hits.clear();
@@ -672,7 +692,9 @@ impl SessionView {
             width: 1,
             height: area.height,
         });
-        self.last_messages_area = Some(messages_area);
+        if !measure_only {
+            self.last_messages_area = Some(messages_area);
+        }
         let content_width = usize::from(messages_area.width.saturating_sub(1));
         let show_thinking = *self.context.show_thinking.read();
         let show_timestamps = *self.context.show_timestamps.read();
@@ -808,6 +830,10 @@ impl SessionView {
         }
         for (idx, _msg) in messages.iter().enumerate() {
             total_lines += leading_spacing(messages, idx) + heights[idx];
+        }
+        if measure_only {
+            self.measured_line_count = total_lines;
+            return;
         }
         self.rendered_line_count = total_lines;
         self.messages_viewport_height = usize::from(messages_area.height);
@@ -2563,6 +2589,90 @@ mod tests {
         assert_eq!(
             first_row, second_row,
             "continuation prompt must not move across frames"
+        );
+    }
+
+    #[test]
+    fn queued_message_rows_do_not_jitter_while_streaming() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "queued-jitter-regression".to_string();
+        let mut messages = vec![
+            message("u1", MessageRole::User, "start prompt", true),
+            message("a1", MessageRole::Assistant, "first answer", true),
+            message("a2", MessageRole::Assistant, "partial", false),
+            message("q1", MessageRole::User, "QUEUED-ONE", true),
+            message("q2", MessageRole::User, "QUEUED-TWO", true),
+            message("q3", MessageRole::User, "QUEUED-THREE", true),
+        ];
+        context
+            .session
+            .write()
+            .set_messages(&session_id, messages.clone());
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        // A tall terminal keeps the transcript shorter than the pane (unclamped),
+        // which is where the one-line pane-sizing lag used to shift queued rows.
+        let mut terminal = Terminal::new(TestBackend::new(80, 60)).expect("terminal");
+        for _ in 0..3 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+
+        let rows = |terminal: &Terminal<TestBackend>| {
+            (
+                row_containing(terminal, "QUEUED-ONE"),
+                row_containing(terminal, "QUEUED-TWO"),
+                row_containing(terminal, "QUEUED-THREE"),
+            )
+        };
+
+        let mut assistant_text = "partial".to_string();
+        for step in 0..8 {
+            assistant_text.push_str(&format!("\nline {step}"));
+            messages[2].content = assistant_text.clone();
+            messages[2].parts = vec![MessagePart::Text {
+                text: assistant_text.clone(),
+            }];
+            context
+                .session
+                .write()
+                .set_messages(&session_id, messages.clone());
+
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+            let after_stream = rows(&terminal);
+
+            // A redraw with no new content must not move the queued rows.
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+            let settled = rows(&terminal);
+
+            assert_eq!(
+                after_stream, settled,
+                "queued rows must not move on a no-op redraw (step {step}): \
+                 {after_stream:?} vs {settled:?}"
+            );
+            assert!(
+                session.rendered_line_count <= session.messages_viewport_height,
+                "test must stay in the unclamped regime (step {step})"
+            );
+        }
+        assert_eq!(
+            session.scroll_offset, 0,
+            "an unclamped transcript must not scroll"
         );
     }
 
