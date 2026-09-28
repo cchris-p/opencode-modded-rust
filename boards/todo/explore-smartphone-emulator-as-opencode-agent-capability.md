@@ -17,7 +17,7 @@ Investigate whether `ort` should gain a first-class capability to drive an Andro
 
 ## Why this exists
 
-Planning the standalone DraftKings emulator project (`BET-001`) surfaced a product question: the same control primitives could be a reusable opencode-agent capability. This card is the adoption-research probe and does not commit the product to building it.
+Planning the standalone DraftKings emulator project (now tracked as `BET-001` on the `acebets` board) surfaced a product question: the same control primitives could be a reusable opencode-agent capability. This card is the adoption-research probe and does not commit the product to building it.
 
 ## Scope
 
@@ -33,7 +33,7 @@ Questions to answer:
 ## Non-goals
 
 - Committing to implement the capability now.
-- Betting or bankroll logic (owned by `BET-001`).
+- Betting or bankroll logic (owned by `BET-001` on the `acebets` board).
 - Any change to the product runtime in this card.
 
 ## Done when
@@ -47,7 +47,7 @@ Questions to answer:
 
 ## Related Items
 
-- `BET-001` Autonomous smartphone-emulator DraftKings betting project (source of the idea)
+- `BET-001` Autonomous smartphone-emulator DraftKings betting project (moved to the `acebets` board; source of the idea)
 - `FEAT-065` Explore Feynman research-agent uses and decide whether to adopt into ort (comparable adoption-research card)
 
 ## Notes
