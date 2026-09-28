@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-09-26"
 ---
 
@@ -335,3 +335,22 @@ persisted snapshot. Dated context only; this card's `qa` status and scope are un
 - Merged into `development` as PR #127 (merge commit `dc41ce3`); branch
   `bug/BUG-043-047-051-snapshot-merge-and-metadata` deleted (remote then local).
 - Remains in `qa` until a post-merge QA report is recorded on `development`.
+
+## QA Report (post-merge self-QA) - 2026-09-27 - PASS
+
+QA: BUG-043 — an aborted run keeps a durable terminal record across a reload on `development`.
+commit: `7377827` (fix `875e5e7`, merge `dc41ce3`)   binary: `target/debug/opencode`
+harness: `scripts/qa/bug-043-047-051-snapshot-merge-qa.sh` (isolated HOME/DB, server 127.0.0.1:4197)
+
+- `cargo test -p opencode-server` 71 + 3 passed; `-p opencode-storage` 3 passed; `-p opencode-tui`
+  `continuation_prompt_renders_once_in_order_and_stays_put` passed; `cargo check --workspace` and
+  `cargo fmt --all -- --check` clean. (`opencode-session` has 2 pre-existing
+  `instruction::tests::test_find_up_*` failures from `e937c3c`; `instruction.rs` is untouched by
+  this fix — unrelated macOS path-symlink issue.)
+- Live (isolated HOME): streaming turn -> abort -> idle -> restart server -> `GET /session/{id}/message`
+  returns the aborted assistant with `error=aborted`, `finish=aborted`, `completed_at` set.
+- Raw storage: `sqlite3 messages.data` for the aborted assistant contains
+  `{"metadata":{"completed_at":...,"error":"aborted","finish_reason":"aborted"},...}` — metadata
+  survives reload (not `HashMap::new()`).
+- `opencode session inspect <id>` reports persisted output and does not say `stalled`.
+- result: **PASS**.

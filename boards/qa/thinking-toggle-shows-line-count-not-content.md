@@ -191,3 +191,34 @@ times in different places." Root cause was hit registration, not the render.
   behavior. Candidate follow-up under `tool-and-script-display-improvements`.
 - Committed directly to `development` per operator request (no PR); status remains `qa`.
 
+## Merge Resolution - 2026-09-28 (development pull)
+
+Resolved the merge of local `BUG-022` (commit `aa560b5`) with `origin/development` (`BUG-049`
+windowed render + `BUG-054` pane sizing, commit `e0f66a8`). Both sides changed the session
+transcript renderer, so `crates/opencode-tui/src/components/session.rs` conflicted.
+
+Why it conflicted:
+
+- `BUG-049` extracted per-message rendering out of `render_messages` into
+  `render_message_body(ctx, msg, idx) -> RenderedBody { lines, thinking_hits, tool_hits }`, added the
+  bounded render window with a per-message height cache (`heights`, `leading_spacing`,
+  `window_start_line`), and offsets body hit indices by `base = window_start_line + lines.len()`.
+- `BUG-022` had edited the old inline `render_messages` body, so its changes had to be ported into the
+  extracted function rather than kept as a parallel arm.
+
+Resolution (origin refactor with `BUG-022` semantics layered on):
+
+- `ThinkingToggleHit` keeps the `start_line`/`end_line` range; the window conversion offsets both ends
+  by `base`.
+- `render_message_body` registers the wrapped "Thinking" header and `[click to collapse]` footer rows
+  using the re-added `painted_line_height` helper next to `wrap_block_line`.
+- `handle_click` matches the range (`hit.start_line <= line_index && line_index <= hit.end_line`).
+- Dropped `BUG-022`'s `visible_reasoning_ids` bookkeeping: `BUG-049`'s windowed layout no longer
+  prunes `collapsed_reasoning` by visible ids, since not every block is laid out each frame.
+- Kept both test sets; adapted `windowed_toggle_click_hits_visible_block` to range-hit selection.
+
+Verification: `cargo check -p opencode-tui` clean; `cargo test -p opencode-tui --lib` green
+(176 passed), including `clicking_the_visible_thinking_affordances_toggles_the_block`,
+`windowed_toggle_click_hits_visible_block`, and `queued_message_rows_do_not_jitter_while_streaming`.
+Status remains `qa`.
+

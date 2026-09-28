@@ -85,6 +85,37 @@ cache generated for a different source and failed with "does not match the sourc
 resolved source path (`scopemux-core-build-<hash>`), so each source keeps its own
 cache. Verified by building with both sources in sequence with no `cargo clean`.
 
+## Follow-up fix (2026-09-27)
+
+`ort-build` still failed on machines whose active `python3` is newer than 3.11
+(for example the repo's own pyenv 3.12 virtualenv): scopemux-core's CMake
+`find_package(Python 3.10...<3.12)` rejects 3.12, then falls back to a system
+Python without development headers and configuration fails. The fetch script's
+`have_python_dev` only inspected the active `python3`, which has headers but is
+out of range, so it reported success and skipped provisioning.
+
+- `crates/opencode-scopemux/build.rs`: resolve a Python 3.10/3.11 interpreter
+  with development headers (`SCOPEMUX_PYTHON`, then `python3.11`/`python3.10`,
+  then `python3`, then pyenv `versions/3.1{0,1}.*/bin/python3`) and pass it to
+  CMake as `-DPython_EXECUTABLE`, so PATH/pyenv state cannot select an
+  unsupported interpreter.
+- `scripts/fetch-scopemux-core.sh`: candidate-aware `have_python_dev` that only
+  accepts 3.10/3.11, and `ensure_python_dev` that installs the matching
+  `python3.11-dev`/`python3.10-dev` (or dnf/brew equivalents) rather than the
+  active interpreter's version; it fails with actionable guidance otherwise.
+- `~/standards/opencode-config`: restored the `opencode-rust-ensure-scopemux-core`
+  preflight called from `opencode-rust-build` (the launcher change was documented
+  here but absent from that checkout), so a fresh build auto-fetches the core
+  before `build.rs` runs.
+- `AGENTS.md`: the native-build bullet now notes the Python 3.10/3.11
+  requirement and `SCOPEMUX_PYTHON`.
+
+Verification: `cargo build -p opencode-cli` succeeds on a machine whose default
+`python3` is pyenv 3.12 (CMake resolved pyenv 3.11.9); `cargo test -p
+opencode-scopemux --features native` passes 14/14; the preflight was tested for
+missing, at-pin, off-pin (warn/refresh), external `SCOPEMUX_CORE_DIR`, and
+`SCOPEMUX_SKIP_NATIVE_BUILD`.
+
 ## Open items / QA focus
 
 - End-to-end `ort-build` verified on `development`: the launcher auto-fetched

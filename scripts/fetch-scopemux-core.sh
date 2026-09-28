@@ -6,6 +6,12 @@
 # (gitignored) and initializes its submodules (Tree-sitter grammars, pybind11),
 # which the C build needs.
 #
+# It also provisions the native build dependencies when they are missing: cmake,
+# and a Python 3.10/3.11 interpreter with development headers. scopemux-core's
+# CMake requires `find_package(Python 3.10...<3.12)`, so a pyenv or distro
+# `python3` newer than 3.11 cannot satisfy it. Set SCOPEMUX_PYTHON to force a
+# specific interpreter.
+#
 # `ort-build` runs this automatically when the source is missing and warns when
 # an existing checkout drifts from the pin; set OPENCODE_RUST_REFRESH_CORE=1 to
 # refresh a drifted checkout.
@@ -63,13 +69,36 @@ ensure_cmake() {
     fi
 }
 
-have_python_dev() {
-    local py="${PYTHON:-python3}"
-    command -v "${py}" >/dev/null 2>&1 || return 1
-    "${py}" - <<'PY' >/dev/null 2>&1
+# Interpreter candidates acceptable to scopemux-core's `find_package(Python
+# 3.10...<3.12)`. An explicit SCOPEMUX_PYTHON wins; otherwise versioned binaries
+# come before `python3`, so a pyenv virtualenv or distro `python3` newer than
+# 3.11 cannot shadow a compatible interpreter. pyenv version directories are
+# included because they carry development headers but are not always reachable
+# as a bare `python3.11` on PATH.
+python_candidates() {
+    if [ -n "${SCOPEMUX_PYTHON:-}" ]; then
+        printf '%s\n' "${SCOPEMUX_PYTHON}"
+    fi
+    printf '%s\n' python3.11 python3.10 python3
+
+    local versions_dir="${PYENV_ROOT:-${HOME:-}/.pyenv}/versions"
+    if [ -d "${versions_dir}" ]; then
+        local dir
+        for dir in "${versions_dir}"/3.11.* "${versions_dir}"/3.10.*; do
+            [ -x "${dir}/bin/python3" ] && printf '%s\n' "${dir}/bin/python3"
+        done
+    fi
+}
+
+python_dev_ok() {
+    "${1}" - <<'PY' >/dev/null 2>&1
 import glob
 import os
+import sys
 import sysconfig
+
+if not ((3, 10) <= sys.version_info[:2] < (3, 12)):
+    raise SystemExit(1)
 
 include = sysconfig.get_path("include")
 if not include or not os.path.exists(os.path.join(include, "Python.h")):
@@ -81,33 +110,63 @@ if libdir and not glob.glob(os.path.join(libdir, "libpython*")):
 PY
 }
 
+have_python_dev() {
+    local py
+    while IFS= read -r py; do
+        [ -n "${py}" ] || continue
+        if python_dev_ok "${py}"; then
+            return 0
+        fi
+    done < <(python_candidates)
+    return 1
+}
+
 ensure_python_dev() {
     if have_python_dev; then
         return
     fi
 
-    echo "[fetch-scopemux-core] Python development files not found; installing native build dependency"
-    local py_version
-    py_version="$("${PYTHON:-python3}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    echo "[fetch-scopemux-core] no Python 3.10/3.11 development files found; installing native build dependency"
 
     if command -v apt-get >/dev/null 2>&1; then
-        run_as_root apt-get update
-        if [ -n "${py_version}" ]; then
-            run_as_root apt-get install -y "python${py_version}-dev" ||
-                run_as_root apt-get install -y python3-dev
-        else
-            run_as_root apt-get install -y python3-dev
-        fi
+        run_as_root apt-get update || true
+        local pkg
+        for pkg in python3.11-dev python3.10-dev; do
+            if run_as_root apt-get install -y "${pkg}" 2>/dev/null; then
+                break
+            fi
+        done
     elif command -v dnf >/dev/null 2>&1; then
-        run_as_root dnf install -y python3-devel
+        local pkg
+        for pkg in python3.11-devel python3.10-devel; do
+            if run_as_root dnf install -y "${pkg}" 2>/dev/null; then
+                break
+            fi
+        done
     elif command -v yum >/dev/null 2>&1; then
-        run_as_root yum install -y python3-devel
+        local pkg
+        for pkg in python3.11-devel python3.10-devel; do
+            if run_as_root yum install -y "${pkg}" 2>/dev/null; then
+                break
+            fi
+        done
     elif command -v pacman >/dev/null 2>&1; then
         run_as_root pacman -Sy --needed --noconfirm python
     elif command -v brew >/dev/null 2>&1; then
-        brew install python@3.11
+        local formula
+        for formula in python@3.11 python@3.10; do
+            if brew install "${formula}" 2>/dev/null; then
+                break
+            fi
+        done
     else
         echo "[fetch-scopemux-core] Unable to install Python development files automatically; install them and rerun this script" >&2
+        exit 1
+    fi
+
+    if ! have_python_dev; then
+        echo "[fetch-scopemux-core] could not provision a Python 3.10/3.11 interpreter with development files." >&2
+        echo "[fetch-scopemux-core] Install one (for example python3.11-dev), or point SCOPEMUX_PYTHON at a compatible interpreter, then rerun." >&2
         exit 1
     fi
 }
