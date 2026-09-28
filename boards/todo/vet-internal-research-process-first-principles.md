@@ -140,3 +140,23 @@ not evidence).
 - A derivation is a prior, not evidence; the pre-registered evaluation is the
   evidence.
 - Keep the human in the loop; findings are advisory.
+
+## Dev Notes
+
+### 2026-09-28 — derivation step fleshed out; A/B protocol defined; run deferred
+
+Companion note: `docs/research/RESEARCH-005-internal-research-process-vetting.md`.
+
+- Produced the **fleshed-out derivation-first research step** (causal-hypothesis
+  schema: mechanism → causal chain → testable prediction → single global rule →
+  falsification condition; TSM grounding map; spec-basis vs spec-divergence;
+  pre-registration template; derivation-is-a-prior guards) and the **A/B vetting
+  protocol** (Arm A derivation-first vs Arm B incumbent re-variant, held constants,
+  D1/D2/D3 comparison criteria, deferred runbook).
+- **Run is deferred**: the operator decision is to **not proceed with a Balke
+  mechanism trial until the research prerequisites are done** (the protocol is
+  defined, but the A/B run, the `invariants/research-department.md` decision, and
+  the per-strategy unblock are still outstanding). No mechanism was selected for
+  the testbed yet; `BALKE-021` #1 (volatility-expansion momentum ignition) is the
+  recorded default recommendation.
+- No aa-studies disposition changed; no run, no `.set`, no MT spend.
