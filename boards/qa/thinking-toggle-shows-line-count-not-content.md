@@ -164,3 +164,30 @@ A live two-session capture (see `BUG-051`) confirmed a `deepseek/deepseek-flash`
 actively streaming (persisted reasoning bytes growing) while the operator could not tell whether it
 was alive — the exact "count/opaque display hides a live stream" problem this card addresses.
 Dated context only; `qa` status and scope unchanged.
+
+## Dev Notes - 2026-09-28 (click reliability follow-up)
+
+Operator follow-up: "click to collapse is hard to click — I have to click `[click to collapse]` many
+times in different places." Root cause was hit registration, not the render.
+
+- `paint_block_lines` wraps each part and adds one blank padding line above and below the block
+  (`session.rs:1477-1492`). The old toggle hits were registered at `start_line` and `lines.len()-1`,
+  i.e. the two *blank padding rows*, while the visible `▼ Thinking` header and `[click to collapse]`
+  footer sat one row inside (`session.rs:852-863` before this change). Clicking the labeled text did
+  nothing; only the unlabeled padding row toggled, which is why repeated clicks "in different places"
+  eventually worked.
+- `ThinkingToggleHit` now carries a `start_line`/`end_line` range, and `handle_click` matches
+  containment instead of a single row (`session.rs:1170-1176`).
+- Hits are registered on the actual visible affordances: the wrapped "Thinking" header row(s) and,
+  when expanded, the wrapped `[click to collapse]` footer row(s), using
+  `painted_line_height` (`session.rs:1595-1599`) to stay correct on narrow terminals. Reasoning body
+  rows remain non-toggle so transcript text selection still works there.
+- Test: `clicking_the_visible_thinking_affordances_toggles_the_block` renders a reasoning part,
+  clicks the exact `[click to collapse]` row and then the `▶ Thinking` row, and asserts the block
+  collapses and re-expands.
+- Verification: `cargo test -p opencode-tui` green (170 passed); `cargo check -p opencode-tui` clean.
+- Related observation (out of scope): `tool_toggle_hits` uses the same padding-row endpoint scheme
+  (`append_rendered_tool_call`), so tool-run toggles likely have the same "click the blank row"
+  behavior. Candidate follow-up under `tool-and-script-display-improvements`.
+- Committed directly to `development` per operator request (no PR); status remains `qa`.
+

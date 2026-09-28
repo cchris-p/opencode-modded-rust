@@ -27,7 +27,8 @@ const SIDEBAR_CLOSE_BUTTON_WIDTH: u16 = 3;
 const SIDEBAR_OPEN_BUTTON_WIDTH: u16 = 3;
 
 struct ThinkingToggleHit {
-    line_index: usize,
+    start_line: usize,
+    end_line: usize,
     reasoning_id: String,
 }
 
@@ -834,6 +835,31 @@ impl SessionView {
                                             text, &theme, collapsed,
                                         );
                                         if !rendered.lines.is_empty() {
+                                            let collapsible = rendered.collapsible;
+                                            // BUG-022 follow-up: the toggle hit rows must land on the
+                                            // visible "Thinking" header and "[click to collapse]"
+                                            // footer, not the blank padding lines that
+                                            // `paint_block_lines` adds around the block. Count the
+                                            // wrapped heights so the mapping stays correct when the
+                                            // terminal is narrow.
+                                            let header_height = rendered
+                                                .lines
+                                                .first()
+                                                .map(|line| {
+                                                    painted_line_height(line, content_width)
+                                                })
+                                                .unwrap_or(1);
+                                            let footer_height = if collapsed || !collapsible {
+                                                0
+                                            } else {
+                                                rendered
+                                                    .lines
+                                                    .last()
+                                                    .map(|line| {
+                                                        painted_line_height(line, content_width)
+                                                    })
+                                                    .unwrap_or(0)
+                                            };
                                             let painted = paint_block_lines(
                                                 rendered.lines,
                                                 message_thinking_bg,
@@ -846,17 +872,25 @@ impl SessionView {
                                                 &msg.id,
                                                 painted,
                                             );
-                                            if rendered.collapsible {
-                                                let end_line = lines.len().saturating_sub(1);
+                                            if collapsible {
                                                 visible_reasoning_ids.insert(reasoning_id.clone());
+                                                let header_start = start_line + 1;
+                                                let header_end =
+                                                    header_start + header_height.saturating_sub(1);
                                                 self.thinking_toggle_hits.push(ThinkingToggleHit {
-                                                    line_index: start_line,
+                                                    start_line: header_start,
+                                                    end_line: header_end,
                                                     reasoning_id: reasoning_id.clone(),
                                                 });
-                                                if end_line > start_line {
+                                                if footer_height > 0 {
+                                                    let footer_end = lines.len().saturating_sub(2);
+                                                    let footer_start = footer_end.saturating_sub(
+                                                        footer_height.saturating_sub(1),
+                                                    );
                                                     self.thinking_toggle_hits.push(
                                                         ThinkingToggleHit {
-                                                            line_index: end_line,
+                                                            start_line: footer_start,
+                                                            end_line: footer_end,
                                                             reasoning_id,
                                                         },
                                                     );
@@ -1169,7 +1203,7 @@ impl SessionView {
         let Some(reasoning_id) = self
             .thinking_toggle_hits
             .iter()
-            .find(|hit| hit.line_index == line_index)
+            .find(|hit| hit.start_line <= line_index && line_index <= hit.end_line)
             .map(|hit| hit.reasoning_id.clone())
         else {
             return false;
@@ -1559,6 +1593,12 @@ fn wrap_block_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
             Line::from(spans)
         })
         .collect()
+}
+
+/// Number of terminal rows a single logical line occupies once
+/// `paint_block_lines` wraps it, excluding the block padding.
+fn painted_line_height(line: &Line<'static>, width: usize) -> usize {
+    wrap_block_line(line.clone(), width).len().max(1)
 }
 
 fn is_gutter_span(content: &str) -> bool {
@@ -2181,6 +2221,96 @@ mod tests {
         assert_eq!(
             first_row, second_row,
             "continuation prompt must not move across frames"
+        );
+    }
+
+    fn reasoning_message(id: &str, reasoning: &str) -> Message {
+        Message {
+            id: id.to_string(),
+            role: MessageRole::Assistant,
+            content: String::new(),
+            created_at: chrono::Utc::now(),
+            agent: None,
+            model: None,
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: Some(chrono::Utc::now()),
+            cost: 0.0,
+            tokens: Default::default(),
+            parts: vec![MessagePart::Reasoning {
+                text: reasoning.to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn clicking_the_visible_thinking_affordances_toggles_the_block() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        *context.show_thinking.write() = true;
+        let session_id = "test-session".to_string();
+        context.session.write().set_messages(
+            &session_id,
+            vec![reasoning_message(
+                "m1",
+                "First line\nSecond line\nThird line",
+            )],
+        );
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+
+        fn draw(terminal: &mut Terminal<TestBackend>, session: &mut SessionView, prompt: &Prompt) {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), prompt);
+                })
+                .expect("draw");
+        }
+
+        // Warm-up draws settle the layout.
+        draw(&mut terminal, &mut session, &prompt);
+        draw(&mut terminal, &mut session, &prompt);
+
+        let hint_rows = row_containing(&terminal, "[click to collapse]");
+        assert_eq!(
+            hint_rows.len(),
+            1,
+            "expanded reasoning should show the collapse hint"
+        );
+        let hint_row = u16::try_from(hint_rows[0]).expect("row fits u16");
+        let col = session
+            .last_messages_area
+            .expect("messages area")
+            .x
+            .saturating_add(1);
+        assert!(
+            session.handle_click(col, hint_row),
+            "clicking the [click to collapse] hint must register as a toggle"
+        );
+
+        draw(&mut terminal, &mut session, &prompt);
+        assert!(
+            row_containing(&terminal, "[click to collapse]").is_empty(),
+            "block must collapse after clicking the hint"
+        );
+        let header_rows = row_containing(&terminal, "▶ Thinking");
+        assert_eq!(header_rows.len(), 1, "collapsed reasoning shows its header");
+        let header_row = u16::try_from(header_rows[0]).expect("row fits u16");
+        assert!(
+            session.handle_click(col, header_row),
+            "clicking the Thinking header must register as a toggle"
+        );
+
+        draw(&mut terminal, &mut session, &prompt);
+        assert_eq!(
+            row_containing(&terminal, "[click to collapse]").len(),
+            1,
+            "block must expand again after clicking the header"
         );
     }
 }
