@@ -1,7 +1,9 @@
 # RESEARCH-005 — Derivation-first research step: protocol + A/B vetting design
 
-**Status:** protocol defined; the A/B run is **deferred** until the research
-prerequisites below are complete. This note is the reference spec for the
+**Status:** protocol defined; the **A/B run is complete (2026-09-28)** — results
+in `RESEARCH-005-ab-run-results.md`. The verdict (Arm A derivation-first
+**stronger**; both arms `park`) and the invariant decision (KEEP, drafted) are
+surfaced for operator approval. This note is the reference spec for the
 aa-studies `RSCH` derivation step (`aa-studies INFRA-051`) that this card vets,
 plus the concrete A/B protocol for the vetting run itself.
 
@@ -160,8 +162,10 @@ No Balke mechanism is trialed until all of these hold:
 - [x] Propagation + enforcement passes complete (`INFRA-051` Pass 2–3).
 - [x] The derivation step is fleshed out (Part 1 of this note).
 - [x] The A/B vetting protocol is defined (Part 2 of this note).
-- [ ] `RESEARCH-005` A/B run executed and a verdict recorded (Part 2.4).
-- [ ] `invariants/research-department.md` decision approved by the operator.
+- [x] `RESEARCH-005` A/B run executed and a verdict recorded (Part 2.4) —
+  `RESEARCH-005-ab-run-results.md` (Arm A stronger; both `park`).
+- [ ] `invariants/research-department.md` decision approved by the operator
+  (draft decision: KEEP as amended — see results §6).
 - [ ] Operator unblocks the specific strategy (aa-studies `INFRA-052` /
   `INFRA-051` Pass 4 seeds `<AREA>-RSCH-I<n>` only after unblock).
 
