@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "wiki/cli-surface.md"
-status: "doing"
+status: "qa"
 created: "2026-09-30"
 ---
 
@@ -90,3 +90,12 @@ This keeps reattachment explicit (no implicit server discovery), consistent with
 - `CLI-004` Plan explicit detach command behavior for TUI-launched servers (done)
 - `CLI-005` Decide whether same-workspace server attach or reuse should exist (done, NO-GO)
 - `FEAT-033` Print a resume command on normal TUI exit (done)
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/133
+
+## QA Status
+
+- Merged status: not merged; PR #133 open against `development`.
+- Awaiting local verification on the checked-out branch `bug/BUG-055-detach-reattach-session`.
