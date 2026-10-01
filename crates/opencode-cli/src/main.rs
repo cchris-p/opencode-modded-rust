@@ -964,7 +964,7 @@ async fn run_tui(
 
     let tui_exit = run_result?;
     match tui_exit {
-        opencode_tui::TuiExit::Detach => {
+        opencode_tui::TuiExit::Detach { session_id } => {
             if let Some(server) = local_server.as_mut() {
                 server.detach();
             }
@@ -972,8 +972,9 @@ async fn run_tui(
             eprintln!("Detached from TUI server.");
             eprintln!("Server: {}", base_url);
             eprintln!("Workspace: {}", workspace.display());
-            eprintln!("Reattach command: opencode attach {}", base_url);
-            eprintln!("ort reattach command: ort --attach {}", base_url);
+            for line in reattach_hint_lines(&base_url, session_id.as_deref()) {
+                eprintln!("{line}");
+            }
         }
         opencode_tui::TuiExit::Exit { session_id } => {
             print_resume_hint(session_id.as_deref());
@@ -1246,6 +1247,23 @@ fn spawn_detached_tui_server(
     }
 
     Ok(cmd.spawn()?)
+}
+
+/// Build the terminal reattach hint printed after `/detach`.
+///
+/// The detached server is still running and already knows the session the user
+/// was viewing, so the hint carries `--session <id>` when available. Without it,
+/// `opencode attach <url>` / `ort --attach <url>` open a fresh session instead of
+/// returning to the detached one.
+fn reattach_hint_lines(base_url: &str, session_id: Option<&str>) -> Vec<String> {
+    let session_suffix = match session_id {
+        Some(id) if !id.is_empty() => format!(" --session {id}"),
+        _ => String::new(),
+    };
+    vec![
+        format!("Reattach command: opencode attach {base_url}{session_suffix}"),
+        format!("ort reattach command: ort --attach {base_url}{session_suffix}"),
+    ]
 }
 
 async fn resolve_requested_session(
@@ -7300,6 +7318,39 @@ mod tests {
         assert_eq!(
             empty,
             vec!["Resume your most recent session:", "  opencode --continue"]
+        );
+    }
+
+    #[test]
+    fn reattach_hint_includes_session_id_when_available() {
+        let lines = reattach_hint_lines("http://127.0.0.1:3189", Some("ses_123"));
+        assert_eq!(
+            lines,
+            vec![
+                "Reattach command: opencode attach http://127.0.0.1:3189 --session ses_123",
+                "ort reattach command: ort --attach http://127.0.0.1:3189 --session ses_123",
+            ]
+        );
+    }
+
+    #[test]
+    fn reattach_hint_omits_session_id_when_absent() {
+        let lines = reattach_hint_lines("http://127.0.0.1:3189", None);
+        assert_eq!(
+            lines,
+            vec![
+                "Reattach command: opencode attach http://127.0.0.1:3189",
+                "ort reattach command: ort --attach http://127.0.0.1:3189",
+            ]
+        );
+
+        let empty = reattach_hint_lines("http://127.0.0.1:3189", Some(""));
+        assert_eq!(
+            empty,
+            vec![
+                "Reattach command: opencode attach http://127.0.0.1:3189",
+                "ort reattach command: ort --attach http://127.0.0.1:3189",
+            ]
         );
     }
 
