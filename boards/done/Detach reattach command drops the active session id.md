@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "wiki/cli-surface.md"
-status: "qa"
+status: "done"
 created: "2026-09-30"
 ---
 
@@ -124,5 +124,6 @@ This keeps reattachment explicit (no implicit server discovery), consistent with
 
 ## QA Status
 
-- Committed directly to `development`; awaiting local re-verification of the printed reattach
-  command.
+- Committed directly to `development` (`0d72498`, `5bf14f1`).
+- QA passed 2026-09-30: `/detach` prints `ort --attach <url> --session <id>`, and running it reopens
+  the detached session. Card moved to `done`.
