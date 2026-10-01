@@ -366,13 +366,13 @@ impl App {
             }
         }
 
+        let session_id = match self.context.current_route() {
+            Route::Session { session_id } => Some(session_id),
+            _ => None,
+        };
         let exit = if self.state == AppState::Detaching {
-            TuiExit::Detach
+            TuiExit::Detach { session_id }
         } else {
-            let session_id = match self.context.current_route() {
-                Route::Session { session_id } => Some(session_id),
-                _ => None,
-            };
             TuiExit::Exit { session_id }
         };
         terminal::restore()?;

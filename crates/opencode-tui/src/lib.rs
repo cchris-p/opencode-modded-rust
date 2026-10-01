@@ -23,7 +23,7 @@ pub use theme::Theme;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TuiExit {
     Exit { session_id: Option<String> },
-    Detach,
+    Detach { session_id: Option<String> },
 }
 
 fn setup_panic_hook() {
