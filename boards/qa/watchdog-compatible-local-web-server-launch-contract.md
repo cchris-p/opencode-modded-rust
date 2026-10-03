@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: "AGENTS.md"
-status: "doing"
+status: "qa"
 created: "2026-10-03"
 ---
 
@@ -60,3 +60,4 @@ This card supports Watchdog backend orchestration. Watchdog owns when to instant
 - Implementation branch: `feature/CLI-011-watchdog-server-launch-contract`
 - Added a supervised `opencode serve` contract using `--cwd <workspace>` and `--startup-json` so external supervisors can parse `pid`, `url`, `health_url`, and `workspace` without relying on TUI state.
 - Documented readiness as polling `/health` and stop behavior as terminating the supervised child process or process group.
+- PR #134 merged into ORT `development`; branch cleanup deferred by operator request.
