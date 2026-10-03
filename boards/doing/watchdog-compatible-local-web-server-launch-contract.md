@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: "AGENTS.md"
-status: "todo"
+status: "doing"
 created: "2026-10-03"
 ---
 
@@ -54,3 +54,9 @@ This card supports Watchdog backend orchestration. Watchdog owns when to instant
 - `CLI-003` Remove local TUI server reuse so every ort run starts a fresh server for the activated workspace
 - `CLI-004` Plan explicit detach command behavior for TUI-launched servers
 - `CLI-005` Decide whether same-workspace server attach or reuse should exist
+
+## Dev Notes - 2026-10-03
+
+- Implementation branch: `feature/CLI-011-watchdog-server-launch-contract`
+- Added a supervised `opencode serve` contract using `--cwd <workspace>` and `--startup-json` so external supervisors can parse `pid`, `url`, `health_url`, and `workspace` without relying on TUI state.
+- Documented readiness as polling `/health` and stop behavior as terminating the supervised child process or process group.
