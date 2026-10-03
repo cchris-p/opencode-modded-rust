@@ -60,6 +60,23 @@ As of `opencode --help` (2026-02-23):
 - `--thinking`
 - `--agent <AGENT>` / `--model <MODEL>`
 
+### `opencode serve`
+
+`opencode serve` is the supported local HTTP server entrypoint for an external supervisor such as Watchdog.
+
+- `--cwd <PATH>` selects the workspace/root before server startup.
+- `--hostname <HOSTNAME>` selects the bind host. The default is `127.0.0.1`.
+- `--port <PORT>` selects the bind port. The default CLI value resolves to `3000` for compatibility with existing local usage.
+- `--startup-json` prints one machine-readable JSON line before the server begins accepting requests.
+
+With `--startup-json`, supervisors should parse a line shaped like:
+
+```json
+{"event":"opencode.server.starting","mode":"serve","pid":12345,"bind_host":"127.0.0.1","port":3000,"url":"http://127.0.0.1:3000","health_url":"http://127.0.0.1:3000/health","workspace":"/repo/path"}
+```
+
+Readiness is established by polling `health_url` until the endpoint returns success. Stopping a supervised server is process supervision: terminate the process group or child process that produced the startup JSON line. ORT does not reuse or attach to unrelated stale servers for this path.
+
 ### `opencode task new|send|view|status`
 
 Task commands talk to an explicit server/session target. They do not discover, start, reuse, or attach to a server implicitly, and they do not change normal `opencode`/`ort` TUI launch behavior.

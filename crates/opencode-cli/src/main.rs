@@ -126,6 +126,10 @@ enum Commands {
         port: u16,
         #[arg(long, default_value = "127.0.0.1")]
         hostname: String,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+        #[arg(long = "startup-json", default_value_t = false)]
+        startup_json: bool,
         #[arg(long, default_value_t = false)]
         mdns: bool,
         #[arg(long = "mdns-domain", default_value = "opencode.local")]
@@ -780,11 +784,23 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Serve {
             port,
             hostname,
+            cwd,
+            startup_json,
             mdns,
             mdns_domain,
             cors,
         }) => {
-            run_server_command("serve", port, hostname, mdns, mdns_domain, cors).await?;
+            run_server_command(
+                "serve",
+                port,
+                hostname,
+                cwd,
+                startup_json,
+                mdns,
+                mdns_domain,
+                cors,
+            )
+            .await?;
         }
         Some(Commands::Web {
             port,
@@ -2346,10 +2362,16 @@ async fn run_server_command(
     mode: &str,
     port: u16,
     hostname: String,
+    cwd: PathBuf,
+    startup_json: bool,
     mdns: bool,
     mdns_domain: String,
     cors: Vec<String>,
 ) -> anyhow::Result<()> {
+    std::env::set_current_dir(&cwd)
+        .map_err(|e| anyhow::anyhow!("Failed to change directory to {}: {}", cwd.display(), e))?;
+    let workspace = std::env::current_dir()?;
+
     if std::env::var("OPENCODE_SERVER_PASSWORD").is_err() {
         eprintln!("Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.");
     }
@@ -2370,9 +2392,42 @@ async fn run_server_command(
     opencode_server::set_cors_whitelist(cors);
     let _mdns_publisher = start_mdns_publisher_if_needed(mdns, &bind_host, bind_port, &mdns_domain);
     let addr: SocketAddr = format!("{}:{}", bind_host, bind_port).parse()?;
-    println!("Starting OpenCode {} server on {}", mode, addr);
+    if startup_json {
+        println!(
+            "{}",
+            serde_json::to_string(&server_startup_event(
+                mode, &bind_host, bind_port, &workspace
+            ))?
+        );
+    } else {
+        println!("Starting OpenCode {} server on {}", mode, addr);
+    }
     opencode_server::run_server(addr).await?;
     Ok(())
+}
+
+fn server_startup_event(
+    mode: &str,
+    bind_host: &str,
+    bind_port: u16,
+    workspace: &Path,
+) -> serde_json::Value {
+    let display_host = if bind_host == "0.0.0.0" {
+        "localhost"
+    } else {
+        bind_host
+    };
+    let url = format!("http://{}:{}", display_host, bind_port);
+    serde_json::json!({
+        "event": "opencode.server.starting",
+        "mode": mode,
+        "pid": std::process::id(),
+        "bind_host": bind_host,
+        "port": bind_port,
+        "url": url,
+        "health_url": format!("{}/health", url),
+        "workspace": workspace.display().to_string(),
+    })
 }
 
 fn try_open_browser(url: &str) {
@@ -2424,7 +2479,17 @@ async fn run_web_command(
     let url = format!("http://{}:{}", display_host, bind_port);
     println!("Web interface: {}", url);
     try_open_browser(&url);
-    run_server_command("web", bind_port, hostname, mdns, mdns_domain, cors).await
+    run_server_command(
+        "web",
+        bind_port,
+        hostname,
+        PathBuf::from("."),
+        false,
+        mdns,
+        mdns_domain,
+        cors,
+    )
+    .await
 }
 
 async fn run_acp_command(
@@ -2445,7 +2510,17 @@ async fn run_acp_command(
     eprintln!(
         "Warning: no external ACP stdio bridge runtime found; falling back to HTTP server mode."
     );
-    run_server_command("acp", port, hostname, mdns, mdns_domain, cors).await
+    run_server_command(
+        "acp",
+        port,
+        hostname,
+        PathBuf::from("."),
+        false,
+        mdns,
+        mdns_domain,
+        cors,
+    )
+    .await
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -7375,6 +7450,52 @@ mod tests {
                 "Reattach to the server:",
                 "  opencode attach http://127.0.0.1:3189",
             ]
+        );
+    }
+
+    #[test]
+    fn server_startup_event_exposes_supervisor_contract() {
+        let event = server_startup_event("serve", "127.0.0.1", 3199, Path::new("/tmp/example"));
+        assert_eq!(
+            event.get("event").and_then(|value| value.as_str()),
+            Some("opencode.server.starting")
+        );
+        assert_eq!(
+            event.get("mode").and_then(|value| value.as_str()),
+            Some("serve")
+        );
+        assert_eq!(
+            event.get("bind_host").and_then(|value| value.as_str()),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            event.get("port").and_then(|value| value.as_u64()),
+            Some(3199)
+        );
+        assert_eq!(
+            event.get("url").and_then(|value| value.as_str()),
+            Some("http://127.0.0.1:3199")
+        );
+        assert_eq!(
+            event.get("health_url").and_then(|value| value.as_str()),
+            Some("http://127.0.0.1:3199/health")
+        );
+        assert_eq!(
+            event.get("workspace").and_then(|value| value.as_str()),
+            Some("/tmp/example")
+        );
+    }
+
+    #[test]
+    fn server_startup_event_uses_localhost_display_for_wildcard_bind() {
+        let event = server_startup_event("serve", "0.0.0.0", 3199, Path::new("/tmp/example"));
+        assert_eq!(
+            event.get("url").and_then(|value| value.as_str()),
+            Some("http://localhost:3199")
+        );
+        assert_eq!(
+            event.get("health_url").and_then(|value| value.as_str()),
+            Some("http://localhost:3199/health")
         );
     }
 
