@@ -73,3 +73,10 @@ selectable, reports auth state, and accepts an API key.
 - The key itself is standards-managed: `NOVITA_API_KEY` is in OpenBao
   `env/shared` and rendered to `~/.config/opencode/.env`, so no per-machine
   Settings entry is required for propagation.
+- Follow-up: the initial change was not sufficient because the server's
+  `is_v1_catalog_provider` gate (used by `list_providers` and
+  `get_config_providers`) also excluded `novita-ai`, so the TUI never received
+  it. Added `novita-ai` there too.
+- Verified against a running server: `GET /provider` and
+  `GET /config/providers` both return `novita-ai` (and the latter's `setup.auth`
+  map includes it).

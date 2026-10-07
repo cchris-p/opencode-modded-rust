@@ -5160,7 +5160,7 @@ fn is_v1_catalog_provider(provider_id: &str) -> bool {
     }
     matches!(
         provider_id,
-        "ollama" | "openai" | "anthropic" | "deepseek" | "openrouter"
+        "ollama" | "openai" | "anthropic" | "deepseek" | "openrouter" | "novita-ai"
     )
 }
 
