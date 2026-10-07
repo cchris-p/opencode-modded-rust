@@ -171,6 +171,31 @@ ensure_python_dev() {
     fi
 }
 
+# Submodules the native C build compiles from source. Keep in sync with
+# REQUIRED_SUBMODULES in crates/opencode-scopemux/build.rs.
+required_submodules() {
+    printf '%s\n' \
+        vendor/tree-sitter \
+        vendor/tree-sitter-c \
+        vendor/tree-sitter-cpp \
+        vendor/tree-sitter-python \
+        vendor/tree-sitter-javascript \
+        vendor/tree-sitter-typescript \
+        vendor/tree-sitter-rust \
+        vendor/pybind11
+}
+
+# Print the required submodule paths that are missing or empty.
+missing_required_submodules() {
+    local rel
+    while IFS= read -r rel; do
+        [ -n "${rel}" ] || continue
+        if [ ! -d "${DEST}/${rel}" ] || [ -z "$(ls -A "${DEST}/${rel}" 2>/dev/null)" ]; then
+            printf '%s\n' "${rel}"
+        fi
+    done < <(required_submodules)
+}
+
 force=false
 check_only=false
 for arg in "$@"; do
@@ -196,6 +221,13 @@ if [ "${check_only}" = true ]; then
     fi
     if [ "${current_rev}" != "${PINNED_REV}" ]; then
         echo "[fetch-scopemux-core] ${DEST} is at ${current_rev}, expected ${PINNED_REV}" >&2
+        exit 1
+    fi
+    check_missing="$(missing_required_submodules || true)"
+    if [ -n "${check_missing}" ]; then
+        echo "[fetch-scopemux-core] ${DEST} is missing submodule sources:" >&2
+        printf '  %s\n' ${check_missing} >&2
+        echo "[fetch-scopemux-core] run without --check to initialize them" >&2
         exit 1
     fi
     echo "[fetch-scopemux-core] ${DEST} is at the pinned revision ${PINNED_REV}"
@@ -232,5 +264,13 @@ echo "[fetch-scopemux-core] Initializing submodules"
 git -C "${DEST}" \
     -c 'url.git@github.com:.insteadOf=https://github.com/' \
     submodule update --init --recursive
+
+update_missing="$(missing_required_submodules || true)"
+if [ -n "${update_missing}" ]; then
+    echo "[fetch-scopemux-core] required submodules are still empty after update:" >&2
+    printf '  %s\n' ${update_missing} >&2
+    echo "[fetch-scopemux-core] check network access to github.com and rerun" >&2
+    exit 1
+fi
 
 echo "[fetch-scopemux-core] Done. Build with: cargo build -p opencode-scopemux --features native"

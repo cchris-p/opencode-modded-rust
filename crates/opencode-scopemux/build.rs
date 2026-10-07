@@ -53,6 +53,13 @@ fn main() {
         );
     }
 
+    // The C build compiles the Tree-sitter grammars and pybind11 from submodules
+    // of scopemux-core. A checkout that is missing them makes CMake fail later
+    // with an opaque "No download info given ... is not an existing non-empty
+    // directory" error. Repair the submodules here, before CMake, so any build
+    // invocation (ort-build, cargo, CI) self-heals instead of failing.
+    ensure_submodules(&source_dir);
+
     println!("cargo:rerun-if-changed={}", source_dir.display());
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -104,9 +111,9 @@ fn main() {
     assert!(
         configure.success(),
         "scopemux-core CMake configuration failed.\n\
-         scopemux-core requires Python 3.10 or 3.11 with development headers.\n\
-         Run scripts/fetch-scopemux-core.sh to provision them, or set \
-         SCOPEMUX_PYTHON to a compatible interpreter."
+         Common causes: missing Tree-sitter/pybind11 submodules (run \
+         scripts/fetch-scopemux-core.sh) or a Python without 3.10/3.11 \
+         development headers (set SCOPEMUX_PYTHON to a compatible interpreter)."
     );
 
     let build = Command::new("cmake")
@@ -176,6 +183,89 @@ fn main() {
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=dylib=c++");
     }
+}
+
+/// Submodule paths of `scopemux-core` the native C build compiles from source.
+/// CMake's `ExternalProject_Add` points at `vendor/tree-sitter` (and the grammar
+/// archives) directly, so an empty checkout fails configuration with
+/// "No download info given ... is not an existing non-empty directory".
+const REQUIRED_SUBMODULES: &[&str] = &[
+    "vendor/tree-sitter",
+    "vendor/tree-sitter-c",
+    "vendor/tree-sitter-cpp",
+    "vendor/tree-sitter-python",
+    "vendor/tree-sitter-javascript",
+    "vendor/tree-sitter-typescript",
+    "vendor/tree-sitter-rust",
+    "vendor/pybind11",
+];
+
+/// Ensure every [`REQUIRED_SUBMODULES`] directory under `source_dir` is checked
+/// out. When any is missing and `source_dir` is a git checkout, initialize the
+/// submodules in place; otherwise fail with an actionable error instead of a
+/// cryptic CMake message.
+fn ensure_submodules(source_dir: &Path) {
+    let missing = || -> Vec<&'static str> {
+        REQUIRED_SUBMODULES
+            .iter()
+            .copied()
+            .filter(|rel| !dir_is_nonempty(&source_dir.join(rel)))
+            .collect()
+    };
+
+    let initially_missing = missing();
+    if initially_missing.is_empty() {
+        return;
+    }
+
+    if source_dir.join(".git").exists() {
+        // Limit to the submodules the C build needs: the test-case submodules are
+        // private and are not required here (SCOPEMUX_BUILD_TESTS=OFF), so
+        // initializing only the public ones keeps this working on machines that
+        // have no GitHub credentials for the private repos.
+        let mut update = Command::new("git");
+        update.arg("-C").arg(source_dir).args([
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            "--",
+        ]);
+        for rel in REQUIRED_SUBMODULES {
+            update.arg(rel);
+        }
+        let status = update.status();
+        if matches!(status, Ok(status) if status.success()) {
+            let still_missing = missing();
+            if still_missing.is_empty() {
+                println!(
+                    "cargo:warning=initialized missing scopemux-core submodules: {}",
+                    initially_missing.join(", ")
+                );
+                return;
+            }
+            panic!(
+                "scopemux-core submodules are still empty after `git submodule update --init \
+                 --recursive`: {}.\nRun scripts/fetch-scopemux-core.sh to provision them.",
+                still_missing.join(", ")
+            );
+        }
+    }
+
+    panic!(
+        "scopemux-core is missing required submodule sources: {}.\n\
+         The C build compiles these Tree-sitter grammars (and pybind11) from source.\n\
+         Run scripts/fetch-scopemux-core.sh, or set SCOPEMUX_CORE_DIR to a fully \
+         checked-out scopemux-core.",
+        initially_missing.join(", ")
+    );
+}
+
+/// Whether `path` is an existing, non-empty directory.
+fn dir_is_nonempty(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
 }
 
 /// Python program that exits 0 only when the interpreter it runs under is in
