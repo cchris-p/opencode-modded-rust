@@ -1,0 +1,4 @@
+data: {"id":"chatcmpl-5","object":"chat.completion.chunk","created":5,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-5","object":"chat.completion.chunk","created":5,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"partial answer"},"finish_reason":null}]}
+

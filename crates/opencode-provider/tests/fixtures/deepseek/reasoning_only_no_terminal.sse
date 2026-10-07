@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-6","object":"chat.completion.chunk","created":6,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"thinking "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6","object":"chat.completion.chunk","created":6,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"more "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-6","object":"chat.completion.chunk","created":6,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"and more"},"finish_reason":null}]}
+
