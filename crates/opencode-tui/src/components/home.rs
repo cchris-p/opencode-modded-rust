@@ -11,6 +11,7 @@ use ratatui::{
 use crate::branding::{APP_SHORT_NAME, APP_VERSION_DATE};
 use crate::components::Prompt;
 use crate::context::{AppContext, McpConnectionStatus};
+use crate::ui::workspace_location_label;
 
 const HOME_TIPS: &[&str] = &[
     "Press {highlight}Tab{/highlight} to cycle agents",
@@ -174,6 +175,7 @@ impl HomeView {
         }
         let theme = self.context.theme.read();
         let directory = self.context.directory.read();
+        let git_branch = self.context.git_branch.read();
         let mcp_servers = self.context.mcp_servers.read();
 
         let horizontal_padding = 2u16.min(area.width / 2);
@@ -199,8 +201,8 @@ impl HomeView {
 
         let mut spans: Vec<Span> = Vec::new();
 
-        // Left: directory
-        let dir_text = directory.to_string();
+        // Left: workspace path and checked-out branch
+        let dir_text = workspace_location_label(&directory, git_branch.as_deref());
         spans.push(Span::styled(
             dir_text.clone(),
             Style::default().fg(theme.text_muted),

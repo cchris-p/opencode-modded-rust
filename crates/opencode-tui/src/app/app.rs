@@ -135,7 +135,8 @@ impl App {
         let config =
             opencode_config::load_config(std::path::Path::new(&workspace_dir)).unwrap_or_default();
         let context = Arc::new(AppContext::new_with_config(&config));
-        *context.directory.write() = workspace_dir;
+        *context.directory.write() = workspace_dir.clone();
+        *context.git_branch.write() = detect_git_branch(&workspace_dir);
         context.set_experimental_background_subagents(config.experimental_background_subagents());
         let terminal = terminal::init()?;
         let mut prompt = Prompt::new(context.clone())
@@ -981,6 +982,8 @@ impl App {
                     let _ = self.refresh_skill_list_dialog();
                     let _ = self.refresh_lsp_status();
                     let _ = self.refresh_mcp_dialog();
+                    let workspace_dir = self.context.directory.read().clone();
+                    *self.context.git_branch.write() = detect_git_branch(&workspace_dir);
                     self.last_aux_sync = Instant::now();
                     tick_changed = true;
                 }
@@ -5391,6 +5394,18 @@ fn default_export_filename(title: &str, session_id: &str) -> String {
         slug = format!("session-{}", short_id);
     }
     format!("{slug}.md")
+}
+
+/// Resolve the workspace's checked-out git branch for the footer label
+/// (FEAT-067). Returns `None` outside a repository or when HEAD is detached,
+/// so the caller can omit the `:<branch>` suffix.
+fn detect_git_branch(directory: &str) -> Option<String> {
+    if directory.trim().is_empty() {
+        return None;
+    }
+    opencode_util::git::get_current_branch(Path::new(directory))
+        .map(|branch| branch.trim().to_string())
+        .filter(|branch| !branch.is_empty())
 }
 
 fn export_path_display(path: &Path) -> String {

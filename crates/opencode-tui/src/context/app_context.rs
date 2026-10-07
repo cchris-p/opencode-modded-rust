@@ -105,6 +105,8 @@ pub struct AppContext {
     pub current_provider: RwLock<Option<String>>,
     pub current_variant: RwLock<Option<String>>,
     pub directory: RwLock<String>,
+    /// Currently checked-out git branch of the workspace, if any (FEAT-067).
+    pub git_branch: RwLock<Option<String>>,
     pub show_sidebar: RwLock<bool>,
     pub show_header: RwLock<bool>,
     pub show_scrollbar: RwLock<bool>,
@@ -165,6 +167,7 @@ impl AppContext {
             current_provider: RwLock::new(None),
             current_variant: RwLock::new(None),
             directory: RwLock::new(String::new()),
+            git_branch: RwLock::new(None),
             show_sidebar: RwLock::new(false),
             show_header: RwLock::new(seed_bool(
                 &ui_kv,

@@ -18,6 +18,7 @@ use super::message_palette;
 use super::sidebar::SidebarState;
 use crate::components::{Prompt, Sidebar};
 use crate::context::{AppContext, Message, MessagePart, MessageRole, SidebarMode};
+use crate::ui::workspace_location_label;
 
 const SIDEBAR_WIDTH: u16 = 42;
 const HEADER_NARROW_THRESHOLD: u16 = 80;
@@ -554,6 +555,7 @@ impl SessionView {
 
         let theme = self.context.theme.read();
         let directory = self.context.directory.read().clone();
+        let git_branch = self.context.git_branch.read().clone();
         let mcp_servers = self.context.mcp_servers.read();
         let lsp_status = self.context.lsp_status.read();
         let permission_count = *self.context.pending_permissions.read();
@@ -632,10 +634,11 @@ impl SessionView {
         }
 
         let right_text_len: usize = right_spans.iter().map(|s| s.content.len()).sum();
-        let dir_len = directory.len();
+        let location = workspace_location_label(&directory, git_branch.as_deref());
+        let dir_len = location.len();
         let available = area.width as usize;
         let mut line_spans = vec![Span::styled(
-            directory,
+            location,
             Style::default().fg(theme.text_muted),
         )];
         if available > dir_len + right_text_len + 1 {
