@@ -575,35 +575,41 @@ impl App {
                         return Ok(());
                     }
                     if let Route::Session { session_id } = self.context.current_route() {
-                        let status = {
+                        let local_status = {
                             let session_ctx = self.context.session.read();
                             session_ctx.status(&session_id).clone()
                         };
-                        if !matches!(status, SessionStatus::Idle) {
-                            if !self.prompt.register_interrupt_keypress() {
-                                return Ok(());
-                            }
-                            let Some(client) = self.context.get_api_client() else {
-                                self.prompt.clear_interrupt_confirmation();
-                                self.toast.show(
-                                    ToastVariant::Error,
-                                    "Cannot interrupt: no server connection",
-                                    3000,
-                                );
-                                return Ok(());
-                            };
-                            match client.abort_session(&session_id) {
-                                Ok(value) => {
-                                    let aborted = value
-                                        .get("aborted")
-                                        .and_then(|item| item.as_bool())
-                                        .unwrap_or(true);
-                                    if aborted {
-                                        // Keep the confirmation latched until the
-                                        // session status changes so the hint does
-                                        // not flip back to "esc interrupt".
-                                        return Ok(());
-                                    }
+                        // BUG-057: never gate the interrupt on the cached local run
+                        // status. That cache can lag or desync from the server, and
+                        // gating on it lets a confirmed Esc silently do nothing while
+                        // the server is still running a turn. Issue the abort and let
+                        // the server report `aborted:false` when nothing was running.
+                        if !interrupt_ignores_cached_status(&local_status) {
+                            self.prompt.clear_interrupt_confirmation();
+                            return Ok(());
+                        }
+                        if !self.prompt.register_interrupt_keypress() {
+                            return Ok(());
+                        }
+                        let Some(client) = self.context.get_api_client() else {
+                            self.prompt.clear_interrupt_confirmation();
+                            self.toast.show(
+                                ToastVariant::Error,
+                                "Cannot interrupt: no server connection",
+                                3000,
+                            );
+                            return Ok(());
+                        };
+                        trace::line(format_args!(
+                            "interrupt: issuing abort for session {session_id} \
+                             (cached status {:?})",
+                            local_status
+                        ));
+                        match client.abort_session(&session_id) {
+                            Ok(value) => {
+                                if interpret_abort_response(&value)
+                                    == InterruptOutcome::NothingToInterrupt
+                                {
                                     self.prompt.clear_interrupt_confirmation();
                                     self.toast.show(
                                         ToastVariant::Info,
@@ -611,17 +617,21 @@ impl App {
                                         2000,
                                     );
                                 }
-                                Err(err) => {
-                                    self.prompt.clear_interrupt_confirmation();
-                                    self.toast.show(
-                                        ToastVariant::Error,
-                                        &format!("Failed to interrupt: {}", err),
-                                        3000,
-                                    );
-                                }
+                                // Otherwise keep the confirmation latched until
+                                // the session status changes so the hint does not
+                                // flip back to "esc interrupt" while the abort is
+                                // still in flight.
                             }
-                            return Ok(());
+                            Err(err) => {
+                                self.prompt.clear_interrupt_confirmation();
+                                self.toast.show(
+                                    ToastVariant::Error,
+                                    &format!("Failed to interrupt: {}", err),
+                                    3000,
+                                );
+                            }
                         }
+                        return Ok(());
                     }
                     self.prompt.clear_interrupt_confirmation();
                     return Ok(());
@@ -5035,6 +5045,37 @@ fn map_mcp_status(server: &McpStatusInfo) -> McpConnectionStatus {
     }
 }
 
+/// BUG-057: whether a confirmed `Esc` interrupt may proceed given the TUI's
+/// cached local run status.
+///
+/// Always `true`. This is a named policy seam so a future change cannot silently
+/// re-introduce a local-status gate, which can drop a legitimate interrupt when
+/// the cache lags or desyncs from the server. The server is authoritative and
+/// answers `aborted:false` when nothing was running.
+fn interrupt_ignores_cached_status(_status: &SessionStatus) -> bool {
+    true
+}
+
+/// How the TUI should react to a server abort response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InterruptOutcome {
+    /// The server cancelled a run (or did not say otherwise); keep the
+    /// confirmation latched until the session status changes.
+    Latch,
+    /// The server explicitly reported nothing to abort.
+    NothingToInterrupt,
+}
+
+/// Interpret the `POST /session/{id}/abort` response. A missing `aborted` field
+/// defaults to latching, matching the prior behavior; only an explicit `false`
+/// means nothing was running.
+fn interpret_abort_response(value: &serde_json::Value) -> InterruptOutcome {
+    match value.get("aborted").and_then(|item| item.as_bool()) {
+        Some(false) => InterruptOutcome::NothingToInterrupt,
+        _ => InterruptOutcome::Latch,
+    }
+}
+
 fn map_api_run_status(status: &crate::api::SessionStatusInfo) -> SessionStatus {
     if status.busy {
         if status.status.eq_ignore_ascii_case("retry") {
@@ -5525,6 +5566,35 @@ mod tests {
         assert!(
             can_start_stream_sync(now, now + STREAM_SYNC_MIN_INTERVAL + Duration::from_secs(5)),
             "a quiet stream must still refresh on the next tick"
+        );
+    }
+
+    #[test]
+    fn interrupt_is_not_gated_by_cached_local_status() {
+        // BUG-057: a confirmed Esc must always reach the server even when the
+        // cached local status says idle, so a stale/desynced cache cannot drop
+        // the interrupt while the server is still running the turn.
+        assert!(interrupt_ignores_cached_status(&SessionStatus::Idle));
+        assert!(interrupt_ignores_cached_status(&SessionStatus::Running));
+    }
+
+    #[test]
+    fn abort_response_missing_field_latches_confirmation() {
+        assert_eq!(
+            interpret_abort_response(&serde_json::json!({ "aborted": true })),
+            InterruptOutcome::Latch
+        );
+        assert_eq!(
+            interpret_abort_response(&serde_json::json!({})),
+            InterruptOutcome::Latch
+        );
+    }
+
+    #[test]
+    fn abort_response_explicit_false_reports_nothing_to_interrupt() {
+        assert_eq!(
+            interpret_abort_response(&serde_json::json!({ "aborted": false })),
+            InterruptOutcome::NothingToInterrupt
         );
     }
 
