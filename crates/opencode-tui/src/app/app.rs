@@ -5397,7 +5397,7 @@ fn default_export_filename(title: &str, session_id: &str) -> String {
 }
 
 /// Resolve the workspace's checked-out git branch for the footer label
-/// (FEAT-067). Returns `None` outside a repository or when HEAD is detached,
+/// (FEAT-068). Returns `None` outside a repository or when HEAD is detached,
 /// so the caller can omit the `:<branch>` suffix.
 fn detect_git_branch(directory: &str) -> Option<String> {
     if directory.trim().is_empty() {

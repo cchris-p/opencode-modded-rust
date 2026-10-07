@@ -1,11 +1,11 @@
 ---
-id: "FEAT-067"
+id: "FEAT-068"
 title: "Show workspace path and current git branch in the bottom-left footer"
 priority: "P3"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "done"
 created: "2026-10-07"
 ---
 
@@ -121,3 +121,11 @@ wants both, in the compact `path:branch` form most other coding TUIs use.
   the two `components::prompt` tests are order/env-sensitive and pass in isolation).
 - Interactive `ort` confirmation (path shown as `~/...`, branch updates after
   `git checkout -b`) is pending the user's local run.
+## Landing - 2026-10-07
+
+- Committed to `development` by cherry-picking the branch commits
+  (`feature/FEAT-067-workspace-path-git-branch`), per user direction (direct commit, no PR).
+- ID renumbered `FEAT-067` -> `FEAT-068` to resolve a collision with the Novita AI card, which
+  already held `FEAT-067`; the two code comments referencing the feature were updated.
+- `cargo test -p opencode-tui` -> 182 passed, 0 failed.
+- Feature branch (local + remote) removed after landing.
