@@ -2993,9 +2993,15 @@ impl App {
                     }
 
                     let result = match mode {
-                        SettingsInputMode::ApiKey => client
-                            .set_provider_api_key("openai", input)
-                            .map(|_| "OpenAI API key saved".to_string()),
+                        SettingsInputMode::ApiKey => {
+                            let provider_id = self
+                                .settings_view
+                                .selected_provider_ref(&self.context)
+                                .unwrap_or_else(|| "openai".to_string());
+                            client
+                                .set_provider_api_key(&provider_id, input)
+                                .map(|_| format!("{} API key saved", provider_id))
+                        }
                         SettingsInputMode::OAuthCode => {
                             let code = if input.is_empty() { None } else { Some(input) };
                             client
@@ -3109,12 +3115,8 @@ impl App {
                 true
             }
             KeyCode::Char('a') if key.modifiers.is_empty() => {
-                if self
-                    .settings_view
-                    .selected_provider_ref(&self.context)
-                    .as_deref()
-                    == Some("openai")
-                {
+                let provider_id = self.settings_view.selected_provider_ref(&self.context);
+                if provider_id.as_deref().is_some_and(|id| id != "ollama") {
                     self.settings_view.begin_api_key_input();
                 }
                 true
@@ -3149,24 +3151,23 @@ impl App {
                 true
             }
             KeyCode::Char('x') if key.modifiers.is_empty() => {
-                if self
-                    .settings_view
-                    .selected_provider_ref(&self.context)
-                    .as_deref()
-                    == Some("openai")
-                {
+                let provider_id = self.settings_view.selected_provider_ref(&self.context);
+                if let Some(provider_id) = provider_id.filter(|id| id != "ollama") {
                     if let Some(client) = self.context.get_api_client() {
-                        match client.delete_provider_auth("openai") {
+                        match client.delete_provider_auth(&provider_id) {
                             Ok(_) => {
                                 self.settings_view.cancel_input();
                                 self.refresh_model_dialog();
                                 let _ = self.refresh_settings_auth_state();
-                                self.toast
-                                    .show(ToastVariant::Success, "OpenAI auth cleared", 2200);
+                                self.toast.show(
+                                    ToastVariant::Success,
+                                    &format!("{} auth cleared", provider_id),
+                                    2200,
+                                );
                             }
                             Err(err) => self.toast.show(
                                 ToastVariant::Error,
-                                &format!("Failed to clear OpenAI auth: {}", err),
+                                &format!("Failed to clear {} auth: {}", provider_id, err),
                                 3200,
                             ),
                         }

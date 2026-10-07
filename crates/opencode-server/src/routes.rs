@@ -8181,6 +8181,7 @@ async fn provider_auth_status_from_runtime(
         "anthropic" => &["ANTHROPIC_API_KEY"],
         "deepseek" => &["DEEPSEEK_API_KEY"],
         "openrouter" => &["OPENROUTER_API_KEY"],
+        "novita-ai" => &["NOVITA_API_KEY"],
         _ => &[],
     };
     let env_name = env_names
@@ -8330,7 +8331,14 @@ async fn effective_provider_setup(
 
     let (ollama_base_url, ollama_base_url_source) = effective_ollama_base_url(config);
     let mut auth = HashMap::new();
-    for provider_id in ["ollama", "openai", "anthropic", "deepseek", "openrouter"] {
+    for provider_id in [
+        "ollama",
+        "openai",
+        "anthropic",
+        "deepseek",
+        "openrouter",
+        "novita-ai",
+    ] {
         if opencode_provider::is_provider_temporarily_hidden(provider_id) {
             continue;
         }

@@ -19,7 +19,14 @@ use crate::context::{AppContext, ProviderInfo};
 
 const SETTINGS_OUTER_H_PADDING: u16 = 2;
 const SETTINGS_OUTER_V_PADDING: u16 = 1;
-const V1_PROVIDER_IDS: &[&str] = &["ollama", "openai", "anthropic", "deepseek", "openrouter"];
+const V1_PROVIDER_IDS: &[&str] = &[
+    "ollama",
+    "openai",
+    "anthropic",
+    "deepseek",
+    "openrouter",
+    "novita-ai",
+];
 
 pub struct SettingsView {
     selected_provider: usize,

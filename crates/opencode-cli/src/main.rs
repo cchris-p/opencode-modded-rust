@@ -4811,6 +4811,7 @@ const AUTH_ENV_PROVIDERS: &[(&str, &str)] = &[
     ("groq", "GROQ_API_KEY"),
     ("xai", "XAI_API_KEY"),
     ("deepseek", "DEEPSEEK_API_KEY"),
+    ("novita-ai", "NOVITA_API_KEY"),
     ("cohere", "COHERE_API_KEY"),
     ("together", "TOGETHER_API_KEY"),
     ("perplexity", "PERPLEXITY_API_KEY"),
