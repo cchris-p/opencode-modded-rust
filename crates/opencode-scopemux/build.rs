@@ -200,16 +200,16 @@ const REQUIRED_SUBMODULES: &[&str] = &[
     "vendor/pybind11",
 ];
 
-/// Ensure every [`REQUIRED_SUBMODULES`] directory under `source_dir` is checked
-/// out. When any is missing and `source_dir` is a git checkout, initialize the
-/// submodules in place; otherwise fail with an actionable error instead of a
-/// cryptic CMake message.
+/// Ensure every [`REQUIRED_SUBMODULES`] entry under `source_dir` is checked out.
+/// When any is missing or uninitialized and `source_dir` is a git checkout,
+/// initialize the submodules in place; otherwise fail with an actionable error
+/// instead of a cryptic CMake message.
 fn ensure_submodules(source_dir: &Path) {
     let missing = || -> Vec<&'static str> {
         REQUIRED_SUBMODULES
             .iter()
             .copied()
-            .filter(|rel| !dir_is_nonempty(&source_dir.join(rel)))
+            .filter(|rel| submodule_needs_init(source_dir, rel))
             .collect()
     };
 
@@ -245,8 +245,9 @@ fn ensure_submodules(source_dir: &Path) {
                 return;
             }
             panic!(
-                "scopemux-core submodules are still empty after `git submodule update --init \
-                 --recursive`: {}.\nRun scripts/fetch-scopemux-core.sh to provision them.",
+                "scopemux-core submodules are still missing or uninitialized after \
+                 `git submodule update --init --recursive`: {}.\n\
+                 Run scripts/fetch-scopemux-core.sh to provision them.",
                 still_missing.join(", ")
             );
         }
@@ -266,6 +267,63 @@ fn dir_is_nonempty(path: &Path) -> bool {
     std::fs::read_dir(path)
         .map(|mut entries| entries.next().is_some())
         .unwrap_or(false)
+}
+
+/// Whether the required submodule at `rel` is absent, empty, or uninitialized.
+///
+/// A merely existing directory is not enough: a failed or partial clone can
+/// leave an empty directory or a bare `.git` gitlink with no sources, which
+/// passes a plain "is it non-empty" test but leaves CMake unable to configure.
+/// When `source_dir` is a git checkout, ask git for the real submodule state.
+fn submodule_needs_init(source_dir: &Path, rel: &str) -> bool {
+    if !dir_is_nonempty(&source_dir.join(rel)) {
+        return true;
+    }
+    matches!(
+        submodule_state(source_dir, rel),
+        Some(SubmoduleState::Uninitialized | SubmoduleState::Conflict)
+    )
+}
+
+#[derive(Clone, Copy)]
+enum SubmoduleState {
+    /// Checked out at the commit recorded by the superproject.
+    Initialized,
+    /// Checked out at a different commit.
+    Modified,
+    /// Registered but not checked out (empty directory or bare gitlink).
+    Uninitialized,
+    /// Merge conflict inside the submodule.
+    Conflict,
+}
+
+/// Parse `git submodule status -- <rel>` into a [`SubmoduleState`].
+///
+/// Returns `None` when `source_dir` is not a git checkout, git is unavailable,
+/// or `rel` is not a registered submodule, so callers fall back to the plain
+/// directory check.
+fn submodule_state(source_dir: &Path, rel: &str) -> Option<SubmoduleState> {
+    if !source_dir.join(".git").exists() {
+        return None;
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(source_dir)
+        .args(["submodule", "status", "--"])
+        .arg(rel)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match stdout.lines().next()?.chars().next()? {
+        ' ' => Some(SubmoduleState::Initialized),
+        '+' => Some(SubmoduleState::Modified),
+        '-' => Some(SubmoduleState::Uninitialized),
+        'U' => Some(SubmoduleState::Conflict),
+        _ => None,
+    }
 }
 
 /// Python program that exits 0 only when the interpreter it runs under is in
