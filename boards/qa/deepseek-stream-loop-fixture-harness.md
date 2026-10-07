@@ -105,7 +105,7 @@ absence explicitly so a future fix must update it.
 
 ## PR Link
 
-- pending
+- https://github.com/cchris-p/opencode-modded-rust/pull/135 (base `development`)
 
 ## QA / Merge Disposition
 
