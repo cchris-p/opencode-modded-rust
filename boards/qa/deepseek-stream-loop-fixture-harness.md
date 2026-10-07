@@ -111,6 +111,20 @@ absence explicitly so a future fix must update it.
 
 - This card is offline-test-only; it does not change runtime behavior, so no live `ort` session is
   required. A reviewer can rerun the four commands above.
+- Merged to `development` via PR #135 (merge commit `f30920f`); card remains in `qa`.
+
+## Live QA - 2026-10-07
+
+Agent-run live verification of the real DeepSeek default-model path (the `EPIC-001` concern). PR #135
+is test-only, so this run confirms the current runtime path, not a code change from this card.
+
+- Command: `scripts/qa/stream-smoke.sh`
+- Artifact: `target/debug/opencode` (built 2026-10-07 20:08), commit `f30920f`
+- Server: `http://127.0.0.1:3491` (detached, fresh per run)
+- Model: `deepseek/deepseek-flash`
+- Observed: 3/3 turns produced a completed assistant reply in one streaming session
+  (`one`, `two`, `three`); no silent stop and no garbled reply.
+- Result: PASS
 
 ## Related Items
 
