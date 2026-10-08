@@ -5,7 +5,7 @@ priority: "P2"
 type: "chore"
 area: "INFRA"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-10-08"
 ---
 
@@ -115,6 +115,12 @@ Verification:
   dirs; shared worktree target `~/worktrees/opencode-modded-rust/.shared-target`
   is ~6.3 GB; main checkout `target/` ~4.8 GB; `third_party` ~0.5 GB. No deletion
   performed (document-only per this card).
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/137 — open, base
+  `development`, awaiting local verification on
+  `chore/INFRA-004-align-setup-paths`.
 
 ## Done when
 
