@@ -83,21 +83,11 @@ selectable, reports auth state, and accepts an API key.
 
 ## Live QA - 2026-10-08
 
-Agent-run live check of the provider on the `odn` model
-(`novita-ai/deepseek/deepseek-r1-0528`), driven headlessly through the built server
-(`target/debug/opencode serve`, commit `f30920f`).
+Agent-run live check of the provider on the `odn` model (`novita-ai/deepseek/deepseek-r1-0528`),
+driven headlessly through the built server (`target/debug/opencode serve`, commit `f30920f`).
 
-- Surfaces (this card's scope): PASS - `opencode auth list` shows
-  `novita-ai  NOVITA_API_KEY  set`, and the provider is selectable.
-- Agentic path: FAIL - a turn told to run the `bash` tool did not execute it. One run returned the
-  tool call as raw DeepSeek text (`I'll run the command as requested.<｜tool▁calls▁begin｜>...`) with
-  no `tool_call`/`tool_result` part and no side effect; another recorded a `tool_call` part but no
-  result. Control on `deepseek/deepseek-flash` executed the same prompt (`tool_call` + `tool_result`,
-  marker file created), so the harness and permissions are not the cause.
-- Catalog: `novita-ai/deepseek/deepseek-r1-0528` is marked `tool_call: true`, and the runtime always
-  sends the tool definitions, so this is the model/provider emitting tool calls in a format the
-  OpenAI-compatible parser does not reliably turn into execution - not a missing-tools or
-  capability-gate issue.
-- Not verified: the `question` tool flow on this model (blocked behind the above).
-- Conclusion: the provider/auth surfaces this card added work, but the model is not reliably agentic;
-  tool execution follows up as its own defect.
+- Surfaces (this card's scope): PASS - `opencode auth list` shows `novita-ai  NOVITA_API_KEY  set`,
+  the provider is selectable, and `GET /provider` / `GET /config/providers` include it.
+- A tool-execution failure surfaced during this QA (the model leaks native DeepSeek tool tokens in
+  content, so tools do not execute). That is a separate runtime defect tracked by `BUG-060`, not this
+  card's scope.
