@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-10-07"
 ---
 
@@ -143,6 +143,49 @@ all render wrong. This blocks trust in paste for the V1 daily-driver loop.
 - `ort-build` then `ort`: paste a CRLF multi-line blob, a tab-indented code block, and a
   long-space-aligned block; confirm every line stays inside the box, the caret tracks, and no
   glyph appears outside the border.
+
+## Dev Notes
+
+Implemented on `bug/BUG-059-paste-bounded` off `development`.
+
+- Added `normalize_prompt_text` (`prompt.rs`): collapses `\r\n` and lone `\r` to `\n`, expands
+  `\t` to the next `PROMPT_TAB_WIDTH` (4) tab stop, and drops remaining control characters.
+  It is applied in `Prompt::insert_text` (bracketed paste and `Ctrl+V`) and `Prompt::set_input`
+  (history/stash/autocomplete and the initial prompt), so no raw control character reaches the
+  render path from an outside source.
+- Added `prompt_grapheme_is_line_break` and treat `\r\n`/`\r` as line breaks inside
+  `wrap_prompt_input` as a backstop for any text that bypasses normalization (e.g. older
+  on-disk history).
+- Added `push_wrapped_whitespace` and routed pending whitespace through it so a whitespace run
+  that starts a line (or a whitespace-only line) wraps at the inner width instead of overflowing.
+- `insert_text` now returns early when normalization yields empty (paste of only control
+  characters), and the caret is advanced by the normalized byte length.
+
+## Verification
+
+- `cargo fmt --all` applied.
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-tui` - clean.
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tui --lib` - 188 passed, 0 failed
+  (adds `insert_text_normalizes_crlf_cr_and_tabs`, `insert_text_drops_other_control_characters`,
+  `set_input_normalizes_crlf_and_tabs`, `wrap_prompt_input_treats_crlf_and_cr_as_line_breaks`,
+  `wrap_prompt_input_never_exceeds_width_for_whitespace_runs`, and
+  `rendered_paste_with_crlf_stays_inside_the_box`).
+- `cargo clippy -p opencode-tui --all-targets` (after `rustup component add clippy`) - no new
+  warnings from this change; only pre-existing workspace warnings.
+- Build environment note: `rustfmt` and `clippy` components were missing for the active
+  toolchain and were added with `rustup component add`; `cargo`/`rustup` are not on the default
+  PATH (`~/.cargo/bin`).
+
+## QA
+
+Agent-driven QA pending final signal capture; see PR #136. Status moved to `qa` per the
+requested closeout. Live `ort` smoke (paste CRLF text, tab-indented code, and a space-aligned
+block; confirm bounded rows with no glyphs outside the border) is the remaining
+operator-facing check.
+
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/136
 
 ## Related Items
 
