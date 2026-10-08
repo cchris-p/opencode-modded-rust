@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::context::{AppContext, SessionStatus};
 use crate::file_index::FileIndex;
@@ -36,6 +36,7 @@ const PROMPT_BLOCK_PAD_RIGHT: u16 = 1;
 const PROMPT_BLOCK_PAD_TOP: u16 = 1;
 const PROMPT_BLOCK_PAD_BOTTOM: u16 = 1;
 const PROMPT_LINE_H_INSET: u16 = 1;
+const PROMPT_TAB_WIDTH: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptMode {
@@ -698,7 +699,7 @@ impl Prompt {
     }
 
     pub fn set_input(&mut self, input: String) {
-        self.input = input;
+        self.input = normalize_prompt_text(&input);
         self.cursor_position = self.input.len();
         self.history_index = None;
         self.history_draft = None;
@@ -733,8 +734,12 @@ impl Prompt {
     }
 
     pub fn insert_text(&mut self, text: &str) {
-        self.input.insert_str(self.cursor_position, text);
-        self.cursor_position = self.cursor_position.saturating_add(text.len());
+        let normalized = normalize_prompt_text(text);
+        if normalized.is_empty() {
+            return;
+        }
+        self.input.insert_str(self.cursor_position, &normalized);
+        self.cursor_position = self.cursor_position.saturating_add(normalized.len());
         self.reset_history_cursor();
         self.recompute_suggestions();
     }
@@ -1304,6 +1309,49 @@ fn prompt_text_width(text: &str) -> usize {
     text.graphemes(true).map(prompt_grapheme_width).sum()
 }
 
+/// Normalize text entering the prompt input from paste or other non-keystroke
+/// sources so the wrap-and-render path only ever sees printable, LF-separated
+/// content.
+///
+/// Raw `\r`, `\t`, and other control characters would otherwise be written
+/// verbatim to the terminal (carriage returns jump to column 0, tabs advance to
+/// the next tab stop), desyncing the rendered cursor from the box. CRLF and lone
+/// CR line endings are collapsed to `\n`; tabs expand to the next
+/// [`PROMPT_TAB_WIDTH`] stop; remaining control characters are dropped.
+fn normalize_prompt_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut column = 0usize;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                out.push('\n');
+                column = 0;
+            }
+            '\n' => {
+                out.push('\n');
+                column = 0;
+            }
+            '\t' => {
+                let spaces = PROMPT_TAB_WIDTH - (column % PROMPT_TAB_WIDTH);
+                for _ in 0..spaces {
+                    out.push(' ');
+                }
+                column = column.saturating_add(spaces);
+            }
+            c if c.is_control() => {}
+            c => {
+                out.push(c);
+                column = column.saturating_add(UnicodeWidthChar::width(c).unwrap_or(0));
+            }
+        }
+    }
+    out
+}
+
 fn saturating_u16(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
@@ -1366,18 +1414,52 @@ impl WrappedPromptInput {
     }
 }
 
+fn prompt_grapheme_is_line_break(grapheme: &str) -> bool {
+    matches!(grapheme, "\n" | "\r" | "\r\n")
+}
+
+/// Append one whitespace grapheme to the current wrapped line, breaking to a new
+/// line first when it would push the line past `width`. This keeps runs of
+/// whitespace (including whitespace-only lines) bounded instead of letting them
+/// overflow the box.
+fn push_wrapped_whitespace(
+    lines: &mut Vec<String>,
+    current: &mut String,
+    current_width: &mut usize,
+    positions: &mut HashMap<usize, (usize, u16)>,
+    offset: usize,
+    whitespace: &str,
+    width: usize,
+) {
+    let grapheme_width = prompt_grapheme_width(whitespace);
+    if *current_width > 0 && *current_width + grapheme_width > width {
+        lines.push(std::mem::take(current));
+        *current_width = 0;
+    }
+    positions.insert(offset, (lines.len(), saturating_u16(*current_width)));
+    current.push_str(whitespace);
+    *current_width = current_width.saturating_add(grapheme_width);
+}
+
 fn append_pending_prompt_whitespace(
+    lines: &mut Vec<String>,
     current: &mut String,
     current_width: &mut usize,
     pending_ws: &mut Vec<(usize, String)>,
     pending_ws_width: &mut usize,
     positions: &mut HashMap<usize, (usize, u16)>,
-    line_index: usize,
+    width: usize,
 ) {
     for (offset, grapheme) in pending_ws.drain(..) {
-        positions.insert(offset, (line_index, saturating_u16(*current_width)));
-        *current_width = current_width.saturating_add(prompt_grapheme_width(&grapheme));
-        current.push_str(&grapheme);
+        push_wrapped_whitespace(
+            lines,
+            current,
+            current_width,
+            positions,
+            offset,
+            &grapheme,
+            width,
+        );
     }
     *pending_ws_width = 0;
 }
@@ -1395,14 +1477,15 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
     let mut index = 0usize;
     while index < graphemes.len() {
         let (byte_offset, grapheme) = graphemes[index];
-        if grapheme == "\n" {
+        if prompt_grapheme_is_line_break(grapheme) {
             append_pending_prompt_whitespace(
+                &mut lines,
                 &mut current,
                 &mut current_width,
                 &mut pending_ws,
                 &mut pending_ws_width,
                 &mut positions,
-                lines.len(),
+                width,
             );
             positions.insert(byte_offset, (lines.len(), saturating_u16(current_width)));
             lines.push(std::mem::take(&mut current));
@@ -1422,7 +1505,8 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
         let mut word_width = 0usize;
         while word_end < graphemes.len() {
             let (_, candidate) = graphemes[word_end];
-            if candidate == "\n" || prompt_grapheme_is_whitespace(candidate) {
+            if prompt_grapheme_is_line_break(candidate) || prompt_grapheme_is_whitespace(candidate)
+            {
                 break;
             }
             word_width = word_width.saturating_add(prompt_grapheme_width(candidate));
@@ -1439,9 +1523,15 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
             current_width = 0;
         } else {
             for (offset, whitespace) in pending_ws.drain(..) {
-                positions.insert(offset, (lines.len(), saturating_u16(current_width)));
-                current_width = current_width.saturating_add(prompt_grapheme_width(&whitespace));
-                current.push_str(&whitespace);
+                push_wrapped_whitespace(
+                    &mut lines,
+                    &mut current,
+                    &mut current_width,
+                    &mut positions,
+                    offset,
+                    &whitespace,
+                    width,
+                );
             }
             pending_ws_width = 0;
         }
@@ -1461,12 +1551,13 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
     }
 
     append_pending_prompt_whitespace(
+        &mut lines,
         &mut current,
         &mut current_width,
         &mut pending_ws,
         &mut pending_ws_width,
         &mut positions,
-        lines.len(),
+        width,
     );
     lines.push(std::mem::take(&mut current));
     if lines.is_empty() {
@@ -2290,6 +2381,110 @@ mod tests {
             assert!(
                 expected.1 < height,
                 "cursor must stay inside the prompt area"
+            );
+        });
+    }
+
+    #[test]
+    fn insert_text_normalizes_crlf_cr_and_tabs() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.insert_text("a\r\nb\tc\rd");
+            // CRLF and lone CR collapse to "\n"; the tab expands to the next
+            // multiple-of-4 stop (the column was 1 after "b", so 3 spaces land it at 4).
+            assert_eq!(prompt.get_input(), "a\nb   c\nd");
+            assert_eq!(prompt.cursor_position(), prompt.get_input().len());
+        });
+    }
+
+    #[test]
+    fn insert_text_drops_other_control_characters() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.insert_text("keep\u{7}\u{1b}[0mthis");
+            assert_eq!(prompt.get_input(), "keep[0mthis");
+        });
+    }
+
+    #[test]
+    fn set_input_normalizes_crlf_and_tabs() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("x\r\ny\tz".to_string());
+            assert_eq!(prompt.get_input(), "x\ny   z");
+            assert_eq!(prompt.cursor_position(), prompt.get_input().len());
+        });
+    }
+
+    #[test]
+    fn wrap_prompt_input_treats_crlf_and_cr_as_line_breaks() {
+        let wrapped = wrap_prompt_input("alpha\r\nbeta\rgamma\ndelta", 40);
+        assert_eq!(
+            wrapped.lines,
+            vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+                "gamma".to_string(),
+                "delta".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn wrap_prompt_input_never_exceeds_width_for_whitespace_runs() {
+        let width = 45u16;
+        for input in [" ".repeat(200), format!("{}word", " ".repeat(60))] {
+            let wrapped = wrap_prompt_input(&input, width);
+            for line in &wrapped.lines {
+                assert!(
+                    prompt_text_width(line) <= usize::from(width),
+                    "line {:?} exceeds inner width {width}",
+                    line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_paste_with_crlf_stays_inside_the_box() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        with_isolated_prompt(|mut prompt| {
+            prompt.insert_text("alpha\r\nbeta\r\ngamma\tdelta");
+            let width = 40u16;
+            let height = prompt.desired_height(width);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+            terminal
+                .draw(|frame| prompt.render(frame, frame.size()))
+                .expect("draw");
+
+            let buffer = terminal.backend().buffer();
+            for y in 0..height {
+                for x in 0..width {
+                    let symbol = buffer.get(x, y).symbol();
+                    assert!(
+                        !symbol.contains('\r') && !symbol.contains('\t') && !symbol.contains('\n'),
+                        "raw control character {symbol:?} rendered at ({x},{y})"
+                    );
+                }
+            }
+
+            let mut text = String::new();
+            for y in 0..height {
+                for x in 0..width {
+                    text.push_str(buffer.get(x, y).symbol());
+                }
+                text.push('\n');
+            }
+            assert!(
+                text.contains("alpha"),
+                "first pasted line visible in:\n{text}"
+            );
+            assert!(
+                text.contains("beta"),
+                "second pasted line visible in:\n{text}"
+            );
+            assert!(
+                text.contains("gamma"),
+                "third pasted line visible in:\n{text}"
             );
         });
     }
