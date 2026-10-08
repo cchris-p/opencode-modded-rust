@@ -14,7 +14,7 @@
 #   SCOPEMUX_QA_BINARY      opencode binary to run
 #   SCOPEMUX_QA_WORKSPACE   workspace served (default: $HOME/worktrees/scopemux-qa)
 #   SCOPEMUX_QA_PORT        port (default: 4096)
-#   OPENCODE_RUST_REPO      product checkout (default: $HOME/repos/opencode-modded-rust)
+#   OPENCODE_RUST_REPO      product checkout (default: $HOME/standards/vendor/opencode-modded-rust)
 #
 # The shared standards aliases are sourced when present:
 #   ~/standards/ollama-config   -> ollama-start-0
@@ -25,7 +25,7 @@ set -eo pipefail
 
 PORT="${SCOPEMUX_QA_PORT:-4096}"
 WORKSPACE="${SCOPEMUX_QA_WORKSPACE:-$HOME/worktrees/scopemux-qa}"
-REPO="${OPENCODE_RUST_REPO:-$HOME/repos/opencode-modded-rust}"
+REPO="${OPENCODE_RUST_REPO:-$HOME/standards/vendor/opencode-modded-rust}"
 BINARY="${SCOPEMUX_QA_BINARY:-}"
 
 usage() {
