@@ -118,9 +118,17 @@ Verification:
 
 ## PR
 
-- https://github.com/cchris-p/opencode-modded-rust/pull/137 — open, base
-  `development`, awaiting local verification on
-  `chore/INFRA-004-align-setup-paths`.
+- https://github.com/cchris-p/opencode-modded-rust/pull/137 — merged into
+  `development` (merge commit `dbbb60f`) on 2026-10-08; branch
+  `chore/INFRA-004-align-setup-paths` deleted remotely and locally.
+
+## Closeout - 2026-10-08
+
+Merged into `development` via PR #137 (`dbbb60f`); PR branch deleted remotely
+and locally; local `development` fast-forwarded to the merge. Remains in `qa`
+until a QA report is recorded or the operator explicitly completes it. The
+`create-worktree.sh` / preserved-stash decisions are intentionally deferred to
+`INFRA-005`.
 
 ## Done when
 
