@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "qa"
 created: "2026-10-08"
 ---
 
@@ -123,3 +123,29 @@ that way the tokens land in the assistant text and no tool call is produced. The
 - `FEAT-067` recorded this failure inline during its QA; that finding is superseded by this card.
 - Control proved the test path works (`deepseek-flash` executes the same prompt), so this is not a
   harness or permission limitation.
+
+## Implementation - 2026-10-08
+
+Added `DeepSeekNativeToolCallExtractor` in `crates/opencode-provider/src/stream.rs`: it detects the
+DeepSeek native calls block (`<｜tool▁calls▁begin｜>...<｜tool▁calls▁end｜>`) in streamed `content`,
+emits `ToolCallStart`/`ToolCallEnd` with the parsed name and JSON arguments, strips the raw tokens
+from the visible text, and buffers across chunk/delta boundaries (holding back a partial token
+suffix). Wired into both OpenAI-compatible parsers - the generic legacy parser `openai.rs`
+(`parse_legacy_sse_data`, the `novita-ai` path) and the stateful parser `stream.rs`
+(`parse_openai_sse_stateful`, deepseek-direct) - and flushed on `[DONE]`/finish.
+
+## Verification - 2026-10-08
+
+- Offline: `cargo test -p opencode-provider` - 114 lib (new extractor tests: char-by-char split,
+  multiple calls, fenceless args, unterminated flush) + integration pass; new fixture
+  `tests/fixtures/deepseek/native_toolcall_tokens.sse` replayed via `openai_compat_sse_stream` incl.
+  a char-boundary split matrix; legacy-parser tests in `openai.rs` (single + split frames).
+- `cargo test -p opencode-session` - 170 + 2 + 11 pass. `cargo fmt --all -- --check` clean.
+- Live: headless server on `novita-ai/deepseek/deepseek-r1-0528`, 5 sequential turns each required to
+  `touch` a marker file - **5/5 executed** (marker created), no raw tokens in text/reasoning.
+- Repro confidence: replaying the runtime's exact captured request against Novita leaked native
+  tokens in content 3/5 times pre-fix; the fix turns those into executed calls.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/138 (base `development`)
