@@ -113,18 +113,13 @@ absence explicitly so a future fix must update it.
   required. A reviewer can rerun the four commands above.
 - Merged to `development` via PR #135 (merge commit `f30920f`); card remains in `qa`.
 
-## Live QA - 2026-10-07
+## Live QA - 2026-10-07 (superseded)
 
-Agent-run live verification of the real DeepSeek default-model path (the `EPIC-001` concern). PR #135
-is test-only, so this run confirms the current runtime path, not a code change from this card.
-
-- Command: `scripts/qa/stream-smoke.sh`
-- Artifact: `target/debug/opencode` (built 2026-10-07 20:08), commit `f30920f`
-- Server: `http://127.0.0.1:3491` (detached, fresh per run)
-- Model: `deepseek/deepseek-flash`
-- Observed: 3/3 turns produced a completed assistant reply in one streaming session
-  (`one`, `two`, `three`); no silent stop and no garbled reply.
-- Result: PASS
+An initial smoke run used `scripts/qa/stream-smoke.sh` on `deepseek/deepseek-flash` with three
+plain-text prompts; it passed, but it only proves trivial text streaming. It used the **wrong model**
+for the active work and never exercised tool execution or the `question` flow, so it is **not**
+evidence for the DeepSeek reliability / agentic defects (`BUG-056`/`BUG-057`/`BUG-058`). The live
+check that actually drives a tool call is recorded on `FEAT-067`.
 
 ## Related Items
 
