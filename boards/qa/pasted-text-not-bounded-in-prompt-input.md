@@ -176,12 +176,39 @@ Implemented on `bug/BUG-059-paste-bounded` off `development`.
   toolchain and were added with `rustup component add`; `cargo`/`rustup` are not on the default
   PATH (`~/.cargo/bin`).
 
-## QA
+## QA Report
 
-Agent-driven QA pending final signal capture; see PR #136. Status moved to `qa` per the
-requested closeout. Live `ort` smoke (paste CRLF text, tab-indented code, and a space-aligned
-block; confirm bounded rows with no glyphs outside the border) is the remaining
-operator-facing check.
+QA: BUG-059 — pasted text bounded within the prompt input box (agent-driven).
+
+- commit: `b29f7de` (feature branch tip), merged as `2b21aa6` (PR #136, base `development`).
+- method: this is a TUI-only rendering change with no server API surface, so the real render
+  path was driven deterministically with ratatui `TestBackend` (the accepted method for
+  TUI-only cards such as FEAT-064), per the product QA policy. A full `opencode-cli` link was
+  not required for this diff; `SCOPEMUX_SKIP_NATIVE_BUILD=1` only supports `cargo check`, and a
+  full link needs the native scopemux core (unrelated to this change).
+- commands:
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tui --lib` — 188 passed, 0 failed.
+  - temporary `TestBackend` dump at width 40: pasting
+    `alpha\r\nbeta\r\ngamma\tdelta\r\nlong tail line that should wrap` rendered `alpha`,
+    `beta`, and `gamma   delta` on separate bounded rows (tab expanded to spaces), box height
+    `9`, no glyph outside the border, no raw control cells.
+- observed signals:
+  - `rendered_paste_with_crlf_stays_inside_the_box`: no buffer cell contains `\r`, `\t`, or
+    `\n`, and all pasted lines are present.
+  - `insert_text_normalizes_crlf_cr_and_tabs`, `set_input_normalizes_crlf_and_tabs`,
+    `insert_text_drops_other_control_characters`: CRLF/CR collapse to `\n`, tabs expand to
+    spaces, other control characters are dropped.
+  - `wrap_prompt_input_treats_crlf_and_cr_as_line_breaks`,
+    `wrap_prompt_input_never_exceeds_width_for_whitespace_runs`.
+- result: PASS.
+- env: local `development` checkout, Linux, `SCOPEMUX_SKIP_NATIVE_BUILD=1`.
+
+## Closeout
+
+- PR #136 merged into `development` as `2b21aa6` (merge commit).
+- Remote branch `bug/BUG-059-paste-bounded` and the local branch were deleted;
+  local `development` was fast-forwarded to the merge commit.
+- Card remains in `qa` per the user's explicit instruction (not promoted to `done`).
 
 ## PR
 
