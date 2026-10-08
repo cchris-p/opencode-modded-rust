@@ -12,7 +12,16 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 git_common_dir=$(git -C "$script_dir/.." rev-parse --path-format=absolute --git-common-dir 2>/dev/null \
   || git -C "$script_dir/.." rev-parse --git-common-dir)
-main_root=$(dirname "$git_common_dir")
+# Resolve the main checkout's working tree. For a normal checkout, or a linked
+# worktree of one, the main checkout is the common git dir's parent. A submodule
+# keeps its git dir under the superproject and records its working tree in
+# `core.worktree`, so honor that when present instead of the git dir's parent.
+main_worktree=$(git config --file "$git_common_dir/config" --get core.worktree 2>/dev/null || true)
+if [ -n "$main_worktree" ]; then
+  main_root=$(CDPATH= cd -- "$git_common_dir/$main_worktree" && pwd)
+else
+  main_root=$(dirname "$git_common_dir")
+fi
 repo_name=$(basename "$main_root")
 
 worktree_root="${OPENCODE_WORKTREE_ROOT:-$HOME/worktrees}"
