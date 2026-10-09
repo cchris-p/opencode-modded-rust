@@ -5,7 +5,7 @@ priority: "P3"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "todo"
+status: "doing"
 created: "2026-10-09"
 ---
 
@@ -35,6 +35,22 @@ that risk is explicit and capped.
   channel is known absent, which is a small refactor of the two parsers.
 - **Flag:** a config/feature switch to disable native normalization entirely.
 - **Both:** guard by default, with a kill switch.
+
+## Refinement - 2026-10-09
+
+Chosen design: **both**.
+
+- Defer synthesized tool calls. The extractor buffers parsed native calls and only emits them at
+  end-of-stream when the turn produced no structured `tool_calls` (`saw_structured_tool_calls`).
+  Visible text is still streamed live; only the synthesized tool-call events are deferred. If a
+  structured call was present, buffered native calls are discarded (avoids duplicate/conflicting
+  calls).
+- Kill switch: `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` (truthy disables). When disabled the
+  extractor passes content through untouched, restoring pre-`BUG-060` behavior.
+
+Residual: this does **not** fully eliminate the "model demonstrates the token format" false positive
+(no structured call is present there either). The kill switch is the real safety valve; the guard
+removes the duplicate-call case. Documented in the wiki note.
 
 ## Non-goals
 

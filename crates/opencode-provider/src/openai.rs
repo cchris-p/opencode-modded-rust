@@ -210,6 +210,7 @@ struct LegacySseParserState {
     tool_call_ids: HashMap<u32, String>,
     tool_call_names: HashMap<u32, String>,
     reasoning_open: bool,
+    saw_structured_tool_calls: bool,
     native: crate::stream::DeepSeekNativeToolCallExtractor,
 }
 
@@ -327,6 +328,7 @@ impl OpenAIProvider {
                 state.reasoning_open = false;
             }
             events.extend(state.native.finish());
+            events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
             events.push(StreamEvent::Done);
             return events;
         }
@@ -388,11 +390,14 @@ impl OpenAIProvider {
                     }
 
                     if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
-                        if !tool_calls.is_empty() && state.reasoning_open {
-                            state.reasoning_open = false;
-                            events.push(StreamEvent::ReasoningEnd {
-                                id: "reasoning-0".to_string(),
-                            });
+                        if !tool_calls.is_empty() {
+                            state.saw_structured_tool_calls = true;
+                            if state.reasoning_open {
+                                state.reasoning_open = false;
+                                events.push(StreamEvent::ReasoningEnd {
+                                    id: "reasoning-0".to_string(),
+                                });
+                            }
                         }
                         for tc in tool_calls {
                             let index = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
@@ -447,6 +452,7 @@ impl OpenAIProvider {
                         });
                     }
                     events.extend(state.native.finish());
+                    events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
                     let normalized_reason = if reason == "tool_calls" {
                         "tool-calls".to_string()
                     } else {
@@ -1288,6 +1294,7 @@ mod tests {
             &mut state,
         );
         events.extend(state.native.finish());
+        events.extend(state.native.drain_pending(true));
         assert_eq!(
             collect_legacy_calls(&events),
             vec![("bash".to_string(), serde_json::json!({"command":"echo hi"}))]
@@ -1311,6 +1318,7 @@ mod tests {
             ));
         }
         events.extend(state.native.finish());
+        events.extend(state.native.drain_pending(true));
         assert_eq!(
             collect_legacy_calls(&events),
             vec![("bash".to_string(), serde_json::json!({"command":"echo hi"}))]
