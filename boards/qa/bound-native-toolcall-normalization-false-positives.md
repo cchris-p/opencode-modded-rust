@@ -5,7 +5,7 @@ priority: "P3"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "doing"
+status: "qa"
 created: "2026-10-09"
 ---
 
@@ -70,3 +70,21 @@ removes the duplicate-call case. Documented in the wiki note.
 - `BUG-006` DeepSeek tool loop (done) - same class.
 - `FEAT-013` Model capability gating (todo).
 - `wiki/deepseek-native-tool-call-normalization.md` - decision record.
+
+## Implementation - 2026-10-09
+
+- `stream.rs`: `DeepSeekNativeToolCallExtractor` now buffers parsed native calls in `pending_calls` and emits them via `drain_pending(include)`; `OpenAiCompatParserState` tracks `saw_structured_tool_calls`. On `[DONE]`/finish the parser flushes with `!saw_structured_tool_calls`, so leaked tokens are discarded when a structured call was already delivered.
+- Kill switch: `native_normalization_enabled()` (env `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS`, truthy disables); when disabled the extractor passes content through unchanged. `set_enabled` for tests.
+- `openai.rs`: legacy parser mirrors the same guard/flag.
+
+## Verification - 2026-10-09
+
+- `cargo test -p opencode-provider`: 117 lib + integration pass, including new guard tests (emitted when no structured calls; discarded when structured present; disabled passes raw tokens) and the updated `BUG-060` extractor/fixture/legacy tests.
+- `cargo test -p opencode-session`: 170 + 2 + 11 pass. `cargo fmt --all -- --check` clean.
+- Live server (`novita-ai/deepseek/deepseek-r1-0528`, 5 marker-file turns): **5/5 executed**, no raw tokens.
+- Live CLI (`opencode run -m novita-ai/deepseek/deepseek-r1-0528`): **2/2 executed**.
+- Residual (documented): the guard does not eliminate the "model demonstrates the token format" false positive; the kill switch is the safety valve.
+
+## PR Link
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/139 (base `development`)

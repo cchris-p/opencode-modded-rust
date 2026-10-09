@@ -92,17 +92,20 @@ the format.
 - **Reasoning leakage.** The confirmed, reproducible path is native tokens in
   `content`. Token leakage via `reasoning_content` was not reproduced; if it is
   observed, the extractor would need a reasoning-aware variant.
-- **Mitigation options.** A lightweight guard (only normalize when the turn
-  produced no structured `tool_calls`, or a config/feature flag to disable the
-  behavior) can reduce the false-positive surface. Tracked as `BUG-061`.
+- **Mitigation (implemented, `BUG-061`).** Synthesized native calls are deferred
+  to end-of-stream and discarded when the turn already delivered a structured
+  `tool_calls` array, so a leaked block cannot produce a duplicate/conflicting
+  call. `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` (truthy) is a kill switch
+  that restores pre-`BUG-060` behavior. The kill switch, not the guard, is what
+  covers the "model demonstrates the format" case.
 
 ## Normative status
 
 The behavior is an explicit, documented DeepSeek-family compatibility
 normalization, not hidden magic. The binding rule lives in
-`invariants/providers.md`; the implementation is `BUG-060`
-(PR #138). Do not replace the signature check with a provider/model-id
-allowlist.
+`invariants/providers.md`; the implementation is `BUG-060` (PR #138) with the
+`BUG-061` guard and kill switch (PR #139). Do not replace the signature check
+with a provider/model-id allowlist.
 
 ## Related
 
