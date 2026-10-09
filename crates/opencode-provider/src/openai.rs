@@ -210,6 +210,7 @@ struct LegacySseParserState {
     tool_call_ids: HashMap<u32, String>,
     tool_call_names: HashMap<u32, String>,
     reasoning_open: bool,
+    native: crate::stream::DeepSeekNativeToolCallExtractor,
 }
 
 impl OpenAIProvider {
@@ -325,6 +326,7 @@ impl OpenAIProvider {
                 });
                 state.reasoning_open = false;
             }
+            events.extend(state.native.finish());
             events.push(StreamEvent::Done);
             return events;
         }
@@ -381,7 +383,7 @@ impl OpenAIProvider {
                                     id: "reasoning-0".to_string(),
                                 });
                             }
-                            events.push(StreamEvent::TextDelta(text.to_string()));
+                            events.extend(state.native.push(text));
                         }
                     }
 
@@ -444,6 +446,7 @@ impl OpenAIProvider {
                             id: "reasoning-0".to_string(),
                         });
                     }
+                    events.extend(state.native.finish());
                     let normalized_reason = if reason == "tool_calls" {
                         "tool-calls".to_string()
                     } else {
@@ -1248,5 +1251,69 @@ mod tests {
             delta.first(),
             Some(StreamEvent::ToolCallDelta { id, input }) if id == "tool-call-0" && input == "{\"cmd\":\"ls\"}"
         ));
+    }
+
+    // BUG-060: novita-ai DeepSeek R1 leaks native tool tokens in content.
+    fn native_call_content(name: &str, args: &str) -> String {
+        let cb = "<\u{ff5c}tool\u{2581}calls\u{2581}begin\u{ff5c}>";
+        let cbeg = "<\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>";
+        let sep = "<\u{ff5c}tool\u{2581}sep\u{ff5c}>";
+        let ce = "<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}>";
+        let cs = "<\u{ff5c}tool\u{2581}calls\u{2581}end\u{ff5c}>";
+        format!("{cb}{cbeg}function{sep}{name}\n```json\n{args}\n```{ce}{cs}")
+    }
+
+    fn content_frame(content: &str) -> String {
+        format!(
+            "{{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}",
+            serde_json::to_string(content).unwrap()
+        )
+    }
+
+    fn collect_legacy_calls(events: &[StreamEvent]) -> Vec<(String, Value)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallEnd { name, input, .. } => Some((name.clone(), input.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parse_legacy_sse_data_extracts_native_deepseek_tool_call() {
+        let mut state = LegacySseParserState::default();
+        let mut events = OpenAIProvider::parse_legacy_sse_data(
+            &content_frame(&native_call_content("bash", "{\"command\":\"echo hi\"}")),
+            &mut state,
+        );
+        events.extend(state.native.finish());
+        assert_eq!(
+            collect_legacy_calls(&events),
+            vec![("bash".to_string(), serde_json::json!({"command":"echo hi"}))]
+        );
+    }
+
+    #[test]
+    fn parse_legacy_sse_data_extracts_native_deepseek_tool_call_split_across_frames() {
+        let whole = native_call_content("bash", "{\"command\":\"echo hi\"}");
+        let chars: Vec<char> = whole.chars().collect();
+        let mid = chars.len() / 2;
+        let first: String = chars[..mid].iter().collect();
+        let second: String = chars[mid..].iter().collect();
+
+        let mut state = LegacySseParserState::default();
+        let mut events = Vec::new();
+        for part in [first, second] {
+            events.extend(OpenAIProvider::parse_legacy_sse_data(
+                &content_frame(&part),
+                &mut state,
+            ));
+        }
+        events.extend(state.native.finish());
+        assert_eq!(
+            collect_legacy_calls(&events),
+            vec![("bash".to_string(), serde_json::json!({"command":"echo hi"}))]
+        );
     }
 }
