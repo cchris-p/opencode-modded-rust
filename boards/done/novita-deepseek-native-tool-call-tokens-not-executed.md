@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-10-08"
 ---
 
@@ -149,3 +149,18 @@ suffix). Wired into both OpenAI-compatible parsers - the generic legacy parser `
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/138 (base `development`)
+
+## QA Report - 2026-10-10 (user, live `odn` TUI)
+
+Post-merge QA on `development` (`a3c0925`) in a real `ort` TUI session
+(`ses_f1f1aa182d5e4ebf85833fafd7ecdec5`, `~/apps/c-cpp-projects`,
+`novita-ai/deepseek/deepseek-r1-0528`, server port 3187).
+
+- Inspected the live session via `GET /session/<id>/message`: **6 `tool_call` parts and 6
+  `tool_result` parts** - `ls` (x3), `glob`, `write` - all executed.
+- The `write` call returned `Successfully wrote 660 bytes (23 lines) to
+  .../cpp-banking-system/learning-roadmap.md`; the file is present on disk.
+- **No** native token markers (`tool▁calls▁begin`) in any text/reasoning part.
+- User: "It did manage to run one tool successfully ... Drastic improvement."
+
+Result: PASS. Closed `done`.

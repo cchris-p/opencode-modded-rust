@@ -5,7 +5,7 @@ priority: "P3"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "qa"
+status: "done"
 created: "2026-10-09"
 ---
 
@@ -88,3 +88,18 @@ removes the duplicate-call case. Documented in the wiki note.
 ## PR Link
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/139 (base `development`)
+
+## QA Report - 2026-10-10 (user, live `odn` TUI)
+
+Post-merge QA on `development` (`a3c0925`), live `ort` TUI session
+`ses_f1f1aa182d5e4ebf85833fafd7ecdec5` (`novita-ai/deepseek/deepseek-r1-0528`).
+
+- The guard path is exercised end to end: 6 tool calls executed with no leaked native tokens, so
+  normalization produced real calls while nothing was duplicated/conflicting.
+- Guard + kill-switch behavior is covered deterministically by the provider tests
+  (`native_call_is_emitted_when_no_structured_tool_calls`,
+  `native_call_is_discarded_when_structured_tool_calls_present`,
+  `normalization_disabled_passes_raw_tokens_through`).
+- User confirmed the improvement on the live model.
+
+Result: PASS. Closed `done`.
