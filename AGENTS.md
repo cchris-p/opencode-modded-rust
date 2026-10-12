@@ -77,6 +77,7 @@
 - Worktree builds share one Cargo target directory. `scripts/setup-worktree-build-cache.sh` writes a managed `.cargo/config.toml` at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.cargo/config.toml` that points every git worktree beneath it at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.shared-target`, so worktrees no longer each duplicate a full `target/`. The main checkout (the `$OPENCODE_RUST_REPO` checkout, currently `$HOME/standards/vendor/opencode-modded-rust`) keeps its own `target/`.
 - Reclaim disk with `scripts/clean-build-caches.sh` (dry run by default; add `--yes` to delete). It removes duplicated per-worktree `target/` dirs; `--shared` also clears the shared cache and `--include-main` also clears the main checkout's `target/`.
 - `ort-build` warns when free disk on the build volume is below `OPENCODE_RUST_MIN_FREE_GB` (default 15) and points at `scripts/clean-build-caches.sh`.
+- `ort-build` also warns when the `$OPENCODE_RUST_REPO` checkout is on `development` and behind `origin/development`, since a binary built from a stale checkout can silently miss already-merged fixes (set `OPENCODE_RUST_STRICT_CHECKOUT=1` to refuse the build instead).
 
 ## Git Hooks
 

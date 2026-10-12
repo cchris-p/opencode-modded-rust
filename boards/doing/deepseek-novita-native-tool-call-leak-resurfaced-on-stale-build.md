@@ -169,12 +169,22 @@ residual test is now active. `cargo test -p opencode-provider` - 124 lib + 9 fix
 1. (done) Synced-build replay - see Verification above.
 2. (done) Budget/abort flush path - see Flush-path findings above (no leak on abort; the
    truncated-block leak is a separate residual).
-3. **Close the stale-build gap.** Determine why `ort`/`ort-build` served a binary from a
-   fix-missing checkout, and whether that is only "main checkout not fast-forwarded" or something
-   `ort-build` can defend against (e.g., warn when the checkout is behind `origin/development` or is
-   missing expected features). Relates to `boards/todo/add-ci-clean-clone-native-build-guard.md` and
-   to the `BUG-061` kill switch (confirm it is unset in the daily environment).
+3. (done) Stale-build guard added in `~/standards/opencode-config` (see Fix below): `ort-build`
+   warns when the checkout is on `development` and behind `origin/development`, and refuses under
+   `OPENCODE_RUST_STRICT_CHECKOUT=1`.
 4. (done) Truncated-block leak fixed - see Fix above.
+
+## Stale-build guard - 2026-10-12
+
+To stop a build from silently missing merged fixes, `opencode-rust-build`
+(`~/standards/opencode-config`) now calls `opencode-rust-warn-stale-checkout` before building. When
+`$OPENCODE_RUST_REPO` is checked out on `development` and is behind `origin/development`, it prints a
+loud warning naming the behind-count and the fetch/merge command, and refuses to build when
+`OPENCODE_RUST_STRICT_CHECKOUT=1`. No warning on feature branches/worktrees (legitimately not
+fast-forwarded) or when up to date.
+
+Committed in the standards repo (`34e3c26`); the guard is process tooling, so it lives there, not in
+the product. This is distinct from `INFRA-003`, which is a CI clean-clone build guard.
 
 ## Scope
 
