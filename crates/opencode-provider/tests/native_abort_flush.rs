@@ -6,8 +6,8 @@
 //! parser used by `novita-ai` were probed and behave identically:
 //! - no terminal `finish_reason`/`[DONE]` -> the buffered native call is dropped,
 //!   the raw tokens never reach the assistant text;
-//! - `finish_reason`/`[DONE]` after an *unterminated* native block -> the partial
-//!   native tokens still leak into the assistant text (tracked below).
+//! - `finish_reason`/`[DONE]` after an *unterminated* native block -> the raw
+//!   tokens are discarded and a visible error is surfaced (BUG-063).
 
 use futures::StreamExt;
 use opencode_provider::{openai_compat_sse_stream, StreamEvent};
@@ -111,8 +111,7 @@ fn partial_native_block_without_finish_does_not_leak() {
 }
 
 #[test]
-#[ignore = "BUG-063 residual: an unterminated native block still leaks its partial tokens when a terminal frame arrives"]
-fn partial_native_block_then_finish_must_not_leak() {
+fn partial_native_block_then_finish_does_not_leak_and_reports() {
     let partial = format!("{CB}{CBE}function{SEP}bash\n```json\n{{\"command\":\"echo hi\"}}");
     let body = format!(
         "{}{}{}",
@@ -122,4 +121,10 @@ fn partial_native_block_then_finish_must_not_leak() {
     );
     let events = replay(&body);
     assert_no_raw_native_tokens(&events);
+    assert!(
+        events.iter().any(
+            |e| matches!(e, StreamEvent::Error(msg) if msg.contains("native tool-call block"))
+        ),
+        "truncated native block must fail visibly, got {events:?}"
+    );
 }

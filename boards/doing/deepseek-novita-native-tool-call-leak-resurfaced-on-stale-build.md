@@ -142,13 +142,27 @@ were probed with an intentionally cut native-token stream. Regression coverage a
   (`finish_reason: error`, "run exceeded its time budget") - on the synced build it does **not** leak.
 - **Complete native block + `finish_reason`/`[DONE]`:** normalized to a real tool call, no leak
   (control).
-- **Unterminated native block + `finish_reason`/`[DONE]`:** the partial native tokens **still leak**
-  into assistant text (`DeepSeekNativeToolCallExtractor::drain(flush_all=true)` emits the captured
-  remainder as `TextDelta`). This is a genuine residual of the `BUG-060`/`BUG-061` fix, captured by the
-  ignored test `partial_native_block_then_finish_must_not_leak`.
+- **Unterminated native block + `finish_reason`/`[DONE]`:** previously leaked the partial native
+  tokens as `TextDelta`; now the raw markup is discarded and a visible `StreamEvent::Error` is
+  surfaced (see Fix below). Covered by `partial_native_block_then_finish_does_not_leak_and_reports`.
 
-Conclusion: the budget/abort path is safe; a narrow **truncated-block-on-finish** leak remains and is
-the only part of this card that may need a code fix.
+Conclusion: the budget/abort path is safe, and the truncated-block-on-finish leak is fixed.
+
+## Fix - 2026-10-12
+
+`DeepSeekNativeToolCallExtractor` (`crates/opencode-provider/src/stream.rs`) no longer emits the
+remainder of an unterminated calls block as text. On flush it discards the raw token markup, and
+`finish()` appends a `StreamEvent::Error` ("incomplete DeepSeek native tool-call block (missing
+closing token) was discarded; no tool was executed"). That error propagates as a hard, visible turn
+failure (`crates/opencode-session/src/prompt.rs`), so the truncated call fails loudly rather than
+leaking tokens or silently dropping the call. Both the stateful and `novita-ai` legacy parsers share
+the extractor, so both are covered; `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` still restores
+pass-through.
+
+Tests: updated `unterminated_native_block_is_dropped_and_reported` (unit) and
+`partial_native_block_then_finish_does_not_leak_and_reports` (integration); the previously ignored
+residual test is now active. `cargo test -p opencode-provider` - 124 lib + 9 fixture + 4
+`native_abort_flush` + 7 integration, all green.
 
 ## Remaining investigation
 
@@ -160,9 +174,7 @@ the only part of this card that may need a code fix.
    `ort-build` can defend against (e.g., warn when the checkout is behind `origin/development` or is
    missing expected features). Relates to `boards/todo/add-ci-clean-clone-native-build-guard.md` and
    to the `BUG-061` kill switch (confirm it is unset in the daily environment).
-4. Decide on the truncated-block leak: sanitize `DeepSeekNativeToolCallExtractor::drain(flush_all)`
-   so an unterminated native block drops or strips the token remainder instead of emitting it as
-   `TextDelta`, then un-ignore `partial_native_block_then_finish_must_not_leak`.
+4. (done) Truncated-block leak fixed - see Fix above.
 
 ## Scope
 
@@ -179,10 +191,10 @@ the only part of this card that may need a code fix.
 
 ## Done when
 
-- A synced-build replay is recorded: commit, binary path, server URL, exact prompt, `tool_call` +
-  `tool_result` parts, `finish_reason`, and no raw tokens in stored `content`.
-- The budget/interrupt flush path is either shown to normalize correctly or filed as a concrete
-  code gap with a provider test.
+- A synced-build replay is recorded: commit, binary path, harness/prompt, the executed `bash` tool
+  side effect, `finish_reason`, and no raw tokens in output.
+- The budget/interrupt flush path is verified: no leak on abort, and the truncated-block-on-finish
+  leak is fixed with provider tests.
 - The stale-checkout cause is explained with a concrete guard or an explicit process note, and the
   local checkout no longer serves a fix-missing binary.
 

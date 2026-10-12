@@ -357,6 +357,7 @@ pub struct DeepSeekNativeToolCallExtractor {
     capturing: bool,
     counter: u64,
     pending_calls: Vec<(String, String, serde_json::Value)>,
+    unterminated_block: bool,
     enabled: bool,
 }
 
@@ -367,6 +368,7 @@ impl Default for DeepSeekNativeToolCallExtractor {
             capturing: false,
             counter: 0,
             pending_calls: Vec::new(),
+            unterminated_block: false,
             enabled: native_normalization_enabled(),
         }
     }
@@ -383,11 +385,23 @@ impl DeepSeekNativeToolCallExtractor {
     }
 
     /// Flush any buffered remainder at end of stream.
+    ///
+    /// An unterminated native calls block has its raw token markup discarded
+    /// (never leaked into assistant text), and a visible error is returned so
+    /// the truncated tool call fails loudly instead of silently (BUG-063).
     pub fn finish(&mut self) -> Vec<StreamEvent> {
         if !self.enabled {
             return Vec::new();
         }
-        self.drain(true)
+        let mut events = self.drain(true);
+        if self.unterminated_block {
+            self.unterminated_block = false;
+            events.push(StreamEvent::Error(
+                "incomplete DeepSeek native tool-call block (missing closing token) was discarded; no tool was executed"
+                    .to_string(),
+            ));
+        }
+        events
     }
 
     /// Emit the buffered native calls as tool-call events, or discard them when
@@ -425,10 +439,13 @@ impl DeepSeekNativeToolCallExtractor {
                     continue;
                 }
                 if flush_all {
+                    // Unterminated calls block: discard the raw native-token
+                    // markup instead of leaking it as assistant text, and flag
+                    // it so `finish` can report a visible error (BUG-063).
                     let rest = std::mem::take(&mut self.buffer);
                     self.capturing = false;
-                    if !rest.is_empty() {
-                        events.push(StreamEvent::TextDelta(rest));
+                    if !rest.trim().is_empty() {
+                        self.unterminated_block = true;
                     }
                 }
                 break;
@@ -1880,12 +1897,18 @@ mod tests {
     }
 
     #[test]
-    fn unterminated_native_block_flushes_as_text() {
+    fn unterminated_native_block_is_dropped_and_reported() {
         let mut ex = DeepSeekNativeToolCallExtractor::default();
         let mut events = ex.push(&format!("{}partial", DS_TOOL_CALLS_BEGIN));
         events.extend(ex.finish());
         assert!(collect_calls(&events).is_empty());
-        assert_eq!(collect_text(&events), "partial");
+        assert_eq!(collect_text(&events), "");
+        assert!(
+            events.iter().any(
+                |e| matches!(e, StreamEvent::Error(msg) if msg.contains("native tool-call block"))
+            ),
+            "expected a visible error for the truncated block, got {events:?}"
+        );
     }
 
     #[test]
