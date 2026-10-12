@@ -205,13 +205,48 @@ pub struct OpenAIProvider {
     legacy_only: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct LegacySseParserState {
     tool_call_ids: HashMap<u32, String>,
     tool_call_names: HashMap<u32, String>,
     reasoning_open: bool,
     saw_structured_tool_calls: bool,
     native: crate::stream::DeepSeekNativeToolCallExtractor,
+    qwen: crate::stream::QwenNativeNormalizer,
+}
+
+impl Default for LegacySseParserState {
+    fn default() -> Self {
+        Self {
+            tool_call_ids: HashMap::new(),
+            tool_call_names: HashMap::new(),
+            reasoning_open: false,
+            saw_structured_tool_calls: false,
+            native: crate::stream::DeepSeekNativeToolCallExtractor::default(),
+            qwen: crate::stream::QwenNativeNormalizer::default(),
+        }
+    }
+}
+
+/// Chained native finish for the legacy parser: DeepSeek pass-through text is
+/// routed through the Qwen content buffer before emits (BUG-060 + BUG-062).
+fn finish_legacy_native(state: &mut LegacySseParserState, events: &mut Vec<StreamEvent>) {
+    for ev in state.native.finish() {
+        match ev {
+            StreamEvent::TextDelta(t) => {
+                state
+                    .qwen
+                    .push_content(&t, events, &mut state.reasoning_open)
+            }
+            other => events.push(other),
+        }
+    }
+    state.qwen.finish(
+        events,
+        &mut state.reasoning_open,
+        !state.saw_structured_tool_calls,
+    );
+    events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
 }
 
 impl OpenAIProvider {
@@ -327,8 +362,7 @@ impl OpenAIProvider {
                 });
                 state.reasoning_open = false;
             }
-            events.extend(state.native.finish());
-            events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
+            finish_legacy_native(state, &mut events);
             events.push(StreamEvent::Done);
             return events;
         }
@@ -361,20 +395,16 @@ impl OpenAIProvider {
                     let reasoning = delta
                         .get("reasoning_content")
                         .or_else(|| delta.get("reasoning_text"))
+                        .or_else(|| delta.get("reasoning"))
                         .and_then(Value::as_str)
                         .unwrap_or_default();
 
                     if !reasoning.is_empty() {
-                        if !state.reasoning_open {
-                            state.reasoning_open = true;
-                            events.push(StreamEvent::ReasoningStart {
-                                id: "reasoning-0".to_string(),
-                            });
-                        }
-                        events.push(StreamEvent::ReasoningDelta {
-                            id: "reasoning-0".to_string(),
-                            text: reasoning.to_string(),
-                        });
+                        state.qwen.push_reasoning(
+                            reasoning,
+                            &mut events,
+                            &mut state.reasoning_open,
+                        );
                     }
 
                     if let Some(text) = delta.get("content").and_then(Value::as_str) {
@@ -385,7 +415,16 @@ impl OpenAIProvider {
                                     id: "reasoning-0".to_string(),
                                 });
                             }
-                            events.extend(state.native.push(text));
+                            for ev in state.native.push(text) {
+                                match ev {
+                                    StreamEvent::TextDelta(t) => state.qwen.push_content(
+                                        &t,
+                                        &mut events,
+                                        &mut state.reasoning_open,
+                                    ),
+                                    other => events.push(other),
+                                }
+                            }
                         }
                     }
 
@@ -451,8 +490,7 @@ impl OpenAIProvider {
                             id: "reasoning-0".to_string(),
                         });
                     }
-                    events.extend(state.native.finish());
-                    events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
+                    finish_legacy_native(state, &mut events);
                     let normalized_reason = if reason == "tool_calls" {
                         "tool-calls".to_string()
                     } else {
@@ -1322,6 +1360,40 @@ mod tests {
         assert_eq!(
             collect_legacy_calls(&events),
             vec![("bash".to_string(), serde_json::json!({"command":"echo hi"}))]
+        );
+    }
+
+    // BUG-062: qwen on Ollama narrates calls as <tool_call>{...}</tool_call>
+    // inside the `reasoning` field (Ollama's reasoning channel).
+    fn reasoning_frame(reasoning: &str) -> String {
+        format!(
+            "{{\"choices\":[{{\"delta\":{{\"reasoning\":{}}}}}]}}",
+            serde_json::to_string(reasoning).unwrap()
+        )
+    }
+
+    #[test]
+    fn parse_legacy_sse_data_extracts_qwen_reasoning_field_tool_call() {
+        let mut state = LegacySseParserState::default();
+        let mut events = Vec::new();
+        for frame in [
+            "<tool_call>",
+            "{\"name\":\"read\",\"arguments\":{\"file_path\":\"hello.txt\"}}",
+            "</tool_call>",
+            "done",
+        ] {
+            events.extend(OpenAIProvider::parse_legacy_sse_data(
+                &reasoning_frame(frame),
+                &mut state,
+            ));
+        }
+        events.extend(OpenAIProvider::parse_legacy_sse_data("[DONE]", &mut state));
+        assert_eq!(
+            collect_legacy_calls(&events),
+            vec![(
+                "read".to_string(),
+                serde_json::json!({"file_path":"hello.txt"})
+            )]
         );
     }
 }
