@@ -108,6 +108,29 @@ have normalized it.
 `novita-ai/deepseek/deepseek-r1-0528` turns executed 5/5 with no raw tokens on 2026-10-10). The defect
 only reappears because the checkout the binary was built from never advanced past the fix.
 
+## Verification - synced build replay (2026-10-12)
+
+Synced this checkout to `origin/development` (merge `ffe2bf4`; card commit `ae8a401`), so local
+`development` now contains `BUG-060`'s fix (`81989bc`) and `BUG-061`'s guard (`a57ada8`). Rebuilt with
+`ort-build`.
+
+- Source commit `ae8a401`; binary `target/debug/opencode` (built 2026-10-12 18:39 local). `strings` on
+  the rebuilt binary now contains `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS`; it previously did not.
+- Offline: `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-provider --test deepseek_fixture_replay`
+  -> 9 passed, including `native_toolcall_tokens_in_content_become_a_tool_call` and the char-boundary
+  split test, run against the exact leaked token shape
+  (`crates/opencode-provider/tests/fixtures/deepseek/native_toolcall_tokens.sse`).
+- Live: `opencode run -m novita-ai/deepseek/deepseek-r1-0528 --dir
+  $HOME/worktrees/opencode-modded-rust/bug063-qa` with a prompt forcing the `bash` tool
+  (`touch /tmp/bug063-marker && echo EXECUTED`) -> **6/6 runs executed the tool** (marker files
+  created), and no `<｜tool▁...` native tokens appeared in any assistant output.
+
+Result: PASS. On the synced build the DeepSeek novita native-token leak no longer reproduces, and the
+original report is fully explained by the stale binary.
+
+Sync side effect resolved: the local-only interrupted-session card collided with `origin`'s
+`BUG-061` id; it was renumbered to `BUG-064` during the merge.
+
 ## Remaining investigation
 
 1. **Verify on a synced build.** Sync this checkout to `origin/development` (or build a worktree at
