@@ -131,25 +131,38 @@ original report is fully explained by the stale binary.
 Sync side effect resolved: the local-only interrupted-session card collided with `origin`'s
 `BUG-061` id; it was renumbered to `BUG-064` during the merge.
 
+## Flush-path findings (2026-10-12)
+
+Both parsers (stateful `parse_openai_sse_stateful` and the `novita-ai` legacy `parse_legacy_sse_data`)
+were probed with an intentionally cut native-token stream. Regression coverage added in
+`crates/opencode-provider/tests/native_abort_flush.rs`.
+
+- **Budget/timeout/abort (no terminal frame):** the buffered native call is **dropped**, and no raw
+  tokens reach the assistant text. This is the path the first leaked transcript message exercised
+  (`finish_reason: error`, "run exceeded its time budget") - on the synced build it does **not** leak.
+- **Complete native block + `finish_reason`/`[DONE]`:** normalized to a real tool call, no leak
+  (control).
+- **Unterminated native block + `finish_reason`/`[DONE]`:** the partial native tokens **still leak**
+  into assistant text (`DeepSeekNativeToolCallExtractor::drain(flush_all=true)` emits the captured
+  remainder as `TextDelta`). This is a genuine residual of the `BUG-060`/`BUG-061` fix, captured by the
+  ignored test `partial_native_block_then_finish_must_not_leak`.
+
+Conclusion: the budget/abort path is safe; a narrow **truncated-block-on-finish** leak remains and is
+the only part of this card that may need a code fix.
+
 ## Remaining investigation
 
-1. **Verify on a synced build.** Sync this checkout to `origin/development` (or build a worktree at
-   `origin/development`), run `ort-build`, and replay a `glob`-style tool prompt on
-   `novita-ai/deepseek/deepseek-r1-0528`. Confirm no raw tokens in `content` and a real `tool_call` +
-   `tool_result`. Capture the exact `tool_call` JSON and `finish_reason`.
-2. **Test the budget/abort path on the synced build.** `BUG-061` defers synthesized native calls to
-   end-of-stream (`saw_structured_tool_calls`), and the first leaked message ended with
-   `finish_reason: error` ("run exceeded its time budget") rather than `stop`. Confirm the deferred
-   flush still runs (or the tokens are dropped/partial-handled) when a turn is killed by
-   `OPENCODE_RUN_TIMEOUT_MS`/`OPENCODE_STREAM_BUDGET_MS` or by interrupt - that case is not covered by
-   the two provider tests and could be a real residual gap even on a synced build.
+1. (done) Synced-build replay - see Verification above.
+2. (done) Budget/abort flush path - see Flush-path findings above (no leak on abort; the
+   truncated-block leak is a separate residual).
 3. **Close the stale-build gap.** Determine why `ort`/`ort-build` served a binary from a
    fix-missing checkout, and whether that is only "main checkout not fast-forwarded" or something
    `ort-build` can defend against (e.g., warn when the checkout is behind `origin/development` or is
    missing expected features). Relates to `boards/todo/add-ci-clean-clone-native-build-guard.md` and
    to the `BUG-061` kill switch (confirm it is unset in the daily environment).
-4. Decide whether any residual is a code fix or purely a process/checkout-hygiene fix; if code, add
-   the provider test and route it through the same shared extractor.
+4. Decide on the truncated-block leak: sanitize `DeepSeekNativeToolCallExtractor::drain(flush_all)`
+   so an unterminated native block drops or strips the token remainder instead of emitting it as
+   `TextDelta`, then un-ignore `partial_native_block_then_finish_must_not_leak`.
 
 ## Scope
 
