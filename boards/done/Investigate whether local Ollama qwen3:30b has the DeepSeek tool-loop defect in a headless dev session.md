@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-10-12"
 ---
 
@@ -231,3 +231,38 @@ continues regardless of `finish_reason` (`crates/opencode-session/src/prompt.rs:
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/140
 
+## QA Report - 2026-10-12 (post-merge, agent)
+
+Merged into `development` as `683d730` (PR #140). The merge tree is identical to the
+tested branch commit `2db39af`, and the binary
+`$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.shared-target/debug/opencode` was built
+from that content. Headless QA on `development`.
+
+**Deterministic native-path check (the defect).** Mock replaying the captured failure
+shape (native `<tool_call>` in `reasoning`, split across frames) then a plain final
+answer:
+
+- PASS: `1xreasoning, 2xtext, 3xtool_call, 3xtool_result`; `read/write/bash` executed;
+  `result.txt` created. Pre-fix `development` on the same mock gave `1xtext` and no
+  `result.txt`.
+
+**Real `ollama/qwen3:30b` dev session (multi-step read→write→bash), captured via logging
+proxy, 3 runs:**
+
+- 2/3 PASS: full structured loop, `3xtool_call` + `3xtool_result`, `result.txt` created.
+- 1/3 distinct residual (out of scope): the model emitted **no tool call at all** — no
+  `tool_calls` array and no native `<tool_call>` markup in `content` or `reasoning`
+  (`finish_reason: stop`), just a hallucinated `result.txt` answer. This is model
+  behavior, not a parser/encoding gap; the parser cannot synthesize a call the model
+  never emitted.
+
+**Regression:** `cargo test -p opencode-provider` green on the merged content
+(124 lib + 9 DeepSeek fixture + 7 integration), including the `BUG-060`/`BUG-061`
+normalization + kill-switch tests.
+
+**Residual follow-up (not this card):** qwen3:30b intermittently answers without
+calling tools even with tools attached. That reliability gap belongs with the
+`EPIC-001` default-model reliability work, not the native tool-call normalization.
+
+Card moved to `done`: the parser defect is fixed and verified; the residual is a
+separate model-reliability concern.
