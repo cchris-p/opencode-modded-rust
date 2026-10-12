@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "done"
 created: "2026-10-12"
 ---
 
@@ -134,3 +134,135 @@ real path headlessly and capture a deterministic signal).
   numbers before editing.
 - Coordinate with the `BUG-060` (novita) work if both land on the same shared
   content-to-tool-call extractor.
+
+## Investigation - 2026-10-12 (reproduced, FAIL)
+
+Headless server (isolated `HOME`/DB), model `ollama/qwen3:30b`, workspace
+`~/worktrees/bug062-qwen-dev`, driven with a multi-step read→write→bash dev
+prompt. Commit under test: `8caf076` (`development`), binary
+`target/debug/opencode`. A logging proxy captured the exact product request and
+the raw Ollama SSE.
+
+Findings:
+
+- The product attaches the tools correctly: the captured request had `stream: true`,
+  **19** well-formed `type: "function"` tools (`read`, `write`, `bash`, ...), and
+  `[system, user]` messages.
+- On the failing run the model **did not emit a structured `tool_calls` array**.
+  Instead it narrated the calls inside Ollama's `reasoning` field as
+  `<tool_call>{"name":...,"arguments":{...}}</tool_call>` blocks (e.g. `read`, `write`,
+  `bash`), with `finish_reason: "stop"`. Raw captured blocks:
+
+  ```
+  <tool_call>{"name": "read", "arguments": {"file_path": ".../hello.txt"}}</tool_call>
+  <tool_call>{"name": "write", "arguments": {"file_path": ".../result.txt", "content": "Hello World\nDONE"}}</tool_call>
+  <tool_call>{"name": "bash", "arguments": {"command": "wc -l result.txt"}}</tool_call>
+  ```
+
+- The legacy OpenAI-compatible parser (used by `ollama` via
+  `OpenAIProvider::openai_compatible`) ignored both the `reasoning` field (it only read
+  `reasoning_content`/`reasoning_text`) and any inline `<tool_call>` markup. So nothing
+  became a `toolCall`: **no tool ran, `result.txt` was never created**, and the run ended
+  with the model's hallucinated answer `3 result.txt` (`finish: stop`).
+- Model-side flakiness was confirmed BUG-060-style: replaying the exact captured request
+  directly against Ollama 11/11 times returned structured `tool_calls`
+  (`finish_reason: "tool_calls"`), and 4/4 fresh product runs also executed the loop
+  correctly. The failure is an intermittent generation that the product must not silently
+  drop.
+
+This confirms the card's hypothesis 3 (tool call leaks as text/reasoning, tools not
+executed) plus a second, distinct gap: Ollama's `reasoning` field was never parsed at all.
+
+## Implementation - 2026-10-12
+
+Branch `bug/BUG-062-qwen-tool-loop` (worktree), on top of `development` after the
+`BUG-060`/`BUG-061` DeepSeek native normalization landed (`1c46925`).
+
+The first push conflicted with the just-landed `BUG-060`/`BUG-061` DeepSeek
+normalization in the same shared parsers; this is the reconciled implementation. It
+extends the same "native tool-call normalization" feature rather than adding a parallel
+one.
+
+- `crates/opencode-provider/src/stream.rs`:
+  - New `NativeToolCallBuffer` for Qwen/Hermes `<tool_call>{json}</tool_call>` markup,
+    with cross-fragment buffering so a split open tag / split JSON joins into one call.
+  - New `QwenNativeNormalizer` wrapping two buffers (content + reasoning): extracts markup,
+    **defers** synthesized calls to end-of-stream, and drops them when a structured
+    `tool_calls` array was already seen this turn — the same `BUG-061` guard the DeepSeek
+    extractor uses. Gated by the shared `native_normalization_enabled()` kill switch.
+  - The DeepSeek extractor's pass-through text is routed through the Qwen content buffer
+    (`finish_native_stream`), so both encodings coexist in one stream without double text.
+- `crates/opencode-provider/src/openai.rs`:
+  - `LegacySseParserState` gains the same `QwenNativeNormalizer`; `parse_legacy_sse_data`
+    (the `ollama` path) runs the reasoning + content channels through it and chains the
+    DeepSeek pass-through text through it (`finish_legacy_native`).
+- Both parsers now also read Ollama's `reasoning` field (alongside
+  `reasoning_content`/`reasoning_text`); that part is independent of the normalization
+  kill switch.
+- Tests: buffer extract/strip, split open tag, reasoning-field native call → structured
+  `ToolCallStart`/`ToolCallEnd`, content-channel native call (no markup leak), discard when
+  a structured call is present, and disabled-kill-switch pass-through.
+
+No session-layer change was needed: the loop already executes any `ToolCall` parts and
+continues regardless of `finish_reason` (`crates/opencode-session/src/prompt.rs:1537`).
+
+### Verification
+
+- `cargo test -p opencode-provider`: 124 lib + 9 fixture + 7 integration pass;
+  `cargo fmt --all` clean (DeepSeek `BUG-060`/`BUG-061` fixture + guard tests still green).
+- Headless end-to-end via a deterministic mock that replays the captured failure shape
+  (native `<tool_call>` in the `reasoning` field, split across frames) and then a plain
+  final answer. Same workspace/model/config, fixed binary
+  `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.shared-target/debug/opencode`:
+  - **Fixed (reconciled)**: parts `1xreasoning, 2xtext, 3xtool_call, 3xtool_result`;
+    tools executed `read, write, bash`; `result.txt` created.
+  - **Contrast (pre-fix `development` binary, same mock)**: parts `1xtext`; no tool calls;
+    `result.txt` absent — the silent-drop repro.
+
+### Follow-ups / related
+
+- The `BUG-060` wiki/invariant scope was written for the DeepSeek signature and notes that
+  reasoning-channel leakage "was not reproduced"; `BUG-062` is that reasoning-aware variant
+  and the invariant/wiki should be widened to cover the Qwen signature.
+- Consider a `QA-002` fixture for the qwen `<tool_call>`-in-`reasoning` case using the
+  captured bytes.
+
+### PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/140
+
+## QA Report - 2026-10-12 (post-merge, agent)
+
+Merged into `development` as `683d730` (PR #140). The merge tree is identical to the
+tested branch commit `2db39af`, and the binary
+`$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.shared-target/debug/opencode` was built
+from that content. Headless QA on `development`.
+
+**Deterministic native-path check (the defect).** Mock replaying the captured failure
+shape (native `<tool_call>` in `reasoning`, split across frames) then a plain final
+answer:
+
+- PASS: `1xreasoning, 2xtext, 3xtool_call, 3xtool_result`; `read/write/bash` executed;
+  `result.txt` created. Pre-fix `development` on the same mock gave `1xtext` and no
+  `result.txt`.
+
+**Real `ollama/qwen3:30b` dev session (multi-step read→write→bash), captured via logging
+proxy, 3 runs:**
+
+- 2/3 PASS: full structured loop, `3xtool_call` + `3xtool_result`, `result.txt` created.
+- 1/3 distinct residual (out of scope): the model emitted **no tool call at all** — no
+  `tool_calls` array and no native `<tool_call>` markup in `content` or `reasoning`
+  (`finish_reason: stop`), just a hallucinated `result.txt` answer. This is model
+  behavior, not a parser/encoding gap; the parser cannot synthesize a call the model
+  never emitted.
+
+**Regression:** `cargo test -p opencode-provider` green on the merged content
+(124 lib + 9 DeepSeek fixture + 7 integration), including the `BUG-060`/`BUG-061`
+normalization + kill-switch tests.
+
+**Residual follow-up (not this card):** qwen3:30b intermittently answers without
+calling tools even with tools attached. That reliability gap belongs with the
+`EPIC-001` default-model reliability work, not the native tool-call normalization.
+
+Card moved to `done`: the parser defect is fixed and verified; the residual is a
+separate model-reliability concern.

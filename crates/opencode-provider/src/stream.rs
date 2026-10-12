@@ -331,6 +331,508 @@ pub fn openai_compat_line_events(line: &str) -> Vec<StreamEvent> {
     parse_openai_sse(payload).into_iter().collect()
 }
 
+// DeepSeek native tool-call special tokens. DeepSeek-family models sometimes
+// emit a tool call as these tokens inside the assistant `content` instead of an
+// OpenAI `tool_calls` array (observed on `novita-ai/deepseek/deepseek-r1-0528`,
+// BUG-060). The characters are: `<`, U+FF5C, `tool`, U+2581, `calls`, U+2581,
+// `begin`, U+FF5C, `>` (and analogous forms below).
+const DS_TOOL_CALLS_BEGIN: &str = "<\u{ff5c}tool\u{2581}calls\u{2581}begin\u{ff5c}>";
+const DS_TOOL_CALL_BEGIN: &str = "<\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>";
+const DS_TOOL_SEP: &str = "<\u{ff5c}tool\u{2581}sep\u{ff5c}>";
+const DS_TOOL_CALL_END: &str = "<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}>";
+const DS_TOOL_CALLS_END: &str = "<\u{ff5c}tool\u{2581}calls\u{2581}end\u{ff5c}>";
+
+/// Normalizes DeepSeek native tool-call tokens that leak into streamed
+/// assistant `content` into real tool-call events, stripping the raw tokens
+/// from the visible text (BUG-060).
+///
+/// The stream is fed chunk by chunk via [`push`](Self::push); text is emitted
+/// immediately except while a calls block is open, plus a short suffix that
+/// could be the start of a token (so a token split across deltas is not emitted
+/// as text). [`finish`](Self::finish) flushes any remainder. A block may carry
+/// several calls and may wrap the JSON arguments in a Markdown code fence.
+#[derive(Debug)]
+pub struct DeepSeekNativeToolCallExtractor {
+    buffer: String,
+    capturing: bool,
+    counter: u64,
+    pending_calls: Vec<(String, String, serde_json::Value)>,
+    enabled: bool,
+}
+
+impl Default for DeepSeekNativeToolCallExtractor {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            capturing: false,
+            counter: 0,
+            pending_calls: Vec::new(),
+            enabled: native_normalization_enabled(),
+        }
+    }
+}
+
+impl DeepSeekNativeToolCallExtractor {
+    /// Feed a content delta and return the events it produces.
+    pub fn push(&mut self, text: &str) -> Vec<StreamEvent> {
+        if !self.enabled {
+            return vec![StreamEvent::TextDelta(text.to_string())];
+        }
+        self.buffer.push_str(text);
+        self.drain(false)
+    }
+
+    /// Flush any buffered remainder at end of stream.
+    pub fn finish(&mut self) -> Vec<StreamEvent> {
+        if !self.enabled {
+            return Vec::new();
+        }
+        self.drain(true)
+    }
+
+    /// Emit the buffered native calls as tool-call events, or discard them when
+    /// `include` is false (a structured `tool_calls` array already arrived this
+    /// turn, so the leaked tokens are redundant). Always clears the buffer.
+    pub fn drain_pending(&mut self, include: bool) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+        for (id, name, input) in std::mem::take(&mut self.pending_calls) {
+            if include {
+                events.push(StreamEvent::ToolCallStart {
+                    id: id.clone(),
+                    name: name.clone(),
+                });
+                events.push(StreamEvent::ToolCallEnd { id, name, input });
+            }
+        }
+        events
+    }
+
+    /// Override whether normalization is active (tests / callers that already
+    /// resolved the flag).
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn drain(&mut self, flush_all: bool) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+        loop {
+            if self.capturing {
+                if let Some(end) = self.buffer.find(DS_TOOL_CALLS_END) {
+                    let block = self.buffer[..end].to_string();
+                    self.buffer.drain(..end + DS_TOOL_CALLS_END.len());
+                    self.capturing = false;
+                    self.emit_block(&block);
+                    continue;
+                }
+                if flush_all {
+                    let rest = std::mem::take(&mut self.buffer);
+                    self.capturing = false;
+                    if !rest.is_empty() {
+                        events.push(StreamEvent::TextDelta(rest));
+                    }
+                }
+                break;
+            }
+
+            if let Some(begin) = self.buffer.find(DS_TOOL_CALLS_BEGIN) {
+                let before = self.buffer[..begin].to_string();
+                self.buffer.drain(..begin + DS_TOOL_CALLS_BEGIN.len());
+                if !before.is_empty() {
+                    events.push(StreamEvent::TextDelta(before));
+                }
+                self.capturing = true;
+                continue;
+            }
+
+            if flush_all {
+                let rest = std::mem::take(&mut self.buffer);
+                if !rest.is_empty() {
+                    events.push(StreamEvent::TextDelta(rest));
+                }
+                break;
+            }
+
+            // Hold back a suffix that could be a partial start token.
+            let hold = partial_suffix_len(&self.buffer, DS_TOOL_CALLS_BEGIN);
+            let emit_len = self.buffer.len() - hold;
+            if emit_len > 0 {
+                let safe = self.buffer[..emit_len].to_string();
+                self.buffer.drain(..emit_len);
+                events.push(StreamEvent::TextDelta(safe));
+            }
+            break;
+        }
+        events
+    }
+
+    fn emit_block(&mut self, block: &str) {
+        let mut rest = block;
+        loop {
+            let Some(cb) = rest.find(DS_TOOL_CALL_BEGIN) else {
+                break;
+            };
+            let after = &rest[cb + DS_TOOL_CALL_BEGIN.len()..];
+            let (segment, remainder) = match after.find(DS_TOOL_CALL_END) {
+                Some(e) => (&after[..e], &after[e + DS_TOOL_CALL_END.len()..]),
+                None => (after, ""),
+            };
+            if let Some((name, input)) = parse_native_call_segment(segment) {
+                let id = format!("deepseek-native-call-{}", self.counter);
+                self.counter += 1;
+                self.pending_calls.push((id, name, input));
+            }
+            if remainder.is_empty() {
+                break;
+            }
+            rest = remainder;
+        }
+    }
+}
+
+/// Length (in bytes, on a char boundary) of the longest suffix of `buf` that is
+/// a proper prefix of `token`, so it can be held back until more text arrives.
+fn partial_suffix_len(buf: &str, token: &str) -> usize {
+    let token_len = token.chars().count();
+    let max = buf.chars().count().min(token_len.saturating_sub(1));
+    for k in (1..=max).rev() {
+        let prefix: String = token.chars().take(k).collect();
+        if buf.ends_with(&prefix) {
+            return prefix.len();
+        }
+    }
+    0
+}
+
+/// Parse one `<｜tool▁call▁begin｜>type<｜tool▁sep｜>name[<｜tool▁sep｜>|newline]args`
+/// segment into a `(name, arguments)` pair. Arguments may be wrapped in a
+/// Markdown code fence; unparseable arguments become an empty object.
+fn parse_native_call_segment(segment: &str) -> Option<(String, serde_json::Value)> {
+    let segment = segment.trim_start();
+    let after_type = match segment.find(DS_TOOL_SEP) {
+        Some(sep) => &segment[sep + DS_TOOL_SEP.len()..],
+        None => segment,
+    };
+    let (name_raw, args_raw) = if let Some(sep) = after_type.find(DS_TOOL_SEP) {
+        (&after_type[..sep], &after_type[sep + DS_TOOL_SEP.len()..])
+    } else if let Some(nl) = after_type.find('\n') {
+        (&after_type[..nl], &after_type[nl + 1..])
+    } else {
+        (after_type, "")
+    };
+    let name = name_raw.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((name.to_string(), parse_native_args(args_raw)))
+}
+
+fn parse_native_args(raw: &str) -> serde_json::Value {
+    let mut s = raw.trim();
+    if let Some(stripped) = s.strip_prefix("```json") {
+        s = stripped;
+    } else if let Some(stripped) = s.strip_prefix("```") {
+        s = stripped;
+    }
+    if let Some(idx) = s.rfind("```") {
+        s = &s[..idx];
+    }
+    let s = s.trim();
+    if s.is_empty() {
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+    serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+}
+
+/// Whether DeepSeek native-token normalization is active. Enabled by default;
+/// `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` (truthy) is the kill switch.
+///
+/// The same switch also gates the Qwen `<tool_call>` normalization below: both
+/// are "native tool-call normalization" restorations of the same kind, so the
+/// operator kill switch covers the whole feature.
+fn native_normalization_enabled() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(
+        || match std::env::var("OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS") {
+            Ok(value) => !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            ),
+            Err(_) => true,
+        },
+    )
+}
+
+/// A tool call decoded from Qwen/Hermes-style inline `<tool_call>` markup
+/// instead of a structured `tool_calls` array (BUG-062).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeToolCall {
+    pub name: String,
+    /// JSON-encoded arguments object.
+    pub arguments: String,
+}
+
+/// Visible text plus any native tool calls extracted from a fed fragment.
+#[derive(Debug, Default)]
+pub struct NativeToolCallExtraction {
+    /// Text with any complete native tool-call blocks removed.
+    pub text: String,
+    /// Tool calls decoded from complete native blocks in this feed.
+    pub calls: Vec<NativeToolCall>,
+}
+
+const QWEN_TOOL_CALL_OPEN: &str = "<tool_call>";
+const QWEN_TOOL_CALL_CLOSE: &str = "</tool_call>";
+
+/// Buffers streamed text/reasoning fragments and extracts Qwen/Hermes-style
+/// `<tool_call>{json}</tool_call>` blocks (BUG-062).
+///
+/// Qwen on Ollama intermittently narrates its tool calls this way inside the
+/// streamed `reasoning` field (Ollama's reasoning channel) or `content`, with
+/// `finish_reason: "stop"`, instead of emitting an OpenAI `tool_calls` array.
+/// Without extraction the call is invisible and no tool runs. Partial open and
+/// close tags split across SSE chunk boundaries are retained until the rest
+/// arrives, so extraction is stable across chunks.
+#[derive(Debug, Default)]
+pub struct NativeToolCallBuffer {
+    buffer: String,
+}
+
+impl NativeToolCallBuffer {
+    /// Feed one streamed fragment, returning visible text and complete calls.
+    pub fn push(&mut self, fragment: &str) -> NativeToolCallExtraction {
+        self.buffer.push_str(fragment);
+        let mut out = NativeToolCallExtraction::default();
+
+        loop {
+            if let Some(start) = self.buffer.find(QWEN_TOOL_CALL_OPEN) {
+                if start > 0 {
+                    out.text.push_str(&self.buffer[..start]);
+                }
+                let after_open = start + QWEN_TOOL_CALL_OPEN.len();
+                match self.buffer[after_open..].find(QWEN_TOOL_CALL_CLOSE) {
+                    Some(rel_end) => {
+                        let inner = self.buffer[after_open..after_open + rel_end]
+                            .trim()
+                            .to_string();
+                        let block_end = after_open + rel_end + QWEN_TOOL_CALL_CLOSE.len();
+                        self.buffer.drain(..block_end);
+                        match parse_qwen_tool_call(&inner) {
+                            Some(call) => out.calls.push(call),
+                            None => out.text.push_str(&inner),
+                        }
+                        continue;
+                    }
+                    None => {
+                        // Unclosed block: keep from the open tag onward buffered.
+                        self.buffer.drain(..start);
+                        break;
+                    }
+                }
+            } else {
+                // No open tag: emit all but a possible partial open-tag suffix.
+                let keep = partial_suffix_len(&self.buffer, QWEN_TOOL_CALL_OPEN);
+                let split = self.buffer.len() - keep;
+                out.text.push_str(&self.buffer[..split]);
+                self.buffer.drain(..split);
+                break;
+            }
+        }
+
+        out
+    }
+
+    /// Flush any buffered remainder (e.g. at end of stream) as plain text.
+    pub fn flush(&mut self) -> String {
+        std::mem::take(&mut self.buffer)
+    }
+}
+
+fn parse_qwen_tool_call(inner: &str) -> Option<NativeToolCall> {
+    let value: serde_json::Value = serde_json::from_str(inner).ok()?;
+    let name = value.get("name").and_then(|v| v.as_str())?.to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let arguments = match value.get("arguments") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => serde_json::to_string(other).ok()?,
+        None => "{}".to_string(),
+    };
+    Some(NativeToolCall { name, arguments })
+}
+
+/// Qwen `<tool_call>` normalization shared by the stateful and legacy
+/// OpenAI-compatible parsers (BUG-062). Extracts markup from the content and
+/// reasoning channels, defers synthesized calls to end-of-stream, and drops them
+/// when the turn already delivered a structured `tool_calls` array (BUG-061
+/// guard). Gated by [`native_normalization_enabled`].
+#[derive(Debug)]
+pub struct QwenNativeNormalizer {
+    content: NativeToolCallBuffer,
+    reasoning: NativeToolCallBuffer,
+    pending: Vec<NativeToolCall>,
+    counter: u64,
+    enabled: bool,
+}
+
+impl Default for QwenNativeNormalizer {
+    fn default() -> Self {
+        Self {
+            content: NativeToolCallBuffer::default(),
+            reasoning: NativeToolCallBuffer::default(),
+            pending: Vec::new(),
+            counter: 0,
+            enabled: native_normalization_enabled(),
+        }
+    }
+}
+
+impl QwenNativeNormalizer {
+    /// Override whether normalization is active (tests / pre-resolved callers).
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// Extract from a content delta, closing any open reasoning block first.
+    pub fn push_content(
+        &mut self,
+        text: &str,
+        events: &mut Vec<StreamEvent>,
+        reasoning_open: &mut bool,
+    ) {
+        if !self.enabled {
+            events.push(StreamEvent::TextDelta(text.to_string()));
+            return;
+        }
+        let extracted = self.content.push(text);
+        if !extracted.text.is_empty() {
+            if *reasoning_open {
+                *reasoning_open = false;
+                events.push(StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::TextDelta(extracted.text));
+        }
+        self.pending.extend(extracted.calls);
+    }
+
+    /// Extract from a reasoning delta (Ollama's `reasoning` channel).
+    pub fn push_reasoning(
+        &mut self,
+        text: &str,
+        events: &mut Vec<StreamEvent>,
+        reasoning_open: &mut bool,
+    ) {
+        if !self.enabled {
+            if !*reasoning_open {
+                *reasoning_open = true;
+                events.push(StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::ReasoningDelta {
+                id: "reasoning-0".to_string(),
+                text: text.to_string(),
+            });
+            return;
+        }
+        let extracted = self.reasoning.push(text);
+        if !extracted.text.is_empty() {
+            if !*reasoning_open {
+                *reasoning_open = true;
+                events.push(StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::ReasoningDelta {
+                id: "reasoning-0".to_string(),
+                text: extracted.text,
+            });
+        }
+        if !extracted.calls.is_empty() {
+            if *reasoning_open {
+                *reasoning_open = false;
+                events.push(StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            self.pending.extend(extracted.calls);
+        }
+    }
+
+    /// Flush buffered tails and emit deferred calls unless `include` is false.
+    pub fn finish(
+        &mut self,
+        events: &mut Vec<StreamEvent>,
+        reasoning_open: &mut bool,
+        include: bool,
+    ) {
+        let reason_tail = self.reasoning.flush();
+        if !reason_tail.is_empty() {
+            if !*reasoning_open {
+                *reasoning_open = true;
+                events.push(StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::ReasoningDelta {
+                id: "reasoning-0".to_string(),
+                text: reason_tail,
+            });
+        }
+        let content_tail = self.content.flush();
+        if !content_tail.is_empty() {
+            if *reasoning_open {
+                *reasoning_open = false;
+                events.push(StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::TextDelta(content_tail));
+        }
+        for call in std::mem::take(&mut self.pending) {
+            if !include {
+                continue;
+            }
+            let id = format!("qwen-native-call-{}", self.counter);
+            self.counter += 1;
+            let input = serde_json::from_str(&call.arguments)
+                .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
+            events.push(StreamEvent::ToolCallStart {
+                id: id.clone(),
+                name: call.name.clone(),
+            });
+            events.push(StreamEvent::ToolCallEnd {
+                id,
+                name: call.name,
+                input,
+            });
+        }
+    }
+}
+
+/// Flush the DeepSeek extractor (routing its pass-through text through the Qwen
+/// content buffer), then the Qwen buffers, then emit any deferred native calls.
+fn finish_native_stream(state: &mut OpenAiCompatParserState, events: &mut Vec<StreamEvent>) {
+    for ev in state.native.finish() {
+        match ev {
+            StreamEvent::TextDelta(t) => {
+                state
+                    .qwen
+                    .push_content(&t, events, &mut state.reasoning_open)
+            }
+            other => events.push(other),
+        }
+    }
+    state.qwen.finish(
+        events,
+        &mut state.reasoning_open,
+        !state.saw_structured_tool_calls,
+    );
+    events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
+}
+
 /// State retained across SSE lines for OpenAI-compatible chat providers.
 ///
 /// OpenAI-compatible streams send a tool call's `id`/`name` in one delta and
@@ -338,11 +840,27 @@ pub fn openai_compat_line_events(line: &str) -> Vec<StreamEvent> {
 /// `index`. Retaining the per-index id and name lets us join fragments into one
 /// tool call (BUG-006 split-tool-call) and lets `reasoning_content` deltas be
 /// surfaced as reasoning events (needed to echo reasoning back on follow-ups).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OpenAiCompatParserState {
     tool_call_ids: HashMap<u32, String>,
     tool_call_names: HashMap<u32, String>,
     reasoning_open: bool,
+    saw_structured_tool_calls: bool,
+    native: DeepSeekNativeToolCallExtractor,
+    qwen: QwenNativeNormalizer,
+}
+
+impl Default for OpenAiCompatParserState {
+    fn default() -> Self {
+        Self {
+            tool_call_ids: HashMap::new(),
+            tool_call_names: HashMap::new(),
+            reasoning_open: false,
+            saw_structured_tool_calls: false,
+            native: DeepSeekNativeToolCallExtractor::default(),
+            qwen: QwenNativeNormalizer::default(),
+        }
+    }
 }
 
 /// Parse one OpenAI-compatible SSE `data:` payload with retained state.
@@ -364,6 +882,7 @@ pub fn parse_openai_sse_stateful(
             });
             state.reasoning_open = false;
         }
+        finish_native_stream(state, &mut events);
         events.push(StreamEvent::Done);
         return events;
     }
@@ -395,19 +914,13 @@ pub fn parse_openai_sse_stateful(
                 let reasoning = delta
                     .get("reasoning_content")
                     .or_else(|| delta.get("reasoning_text"))
+                    .or_else(|| delta.get("reasoning"))
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 if !reasoning.is_empty() {
-                    if !state.reasoning_open {
-                        state.reasoning_open = true;
-                        events.push(StreamEvent::ReasoningStart {
-                            id: "reasoning-0".to_string(),
-                        });
-                    }
-                    events.push(StreamEvent::ReasoningDelta {
-                        id: "reasoning-0".to_string(),
-                        text: reasoning.to_string(),
-                    });
+                    state
+                        .qwen
+                        .push_reasoning(reasoning, &mut events, &mut state.reasoning_open);
                 }
 
                 if let Some(text) = delta.get("content").and_then(Value::as_str) {
@@ -418,16 +931,28 @@ pub fn parse_openai_sse_stateful(
                                 id: "reasoning-0".to_string(),
                             });
                         }
-                        events.push(StreamEvent::TextDelta(text.to_string()));
+                        for ev in state.native.push(text) {
+                            match ev {
+                                StreamEvent::TextDelta(t) => state.qwen.push_content(
+                                    &t,
+                                    &mut events,
+                                    &mut state.reasoning_open,
+                                ),
+                                other => events.push(other),
+                            }
+                        }
                     }
                 }
 
                 if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
-                    if !tool_calls.is_empty() && state.reasoning_open {
-                        state.reasoning_open = false;
-                        events.push(StreamEvent::ReasoningEnd {
-                            id: "reasoning-0".to_string(),
-                        });
+                    if !tool_calls.is_empty() {
+                        state.saw_structured_tool_calls = true;
+                        if state.reasoning_open {
+                            state.reasoning_open = false;
+                            events.push(StreamEvent::ReasoningEnd {
+                                id: "reasoning-0".to_string(),
+                            });
+                        }
                     }
                     for tc in tool_calls {
                         let index = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
@@ -478,6 +1003,7 @@ pub fn parse_openai_sse_stateful(
                         id: "reasoning-0".to_string(),
                     });
                 }
+                finish_native_stream(state, &mut events);
                 let normalized_reason = if reason == "tool_calls" {
                     "tool-calls".to_string()
                 } else {
@@ -1215,5 +1741,371 @@ mod tests {
         // Non-data / garbage lines produce nothing and must not panic.
         assert!(openai_compat_line_events("event: done").is_empty());
         assert!(openai_compat_line_events("data: {not json").is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // DeepSeek native tool-call token normalization (BUG-060)
+    // ------------------------------------------------------------------------
+
+    fn native_call(name: &str, args: &str) -> String {
+        format!(
+            "{cb}{cbegin}function{sep}{name}\n```json\n{args}\n```{ce}{cs}",
+            cb = DS_TOOL_CALLS_BEGIN,
+            cbegin = DS_TOOL_CALL_BEGIN,
+            sep = DS_TOOL_SEP,
+            ce = DS_TOOL_CALL_END,
+            cs = DS_TOOL_CALLS_END,
+        )
+    }
+
+    fn native_call_fenceless(name: &str, args: &str) -> String {
+        format!(
+            "{cb}{cbegin}function{sep}{name}\n{args}{ce}{cs}",
+            cb = DS_TOOL_CALLS_BEGIN,
+            cbegin = DS_TOOL_CALL_BEGIN,
+            sep = DS_TOOL_SEP,
+            ce = DS_TOOL_CALL_END,
+            cs = DS_TOOL_CALLS_END,
+        )
+    }
+
+    fn native_call_segment(name: &str, args: &str) -> String {
+        format!(
+            "{cbegin}function{sep}{name}\n{args}{ce}",
+            cbegin = DS_TOOL_CALL_BEGIN,
+            sep = DS_TOOL_SEP,
+            ce = DS_TOOL_CALL_END,
+        )
+    }
+
+    fn collect_calls(events: &[StreamEvent]) -> Vec<(String, serde_json::Value)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallEnd { name, input, .. } => Some((name.clone(), input.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn collect_text(events: &[StreamEvent]) -> String {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn native_tool_tokens_become_a_tool_call_and_are_removed_from_text() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&format!(
+            "Here's the tool call:{}",
+            native_call("bash", "{\"command\": \"echo captured\"}")
+        ));
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        assert_eq!(collect_text(&events), "Here's the tool call:");
+        let calls = collect_calls(&events);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "bash");
+        assert_eq!(calls[0].1["command"], "echo captured");
+    }
+
+    #[test]
+    fn native_tool_tokens_split_across_deltas_still_parse() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let payload = format!(
+            "prefix {}",
+            native_call("bash", "{\"command\":\"echo hi\"}")
+        );
+        let mut events = Vec::new();
+        for ch in payload.chars() {
+            events.extend(ex.push(&ch.to_string()));
+        }
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        assert_eq!(collect_text(&events), "prefix ");
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "bash".to_string(),
+                serde_json::json!({"command": "echo hi"})
+            )]
+        );
+    }
+
+    #[test]
+    fn native_tool_tokens_without_code_fence_parse() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&native_call_fenceless("read", "{\"path\":\"a.rs\"}"));
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        assert_eq!(
+            collect_calls(&events),
+            vec![("read".to_string(), serde_json::json!({"path": "a.rs"}))]
+        );
+    }
+
+    #[test]
+    fn multiple_native_calls_in_one_block_parse() {
+        let block = format!(
+            "{}{}{}{}",
+            DS_TOOL_CALLS_BEGIN,
+            native_call_segment("bash", "{\"command\":\"a\"}"),
+            native_call_segment("read", "{\"path\":\"b\"}"),
+            DS_TOOL_CALLS_END,
+        );
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&block);
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        let calls = collect_calls(&events);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "bash");
+        assert_eq!(calls[1].0, "read");
+        assert_eq!(calls[1].1["path"], "b");
+    }
+
+    #[test]
+    fn plain_text_without_native_tokens_passes_through_unchanged() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push("hello ");
+        events.extend(ex.push("< world & now"));
+        events.extend(ex.finish());
+        assert_eq!(collect_text(&events), "hello < world & now");
+        assert!(collect_calls(&events).is_empty());
+    }
+
+    #[test]
+    fn unterminated_native_block_flushes_as_text() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&format!("{}partial", DS_TOOL_CALLS_BEGIN));
+        events.extend(ex.finish());
+        assert!(collect_calls(&events).is_empty());
+        assert_eq!(collect_text(&events), "partial");
+    }
+
+    #[test]
+    fn stateful_parser_extracts_native_tool_call_from_content() {
+        let payload = serde_json::json!({
+            "choices": [{"delta": {"content": native_call("bash", "{\"command\":\"echo hi\"}")}}]
+        })
+        .to_string();
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(&payload, &mut state);
+        events.extend(state.native.finish());
+        events.extend(state.native.drain_pending(true));
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "bash".to_string(),
+                serde_json::json!({"command": "echo hi"})
+            )]
+        );
+    }
+
+    #[test]
+    fn stateful_parser_still_streams_plain_content() {
+        let payload = serde_json::json!({
+            "choices": [{"delta": {"content": "normal text"}}]
+        })
+        .to_string();
+        let mut state = OpenAiCompatParserState::default();
+        let events = parse_openai_sse_stateful(&payload, &mut state);
+        assert_eq!(collect_text(&events), "normal text");
+        assert!(collect_calls(&events).is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // BUG-061: guard + kill switch
+    // ------------------------------------------------------------------------
+
+    fn finish_frame() -> &'static str {
+        r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#
+    }
+
+    #[test]
+    fn native_call_is_emitted_when_no_structured_tool_calls() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            &serde_json::json!({
+                "choices": [{"delta": {"content": native_call("bash", "{\"command\":\"echo hi\"}")}}]
+            })
+            .to_string(),
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "bash".to_string(),
+                serde_json::json!({"command": "echo hi"})
+            )]
+        );
+    }
+
+    #[test]
+    fn native_call_is_discarded_when_structured_tool_calls_present() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\"path\":\"a.rs\"}"}}]}}]}"#,
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(
+            &serde_json::json!({
+                "choices": [{"delta": {"content": native_call("bash", "{\"command\":\"echo hi\"}")}}]
+            })
+            .to_string(),
+            &mut state,
+        ));
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+
+        assert!(
+            collect_calls(&events)
+                .iter()
+                .all(|(name, _)| name != "bash"),
+            "leaked native call must be discarded when a structured tool call is present"
+        );
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "read")));
+    }
+
+    #[test]
+    fn normalization_disabled_passes_raw_tokens_through() {
+        let mut state = OpenAiCompatParserState::default();
+        state.native.set_enabled(false);
+        let content = native_call("bash", "{\"command\":\"echo hi\"}");
+        let mut events = parse_openai_sse_stateful(
+            &serde_json::json!({ "choices": [{"delta": {"content": content}}] }).to_string(),
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert!(collect_calls(&events).is_empty());
+        assert!(collect_text(&events).contains(DS_TOOL_CALLS_BEGIN));
+    }
+
+    // ------------------------------------------------------------------------
+    // Qwen `<tool_call>` native normalization (BUG-062)
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn qwen_native_tool_call_buffer_extracts_and_strips_markup() {
+        let mut buffer = NativeToolCallBuffer::default();
+        let mut text = String::new();
+        let mut calls = Vec::new();
+        for fragment in [
+            "pre ",
+            "<tool_call>",
+            "{\"name\": \"read\", \"arguments\": {\"file_path\": \"hello.txt\"}}",
+            "</tool_call>",
+            " post",
+        ] {
+            let out = buffer.push(fragment);
+            text.push_str(&out.text);
+            calls.extend(out.calls);
+        }
+        assert_eq!(text, "pre  post");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read");
+        assert_eq!(calls[0].arguments, "{\"file_path\":\"hello.txt\"}");
+    }
+
+    #[test]
+    fn qwen_open_tag_split_across_fragments_is_buffered() {
+        let mut buffer = NativeToolCallBuffer::default();
+        let a = buffer.push("hello <to");
+        assert_eq!(a.text, "hello ");
+        assert!(a.calls.is_empty());
+        let b = buffer
+            .push("ol_call>{\"name\":\"bash\",\"arguments\":{\"command\":\"ls\"}}</tool_call>");
+        assert_eq!(b.text, "");
+        assert_eq!(b.calls.len(), 1);
+        assert_eq!(b.calls[0].name, "bash");
+        assert_eq!(b.calls[0].arguments, "{\"command\":\"ls\"}");
+    }
+
+    #[test]
+    fn qwen_reasoning_field_becomes_structured_events() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = Vec::new();
+        for frame in [
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"<tool_call>\"}}]}",
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"{\\\"name\\\":\\\"read\\\",\\\"arguments\\\":{\\\"file_path\\\":\\\"hello.txt\\\"}}\"}}]}",
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"</tool_call>\"}}]}",
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"done\"}}]}",
+        ] {
+            events.extend(parse_openai_sse_stateful(frame, &mut state));
+        }
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "read".to_string(),
+                serde_json::json!({"file_path": "hello.txt"})
+            )]
+        );
+        let reasoning: String = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ReasoningDelta { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, "done");
+    }
+
+    #[test]
+    fn qwen_content_channel_call_is_extracted() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            "{\"choices\":[{\"delta\":{\"content\":\"<tool_call>{\\\"name\\\":\\\"bash\\\",\\\"arguments\\\":{\\\"command\\\":\\\"ls\\\"}}</tool_call>\"}}]}",
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert_eq!(
+            collect_calls(&events),
+            vec![("bash".to_string(), serde_json::json!({"command": "ls"}))]
+        );
+        assert!(!collect_text(&events).contains("tool_call"));
+    }
+
+    #[test]
+    fn qwen_native_call_is_discarded_when_structured_tool_calls_present() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\"path\":\"a.rs\"}"}}]}}]}"#,
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"<tool_call>{\\\"name\\\":\\\"bash\\\",\\\"arguments\\\":{\\\"command\\\":\\\"ls\\\"}}</tool_call>\"}}]}",
+            &mut state,
+        ));
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert!(collect_calls(&events)
+            .iter()
+            .all(|(name, _)| name != "bash"));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "read")));
+    }
+
+    #[test]
+    fn qwen_normalization_disabled_passes_raw_markup_through() {
+        let mut state = OpenAiCompatParserState::default();
+        state.qwen.set_enabled(false);
+        let content =
+            "<tool_call>{\"name\":\"bash\",\"arguments\":{\"command\":\"ls\"}}</tool_call>";
+        let mut events = parse_openai_sse_stateful(
+            &serde_json::json!({ "choices": [{"delta": {"content": content}}] }).to_string(),
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert!(collect_calls(&events).is_empty());
+        assert!(collect_text(&events).contains("<tool_call>"));
     }
 }

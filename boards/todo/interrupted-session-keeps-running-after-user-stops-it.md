@@ -1,5 +1,5 @@
 ---
-id: "BUG-061"
+id: "BUG-064"
 title: "Interrupted session keeps running after the user stops it"
 priority: "P1"
 type: "bug"

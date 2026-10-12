@@ -17,6 +17,7 @@ const USAGE_REASONING_CONTENT: &str = include_str!("fixtures/deepseek/usage_reas
 const NO_FINISH_NO_DONE: &str = include_str!("fixtures/deepseek/no_finish_no_done.sse");
 const REASONING_ONLY_NO_TERMINAL: &str =
     include_str!("fixtures/deepseek/reasoning_only_no_terminal.sse");
+const NATIVE_TOOLCALL_TOKENS: &str = include_str!("fixtures/deepseek/native_toolcall_tokens.sse");
 
 fn replay_with_chunks(chunks: Vec<Vec<u8>>) -> Vec<StreamEvent> {
     let chunks: Vec<Result<Vec<u8>, reqwest::Error>> = chunks.into_iter().map(Ok).collect();
@@ -67,6 +68,16 @@ fn tool_deltas(events: &[StreamEvent]) -> Vec<(String, String)> {
         .iter()
         .filter_map(|event| match event {
             StreamEvent::ToolCallDelta { id, input } => Some((id.clone(), input.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn tool_ends(events: &[StreamEvent]) -> Vec<(String, serde_json::Value)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ToolCallEnd { name, input, .. } => Some((name.clone(), input.clone())),
             _ => None,
         })
         .collect()
@@ -213,6 +224,45 @@ fn chunk_boundaries_do_not_change_parsed_events() {
         assert_eq!(
             actual, expected,
             "splitting the fixture at byte {split} changed the parsed events"
+        );
+    }
+}
+
+#[test]
+fn native_toolcall_tokens_in_content_become_a_tool_call() {
+    let events = replay(NATIVE_TOOLCALL_TOKENS);
+
+    assert_eq!(text(&events), "I'll run it:");
+    assert_eq!(
+        tool_ends(&events),
+        vec![(
+            "bash".to_string(),
+            serde_json::json!({ "command": "echo native" })
+        )]
+    );
+    assert_eq!(finish_reasons(&events), vec![Some("stop".to_string())]);
+    assert!(has_done(&events));
+}
+
+#[test]
+fn native_toolcall_tokens_survive_char_boundary_splits() {
+    // The native token chars are multi-byte, so split only on char boundaries
+    // (splitting mid-char is an existing `from_utf8_lossy` limitation, not this
+    // fix's concern).
+    let fixture = NATIVE_TOOLCALL_TOKENS;
+    let expected = serde_json::to_value(replay(fixture)).expect("events serialize");
+    let boundaries: Vec<usize> = fixture
+        .char_indices()
+        .map(|(i, _)| i)
+        .filter(|i| *i > 0)
+        .collect();
+    for split in boundaries {
+        let bytes = fixture.as_bytes();
+        let events = replay_with_chunks(vec![bytes[..split].to_vec(), bytes[split..].to_vec()]);
+        let actual = serde_json::to_value(&events).expect("events serialize");
+        assert_eq!(
+            actual, expected,
+            "splitting at char boundary {split} changed the parsed events"
         );
     }
 }
