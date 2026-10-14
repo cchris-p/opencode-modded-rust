@@ -176,3 +176,18 @@ Verification gate:
 - `omr`/`ort` run the `opencode-modded-rust` product; `omr <subcommand>` reaches the CLI surface.
 - No current surface presents the product as `opencode` or `scopemux-code`; `opencode` is vanilla.
 - Layer 2 remains explicitly deferred and untouched.
+
+## Execution log
+
+- 2026-10-14 Phase 1 (START-033) implemented on `feature/START-033-command-identity`;
+  PR [#142](https://github.com/cchris-p/opencode-modded-rust/pull/142) into `development` (open).
+  Renamed the `[[bin]]`/clap command to `opencode-modded-rust`, updated help/about/banner/version/hints
+  and their tests, set TUI `APP_NAME`/`APP_SHORT_NAME`, removed dead `components/logo.rs`, and updated
+  command references across docs/wiki/scripts/AGENTS.md. Verified: `cargo fmt`, `cargo check`
+  (`-p opencode-cli -p opencode-tui -p opencode-server`), `cargo test -p opencode-cli` (21 passed),
+  `ort-build`, `omr --help`/`ort --help` (no `Usage: opencode`), vanilla `opencode --version` unchanged.
+  Layer 2 deferred. Standards launcher binary-path edit deferred until the product rename is on
+  `development`.
+- 2026-10-14 Pre-existing, unrelated `cargo test -p opencode-tui` failure:
+  `components::prompt::tests::tab_autocomplete_uses_first_candidate` (prompt.rs untouched here).
+

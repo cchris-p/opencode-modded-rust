@@ -143,3 +143,28 @@ future-card questions, not open decisions for `START-033`.
 
 - Created 2026-10-14; reframed 2026-10-14: canonical name corrected to `opencode-modded-rust`, layers
   1/2 inventory expanded, and the `scopemux-code` scrub split out to `START-034`.
+
+## Implementation Notes
+
+- 2026-10-14: Layer 1 implemented on `feature/START-033-command-identity`.
+  - `crates/opencode-cli/Cargo.toml` `[[bin]] name` and clap `#[command(name)]`/`about` renamed to
+    `opencode-modded-rust`; subcommand about strings updated.
+  - Server banner, `version`, interactive banner, and task/auth/mcp/github hints renamed.
+  - `resume_launcher_from` prints `opencode-modded-rust` when the Rust launcher env is absent; `ort`
+    retained; tests updated.
+  - `branding.rs` `APP_NAME=opencode-modded-rust`, `APP_SHORT_NAME=omr`; dead `components/logo.rs`
+    (`RO CODE`) removed.
+  - Server web page title/h1, `init` command description/heading, copilot reauth message, OpenAPI
+    title updated.
+  - Command references updated across `README.md`, `USER_GUIDE.md`, `docs/`, `wiki/`, `scripts/`,
+    `AGENTS.md`.
+  - Kept as compatibility/implementation surfaces: `OPENCODE_*` env names, `opencode.local` mdns
+    domain, `opencode.server.starting` event id, provider ids, and the model system-prompt identity.
+  - Layer 2 (config/state/env path renames) deferred.
+- Verification: `cargo fmt --all`; `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-cli
+  -p opencode-tui -p opencode-server`; `cargo test -p opencode-cli` (21 passed); `ort-build`;
+  `omr --help`/`ort --help` now print `Usage: opencode-modded-rust …`; vanilla `opencode --version`
+  unchanged.
+- PR: [#142](https://github.com/cchris-p/opencode-modded-rust/pull/142) (`development`, open).
+- Standards launcher `_opencode_rust_exec`/`ort-doctor` binary path updated after this lands;
+  commit deferred to preserve machine consistency.
