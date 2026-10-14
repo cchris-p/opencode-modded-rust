@@ -4,8 +4,8 @@
 
 ## Branding and display
 
-- `APP_NAME`: `scopemux-code`
-- `APP_SHORT_NAME`: `scopemux-code`
+- `APP_NAME`: `opencode-modded-rust`
+- `APP_SHORT_NAME`: `omr`
 - `APP_VERSION_DATE`: `2026.02.23`
 
 Defined in: `crates/opencode-tui/src/branding.rs`

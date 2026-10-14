@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define what `Jev UltraFast` is, what an interactive browser-automation capability could offer `scopemux-code`, the candidate integration surfaces, and the boundary and guardrails that would apply if it were ever adopted. This document is recorded for triage only.
+Define what `Jev UltraFast` is, what an interactive browser-automation capability could offer `opencode-modded-rust`, the candidate integration surfaces, and the boundary and guardrails that would apply if it were ever adopted. This document is recorded for triage only.
 
 ## Status: Not Planned for Integration
 
@@ -49,7 +49,7 @@ Model output never becomes selectors, coordinates, shell commands, or executable
 
 ## Why It Might Matter Here (Hypothetical)
 
-`scopemux-code` has read-only web access (`webfetch`, `websearch` in `crates/opencode-tool`) but no way to drive an interactive browser. A browser agent could theoretically serve workflows such as:
+`opencode-modded-rust` has read-only web access (`webfetch`, `websearch` in `crates/opencode-tool`) but no way to drive an interactive browser. A browser agent could theoretically serve workflows such as:
 
 - filling and submitting web forms as part of a task
 - navigating authenticated or multi-step sites that `webfetch` cannot

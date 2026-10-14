@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define what `laya` is, why a fast local decision engine is interesting to `scopemux-code`, and the narrow boundary the Rust runtime should preserve so `laya` can be adopted later without becoming a hidden dependency or weakening runtime authority.
+Define what `laya` is, why a fast local decision engine is interesting to `opencode-modded-rust`, and the narrow boundary the Rust runtime should preserve so `laya` can be adopted later without becoming a hidden dependency or weakening runtime authority.
 
 ## What Laya Is
 
@@ -26,7 +26,7 @@ Reference: `~/repos/laya` (fork of `NandhaKishorM/laya`, upstream `https://githu
 
 ## Why It Might Matter Here
 
-`scopemux-code` is local-model-first and keeps the runtime authoritative over task state, lifecycle, verification, and permissions. Several of those decision points are bounded classification or gating problems that do not need a generative model:
+`opencode-modded-rust` is local-model-first and keeps the runtime authoritative over task state, lifecycle, verification, and permissions. Several of those decision points are bounded classification or gating problems that do not need a generative model:
 
 - triaging an incoming request (intent, difficulty, whether tools are needed)
 - pre-classifying a tool call as low/high risk before the permission prompt
@@ -115,4 +115,4 @@ Additional operational rules:
 
 ## Bottom Line
 
-Laya is a strong fit for the fast, bounded decisions `scopemux-code` keeps making around a generative model, and its local-only design matches this product's stance. It should enter through an optional MCP-tool path or a narrow decision-provider boundary, as evidence the runtime may act on — never as an authority over lifecycle, task state, verification, or permissions.
+Laya is a strong fit for the fast, bounded decisions `opencode-modded-rust` keeps making around a generative model, and its local-only design matches this product's stance. It should enter through an optional MCP-tool path or a narrow decision-provider boundary, as evidence the runtime may act on — never as an authority over lifecycle, task state, verification, or permissions.

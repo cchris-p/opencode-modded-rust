@@ -1,6 +1,6 @@
 # Invariants Index
 
-The `invariants/` directory contains absolute truths for the final desired `scopemux-code` system.
+The `invariants/` directory contains absolute truths for the final desired `opencode-modded-rust` system.
 
 ## What belongs here
 
@@ -59,4 +59,4 @@ being exclusive to the CLI group.
 
 - Reference by path, not by inheritance.
 - Files in `$HOME/repos/opencode-modded` may be used as context or historical reference.
-- A rule is binding for `scopemux-code` only when documented in this repo.
+- A rule is binding for `opencode-modded-rust` only when documented in this repo.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define how `scopemux-code` judges whether the runtime is getting better at real coding work without depending on TypeScript-vs-Rust benchmark comparisons.
+Define how `opencode-modded-rust` judges whether the runtime is getting better at real coding work without depending on TypeScript-vs-Rust benchmark comparisons.
 
 ## Principles
 

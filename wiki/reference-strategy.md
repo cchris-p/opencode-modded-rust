@@ -12,7 +12,7 @@
 ## Documentation convention
 
 - Files in `opencode-modded` may be referenced by explicit path for history, planning context, or behavior reference.
-- Normative Rust-product guidance must live in `scopemux-code`.
+- Normative Rust-product guidance must live in `opencode-modded-rust`.
 - Cross-repo references are for context and traceability, not shared ownership.
 
 ## What is not carried over automatically

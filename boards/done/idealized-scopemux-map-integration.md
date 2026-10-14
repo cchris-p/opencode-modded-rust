@@ -11,6 +11,10 @@ created: "2026-09-21"
 
 # Idealized scopemux map integration
 
+> **Superseded (START-034, 2026-10-14):** `scopemux-code` is a retired product name; the
+> canonical name is `opencode-modded-rust`. This historical record is preserved as-is and is
+> not rewritten.
+
 ## Summary
 
 Define the idealized way `scopemux` helps `scopemux-code`: a live **map** of the workspace that converts a codebase into layered representations an agent can concisely reference and jump into, so tasks complete with less context.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the idealized way `scopemux-core` should serve `scopemux-code`: not as a search index bolted onto the runtime, but as a live **map** of the workspace that lets an agent understand a task, change it, and verify it using as little context as possible.
+Define the idealized way `scopemux-core` should serve `opencode-modded-rust`: not as a search index bolted onto the runtime, but as a live **map** of the workspace that lets an agent understand a task, change it, and verify it using as little context as possible.
 
 This document is the target for `SCOPE-001` and its follow-on cards. It extends, and does not replace, `wiki/scopemux-integration-plan.md`, which still defines the retrieval-provider boundary and the V1 guardrails. Where this document describes capabilities that do not exist in `scopemux-core` yet, it names the upstream work explicitly rather than assuming it.
 
@@ -208,4 +208,4 @@ Each phase is independently useful and must not make the previous phase a hard d
 
 ## Cross-Repo References
 
-Referenced by path, not by inheritance. Upstream scope and IR context live in `$HOME/apps/scopemux-notes` (`wiki/concepts.md`, `wiki/indexing-pipeline.md`, `wiki/supported-ir-structures.md`, `features/mapping-dependency-relationships.md`, `features/watcher-and-incremental-indexer.md`, `features/documentation-suite-feature-archived.md`), the core invariants in `$HOME/apps/scopemux-notes/invariants/`, and the conflict-fix program in `$HOME/apps/scopemux-notes/handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`). The engine is `$HOME/apps/scopemux-core` (`core/include/scopemux/`). Any rule that must bind `scopemux-code` is restated here or in `invariants/`.
+Referenced by path, not by inheritance. Upstream scope and IR context live in `$HOME/apps/scopemux-notes` (`wiki/concepts.md`, `wiki/indexing-pipeline.md`, `wiki/supported-ir-structures.md`, `features/mapping-dependency-relationships.md`, `features/watcher-and-incremental-indexer.md`, `features/documentation-suite-feature-archived.md`), the core invariants in `$HOME/apps/scopemux-notes/invariants/`, and the conflict-fix program in `$HOME/apps/scopemux-notes/handoffs/FIX-001-006-invariant-conflict-fixes-handoff.md` (`H-001`). The engine is `$HOME/apps/scopemux-core` (`core/include/scopemux/`). Any rule that must bind `opencode-modded-rust` is restated here or in `invariants/`.

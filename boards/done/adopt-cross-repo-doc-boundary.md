@@ -11,6 +11,10 @@ created: "2026-08-28"
 
 # Adopt cross-repo documentation boundary
 
+> **Superseded (START-034, 2026-10-14):** `scopemux-code` is a retired product name; the
+> canonical name is `opencode-modded-rust`. This historical record is preserved as-is and is
+> not rewritten.
+
 ## Summary
 
 Record the cross-repo documentation ownership model as an explicit project decision for `scopemux-code`.

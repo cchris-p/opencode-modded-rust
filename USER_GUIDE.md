@@ -1,9 +1,9 @@
-# USER GUIDE - scopemux-code
+# USER GUIDE - opencode-modded-rust
 
 This guide is for day-to-day users. It covers startup, common commands, configuration, and troubleshooting.  
-The product is named `scopemux-code`. The CLI command is `opencode-modded-rust`.
+The product is named `opencode-modded-rust`. The CLI command is `opencode-modded-rust`.
 
-**Use this project's binary.** If you have another OpenCode (e.g. npm/global) on your PATH, the shell may run that instead. From the **scopemux-code repo root** use one of:
+**Use this project's binary.** If you have another OpenCode (e.g. npm/global) on your PATH, the shell may run that instead. From the **opencode-modded-rust repo root** use one of:
 
 - **`./target/debug/opencode-modded-rust`** — after `cargo build -p opencode-cli`
 - **`cargo run -p opencode-cli --`** — always uses this repo's version
@@ -13,7 +13,7 @@ In the commands below, `opencode-modded-rust` means this local binary (run from 
 
 ## 1. Quick start
 
-From the scopemux-code repo root:
+From the opencode-modded-rust repo root:
 
 ```bash
 cargo run -p opencode-cli -- --help
@@ -45,7 +45,7 @@ cargo run -p opencode-cli -- serve --port 3000 --hostname 127.0.0.1
 
 ## 2. Common commands
 
-Run these from the **scopemux-code repo root**; use `./target/debug/opencode-modded-rust` or `cargo run -p opencode-cli --`.
+Run these from the **opencode-modded-rust repo root**; use `./target/debug/opencode-modded-rust` or `cargo run -p opencode-cli --`.
 
 ### 2.1 Session management
 
