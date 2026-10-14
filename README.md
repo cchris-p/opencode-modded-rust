@@ -144,6 +144,32 @@ See: `docs/opencode-config.md`
 - `crates/opencode-lsp` – LSP support
 - `crates/opencode-storage` – SQLite storage
 
+## Native provider artifacts
+
+The default binary compiles the native ScopeMux provider. `INFRA-006` builds it
+once in CI (`.github/workflows/native-artifacts.yml`) and publishes platform
+bundles to the `native-artifacts` release, so machines download a prebuilt bundle
+instead of cloning `scopemux-core` and compiling the C provider (with its
+Tree-sitter/pybind11 submodules) per machine.
+
+- Install for a build: `scripts/ensure-native-artifacts.sh` downloads the matching
+  bundle (by OS/arch + pinned revision) into
+  `~/.cache/opencode-modded-rust/native/` and prints its path. `ort-build` calls
+  it and exports `SCOPEMUX_PREBUILT_DIR`; set `OPENCODE_RUST_PREBUILT_NATIVE=0` to
+  skip it.
+- Package a bundle (local or CI): `scripts/package-native-artifacts.sh`.
+- `build.rs` links the bundle from `SCOPEMUX_PREBUILT_DIR` when set (no CMake,
+  Python, or Tree-sitter/pybind11 submodules), and otherwise falls back to the
+  source build in `third_party/scopemux-core` (provisioned by
+  `scripts/fetch-scopemux-core.sh`). Set `SCOPEMUX_CORE_DIR` to force a specific
+  source checkout.
+
+**CI access.** `scopemux-core` and the grammar/pybind11 submodules the provider
+build needs are public, so CI clones them over anonymous HTTPS (the workflow sets
+`SCOPEMUX_CORE_REPO` to the HTTPS URL; the script's default is SSH). The private
+`scopemux-test-cases` submodules are intentionally not initialized. If
+`scopemux-core` is ever made private, add token auth to the workflow.
+
 ## Development and validation
 
 ```bash

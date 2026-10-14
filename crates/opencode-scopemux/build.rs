@@ -34,6 +34,20 @@ fn main() {
         return;
     }
 
+    // INFRA-006: prefer a prebuilt native bundle when one is provided and no
+    // explicit source checkout was requested. This links the published artifacts
+    // directly and needs neither CMake nor a C/Python toolchain nor the
+    // scopemux-core Tree-sitter/pybind11 submodules. The download/ensure path is
+    // `scripts/ensure-native-artifacts.sh` (wired into `ort-build`); build.rs
+    // only consumes the resolved `SCOPEMUX_PREBUILT_DIR`.
+    println!("cargo:rerun-if-env-changed=SCOPEMUX_PREBUILT_DIR");
+    if env::var_os("SCOPEMUX_CORE_DIR").is_none() {
+        if let Some(prebuilt) = prebuilt_bundle() {
+            link_prebuilt(&prebuilt);
+            return;
+        }
+    }
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let workspace_root = manifest_dir
         .parent()
@@ -163,19 +177,65 @@ fn main() {
     // parser_core and the grammar archives; the `native` feature depends on it
     // for standalone builds. Only the grammar archives and parser_core are
     // linked from the scopemux-core build tree.
-    for lib in [
-        "parser_core",
-        "tree-sitter-c",
-        "tree-sitter-cpp",
-        "tree-sitter-python",
-        "tree-sitter-javascript",
-        "tree-sitter-typescript",
-        "tree-sitter-rust",
-    ] {
+    println!("cargo:rustc-link-lib=static=parser_core");
+    for lib in GRAMMAR_LIBS {
         println!("cargo:rustc-link-lib=static={lib}");
     }
 
-    // System libraries the C core depends on.
+    link_system_libs();
+}
+
+/// Static Tree-sitter grammar archives linked from a scopemux-core build,
+/// whether it was compiled from source or consumed as a prebuilt bundle.
+const GRAMMAR_LIBS: &[&str] = &[
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-rust",
+];
+
+/// Resolve a prebuilt native bundle from `SCOPEMUX_PREBUILT_DIR`.
+///
+/// Returns `None` unless the path looks like a complete bundle
+/// (`lib/libparser_core.a` plus a `queries/` directory), so a stray or partial
+/// directory falls back to the source build instead of failing the link.
+fn prebuilt_bundle() -> Option<PathBuf> {
+    let dir = PathBuf::from(env::var_os("SCOPEMUX_PREBUILT_DIR")?);
+    if dir.join("lib").join("libparser_core.a").is_file() && dir.join("queries").is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+/// Link a prebuilt native bundle and bake its query directory. Reproduces the
+/// source build's link inputs without configuring CMake or touching submodules.
+fn link_prebuilt(dir: &Path) {
+    println!("cargo:rerun-if-changed={}", dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        dir.join("lib").display()
+    );
+
+    println!("cargo:rustc-link-lib=static=parser_core");
+    for lib in GRAMMAR_LIBS {
+        println!("cargo:rustc-link-lib=static={lib}");
+    }
+
+    // The bundle ships queries next to lib/; bake that path so the built binary
+    // does not depend on the bundle (or a source tree) still existing.
+    println!(
+        "cargo:rustc-env=SCOPEMUX_QUERIES_DIR={}",
+        dir.join("queries").display()
+    );
+
+    link_system_libs();
+}
+
+/// System libraries the C core depends on (shared by source and prebuilt builds).
+fn link_system_libs() {
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=dylib=dl");
         println!("cargo:rustc-link-lib=dylib=m");
