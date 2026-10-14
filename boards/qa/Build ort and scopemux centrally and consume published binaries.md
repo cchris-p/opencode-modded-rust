@@ -139,5 +139,5 @@ dispatch or tag (do this once to seed the `native-artifacts` release, then verif
 `scripts/ensure-native-artifacts.sh` against it on a clean machine).
 
 Follow-up: the macOS runner failure is the `scopemux-core` C23 label-declaration
-(now tracked on the `scopemux-core` board); re-enable the macOS matrix entry when
-that fix lands.
+(filed as `cchris-p/scopemux-core#36`; re-enable the macOS matrix entry when that
+fix lands and the pin is bumped).
