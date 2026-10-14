@@ -131,6 +131,13 @@ CLI flag wiring.
 
 - PR #141 (https://github.com/cchris-p/opencode-modded-rust/pull/141) - `feature/CLI-012-cli-task-file-attachments` → `development`.
 
+## Merge Closeout - 2026-10-14
+
+- PR #141 merged into `development` (merge commit `4c0648f`).
+- Branch `feature/CLI-012-cli-task-file-attachments` deleted remotely and locally.
+- Remains in `qa` pending a recorded QA report or explicit user completion; merged work awaits
+  post-merge verification on `development`.
+
 ## Related Items
 
 - `CLI-001` Copy Cline-style CLI task send conventions - parent; this is its deferred split-out.
