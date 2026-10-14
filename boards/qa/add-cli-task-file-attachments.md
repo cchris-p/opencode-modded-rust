@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: ""
-status: "doing"
+status: "qa"
 predecessors: "CLI-001"
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -126,6 +126,10 @@ CLI flag wiring.
 - Verification: `cargo fmt --all`; `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-cli -p
   opencode-server`; `cargo test -p opencode-cli` (21 passed); `cargo test -p opencode-server`
   (71 + 3 passed).
+
+## PR Link
+
+- PR #141 (https://github.com/cchris-p/opencode-modded-rust/pull/141) - `feature/CLI-012-cli-task-file-attachments` → `development`.
 
 ## Related Items
 
