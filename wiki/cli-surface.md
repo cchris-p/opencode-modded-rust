@@ -140,7 +140,7 @@ same canonical path.
 | CLI-009 | hold | Direct-run question and ask/approval parity (gated) |
 | CLI-010 | qa | CLI subagent surface (`GATE-004` done; covered by `H-009`) |
 | CLI-012 | refinement | CLI task file attachments (`task new`/`send -f`; loopback `file://`, remote inline `data:`) |
-| CLI-013 | qa | Reach the headless CLI subcommands through the `omr` launcher; `ort` stays TUI-only |
+| CLI-013 | done | Reach the headless CLI subcommands through the `omr` launcher; `ort` stays TUI-only |
 
 ## Lineage (history only)
 

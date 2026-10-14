@@ -208,4 +208,7 @@ Verification gate:
   `vendor/opencode-modded-rust` bumped to the merged product `development` tip and published via the
   managed-submodule order (submodule push → standards pointer + launcher commit → standards push →
   `standards-sync --apply-all`). Layer 2 remains deferred.
+- 2026-10-14 Post-merge QA (agent-run) passed on `development` for all three cards, including a real
+  `omr serve` health smoke (`{"status":"ok","version":"0.1.0"}`); cards promoted `qa` → `done`.
+  Deferred Layer 2 work captured as `START-035`.
 

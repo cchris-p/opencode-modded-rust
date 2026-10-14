@@ -5,7 +5,7 @@ priority: "P2"
 type: "refactor"
 area: "START"
 spec: "invariants/reference-boundary.md"
-status: "qa"
+status: "done"
 predecessors: "START-033"
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -136,3 +136,13 @@ Historical surfaces (see decision below):
 - Verification: `rg -i "scopemux-code" crates/ scripts/` empty; repo-wide matches are historical
   annotations/retired-name notes only.
 - PR: [#143](https://github.com/cchris-p/opencode-modded-rust/pull/143) (`development`, open).
+
+## QA / Verification (2026-10-14, post-merge on `development`)
+
+- `rg -i "scopemux-code" crates/ scripts/` → empty.
+- Repo-wide matches are historical annotations, retired-name notes, and the scrub work items only.
+- `invariants/reference-boundary.md` states `opencode-modded-rust` canonical and `scopemux-code`
+  retired/legacy.
+- `invariants/integration-scope.md` present; ScopeMux integration untouched.
+- **QA PASS.**
+

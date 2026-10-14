@@ -5,7 +5,7 @@ priority: "P2"
 type: "refactor"
 area: "START"
 spec: "invariants/reference-boundary.md"
-status: "qa"
+status: "done"
 predecessors: ""
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -168,3 +168,16 @@ future-card questions, not open decisions for `START-033`.
 - PR: [#142](https://github.com/cchris-p/opencode-modded-rust/pull/142) (`development`, open).
 - Standards launcher `_opencode_rust_exec`/`ort-doctor` binary path updated after this lands;
   commit deferred to preserve machine consistency.
+
+## QA / Verification (2026-10-14, post-merge on `development`)
+
+- `target/debug/opencode-modded-rust --help` → `opencode-modded-rust - Rust-native AI coding agent`;
+  top-level `Usage: opencode-modded-rust …` (no `Usage: opencode`).
+- `… tui --help` → `Usage: opencode-modded-rust tui …`; `… version` → `opencode-modded-rust 0.1.0`.
+- `branding.rs` `APP_NAME=opencode-modded-rust`, `APP_SHORT_NAME=omr`; `components/logo.rs` removed;
+  server web page title/h1 = `opencode-modded-rust (omr)`.
+- `omr --help` / `ort --help` print the product usage, not `Usage: opencode`.
+- Vanilla `opencode --version` unchanged (`1.19.0`).
+- `cargo test -p opencode-cli`: 21 passed.
+- **QA PASS.**
+

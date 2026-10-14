@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: "wiki/cli-surface.md"
-status: "qa"
+status: "done"
 predecessors: "START-034"
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -116,3 +116,15 @@ have no convenient entry point.
 - Docs: `wiki/cli-surface.md` documents the `omr` launcher reachability and uses `omr` in the target
   workflow (product `development`).
 - Merge: product PRs #142 (`START-033`) and #143 (`START-034`) merged into `development` in order.
+
+## QA / Verification (2026-10-14, on `development`)
+
+- `omr --help` lists the full top-level command surface (25 commands).
+- Passthrough: `omr version`/`--version` → `opencode-modded-rust 0.1.0`; `omr debug paths`,
+  `omr session list`, `omr attach --help`, `omr config`, `omr agent --help`, `omr github` reach the
+  product.
+- Real headless smoke: `omr serve --port 4319` → `GET /health` = `{"status":"ok","version":"0.1.0"}`.
+- TUI routing: bare `omr`, `omr --model <m>`, `omr --continue`, `omr tui`, and `ort` launch the TUI.
+- `opencode` remains vanilla and unchanged.
+- **QA PASS.**
+
