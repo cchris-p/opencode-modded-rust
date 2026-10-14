@@ -42,10 +42,15 @@ jobs:
               sudo add-apt-repository -y ppa:deadsnakes/ppa
               sudo apt-get update
               sudo apt-get install -y cmake python3.11-dev
-          - os: macos-14
-            deps: |
-              brew install cmake python@3.11
-              echo "$(brew --prefix python@3.11)/bin" >> "$GITHUB_PATH"
+        # macOS bundle is temporarily disabled: the pinned scopemux-core does not
+        # compile under the runner's older AppleClang (a label-followed-by-
+        # declaration in core/src/parser/project_context/symbol_management.c is a
+        # C23 extension; clang 21 warns, the runner errors). Re-enable here once
+        # scopemux-core wraps that case body in braces (or the pin is bumped).
+        # - os: macos-14
+        #   deps: |
+        #     brew install cmake python@3.11
+        #     echo "$(brew --prefix python@3.11)/bin" >> "$GITHUB_PATH"
     steps:
       - uses: actions/checkout@v4
 

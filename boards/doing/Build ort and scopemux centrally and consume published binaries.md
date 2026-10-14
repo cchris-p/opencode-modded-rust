@@ -122,4 +122,8 @@ exercised over a local HTTP server (download, checksum, extract, `--check`).
 Remaining: CI release-asset publish is verified only once the workflow runs on
 GitHub; the nested Tree-sitter/pybind11 submodules in the `scopemux-core` repo
 can now be dropped for the download path (separate `scopemux-core` change); the
-standards-side `opencode-config` hook lands with this pass.
+standards-side `opencode-config` hook lands with this pass. The workflow ships
+Linux-only for now: the pinned `scopemux-core` fails to compile under the macOS
+runner's older AppleClang (`symbol_management.c` has a label-followed-by-
+declaration, a C23 extension), which needs a one-line `scopemux-core` fix before
+the macOS bundle can be re-enabled.
