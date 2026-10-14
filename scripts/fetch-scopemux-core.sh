@@ -260,10 +260,19 @@ if ! git -C "${DEST}" checkout --quiet "${PINNED_REV}"; then
     exit 1
 fi
 
-echo "[fetch-scopemux-core] Initializing submodules"
+echo "[fetch-scopemux-core] Initializing required submodules"
+# Initialize only the grammars/pybind11 the C build needs. The scopemux-core
+# test-case submodules are private and unnecessary for the provider build
+# (SCOPEMUX_BUILD_TESTS=OFF), so a recursive update of *all* submodules would
+# need credentials CI/build machines do not have. Keep in sync with
+# REQUIRED_SUBMODULES in crates/opencode-scopemux/build.rs.
+required_paths=()
+while IFS= read -r rel; do
+    [ -n "${rel}" ] && required_paths+=("${rel}")
+done < <(required_submodules)
 git -C "${DEST}" \
     -c 'url.git@github.com:.insteadOf=https://github.com/' \
-    submodule update --init --recursive
+    submodule update --init --recursive -- "${required_paths[@]}"
 
 update_missing="$(missing_required_submodules || true)"
 if [ -n "${update_missing}" ]; then
