@@ -84,6 +84,17 @@ cancel active execution; a user must be able to leave and revisit a running sess
 The target is to drive the same agentic session runtime as the TUI without a TUI, and to keep a server
 alive independently of any TUI. Detached + headless together are what make the CLI Cline-like.
 
+### Launcher reachability (`omr` / `ort`)
+
+- `omr` is the general product launcher (defined in standards `~/standards/opencode-config`). A
+  recognized headless subcommand as the first non-flag token — `task`, `serve`, `session`, `attach`,
+  `run`, `import`, `export`, `mcp`, `auth`, `models`, `pr`, `debug`, `stats`, `db`, `acp`, `web` —
+  passes straight through to the product binary. Any other invocation (bare `omr`, or TUI flags such
+  as `--model`/`--session`/`--fork`/`--attach`/`--port`) launches the TUI. `omr --help` prints the
+  product's full top-level command list.
+- `ort` stays TUI-only for back-compat.
+- `opencode` on `PATH` remains the untouched vanilla upstream build. Canonical owner: `CLI-013`.
+
 Available today:
 
 - `opencode-modded-rust serve` starts a headless server (no TUI); alternatively `ort` + `/detach` leaves a
@@ -98,14 +109,14 @@ Available today:
 Target shape (the Cline-like workflow):
 
 ```sh
-opencode-modded-rust serve                                     # or: ort, then /detach
-opencode-modded-rust task target select --server <url>
-opencode-modded-rust task new "Fix the failing test"           # CLI-001
-opencode-modded-rust task send "Now run the focused tests"     # CLI-001
-opencode-modded-rust task send -f ./logs/test.log "Why did this fail?"   # CLI-012 (attachment)
-opencode-modded-rust task view                                 # CLI-001
-opencode-modded-rust task status                               # CLI-006
-opencode-modded-rust attach <url>                              # optional: back to the TUI
+omr serve                                     # or: ort, then /detach
+omr task target select --server <url>
+omr task new "Fix the failing test"           # CLI-001
+omr task send "Now run the focused tests"     # CLI-001
+omr task send -f ./logs/test.log "Why did this fail?"   # CLI-012 (attachment)
+omr task view                                 # CLI-001
+omr task status                               # CLI-006
+omr attach <url>                              # optional: back to the TUI
 ```
 
 `CLI-001` and `CLI-006` are delivered, merged into `development` (PR #80, PR #81), and QA-verified
@@ -129,6 +140,7 @@ same canonical path.
 | CLI-009 | hold | Direct-run question and ask/approval parity (gated) |
 | CLI-010 | qa | CLI subagent surface (`GATE-004` done; covered by `H-009`) |
 | CLI-012 | refinement | CLI task file attachments (`task new`/`send -f`; loopback `file://`, remote inline `data:`) |
+| CLI-013 | qa | Reach the headless CLI subcommands through the `omr` launcher; `ort` stays TUI-only |
 
 ## Lineage (history only)
 

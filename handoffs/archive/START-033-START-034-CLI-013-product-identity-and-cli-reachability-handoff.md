@@ -1,7 +1,7 @@
 ---
 id: "H-015"
 title: "START-033/START-034/CLI-013 Product identity and CLI reachability - Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-10-14"
 updated: "2026-10-14"
 owner: ""
@@ -197,4 +197,15 @@ Verification gate:
   `boards/done`/`boards/archive`/`docs/transcripts` surfaces. Verified `rg` gates: no
   `scopemux-code` in `crates/`/`scripts/`; remaining hits are historical annotations/retired-name
   notes. ScopeMux integration untouched.
+- 2026-10-14 Phase 3 (CLI-013) implemented in standards `~/standards/opencode-config` (committed on
+  its `development` branch): `omr` general launcher with subcommand passthrough for the locked
+  allowlist, TUI otherwise, `omr --help` top-level help; `ort` TUI-only; `_opencode_rust_exec`/
+  `ort-doctor` binary path updated. `wiki/cli-surface.md` documents the launcher. Verified via stubbed
+  `_opencode_rust_exec` routing checks.
+- 2026-10-14 Completion: PR #142 then PR #143 merged into product `development` in dependency order
+  (merge commits 138d81e, 3bc94da); rebuilt + re-ran gates on merged `development`. All three cards
+  (`START-033`, `START-034`, `CLI-013`) moved to `qa`. Standards submodule pointer for
+  `vendor/opencode-modded-rust` bumped to the merged product `development` tip and published via the
+  managed-submodule order (submodule push → standards pointer + launcher commit → standards push →
+  `standards-sync --apply-all`). Layer 2 remains deferred.
 

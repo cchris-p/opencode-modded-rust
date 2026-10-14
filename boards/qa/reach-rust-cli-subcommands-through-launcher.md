@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: "wiki/cli-surface.md"
-status: "doing"
+status: "qa"
 predecessors: "START-034"
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -97,3 +97,22 @@ have no convenient entry point.
 
 - Created 2026-10-14; follow-up to `START-033` per user direction ("name decoupling first, then the
   CLI improvement").
+
+## Implementation Notes
+
+- 2026-10-14: implemented in standards `~/standards/opencode-config` (committed on its `development`
+  branch; H-015/CLI-013), after `START-033`/`START-034` landed on product `development`.
+  - `omr` is now the general launcher: the first non-flag token is checked against the explicit
+    allowlist `task serve session attach run import export mcp auth models pr debug stats db acp web`.
+    A match passes straight through to `_opencode_rust_exec "$@"`; anything else (bare `omr` or TUI
+    flags `--model`/`--session`/`--fork`/`--attach`/`--port`) launches the TUI.
+  - `omr --help`/`-h`/`help` delegates to the product's top-level `--help` (full command list).
+  - `ort` remains TUI-only for back-compat; `opencode` on `PATH` is untouched vanilla.
+  - `_opencode_rust_exec` and `ort-doctor` binary path updated to
+    `$OPENCODE_RUST_REPO/target/debug/opencode-modded-rust`.
+- Verification (stubbed `_opencode_rust_exec`): `omr serve`, `omr task new hi`, `omr task view`,
+  `omr session list`, `omr attach <url>`, `omr models`, `omr stats` → passthrough; `omr --model m`,
+  `omr --continue`, bare `omr`, `ort` → TUI; `omr --help` → top-level help.
+- Docs: `wiki/cli-surface.md` documents the `omr` launcher reachability and uses `omr` in the target
+  workflow (product `development`).
+- Merge: product PRs #142 (`START-033`) and #143 (`START-034`) merged into `development` in order.
