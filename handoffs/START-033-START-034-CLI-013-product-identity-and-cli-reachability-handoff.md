@@ -190,4 +190,11 @@ Verification gate:
   `development`.
 - 2026-10-14 Pre-existing, unrelated `cargo test -p opencode-tui` failure:
   `components::prompt::tests::tab_autocomplete_uses_first_candidate` (prompt.rs untouched here).
+- 2026-10-14 Phase 2 (START-034) implemented on `feature/START-034-scrub-scopemux-code`
+  (stacked on PR #142); PR [#143](https://github.com/cchris-p/opencode-modded-rust/pull/143) into
+  `development` (open). Corrected `invariants/reference-boundary.md`, replaced the retired
+  `scopemux-code` token across current docs/wiki/invariants, and annotated historical
+  `boards/done`/`boards/archive`/`docs/transcripts` surfaces. Verified `rg` gates: no
+  `scopemux-code` in `crates/`/`scripts/`; remaining hits are historical annotations/retired-name
+  notes. ScopeMux integration untouched.
 

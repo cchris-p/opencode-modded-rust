@@ -115,3 +115,24 @@ Historical surfaces (see decision below):
 
 - Created 2026-10-14 to sit between `START-033` and `CLI-013`, per user direction, because the stale
   `scopemux-code` name adds confusion.
+
+## Implementation Notes
+
+- 2026-10-14: implemented on `feature/START-034-scrub-scopemux-code` (stacked on PR #142).
+  - `invariants/reference-boundary.md`: `opencode-modded-rust` canonical; `scopemux-code` marked
+    retired/legacy.
+  - Replaced `scopemux-code` with `opencode-modded-rust` in `README.md`, `USER_GUIDE.md`,
+    `docs/README.md`, `docs/opencode-tui.md`, `wiki/` (product-boundary, README, reference-strategy,
+    vision, v1, v1-runtime-loop, agent-evaluation-strategy, scopemux-map-integration,
+    laya-integration, jev-ultrafast-integration), `invariants/README.md`, and
+    `invariants/documentation-boundary.md`.
+  - `docs/opencode-tui.md` branding updated to `APP_NAME=opencode-modded-rust`, `APP_SHORT_NAME=omr`.
+  - Historical surfaces annotated (not rewritten) with a `START-034` superseding note:
+    `boards/done/{standardize-product-name,freeze-ts-reference-line,idealized-scopemux-map-integration,adopt-cross-repo-doc-boundary}.md`,
+    `boards/archive/rebrand-tui-branding-constants-to-scopemux-code.md`,
+    `docs/transcripts/feat-023-confirm-done-and-delete-duplicate.md`. Supersedes `START-003`.
+  - ScopeMux integration (`scopemux-core`, `scopemux-notes`, `SCOPE-*`,
+    `invariants/integration-scope.md`) untouched.
+- Verification: `rg -i "scopemux-code" crates/ scripts/` empty; repo-wide matches are historical
+  annotations/retired-name notes only.
+- PR: [#143](https://github.com/cchris-p/opencode-modded-rust/pull/143) (`development`, open).
