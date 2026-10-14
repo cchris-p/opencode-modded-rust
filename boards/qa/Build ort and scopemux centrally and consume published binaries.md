@@ -5,7 +5,7 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-10-14"
 updated: "2026-10-14"
 ---
@@ -127,3 +127,17 @@ Linux-only for now: the pinned `scopemux-core` fails to compile under the macOS
 runner's older AppleClang (`symbol_management.c` has a label-followed-by-
 declaration, a C23 extension), which needs a one-line `scopemux-core` fix before
 the macOS bundle can be re-enabled.
+
+### QA - 2026-10-14
+
+Merged into `development` via PR #144. The `native-artifacts` workflow ran on the
+PR and is green end-to-end on `ubuntu-24.04`: fetch pinned scopemux-core, package
+the native provider bundle, build the release CLI, package it, and upload
+workflow artifacts. The release-publish step is gated to tag pushes /
+`workflow_dispatch`, so publishing an actual release asset still needs a manual
+dispatch or tag (do this once to seed the `native-artifacts` release, then verify
+`scripts/ensure-native-artifacts.sh` against it on a clean machine).
+
+Follow-up: the macOS runner failure is the `scopemux-core` C23 label-declaration
+(now tracked on the `scopemux-core` board); re-enable the macOS matrix entry when
+that fix lands.
