@@ -160,20 +160,23 @@ Both tracked follow-ups are done.
   `PINNED_REV` to `2a642c1` and re-enabled the `macos-14` matrix entry; merged to
   `development` (`0f3ce2b`). CI ran both jobs green: `ubuntu-24.04` (9m31s) and
   `macos-14` (9m18s) — the macOS native provider + CLI now build and package.
-- **`native-artifacts` release seeded.** Created the rolling release and
-  uploaded the CI-built assets from run `38581032644` (8 assets):
+- **`native-artifacts` release seeded by CI dispatch.** Ran
+  `gh workflow run native-artifacts.yml --ref development -f publish=true`
+  (run [38583538988](https://github.com/cchris-p/opencode-modded-rust/actions/runs/38583538988)),
+  both jobs green (`ubuntu-24.04`, `macos-14`), which published the rolling
+  release's 8 assets via the workflow's own publish step:
   `opencode-native-{linux-x86_64,macos-aarch64}-2a642c10534f.tar.gz` (+
   `.sha256`) and `opencode-modded-rust-{linux-x86_64,darwin-aarch64}.tar.gz`
-  (+ `.sha256`). (`workflow_dispatch` could not be triggered through the
-  available token — Actions write is not granted — so the release was seeded from
-  the equivalent PR-run artifacts.)
+  (+ `.sha256`).
 - **Download path verified end-to-end.** `scripts/ensure-native-artifacts.sh
-  --force` downloaded the macOS bundle from the release, verified its checksum,
-  and installed it to `~/.cache/opencode-modded-rust/native/macos-aarch64-2a642c10534f`.
-  `cargo build -p opencode-scopemux --features native` then linked directly from
-  the bundle (`-L native=.../lib -l static=parser_core -l static=tree-sitter-*`,
+  --force` downloaded the freshly published macOS bundle, verified its checksum,
+  and installed it to `~/.cache/opencode-modded-rust/native/macos-aarch64-2a642c10534f`
+  (manifest `created` `14:50:53Z`, from this dispatch build). `cargo build -p
+  opencode-scopemux --features native` then linked directly from the bundle
+  (`-L native=.../lib -l static=parser_core -l static=tree-sitter-*`,
   `SCOPEMUX_QUERIES_DIR` baked to the bundle's `queries/`) with no CMake run and
   no `scopemux-core` source build.
-
-Open item: `scopemux-core#36` could not be auto-closed (the token lacks
-`issues: write`); it remains open though the fix is merged.
+- **`scopemux-core#36` closed** (fixed by #37). The operation needs the classic
+  `GH_TOKEN` from OpenBao (`env/shared`, scopes `repo`, `admin:org`), not the
+  fine-grained session token; the same token is what triggers
+  `workflow_dispatch`.
