@@ -1,6 +1,6 @@
 # Wiki Index
 
-The wiki contains architecture direction, version planning, and product-boundary documents for `scopemux-code`.
+The wiki contains architecture direction, version planning, and product-boundary documents for `opencode-modded-rust`.
 
 ## Document roles
 

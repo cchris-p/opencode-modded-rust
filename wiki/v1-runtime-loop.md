@@ -2,7 +2,7 @@
 
 ### Purpose
 
-Define the minimum runtime-owned workflow that makes `scopemux-code` usable as a serious personal daily-driver without falling back to an unconstrained chat loop.
+Define the minimum runtime-owned workflow that makes `opencode-modded-rust` usable as a serious personal daily-driver without falling back to an unconstrained chat loop.
 
 This document translates `wiki/v1.md` and the current invariants into the concrete V1 execution model.
 

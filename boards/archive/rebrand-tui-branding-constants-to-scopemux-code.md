@@ -12,6 +12,10 @@ updated: "2026-09-26"
 
 # Rebrand TUI branding constants to scopemux-code
 
+> **Superseded (START-034, 2026-10-14):** `scopemux-code` is a retired product name; the
+> canonical name is `opencode-modded-rust`. This historical record is preserved as-is and is
+> not rewritten.
+
 ## Archived
 
 Archived 2026-09-26 at user request. This was a draft card whose blocking open question (exact logo art and `APP_SHORT_NAME` value) was never finalized, so it was never implementation-ready. Kept for later; not scheduled.

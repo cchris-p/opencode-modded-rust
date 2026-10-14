@@ -1,6 +1,6 @@
 # Vision
 
-`scopemux-code` is a new Rust-native coding-agent product optimized for local models and personal daily use.
+`opencode-modded-rust` is a new Rust-native coding-agent product optimized for local models and personal daily use.
 
 ## Intent
 

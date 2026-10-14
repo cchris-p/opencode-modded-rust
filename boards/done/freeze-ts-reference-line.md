@@ -11,6 +11,10 @@ created: "2026-08-28"
 
 # Freeze TS reference line
 
+> **Superseded (START-034, 2026-10-14):** `scopemux-code` is a retired product name; the
+> canonical name is `opencode-modded-rust`. This historical record is preserved as-is and is
+> not rewritten.
+
 ## Summary
 
 Record and preserve the initial TypeScript reference line used by `scopemux-code` planning.

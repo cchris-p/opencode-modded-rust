@@ -1,5 +1,9 @@
 # FEAT-023: Confirm Done and Delete Duplicate
 
+> **Superseded (START-034, 2026-10-14):** `scopemux-code` is a retired product name; the
+> canonical name is `opencode-modded-rust`. This historical record is preserved as-is and is
+> not rewritten.
+
 **Session ID:** ses_c06a60f9235747e8b9a6a06999391d13
 **Created:** 2026-09-21T19:12:28.085+00:00
 **Updated:** 2026-09-21T19:25:28.621+00:00
