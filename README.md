@@ -8,7 +8,7 @@
 
 - Product name: `scopemux-code`
 - Repository shorthand: `opencode-modded-rust` (legacy repository identifier)
-- Executable: `opencode` (legacy compatibility command name)
+- Executable: `opencode-modded-rust`
 
 ## Feature overview
 
@@ -37,13 +37,13 @@ cargo build -p opencode-cli
 
 To avoid running another OpenCode (e.g. npm/global) on your PATH when using `scopemux-code`, run from the **repo root**:
 
-- **`./target/debug/opencode`** after `cargo build -p opencode-cli`
+- **`./target/debug/opencode-modded-rust`** after `cargo build -p opencode-cli`
 - **`cargo run -p opencode-cli --`** to always use this repo's version
 
 ### 4. Show help
 
 ```bash
-./target/debug/opencode --help
+./target/debug/opencode-modded-rust --help
 ```
 
 or
@@ -80,7 +80,7 @@ cargo run -p opencode-cli -- serve --port 3000 --hostname 127.0.0.1
 
 ## CLI commands overview
 
-From the repo root use `./target/debug/opencode` or `cargo run -p opencode-cli --`. These commands match the current `./target/debug/opencode --help`:
+From the repo root use `./target/debug/opencode-modded-rust` or `cargo run -p opencode-cli --`. These commands match the current `./target/debug/opencode-modded-rust --help`:
 
 - `tui` – Start interactive terminal UI
 - `attach` – Attach to a running server
@@ -108,12 +108,12 @@ From the repo root use `./target/debug/opencode` or `cargo run -p opencode-cli -
 Subcommand help:
 
 ```bash
-./target/debug/opencode tui --help
-./target/debug/opencode run --help
-./target/debug/opencode task --help
-./target/debug/opencode task target --help
-./target/debug/opencode serve --help
-./target/debug/opencode session --help
+./target/debug/opencode-modded-rust tui --help
+./target/debug/opencode-modded-rust run --help
+./target/debug/opencode-modded-rust task --help
+./target/debug/opencode-modded-rust task target --help
+./target/debug/opencode-modded-rust serve --help
+./target/debug/opencode-modded-rust session --help
 ```
 
 ## Configuration
@@ -133,7 +133,7 @@ See: `docs/opencode-config.md`
 
 ## Repository structure
 
-- `crates/opencode-cli` – CLI entrypoint (binary: `opencode`)
+- `crates/opencode-cli` – CLI entrypoint (binary: `opencode-modded-rust`)
 - `crates/opencode-server` – HTTP/SSE/WebSocket server
 - `crates/opencode-tui` – Terminal UI
 - `crates/opencode-session` – Sessions and messages
@@ -226,7 +226,7 @@ The local server's stdout/stderr is written to
 discarded, and a panic hook appends the panic message, source location, and
 backtrace there. Set `OPENCODE_SERVER_LOG` to override the path, or to
 `0`/`false`/`off` to disable the durable sink. Find it with
-`opencode debug paths` (`server-log`) or `opencode session inspect <id>`
+`opencode-modded-rust debug paths` (`server-log`) or `opencode-modded-rust session inspect <id>`
 (`Server log:`). Turn progress is persisted incrementally (throttled to ~1s) so
 exiting, stalling, or aborting mid-turn keeps the latest chunk for resume.
 
@@ -246,7 +246,7 @@ exiting, stalling, or aborting mid-turn keeps the latest chunk for resume.
 ## Notes
 
 - `scopemux-code` is the canonical product name for planning and product-facing documentation.
-- The executable name `opencode` remains for backward compatibility.
+- The executable name is `opencode-modded-rust` (launched via `omr`/`ort`).
 - `opencode-*` crate names and `opencode-modded-rust` are retained as implementation and repository identifiers, not the product name.
 - `opencode-modded` remains the long-term reference and planning repo.
 - The TypeScript reference line for planning and later sync review is `$HOME/repos/opencode-modded`, referenced from its `dev` branch; fetch the latest `dev` before comparing vanilla behavior. The recorded pin is `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (re-pinned by `GATE-004`; the prior `e62912b5` pin is unreachable).

@@ -13,7 +13,7 @@ default = ["scopemux-native"]
 scopemux-native = ["opencode-session/scopemux-native"]
 
 [[bin]]
-name = "opencode"
+name = "opencode-modded-rust"
 path = "src/main.rs"
 
 [dependencies]

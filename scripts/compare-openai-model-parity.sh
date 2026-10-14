@@ -18,7 +18,7 @@ parse path.
 
 Environment overrides:
   MODELS_URL             Catalog JSON URL. Default: https://models.opencode.ai/api.json
-  RUST_OPENCODE_BIN      Rust CLI binary. Default: <repo>/target/debug/opencode
+  RUST_OPENCODE_BIN      Rust CLI binary. Default: <repo>/target/debug/opencode-modded-rust
 USAGE
 }
 
@@ -29,7 +29,7 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 models_url="${MODELS_URL:-https://models.opencode.ai/api.json}"
-rust_bin="${RUST_OPENCODE_BIN:-$repo_root/target/debug/opencode}"
+rust_bin="${RUST_OPENCODE_BIN:-$repo_root/target/debug/opencode-modded-rust}"
 
 if [[ ! -x "$rust_bin" ]]; then
   printf 'Rust binary not found or not executable: %s\n' "$rust_bin" >&2

@@ -37,9 +37,9 @@ As in `crates/opencode-server/src/routes.rs`:
 
 ## External Supervision Contract
 
-Watchdog and other external supervisors should start ORT with `opencode serve`, not by depending on TUI-only launcher state.
+Watchdog and other external supervisors should start ORT with `opencode-modded-rust serve`, not by depending on TUI-only launcher state.
 
-- Launch command: `opencode serve --cwd <workspace> --hostname 127.0.0.1 --port <port> --startup-json`
+- Launch command: `opencode-modded-rust serve --cwd <workspace> --hostname 127.0.0.1 --port <port> --startup-json`
 - Startup discovery: parse the single startup JSON line emitted by the CLI for `pid`, `url`, `health_url`, and `workspace`.
 - Readiness: poll `health_url` (`GET /health`) until it succeeds before exposing the server as usable.
 - Stop: terminate the supervised child process or process group. ORT does not provide a separate remote shutdown route for this contract.

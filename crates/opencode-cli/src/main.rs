@@ -31,8 +31,8 @@ use opencode_tool::{registry::create_default_registry, ToolContext};
 use opencode_types::{MessagePart, MessageRole, PartType, Session, SessionMessage, SessionStatus};
 
 #[derive(Parser)]
-#[command(name = "opencode")]
-#[command(about = "OpenCode - Open source AI coding agent", long_about = None)]
+#[command(name = "opencode-modded-rust")]
+#[command(about = "opencode-modded-rust - Rust-native AI coding agent", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -69,7 +69,7 @@ enum Commands {
         #[arg(long, value_name = "URL")]
         attach: Option<String>,
     },
-    #[command(about = "Attach TUI to a running OpenCode server")]
+    #[command(about = "Attach TUI to a running opencode-modded-rust server")]
     Attach {
         #[arg(value_name = "URL")]
         url: String,
@@ -80,7 +80,7 @@ enum Commands {
         #[arg(short = 'p', long)]
         password: Option<String>,
     },
-    #[command(about = "Run opencode with a message")]
+    #[command(about = "Run opencode-modded-rust with a message")]
     Run {
         #[arg(value_name = "MESSAGE", trailing_var_arg = true)]
         message: Vec<String>,
@@ -240,19 +240,19 @@ enum Commands {
         #[command(subcommand)]
         action: GithubCommands,
     },
-    #[command(about = "Fetch and checkout a GitHub PR branch, then run opencode")]
+    #[command(about = "Fetch and checkout a GitHub PR branch, then run opencode-modded-rust")]
     Pr {
         #[arg(value_name = "NUMBER")]
         number: u32,
     },
-    #[command(about = "Upgrade opencode to latest or specific version")]
+    #[command(about = "Upgrade opencode-modded-rust to latest or specific version")]
     Upgrade {
         #[arg(value_name = "TARGET")]
         target: Option<String>,
         #[arg(short = 'm', long)]
         method: Option<String>,
     },
-    #[command(about = "Uninstall opencode and remove related files")]
+    #[command(about = "Uninstall opencode-modded-rust and remove related files")]
     Uninstall {
         #[arg(short = 'c', long = "keep-config", default_value_t = false)]
         keep_config: bool,
@@ -892,7 +892,7 @@ async fn main() -> anyhow::Result<()> {
             handle_generate_command().await?;
         }
         Some(Commands::Version) => {
-            println!("OpenCode {}", env!("CARGO_PKG_VERSION"));
+            println!("opencode-modded-rust {}", env!("CARGO_PKG_VERSION"));
         }
         None => {
             run_tui(
@@ -1029,7 +1029,7 @@ fn resume_launcher_from(rust_launcher_env_present: bool) -> &'static str {
     if rust_launcher_env_present {
         "ort"
     } else {
-        "opencode"
+        "opencode-modded-rust"
     }
 }
 
@@ -1051,7 +1051,7 @@ fn resume_hint_lines(session_id: Option<&str>, launcher: &str) -> Vec<String> {
 /// CLI-003: the launcher never reuses or attaches to a previously recorded
 /// local server. Every `ort` run starts a brand-new server bound to the
 /// workspace it was activated in, so no stale/other-workspace or pre-fix
-/// process can serve the TUI. `opencode attach <url>` remains the explicit
+/// process can serve the TUI. `opencode-modded-rust attach <url>` remains the explicit
 /// path for intentional re-attachment.
 struct LocalTuiServer {
     base_url: String,
@@ -1277,8 +1277,8 @@ fn spawn_detached_tui_server(
 ///
 /// The command is launcher-specific so it is copy-paste runnable in the same
 /// shell that launched the TUI. `ort` injects the `tui` subcommand, so it takes
-/// `--attach <url>`; a bare `opencode` uses the `attach <url>` subcommand. The
-/// command is printed on its own indented line so a label is never pasted as
+/// `--attach <url>`; a bare product command uses the `attach <url>` subcommand.
+/// The command is printed on its own indented line so a label is never pasted as
 /// arguments.
 fn reattach_hint_lines(base_url: &str, session_id: Option<&str>, launcher: &str) -> Vec<String> {
     let session_suffix = match session_id {
@@ -1969,7 +1969,8 @@ async fn run_chat_session(
     }
 
     println!("\n╔══════════════════════════════════════════╗");
-    println!("║        OpenCode Interactive Mode         ║");
+    println!("║         opencode-modded-rust              ║");
+    println!("║            Interactive Mode               ║");
     println!("╚══════════════════════════════════════════╝");
     println!();
     println!("  Model: {}", model.as_deref().unwrap_or("auto"));
@@ -2404,7 +2405,7 @@ async fn run_server_command(
             ))?
         );
     } else {
-        println!("Starting OpenCode {} server on {}", mode, addr);
+        println!("Starting opencode-modded-rust {} server on {}", mode, addr);
     }
     opencode_server::run_server(addr).await?;
     Ok(())
@@ -2990,14 +2991,14 @@ fn selected_task_target(
             .map(|target| target.server.clone())
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "No task target selected. Run `opencode task target select --server <url>` or pass --server."
+                    "No task target selected. Run `opencode-modded-rust task target select --server <url>` or pass --server."
                 )
             })?,
     };
     let session = session.or_else(|| selection.as_ref().and_then(|target| target.session.clone()));
     if require_session && session.is_none() {
         anyhow::bail!(
-            "No task session selected. Run `opencode task new ...`, `opencode task target select --server <url> --session <id>`, or pass --session."
+            "No task session selected. Run `opencode-modded-rust task new ...`, `opencode-modded-rust task target select --server <url> --session <id>`, or pass --session."
         );
     }
     Ok(ResolvedTaskTarget { server, session })
@@ -4051,7 +4052,10 @@ async fn handle_upgrade_command(
 
     let current = env!("CARGO_PKG_VERSION").trim_start_matches('v');
     if current == target {
-        println!("opencode upgrade skipped: {} is already installed", target);
+        println!(
+            "opencode-modded-rust upgrade skipped: {} is already installed",
+            target
+        );
         return Ok(());
     }
 
@@ -4244,7 +4248,7 @@ async fn handle_generate_command() -> anyhow::Result<()> {
     let spec = serde_json::json!({
         "openapi": "3.1.0",
         "info": {
-            "title": "OpenCode Rust Rewrite API",
+            "title": "opencode-modded-rust API",
             "version": env!("CARGO_PKG_VERSION")
         },
         "paths": paths
@@ -4990,13 +4994,13 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
 
             if provider.starts_with("http://") || provider.starts_with("https://") {
                 anyhow::bail!(
-                    "Well-known URL login is not fully wired in Rust CLI yet. Use `opencode auth login <provider> --token ...` for now."
+                    "Well-known URL login is not fully wired in Rust CLI yet. Use `opencode-modded-rust auth login <provider> --token ...` for now."
                 );
             }
 
             let Some(env_var) = provider_env_var(&provider) else {
                 anyhow::bail!(
-                    "Unknown provider: {}. Run `opencode auth list` to see supported providers.",
+                    "Unknown provider: {}. Run `opencode-modded-rust auth list` to see supported providers.",
                     provider
                 );
             };
@@ -5041,7 +5045,7 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
 
             let Some(env_var) = provider_env_var(&provider) else {
                 anyhow::bail!(
-                    "Unknown provider: {}. Run `opencode auth list` to see supported providers.",
+                    "Unknown provider: {}. Run `opencode-modded-rust auth list` to see supported providers.",
                     provider
                 );
             };
@@ -5724,7 +5728,9 @@ async fn handle_mcp_command(server: String, action: McpCommands) -> anyhow::Resu
             }
 
             let name = name.ok_or_else(|| {
-                anyhow::anyhow!("Missing MCP server name. Use `opencode mcp auth <name>`.")
+                anyhow::anyhow!(
+                    "Missing MCP server name. Use `opencode-modded-rust mcp auth <name>`."
+                )
             })?;
 
             if authenticate {
@@ -5756,7 +5762,9 @@ async fn handle_mcp_command(server: String, action: McpCommands) -> anyhow::Resu
         }
         McpCommands::Logout { name } => {
             let name = name.ok_or_else(|| {
-                anyhow::anyhow!("Missing MCP server name. Use `opencode mcp logout <name>`.")
+                anyhow::anyhow!(
+                    "Missing MCP server name. Use `opencode-modded-rust mcp logout <name>`."
+                )
             })?;
             let endpoint = server_url(&server, &format!("/mcp/{}/auth", name));
             let _: serde_json::Value =
@@ -7085,7 +7093,7 @@ async fn handle_github_command(action: GithubCommands) -> anyhow::Result<()> {
                 .output()
                 .map_err(|e| anyhow::anyhow!("Failed to run git: {}", e))?;
             if !git_check.status.success() {
-                anyhow::bail!("Run `opencode github install` inside a git repository.");
+                anyhow::bail!("Run `opencode-modded-rust github install` inside a git repository.");
             }
 
             let remote = ProcessCommand::new("git")
@@ -7506,7 +7514,7 @@ mod tests {
     #[test]
     fn resume_launcher_prefers_ort_when_env_present() {
         assert_eq!(resume_launcher_from(true), "ort");
-        assert_eq!(resume_launcher_from(false), "opencode");
+        assert_eq!(resume_launcher_from(false), "opencode-modded-rust");
     }
 
     #[test]
@@ -7520,16 +7528,22 @@ mod tests {
 
     #[test]
     fn resume_hint_falls_back_to_continue_without_session_id() {
-        let lines = resume_hint_lines(None, "opencode");
+        let lines = resume_hint_lines(None, "opencode-modded-rust");
         assert_eq!(
             lines,
-            vec!["Resume your most recent session:", "  opencode --continue"]
+            vec![
+                "Resume your most recent session:",
+                "  opencode-modded-rust --continue"
+            ]
         );
 
-        let empty = resume_hint_lines(Some(""), "opencode");
+        let empty = resume_hint_lines(Some(""), "opencode-modded-rust");
         assert_eq!(
             empty,
-            vec!["Resume your most recent session:", "  opencode --continue"]
+            vec![
+                "Resume your most recent session:",
+                "  opencode-modded-rust --continue"
+            ]
         );
     }
 
@@ -7546,13 +7560,17 @@ mod tests {
     }
 
     #[test]
-    fn reattach_hint_uses_opencode_attach_subcommand_with_session() {
-        let lines = reattach_hint_lines("http://127.0.0.1:3189", Some("ses_123"), "opencode");
+    fn reattach_hint_uses_product_attach_subcommand_with_session() {
+        let lines = reattach_hint_lines(
+            "http://127.0.0.1:3189",
+            Some("ses_123"),
+            "opencode-modded-rust",
+        );
         assert_eq!(
             lines,
             vec![
                 "Reattach to this session:",
-                "  opencode attach http://127.0.0.1:3189 --session ses_123",
+                "  opencode-modded-rust attach http://127.0.0.1:3189 --session ses_123",
             ]
         );
     }
@@ -7568,12 +7586,12 @@ mod tests {
             ]
         );
 
-        let empty = reattach_hint_lines("http://127.0.0.1:3189", Some(""), "opencode");
+        let empty = reattach_hint_lines("http://127.0.0.1:3189", Some(""), "opencode-modded-rust");
         assert_eq!(
             empty,
             vec![
                 "Reattach to the server:",
-                "  opencode attach http://127.0.0.1:3189",
+                "  opencode-modded-rust attach http://127.0.0.1:3189",
             ]
         );
     }

@@ -15,7 +15,7 @@ A real session (`project-review-request.md`, session `ses_ae81decdf5024e638e67f2
 
 ## Live product path
 
-The default `opencode` command launches the TUI (`crates/opencode-cli/src/main.rs:769-787`). The TUI talks HTTP to a (possibly detached) server and sends prompts via `POST /session/{id}/prompt`:
+The default `opencode-modded-rust` command launches the TUI (`crates/opencode-cli/src/main.rs:769-787`). The TUI talks HTTP to a (possibly detached) server and sends prompts via `POST /session/{id}/prompt`:
 
 - TUI request body: only `message`, `agent`, `model`, `variant` (`crates/opencode-tui/src/api.rs:504-532`, struct at `api.rs:141-149`). Default agent string is `"build"` (`crates/opencode-tui/src/context/app_context.rs:138`).
 - Server handler `session_prompt` (`crates/opencode-server/src/routes.rs:1654-1946`) invokes `SessionPrompt::prompt_with_update_hook` with `system_prompt = None`, `tools = Vec::new()`, `AgentParams::default()`, and no MCP/LSP clients (`routes.rs:1863-1893`).
@@ -45,7 +45,7 @@ Two secondary defects would block usability even after declaration is fixed:
 - Tool execution exists and loops correctly; permission decisions are not applied (ask fires for everything).
 - Resume: `resume_session` (`prompt.rs:873-953`) exists but is dead code (no HTTP route calls it); it does propagate `system_prompt`/`tools` into `loop_inner`, so it is a prepared seam.
 
-### CLI path (`opencode run` / interactive / `github run` → `AgentExecutor`)
+### CLI path (`opencode-modded-rust run` / interactive / `github run` → `AgentExecutor`)
 
 - System prompt attached as a `Role::System` conversation message: `Conversation::with_system_prompt` (`message.rs:92-96`) → `to_provider_messages` (`message.rs:121-131`); built in `main.rs:1589-1607, 5189-5208`.
 - Tools never attached: `ChatRequest::new(...)` used at `executor.rs:164, 226, 274` with `tools: None` (`message.rs:212-226`).
@@ -55,7 +55,7 @@ Two secondary defects would block usability even after declaration is fixed:
 
 - No auto-injection: OpenAI emits only what it is given (`openai.rs:591-640` serializes `tools`; legacy `chat_stream_legacy` uses `build_request_body` which serializes `ChatRequest`, `openai.rs:507-532, 892-976`).
 - Anthropic structurally cannot receive tools: `AnthropicRequest` has no tools field and `convert_request` never reads `request.tools` (`anthropic.rs:99-144, 228-239`). It lifts `Role::System` messages into the `system` parameter but ignores `request.system`/`request.tools`.
-- Secondary: repo default model `opencode/trinity-large-preview-free` (`opencode.jsonc`) is deprecated in the catalog and filtered from the runtime provider registry at bootstrap (`bootstrap.rs:1956-1959, 3191-3200`).
+- Secondary: repo default model `opencode-modded-rust/trinity-large-preview-free` (`opencode.jsonc`) is deprecated in the catalog and filtered from the runtime provider registry at bootstrap (`bootstrap.rs:1956-1959, 3191-3200`).
 
 ## Reference behavior (confirmed from the frozen line)
 

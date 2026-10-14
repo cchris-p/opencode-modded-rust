@@ -17,7 +17,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BIN="$REPO/target/debug/opencode"
+BIN="$REPO/target/debug/opencode-modded-rust"
 PORT="${SMOKE_PORT:-3491}"
 BASE="http://127.0.0.1:${PORT}"
 LOG="$(mktemp /tmp/stream-smoke.XXXXXX.log)"

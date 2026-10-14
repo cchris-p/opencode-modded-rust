@@ -245,7 +245,7 @@ fn format_error_message(provider_id: &str, error: &ProviderError) -> String {
             status_code: 403, ..
         } = error
         {
-            return "Please reauthenticate with the copilot provider to ensure your credentials work properly with OpenCode.".to_string();
+            return "Please reauthenticate with the copilot provider to ensure your credentials work properly with opencode-modded-rust.".to_string();
         }
     }
     error.to_string()
