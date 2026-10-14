@@ -5,7 +5,7 @@ priority: "P2"
 type: "refactor"
 area: "START"
 spec: "invariants/reference-boundary.md"
-status: "refinement"
+status: "todo"
 predecessors: ""
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -74,17 +74,18 @@ is planned here but explicitly deferred. **Layer 3** (crate/package names) is a 
 
 ## Layer 2 — config/state/env paths (PLANNED, DEFERRED)
 
-Documented here so the decision is explicit; **do not implement in this card**.
+Documented here only to record the deferred scope; **do not implement in this card**. These are
+future-card questions, not open decisions for `START-033`.
 
 - **Config dir:** `~/.config/opencode/*` (shared with vanilla; standards-managed config and
-  `AGENTS.md` live here). Decision: introduce a product-scoped config dir (e.g.
+  `AGENTS.md` live here). A future card may introduce a product-scoped config dir (e.g.
   `~/.config/opencode-modded-rust/`) or keep sharing `~/.config/opencode/`.
 - **Data dir / DB:** `dirs::data_local_dir()/opencode/opencode.db`
   (`crates/opencode-storage/src/database.rs:174-178`); `dirs::data_local_dir()/opencode/traces/server.log`.
-  Decision: rename the `opencode` data subdir or keep for continuity.
+  A future card may rename the `opencode` data subdir or keep it for continuity.
 - **Env-var names:** `OPENCODE_SERVER_LOG`, `OPENCODE_RUN_TIMEOUT_MS`, `OPENCODE_STREAM_BUDGET_MS`,
   and the launcher pass-through vars `OPENCODE_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`,
-  `OPENCODE_TUI_CONFIG`, plus `OPENCODE_MODEL_*` presets. Decision: product-scoped names vs keep.
+  `OPENCODE_TUI_CONFIG`, plus `OPENCODE_MODEL_*` presets. A future card may product-scope these.
 - **Migration/compat:** read-old/write-new, one-time migration, or no migration (accept fresh state).
 - **Risks:** state fragmentation, breaking standards-managed config, macOS vs vanilla DB path
   mismatch, and hidden coupling in launchers/plugins/tests.
@@ -103,13 +104,14 @@ Documented here so the decision is explicit; **do not implement in this card**.
 - Repointing `opencode` at the Rust build (forbidden by global rule).
 - Launcher subcommand passthrough (`CLI-013`) and the `scopemux-code` doc scrub (`START-034`).
 
-## Open Decisions
+## Resolved Decisions (locked 2026-10-14)
 
-- Binary/clap name: `opencode-modded-rust` exactly, or a distinct binary with `omr` as the typed
-  command. Recommendation: binary/command `opencode-modded-rust`, short primary launcher `omr`,
-  `ort` retained for TUI.
-- Whether `APP_SHORT_NAME` is `omr` or `opencode-modded-rust`.
-- Whether launcher env vars are renamed in this card or deferred with Layer 2 (recommend defer).
+- **Product name / binary / clap command:** `opencode-modded-rust`.
+- **Primary short launcher:** `omr` (general entry point; `START-033` only points it at the new
+  binary; subcommand dispatch is `CLI-013`).
+- **TUI alias:** `ort` retained as the TUI launcher.
+- **`APP_NAME`:** `opencode-modded-rust`; **`APP_SHORT_NAME`:** `omr`.
+- **Launcher env vars:** keep `OPENCODE_*` names in Layer 1; renaming is deferred with Layer 2.
 
 ## Done when
 

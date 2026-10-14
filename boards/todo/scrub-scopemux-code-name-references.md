@@ -5,7 +5,7 @@ priority: "P2"
 type: "refactor"
 area: "START"
 spec: "invariants/reference-boundary.md"
-status: "refinement"
+status: "todo"
 predecessors: "START-033"
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -70,7 +70,7 @@ Historical surfaces (see decision below):
   `START-003` in the plan.
 - Sweep any `scopemux-code` string in `crates/` and `scripts/`.
 - Add a superseding note to historical cards/transcripts rather than rewriting their history (see
-  Open Decisions).
+  Resolved Decisions).
 - Leave `RustingOpenCode`/`ROCode` runtime-string replacement to `START-033` (branding constants);
   this card handles the `scopemux-code` name text.
 
@@ -81,12 +81,12 @@ Historical surfaces (see decision below):
 - Layer 2 config/state/env paths (`START-033`, deferred).
 - Renaming crates, the repo, or the ScopeMux integration.
 
-## Open Decisions
+## Resolved Decisions (locked 2026-10-14)
 
-- Historical `boards/done/**` and `boards/archive/**` and `docs/transcripts/**` are immutable history
-  per repo convention: annotate with a superseding note (reference `START-034`) or leave untouched.
-  Recommendation: annotate, do not rewrite.
-- Verify each `wiki/*-integration.md` hit is a product-name use (scrub) vs an integration use (keep).
+- **Historical surfaces** (`boards/done/**`, `boards/archive/**`, `docs/transcripts/**`): annotate
+  with a superseding note referencing `START-034`; do **not** rewrite their history.
+- **`wiki/*-integration.md` hits:** scrub when the token names the *product*; keep when it names the
+  *ScopeMux integration*.
 
 ## Done when
 

@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: "wiki/cli-surface.md"
-status: "refinement"
+status: "todo"
 predecessors: "START-034"
 created: "2026-10-14"
 updated: "2026-10-14"
@@ -49,13 +49,14 @@ have no convenient entry point.
 - Preserve `ort` as the TUI launcher for back-compat; the passthrough name follows the `START-033`
   decision.
 
-## Open Decisions
+## Resolved Decisions (locked 2026-10-14)
 
-- Which launcher becomes the passthrough: extend `ort`/`omr`, or add a dedicated CLI launcher (e.g.
-  `<name>-cli`)?
-- Which first-argument tokens count as subcommands vs TUI flags (allowlist vs "anything not a known
-  TUI flag").
-- Whether the launcher help should delegate to the product's top-level `--help`.
+- **Passthrough launcher:** `omr` becomes the general launcher — TUI by default, subcommand
+  passthrough for known subcommands. `ort` stays TUI-only for back-compat.
+- **Dispatch rule:** explicit allowlist of the product's top-level subcommands; any first token not
+  in the allowlist (including TUI flags such as `--model`/`--session`/`--fork`/`--attach`/`--port`)
+  launches the TUI.
+- **Help:** `omr --help` delegates to the product's top-level `--help` (full command list).
 
 ## Scope
 
