@@ -270,9 +270,7 @@ required_paths=()
 while IFS= read -r rel; do
     [ -n "${rel}" ] && required_paths+=("${rel}")
 done < <(required_submodules)
-git -C "${DEST}" \
-    -c 'url.git@github.com:.insteadOf=https://github.com/' \
-    submodule update --init --recursive -- "${required_paths[@]}"
+git -C "${DEST}" submodule update --init --recursive -- "${required_paths[@]}"
 
 update_missing="$(missing_required_submodules || true)"
 if [ -n "${update_missing}" ]; then

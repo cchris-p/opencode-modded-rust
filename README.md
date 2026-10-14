@@ -164,12 +164,11 @@ Tree-sitter/pybind11 submodules) per machine.
   `scripts/fetch-scopemux-core.sh`). Set `SCOPEMUX_CORE_DIR` to force a specific
   source checkout.
 
-**CI secret.** `scopemux-core` is private, so the workflow needs read access to
-it. Add a repository secret `SCOPEMUX_CORE_TOKEN` with a PAT (or GitHub App
-token) that can read `cchris-p/scopemux-core`. Without it the workflow still
-builds the CLI but fails at the "Fetch pinned scopemux-core" step. The fetch only
-initializes the public grammar/pybind11 submodules, so no access to the private
-test-case submodules is required.
+**CI access.** `scopemux-core` and the grammar/pybind11 submodules the provider
+build needs are public, so CI clones them over anonymous HTTPS (the workflow sets
+`SCOPEMUX_CORE_REPO` to the HTTPS URL; the script's default is SSH). The private
+`scopemux-test-cases` submodules are intentionally not initialized. If
+`scopemux-core` is ever made private, add token auth to the workflow.
 
 ## Development and validation
 

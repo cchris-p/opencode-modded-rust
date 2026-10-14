@@ -54,20 +54,9 @@ jobs:
       - name: Install native build dependencies
         run: ${{ matrix.deps }}
 
-      - name: Configure GitHub auth for the private scopemux-core
-        env:
-          SCOPEMUX_CORE_TOKEN: ${{ secrets.SCOPEMUX_CORE_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${SCOPEMUX_CORE_TOKEN:-}" ]; then
-            git config --global \
-              url."https://x-access-token:${SCOPEMUX_CORE_TOKEN}@github.com/".insteadOf \
-              "https://github.com/"
-            echo "Configured token auth for github.com HTTPS clones."
-          else
-            echo "::warning::SCOPEMUX_CORE_TOKEN is not set; the private scopemux-core fetch (and its private test-case submodules) will fail. Add a PAT secret with read access to cchris-p/scopemux-core (see README \"Native provider artifacts\")."
-          fi
-
+      # scopemux-core and its required grammar/pybind11 submodules are public, so
+      # clones go over anonymous HTTPS (the script's default is SSH). If
+      # scopemux-core is ever made private, add token auth here.
       - name: Fetch pinned scopemux-core
         env:
           SCOPEMUX_CORE_REPO: https://github.com/cchris-p/scopemux-core.git
