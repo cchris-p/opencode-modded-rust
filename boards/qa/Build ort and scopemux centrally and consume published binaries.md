@@ -141,3 +141,39 @@ dispatch or tag (do this once to seed the `native-artifacts` release, then verif
 Follow-up: the macOS runner failure is the `scopemux-core` C23 label-declaration
 (filed as `cchris-p/scopemux-core#36`; re-enable the macOS matrix entry when that
 fix lands and the pin is bumped).
+
+### Follow-up pass - 2026-10-14
+
+Both tracked follow-ups are done.
+
+- **macOS bundle re-enabled.** Fixed `scopemux-core#36` by wrapping the
+  `NODE_OPERATOR` case body in a compound statement
+  (`core/src/parser/project_context/symbol_management.c`), so the label is
+  followed by a statement rather than a declaration. Landed on `scopemux-core`
+  `development` via PR
+  [#37](https://github.com/cchris-p/scopemux-core/pull/37) (merge `2a642c1`).
+  Confirmed with `clang -std=c11 -pedantic-errors` (old form errors
+  `-Wc23-extensions`, new form compiles) and a scan for other
+  label-followed-by-declaration sites (none).
+- **Pin bumped + macOS matrix restored.** PR
+  [#145](https://github.com/cchris-p/opencode-modded-rust/pull/145) advanced
+  `PINNED_REV` to `2a642c1` and re-enabled the `macos-14` matrix entry; merged to
+  `development` (`0f3ce2b`). CI ran both jobs green: `ubuntu-24.04` (9m31s) and
+  `macos-14` (9m18s) — the macOS native provider + CLI now build and package.
+- **`native-artifacts` release seeded.** Created the rolling release and
+  uploaded the CI-built assets from run `38581032644` (8 assets):
+  `opencode-native-{linux-x86_64,macos-aarch64}-2a642c10534f.tar.gz` (+
+  `.sha256`) and `opencode-modded-rust-{linux-x86_64,darwin-aarch64}.tar.gz`
+  (+ `.sha256`). (`workflow_dispatch` could not be triggered through the
+  available token — Actions write is not granted — so the release was seeded from
+  the equivalent PR-run artifacts.)
+- **Download path verified end-to-end.** `scripts/ensure-native-artifacts.sh
+  --force` downloaded the macOS bundle from the release, verified its checksum,
+  and installed it to `~/.cache/opencode-modded-rust/native/macos-aarch64-2a642c10534f`.
+  `cargo build -p opencode-scopemux --features native` then linked directly from
+  the bundle (`-L native=.../lib -l static=parser_core -l static=tree-sitter-*`,
+  `SCOPEMUX_QUERIES_DIR` baked to the bundle's `queries/`) with no CMake run and
+  no `scopemux-core` source build.
+
+Open item: `scopemux-core#36` could not be auto-closed (the token lacks
+`issues: write`); it remains open though the fix is merged.
