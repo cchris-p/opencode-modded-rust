@@ -14,6 +14,13 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/native-artifacts.yml"
+      - "crates/opencode-scopemux/**"
+      - "scripts/fetch-scopemux-core.sh"
+      - "scripts/package-native-artifacts.sh"
+      - "scripts/ensure-native-artifacts.sh"
 
 permissions:
   contents: write
