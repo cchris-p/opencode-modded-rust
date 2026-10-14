@@ -30,6 +30,9 @@ unresolved decision are marked **target** and must remain true if and when that 
 - A selected default target must identify the server URL and, when applicable, the default session ID used by follow-up sends and views.
 - Target selection must present active, observable servers/sessions for user choice when an interactive selector is used; stale records may be shown only when clearly marked unavailable and must not be selected silently.
 - Explicit command-line server/session options must override the selected default target.
+- CLI file attachments (`task new|send -f/--file`) must not change target selection; they add
+  file parts to the prompt submitted to the already-resolved explicit/default target, and a remote
+  (non-loopback) target receives inline bytes while a loopback target receives a `file://` reference.
 - A stale, unreachable, or invalid selected target must fail visibly and must not silently fall back to a different server or session.
 - Task sends and views must use the canonical server/session runtime path, not a parallel prompt executor.
 - Creating a task from the CLI may update the selected current/default session pointer only after the server acknowledges the created session.

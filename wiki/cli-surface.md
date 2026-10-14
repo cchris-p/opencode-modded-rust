@@ -53,6 +53,10 @@ is driving toward.
   `new`/`send` submit through the canonical `POST /session/{id}/prompt` path; `view` reads
   `/session/{id}/message`; `status` reads `GET /session/status` with plain-text and `--json` output
   (`CLI-001`/`CLI-006`, PR #80/#81; defects fixed by `BUG-036` PR #82; done 2026-09-23).
+- `opencode task new` and `opencode task send` accept `-f`/`--file <PATH>` attachments (`CLI-012`).
+  A loopback target (`127.0.0.1`, `localhost`, `::1`) is sent a `file://` reference the server reads
+  through normal tools; a non-loopback target receives the bytes inline as a `data:` URL (10 MiB cap),
+  because the server cannot open the client's local path. Attachments do not change target selection.
 - `opencode run` currently uses the interim `AgentExecutor` tool loop, not the canonical
   session/server runtime (`CLI-002`, `hold`).
 
@@ -65,6 +69,7 @@ is driving toward.
 | `CLI-002` | Route `opencode run` through the canonical session runtime; retire the parallel `AgentExecutor` loop. |
 | `CLI-009` | CLI/direct-run question and ask/approval parity; blocked by `CLI-001`/`CLI-006`, `CLI-002`, and `GATE-002`. |
 | `CLI-010` | Subagent/child-session surface on the CLI; `GATE-004` done, card in `qa` (covered by `H-009`). |
+| `CLI-012` | `task new`/`send` file attachments: `file://` on a shared filesystem, inline `data:` bytes for a remote target (10 MiB cap). Attachments must not change target selection. |
 | `CLI-005` | Same-workspace attach/reuse resolved **NO-GO** (2026-09-26): reattachment stays explicit (`opencode attach <url>`); no implicit discovery/reuse record. |
 | `CLI-004` | Explicit `/detach` command (done). |
 | `FEAT-033` | Resume hint on normal TUI exit (done); adjacent exit UX, not detach. |
@@ -97,6 +102,7 @@ opencode serve                                     # or: ort, then /detach
 opencode task target select --server <url>
 opencode task new "Fix the failing test"           # CLI-001
 opencode task send "Now run the focused tests"     # CLI-001
+opencode task send -f ./logs/test.log "Why did this fail?"   # CLI-012 (attachment)
 opencode task view                                 # CLI-001
 opencode task status                               # CLI-006
 opencode attach <url>                              # optional: back to the TUI
@@ -122,6 +128,7 @@ same canonical path.
 | CLI-008 | archive | Queue CLI sends (delivered by `GATE-001`) |
 | CLI-009 | hold | Direct-run question and ask/approval parity (gated) |
 | CLI-010 | qa | CLI subagent surface (`GATE-004` done; covered by `H-009`) |
+| CLI-012 | refinement | CLI task file attachments (`task new`/`send -f`; loopback `file://`, remote inline `data:`) |
 
 ## Lineage (history only)
 
