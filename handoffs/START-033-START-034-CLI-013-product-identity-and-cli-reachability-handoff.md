@@ -1,7 +1,7 @@
 ---
 id: "H-015"
 title: "START-033/START-034/CLI-013 Product identity and CLI reachability - Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-10-14"
 updated: "2026-10-14"
 owner: ""
