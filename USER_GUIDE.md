@@ -1,15 +1,15 @@
 # USER GUIDE - scopemux-code
 
 This guide is for day-to-day users. It covers startup, common commands, configuration, and troubleshooting.  
-The product is named `scopemux-code`. The CLI command is still `opencode` as a legacy compatibility identifier.
+The product is named `scopemux-code`. The CLI command is `opencode-modded-rust`.
 
-**Use this project's opencode.** If you have another OpenCode (e.g. npm/global) on your PATH, the shell may run that instead. From the **scopemux-code repo root** use one of:
+**Use this project's binary.** If you have another OpenCode (e.g. npm/global) on your PATH, the shell may run that instead. From the **scopemux-code repo root** use one of:
 
-- **`./target/debug/opencode`** — after `cargo build -p opencode-cli`
+- **`./target/debug/opencode-modded-rust`** — after `cargo build -p opencode-cli`
 - **`cargo run -p opencode-cli --`** — always uses this repo's version
 
-Example: `./target/debug/opencode tui` or `cargo run -p opencode-cli -- tui`.  
-In the commands below, `opencode` means this local binary (run from repo root).
+Example: `./target/debug/opencode-modded-rust tui` or `cargo run -p opencode-cli -- tui`.  
+In the commands below, `opencode-modded-rust` means this local binary (run from repo root).
 
 ## 1. Quick start
 
@@ -45,31 +45,31 @@ cargo run -p opencode-cli -- serve --port 3000 --hostname 127.0.0.1
 
 ## 2. Common commands
 
-Run these from the **scopemux-code repo root**; use `./target/debug/opencode` or `cargo run -p opencode-cli --`.
+Run these from the **scopemux-code repo root**; use `./target/debug/opencode-modded-rust` or `cargo run -p opencode-cli --`.
 
 ### 2.1 Session management
 
 ```bash
-./target/debug/opencode session list
-./target/debug/opencode session list --format json
-./target/debug/opencode session show <SESSION_ID>
-./target/debug/opencode session delete <SESSION_ID>
+./target/debug/opencode-modded-rust session list
+./target/debug/opencode-modded-rust session list --format json
+./target/debug/opencode-modded-rust session show <SESSION_ID>
+./target/debug/opencode-modded-rust session delete <SESSION_ID>
 ```
 
 ### 2.2 Models and config
 
 ```bash
-./target/debug/opencode models
-./target/debug/opencode models --refresh --verbose
-./target/debug/opencode config
+./target/debug/opencode-modded-rust models
+./target/debug/opencode-modded-rust models --refresh --verbose
+./target/debug/opencode-modded-rust config
 ```
 
 ### 2.3 Auth management
 
 ```bash
-./target/debug/opencode auth list
-./target/debug/opencode auth login --help
-./target/debug/opencode auth logout --help
+./target/debug/opencode-modded-rust auth list
+./target/debug/opencode-modded-rust auth login --help
+./target/debug/opencode-modded-rust auth logout --help
 ```
 
 Note: For `auth login` / `auth logout` options, use the `--help` output.
@@ -77,26 +77,26 @@ Note: For `auth login` / `auth logout` options, use the `--help` output.
 ### 2.4 MCP management
 
 ```bash
-./target/debug/opencode mcp list
-./target/debug/opencode mcp connect <NAME>
-./target/debug/opencode mcp disconnect <NAME>
-./target/debug/opencode mcp add --help
-./target/debug/opencode mcp auth --help
+./target/debug/opencode-modded-rust mcp list
+./target/debug/opencode-modded-rust mcp connect <NAME>
+./target/debug/opencode-modded-rust mcp disconnect <NAME>
+./target/debug/opencode-modded-rust mcp add --help
+./target/debug/opencode-modded-rust mcp auth --help
 ```
 
 If the local server is not at the default address:
 
 ```bash
-./target/debug/opencode mcp --server http://127.0.0.1:3000 list
+./target/debug/opencode-modded-rust mcp --server http://127.0.0.1:3000 list
 ```
 
 ### 2.5 Debug commands
 
 ```bash
-./target/debug/opencode debug paths
-./target/debug/opencode debug config
-./target/debug/opencode debug skill
-./target/debug/opencode debug agent
+./target/debug/opencode-modded-rust debug paths
+./target/debug/opencode-modded-rust debug config
+./target/debug/opencode-modded-rust debug skill
+./target/debug/opencode-modded-rust debug agent
 ```
 
 ## 3. TUI and Run common options
@@ -104,8 +104,8 @@ If the local server is not at the default address:
 Show full options:
 
 ```bash
-./target/debug/opencode tui --help
-./target/debug/opencode run --help
+./target/debug/opencode-modded-rust tui --help
+./target/debug/opencode-modded-rust run --help
 ```
 
 Frequently used (both TUI and run):
@@ -183,8 +183,8 @@ Do not commit real API keys; use env vars or a local config that’s in `.gitign
 ### 5.2 Check that the provider is available
 
 ```bash
-./target/debug/opencode auth list
-./target/debug/opencode models --refresh
+./target/debug/opencode-modded-rust auth list
+./target/debug/opencode-modded-rust models --refresh
 ```
 
 You should see `anthropic` and Claude models in the list.
@@ -194,13 +194,13 @@ You should see `anthropic` and Claude models in the list.
 **Interactive TUI (recommended for coding):**
 
 ```bash
-./target/debug/opencode tui -m anthropic/claude-sonnet-4-20250514
+./target/debug/opencode-modded-rust tui -m anthropic/claude-sonnet-4-20250514
 ```
 
 Or with default model from config:
 
 ```bash
-./target/debug/opencode tui
+./target/debug/opencode-modded-rust tui
 ```
 
 In the TUI you can type prompts, use slash commands, and let the agent edit files and run tools.
@@ -208,13 +208,13 @@ In the TUI you can type prompts, use slash commands, and let the agent edit file
 **Single task (no TUI):**
 
 ```bash
-./target/debug/opencode run "Add a unit test for the login function in src/auth.rs"
+./target/debug/opencode-modded-rust run "Add a unit test for the login function in src/auth.rs"
 ```
 
 With a specific model:
 
 ```bash
-./target/debug/opencode run -m anthropic/claude-sonnet-4-20250514 "Review this repo for security issues"
+./target/debug/opencode-modded-rust run -m anthropic/claude-sonnet-4-20250514 "Review this repo for security issues"
 ```
 
 ### 5.4 Useful model IDs (Anthropic)
@@ -223,44 +223,44 @@ With a specific model:
 - `anthropic/claude-3-5-sonnet-20241022` – Claude 3.5 Sonnet
 - `anthropic/claude-3-opus-20240229` – Claude 3 Opus
 
-Use `./target/debug/opencode models` to see the full list for your setup.
+Use `./target/debug/opencode-modded-rust models` to see the full list for your setup.
 
 ## 6. Recommended workflows
 
 ### 6.1 Local interactive use
 
-1. `cargo run -p opencode-cli --` or `./target/debug/opencode tui`
+1. `cargo run -p opencode-cli --` or `./target/debug/opencode-modded-rust tui`
 2. Run tasks in the TUI
-3. Use `./target/debug/opencode session list/show` to review history
+3. Use `./target/debug/opencode-modded-rust session list/show` to review history
 
 ### 6.2 Scripts or integration
 
-1. `./target/debug/opencode serve --port 3000`
-2. Use `./target/debug/opencode run ... --format json` or the server API for integration
-3. Use `./target/debug/opencode stats` to track token/cost
+1. `./target/debug/opencode-modded-rust serve --port 3000`
+2. Use `./target/debug/opencode-modded-rust run ... --format json` or the server API for integration
+3. Use `./target/debug/opencode-modded-rust stats` to track token/cost
 
 ## 7. Troubleshooting
 
 ### 7.1 Port in use
 
-- Use another port: `./target/debug/opencode serve --port 3001`
+- Use another port: `./target/debug/opencode-modded-rust serve --port 3001`
 
 ### 7.2 Model not available
 
-1. `./target/debug/opencode auth list`
-2. `./target/debug/opencode models --refresh`
-3. `./target/debug/opencode config` to check that provider config is applied
+1. `./target/debug/opencode-modded-rust auth list`
+2. `./target/debug/opencode-modded-rust models --refresh`
+3. `./target/debug/opencode-modded-rust config` to check that provider config is applied
 
 ### 7.3 Config issues
 
-1. `./target/debug/opencode debug paths` – see config search paths
-2. `./target/debug/opencode debug config` – see final merged config
+1. `./target/debug/opencode-modded-rust debug paths` – see config search paths
+2. `./target/debug/opencode-modded-rust debug config` – see final merged config
 
 ### 7.4 MCP connection problems
 
-1. `./target/debug/opencode mcp list`
-2. `./target/debug/opencode mcp debug <NAME>`
-3. `./target/debug/opencode mcp connect <NAME>`
+1. `./target/debug/opencode-modded-rust mcp list`
+2. `./target/debug/opencode-modded-rust mcp debug <NAME>`
+3. `./target/debug/opencode-modded-rust mcp connect <NAME>`
 
 ## 8. Documentation index
 

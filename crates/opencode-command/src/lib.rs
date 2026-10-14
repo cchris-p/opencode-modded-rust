@@ -73,7 +73,7 @@ impl CommandRegistry {
     fn register_builtin_commands(&mut self) {
         self.register(Command {
             name: "init".to_string(),
-            description: "Initialize OpenCode in the current project".to_string(),
+            description: "Initialize opencode-modded-rust in the current project".to_string(),
             template: include_str!("../commands/init.md").to_string(),
             source: CommandSource::Builtin,
         });

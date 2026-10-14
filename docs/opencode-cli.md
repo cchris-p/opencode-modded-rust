@@ -1,6 +1,6 @@
 # opencode-cli
 
-`opencode-cli` provides the workspace’s unified executable entrypoint (binary name: `opencode`).
+`opencode-cli` provides the workspace’s unified executable entrypoint (binary name: `opencode-modded-rust`).
 
 ## Command scope
 
@@ -13,7 +13,7 @@
 
 ## Top-level subcommands
 
-As of `opencode --help` (2026-02-23):
+As of `opencode-modded-rust --help` (2026-02-23):
 
 - `tui`
 - `attach`
@@ -42,7 +42,7 @@ As of `opencode --help` (2026-02-23):
 
 ## Common options
 
-### `opencode tui`
+### `opencode-modded-rust tui`
 
 - `-m, --model <MODEL>`
 - `-c, --continue`
@@ -51,7 +51,7 @@ As of `opencode --help` (2026-02-23):
 - `--agent <AGENT>` (default: `build`)
 - `--port <PORT>`, `--hostname <HOSTNAME>`
 
-### `opencode run`
+### `opencode-modded-rust run`
 
 - `MESSAGE...`
 - `--command <COMMAND>`
@@ -60,9 +60,9 @@ As of `opencode --help` (2026-02-23):
 - `--thinking`
 - `--agent <AGENT>` / `--model <MODEL>`
 
-### `opencode serve`
+### `opencode-modded-rust serve`
 
-`opencode serve` is the supported local HTTP server entrypoint for an external supervisor such as Watchdog.
+`opencode-modded-rust serve` is the supported local HTTP server entrypoint for an external supervisor such as Watchdog.
 
 - `--cwd <PATH>` selects the workspace/root before server startup.
 - `--hostname <HOSTNAME>` selects the bind host. The default is `127.0.0.1`.
@@ -77,9 +77,9 @@ With `--startup-json`, supervisors should parse a line shaped like:
 
 Readiness is established by polling `health_url` until the endpoint returns success. Stopping a supervised server is process supervision: terminate the process group or child process that produced the startup JSON line. ORT does not reuse or attach to unrelated stale servers for this path.
 
-### `opencode task new|send|view|status`
+### `opencode-modded-rust task new|send|view|status`
 
-Task commands talk to an explicit server/session target. They do not discover, start, reuse, or attach to a server implicitly, and they do not change normal `opencode`/`ort` TUI launch behavior.
+Task commands talk to an explicit server/session target. They do not discover, start, reuse, or attach to a server implicitly, and they do not change normal `opencode-modded-rust`/`ort` TUI launch behavior.
 
 - `task new [--server <URL>] [--stream] <PROMPT...>` creates a new session on the selected or provided server, submits the prompt through `POST /session/{id}/prompt`, then stores that acknowledged session as the workspace-local default task session.
 - `task new [--server <URL>] < prompt.md` reads prompt text from stdin when available.
@@ -89,9 +89,9 @@ Task commands talk to an explicit server/session target. They do not discover, s
 - `--server` and `--session` override the stored target for the current command only.
 - A stale or unreachable selected target fails visibly instead of falling back to a different server or session.
 
-### `opencode task target`
+### `opencode-modded-rust task target`
 
-`task target` manages the explicit default server/session pointer used by future CLI task commands. It does not change normal `opencode`/`ort` TUI launch behavior and does not implicitly discover or reuse servers.
+`task target` manages the explicit default server/session pointer used by future CLI task commands. It does not change normal `opencode-modded-rust`/`ort` TUI launch behavior and does not implicitly discover or reuse servers.
 
 - `list --server <URL>` live-checks explicitly provided server candidates and prints their root sessions when reachable.
 - `select --server <URL> [--session <SESSION_ID>]` verifies the server, verifies the session when provided, and stores the workspace-local default target in `.opencode/task-target.json`.
@@ -113,7 +113,7 @@ Explicit task command options such as `--server` and `--session` override this s
 
 ```bash
 cargo check -p opencode-cli
-./target/debug/opencode --help
-./target/debug/opencode task --help
-./target/debug/opencode task target --help
+./target/debug/opencode-modded-rust --help
+./target/debug/opencode-modded-rust task --help
+./target/debug/opencode-modded-rust task target --help
 ```

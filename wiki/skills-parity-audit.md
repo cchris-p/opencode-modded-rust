@@ -17,7 +17,7 @@ Confirmed in this repo today:
 - Discovery searches built-in home, config, and workspace-local roots plus configured `skills.paths` entries.
 - Duplicate skill names collapse to one surviving definition.
 - The `skill` tool permission-gates loading and returns skill content, base directory guidance, sampled files, and metadata.
-- CLI debug listing exists through `opencode debug skill`.
+- CLI debug listing exists through `opencode-modded-rust debug skill`.
 - Session compaction protects `skill` tool calls.
 
 ## Reference behavior confirmed

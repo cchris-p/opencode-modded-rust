@@ -2,7 +2,6 @@ mod dialog;
 mod dialogs;
 mod diff;
 mod home;
-mod logo;
 mod markdown;
 mod message_palette;
 mod permission;
@@ -31,7 +30,6 @@ pub use dialogs::{
 };
 pub use diff::{DiffLine, DiffLineType, DiffMode, DiffView};
 pub use home::HomeView;
-pub use logo::Logo;
 pub use markdown::{CodeBlock, MarkdownBlock, MarkdownRenderer};
 pub use permission::{PermissionAction, PermissionPrompt, PermissionRequest, PermissionType};
 pub use prompt::{Prompt, PromptStashEntry};

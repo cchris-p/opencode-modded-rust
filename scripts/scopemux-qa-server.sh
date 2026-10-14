@@ -46,8 +46,8 @@ done
 # worktree build target used by this repository's worktrees.
 if [ -z "$BINARY" ]; then
   for candidate in \
-    "$REPO/target/debug/opencode" \
-    "${OPENCODE_WORKTREE_ROOT:-$HOME/worktrees}/opencode-modded-rust/.shared-target/debug/opencode"
+    "$REPO/target/debug/opencode-modded-rust" \
+    "${OPENCODE_WORKTREE_ROOT:-$HOME/worktrees}/opencode-modded-rust/.shared-target/debug/opencode-modded-rust"
   do
     if [ -x "$candidate" ]; then
       BINARY="$candidate"

@@ -45,7 +45,7 @@ Verify auth state with `GET /auth/openai`: an OAuth login reports `auth_type: "o
 Provider and model listings are backed by the vanilla `models.dev` catalog (`https://models.opencode.ai/api.json`), cached at `dirs::cache_dir()/opencode/models.json`. The cache is not frozen after the first fetch:
 
 - A cache older than `MODELS_DEV_TTL` (5 minutes, matching vanilla's `Duration.minutes(5)`) is refetched on the next CLI or server load without requiring manual file deletion.
-- `opencode models --refresh` forces an immediate refetch of the catalog and then rebuilds the provider registry from the refreshed file.
+- `opencode-modded-rust models --refresh` forces an immediate refetch of the catalog and then rebuilds the provider registry from the refreshed file.
 - A running server schedules a catalog refresh every `MODELS_DEV_REFRESH_INTERVAL` (~60 minutes, matching vanilla's `Schedule.spaced("60 minutes")`) and rebuilds its provider registry, so long-running sessions pick up new models without a restart.
 - A failed fetch is non-fatal: the product keeps serving the existing cached catalog rather than dropping models.
 

@@ -10,7 +10,7 @@ Direct TUI testing is still required for TUI-specific behavior, but agent correc
 
 The canonical product path for agent-session QA is the server/session path:
 
-- start `opencode serve`
+- start `opencode-modded-rust serve`
 - create or select a session through the server API
 - send work through `/session/{id}/prompt`
 - inspect results through `/session/{id}/message`
@@ -66,19 +66,19 @@ DEEPSEEK_API_KEY=<key> scripts/qa/stream-smoke.sh
 
 If the non-TUI path fails, debug the runtime before opening the TUI. If the non-TUI path passes and the TUI still fails, the likely bug is in the TUI/client layer, launch lifecycle, attach behavior, or rendering/input state.
 
-## Relationship To `opencode run`
+## Relationship To `opencode-modded-rust run`
 
-`CLI-002` improved `opencode run` by fixing the interim `AgentExecutor` path: tools are now attached, a bounded tool loop runs, and tool results are fed back to the provider.
+`CLI-002` improved `opencode-modded-rust run` by fixing the interim `AgentExecutor` path: tools are now attached, a bounded tool loop runs, and tool results are fed back to the provider.
 
 That path is still not the canonical TUI/session runtime path. It does not become equivalent to TUI/session behavior until it is routed through the same `SessionPrompt` and server/session machinery as `/session/{id}/prompt`.
 
-Use `opencode run` as a useful CLI smoke path, not as proof that TUI-backed sessions behave identically.
+Use `opencode-modded-rust run` as a useful CLI smoke path, not as proof that TUI-backed sessions behave identically.
 
-The canonical map of CLI/lifecycle behavior and the owning `CLI-*` cards is `wiki/cli-surface.md`; use it to see what exists today versus the target `opencode task` surface.
+The canonical map of CLI/lifecycle behavior and the owning `CLI-*` cards is `wiki/cli-surface.md`; use it to see what exists today versus the target `opencode-modded-rust task` surface.
 
 ## Relationship To CLI-001
 
-`CLI-001` should make the canonical non-TUI runtime path ergonomic. Its future `opencode task new`, `opencode task send`, and `opencode task view` commands should submit and inspect work through the server/session prompt path rather than through `AgentExecutor`.
+`CLI-001` should make the canonical non-TUI runtime path ergonomic. Its future `opencode-modded-rust task new`, `opencode-modded-rust task send`, and `opencode-modded-rust task view` commands should submit and inspect work through the server/session prompt path rather than through `AgentExecutor`.
 
 If `CLI-001` is implemented on top of the same session/server prompt runtime as the TUI, it can replace most manual TUI testing for agent-session work. In that case, a CLI task smoke should exercise the same agent result that the TUI would show.
 

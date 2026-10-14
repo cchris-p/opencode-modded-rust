@@ -26,14 +26,14 @@ is driving toward.
   `AppState::Detaching` and returns `TuiExit::Detach` (`crates/opencode-tui/src/app/app.rs:345-346`,
   `crates/opencode-tui/src/lib.rs:26`), and the CLI disables the `LocalTuiServer` kill-on-drop guard
   only for that result (`crates/opencode-cli/src/main.rs:897-908,973-976`).
-- After detach the terminal prints the server URL, workspace, `opencode attach <url>`, and
+- After detach the terminal prints the server URL, workspace, `opencode-modded-rust attach <url>`, and
   `ort --attach <url>` (`crates/opencode-cli/src/main.rs:904-907`).
 - Detach writes no persisted record. Canonical owner: `CLI-004`.
 
 ### Attach / reattach
 
-- Reattachment is explicit: `opencode attach <url>` (`crates/opencode-cli/src/main.rs:72-82`) or
-  `ort --attach <url>` / `opencode tui --attach <url>` (`crates/opencode-cli/src/main.rs:70,108`).
+- Reattachment is explicit: `opencode-modded-rust attach <url>` (`crates/opencode-cli/src/main.rs:72-82`) or
+  `ort --attach <url>` / `opencode-modded-rust tui --attach <url>` (`crates/opencode-cli/src/main.rs:70,108`).
 - Normal exit (`Ctrl-D`, Esc, `/exit`) terminates the launched server; only detach leaves it alive.
 - Same-workspace server discovery/reuse is intentionally absent; resolved **NO-GO** by `CLI-005`
   (2026-09-26) as the Cline-aligned explicit-only behavior.
@@ -46,18 +46,18 @@ is driving toward.
 
 ### CLI task surface
 
-- `opencode task target list|select|show|clear` exists and stores a workspace-local
+- `opencode-modded-rust task target list|select|show|clear` exists and stores a workspace-local
   `.opencode/task-target.json` with live `/health` + `/session` validation (`CLI-007`, PR #37; done
   2026-09-23).
-- `opencode task new`, `opencode task send`, `opencode task view`, and `opencode task status` exist.
+- `opencode-modded-rust task new`, `opencode-modded-rust task send`, `opencode-modded-rust task view`, and `opencode-modded-rust task status` exist.
   `new`/`send` submit through the canonical `POST /session/{id}/prompt` path; `view` reads
   `/session/{id}/message`; `status` reads `GET /session/status` with plain-text and `--json` output
   (`CLI-001`/`CLI-006`, PR #80/#81; defects fixed by `BUG-036` PR #82; done 2026-09-23).
-- `opencode task new` and `opencode task send` accept `-f`/`--file <PATH>` attachments (`CLI-012`).
+- `opencode-modded-rust task new` and `opencode-modded-rust task send` accept `-f`/`--file <PATH>` attachments (`CLI-012`).
   A loopback target (`127.0.0.1`, `localhost`, `::1`) is sent a `file://` reference the server reads
   through normal tools; a non-loopback target receives the bytes inline as a `data:` URL (10 MiB cap),
   because the server cannot open the client's local path. Attachments do not change target selection.
-- `opencode run` currently uses the interim `AgentExecutor` tool loop, not the canonical
+- `opencode-modded-rust run` currently uses the interim `AgentExecutor` tool loop, not the canonical
   session/server runtime (`CLI-002`, `hold`).
 
 ## Target Behavior
@@ -66,11 +66,11 @@ is driving toward.
 |---|---|
 | `CLI-001` | `task new`/`send`/`view` on the canonical server/session prompt path; returns target session plus `started`/`queued`; `--stream` follows once active. Delivered 2026-09-23 (PR #80, fix `BUG-036` PR #82). |
 | `CLI-006` | CLI status visibility over `GET /session/status` (`idle|busy|queued|retry|error`), plain text plus `--json`. Delivered 2026-09-23 (PR #81, fix `BUG-036` PR #82). |
-| `CLI-002` | Route `opencode run` through the canonical session runtime; retire the parallel `AgentExecutor` loop. |
+| `CLI-002` | Route `opencode-modded-rust run` through the canonical session runtime; retire the parallel `AgentExecutor` loop. |
 | `CLI-009` | CLI/direct-run question and ask/approval parity; blocked by `CLI-001`/`CLI-006`, `CLI-002`, and `GATE-002`. |
 | `CLI-010` | Subagent/child-session surface on the CLI; `GATE-004` done, card in `qa` (covered by `H-009`). |
 | `CLI-012` | `task new`/`send` file attachments: `file://` on a shared filesystem, inline `data:` bytes for a remote target (10 MiB cap). Attachments must not change target selection. |
-| `CLI-005` | Same-workspace attach/reuse resolved **NO-GO** (2026-09-26): reattachment stays explicit (`opencode attach <url>`); no implicit discovery/reuse record. |
+| `CLI-005` | Same-workspace attach/reuse resolved **NO-GO** (2026-09-26): reattachment stays explicit (`opencode-modded-rust attach <url>`); no implicit discovery/reuse record. |
 | `CLI-004` | Explicit `/detach` command (done). |
 | `FEAT-033` | Resume hint on normal TUI exit (done); adjacent exit UX, not detach. |
 
@@ -86,32 +86,32 @@ alive independently of any TUI. Detached + headless together are what make the C
 
 Available today:
 
-- `opencode serve` starts a headless server (no TUI); alternatively `ort` + `/detach` leaves a
+- `opencode-modded-rust serve` starts a headless server (no TUI); alternatively `ort` + `/detach` leaves a
   TUI-launched server alive.
-- `opencode task target select --server <url>` records the server/session to use (`CLI-007`).
-- `opencode task new|send|view|status` drive the canonical session runtime headlessly
+- `opencode-modded-rust task target select --server <url>` records the server/session to use (`CLI-007`).
+- `opencode-modded-rust task new|send|view|status` drive the canonical session runtime headlessly
   (`CLI-001`/`CLI-006`).
 - Direct HTTP `POST /session/{id}/prompt` already runs agentic work headlessly.
-- `opencode run` / `run --attach` exists but uses the interim `AgentExecutor` path, not the canonical
+- `opencode-modded-rust run` / `run --attach` exists but uses the interim `AgentExecutor` path, not the canonical
   session runtime (`CLI-002`, `hold`).
 
 Target shape (the Cline-like workflow):
 
 ```sh
-opencode serve                                     # or: ort, then /detach
-opencode task target select --server <url>
-opencode task new "Fix the failing test"           # CLI-001
-opencode task send "Now run the focused tests"     # CLI-001
-opencode task send -f ./logs/test.log "Why did this fail?"   # CLI-012 (attachment)
-opencode task view                                 # CLI-001
-opencode task status                               # CLI-006
-opencode attach <url>                              # optional: back to the TUI
+opencode-modded-rust serve                                     # or: ort, then /detach
+opencode-modded-rust task target select --server <url>
+opencode-modded-rust task new "Fix the failing test"           # CLI-001
+opencode-modded-rust task send "Now run the focused tests"     # CLI-001
+opencode-modded-rust task send -f ./logs/test.log "Why did this fail?"   # CLI-012 (attachment)
+opencode-modded-rust task view                                 # CLI-001
+opencode-modded-rust task status                               # CLI-006
+opencode-modded-rust attach <url>                              # optional: back to the TUI
 ```
 
 `CLI-001` and `CLI-006` are delivered, merged into `development` (PR #80, PR #81), and QA-verified
 (2026-09-23); `BUG-036` (PR #82) fixed the `task new` 404 and the `idle` status label. The composition
 is recorded in `handoffs/archive/2026-09-22-cli-task-surface-and-status-handoff.md` (`H-006`).
-`CLI-002` remains on `hold` and retires the parallel `opencode run` engine so headless runs use the
+`CLI-002` remains on `hold` and retires the parallel `opencode-modded-rust run` engine so headless runs use the
 same canonical path.
 
 ## Canonical Card Map
@@ -119,7 +119,7 @@ same canonical path.
 | ID | Lane | Role |
 |---|---|---|
 | CLI-001 | done | Cline-style task send (PR #80; QA done 2026-09-23) |
-| CLI-002 | hold | Route `opencode run` through session runtime (gated) |
+| CLI-002 | hold | Route `opencode-modded-rust run` through session runtime (gated) |
 | CLI-003 | done | Removed server reuse / fresh server per launch |
 | CLI-004 | done | Explicit `/detach` command |
 | CLI-005 | done | Same-workspace attach/reuse resolved NO-GO (explicit-only; 2026-09-26) |

@@ -19,7 +19,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BIN="$REPO/target/debug/opencode"
+BIN="$REPO/target/debug/opencode-modded-rust"
 PORT="${QA_PORT:-4197}"
 BASE="http://127.0.0.1:${PORT}"
 MODEL="${QA_MODEL:-deepseek/deepseek-flash}"
