@@ -5,8 +5,9 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "done"
+status: "hold"
 created: "2026-09-30"
+updated: "2026-10-14"
 ---
 
 # Interrupt still does not stop a running session; deepseek keeps thinking after Esc
@@ -274,3 +275,16 @@ remaining live check (does the request reach the server during a stuck/thinking 
 - Card marked `done` at user request. Residual: still a robustness fix for candidate C1, not a
   proven root cause; the one open live check is pressing `Esc` twice during a `deepseek` thinking
   turn and confirming `POST /session/{id}/abort` is issued and returns `aborted:true`.
+
+## Recurrence - 2026-10-14 (reopened to `hold`)
+
+- User reports interrupt is **still unreliable in `ort`**: the agent keeps thinking / keeps running
+  after the interrupt gesture. This is the same defect the `2026-10-07` closeout marked `done`
+  without ever completing the live TUI check.
+- Per user expectation, re-raising the issue updates this card rather than spawning a duplicate;
+  the card is reopened and placed in `hold` instead of left `done`.
+- Required outcome is now absolute: **interrupt must always be reliable** - there is no case where
+  the agent should be allowed to continue thinking or running after the user intends to interrupt.
+- Not yet re-localized. Next step is the evidence-first live capture from the `2026-10-07` residual
+  (confirm the TUI issues `POST /session/{id}/abort` during a `deepseek` thinking turn and that it
+  returns `aborted:true`), then fix the confirmed stage.
