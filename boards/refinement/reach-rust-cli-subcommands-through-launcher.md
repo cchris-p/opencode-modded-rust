@@ -6,7 +6,7 @@ type: "feature"
 area: "CLI"
 spec: "wiki/cli-surface.md"
 status: "refinement"
-predecessors: "START-033"
+predecessors: "START-034"
 created: "2026-10-14"
 updated: "2026-10-14"
 ---
@@ -34,8 +34,9 @@ have no convenient entry point.
 
 ## Dependency
 
-- Depends on `START-033`, which decides the product command/binary name. The launcher cannot be
-  cleanly renamed or dispatched until that identity is fixed. Do not start until `START-033` lands.
+- Depends on `START-033` (command/binary name) and `START-034` (name scrub); sequenced after both.
+  The launcher cannot be cleanly renamed or dispatched until the product identity is fixed and the
+  stale `scopemux-code` name is gone. Do not start until they land.
 
 ## Proposed design
 
@@ -84,7 +85,8 @@ have no convenient entry point.
 
 ## Related Items
 
-- `START-033` Adopt the scopemux-code command identity — predecessor; decides the launcher name.
+- `START-033` Decouple the product command identity from opencode — sets the command name.
+- `START-034` Scrub scopemux-code product-name references — predecessor; removes the stale name.
 - `CLI-001` Cline-style CLI task send — built the `task`/`session`/`attach` surface this makes reachable.
 - `CLI-006` CLI status visibility; `CLI-012` CLI task file attachments — headless surface made reachable.
 - `CLI-003`/`CLI-005` — launcher/TUI lifecycle decisions this must not disturb.
