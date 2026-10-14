@@ -398,6 +398,9 @@ const SESSION_QUEUE_LIMIT: usize = 32;
 struct PendingPrompt {
     message_id: String,
     prompt_text: String,
+    /// Explicit non-text parts (e.g. CLI file attachments) to apply to the
+    /// materialized user message when this prompt's turn drains.
+    parts: Vec<opencode_session::PartInput>,
     provider: Arc<dyn opencode_provider::Provider>,
     provider_id: String,
     model_id: String,
@@ -1873,6 +1876,7 @@ mod session_queue_tests {
             agent: None,
             command: None,
             arguments: None,
+            parts: None,
         };
 
         let first = session_prompt(
@@ -2524,6 +2528,11 @@ pub struct SessionPromptRequest {
     pub agent: Option<String>,
     pub command: Option<String>,
     pub arguments: Option<String>,
+    /// Explicit prompt parts (file attachments from the CLI, or text parts).
+    /// File parts carry a `file://` URL on a shared filesystem or an inline
+    /// `data:` URL for a remote target; see `opencode_session::PartInput`.
+    #[serde(default)]
+    pub parts: Option<Vec<opencode_session::PartInput>>,
 }
 
 #[derive(Debug)]
@@ -2539,6 +2548,7 @@ async fn session_prompt(
     Path(id): Path<String>,
     Json(req): Json<SessionPromptRequest>,
 ) -> Result<Json<serde_json::Value>> {
+    let parts = req.parts.clone().unwrap_or_default();
     let prompt_text = if let Some(message) = req.message.as_deref() {
         message.to_string()
     } else if let Some(command) = req.command.as_deref() {
@@ -2547,9 +2557,20 @@ async fn session_prompt(
             .map(|args| format!("/{command} {args}"))
             .unwrap_or_else(|| format!("/{command}"))
     } else {
-        return Err(ApiError::BadRequest(
-            "Either `message` or `command` must be provided".to_string(),
-        ));
+        let joined = parts
+            .iter()
+            .filter_map(|part| match part {
+                opencode_session::PartInput::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if joined.trim().is_empty() {
+            return Err(ApiError::BadRequest(
+                "Either `message`, `command`, or a text part must be provided".to_string(),
+            ));
+        }
+        joined
     };
 
     {
@@ -2565,7 +2586,7 @@ async fn session_prompt(
             .await?;
     drop(config);
 
-    let accepted = accept_prompt(
+    let accepted = accept_prompt_with_parts(
         &state,
         &id,
         prompt_text,
@@ -2574,6 +2595,7 @@ async fn session_prompt(
         model_id.clone(),
         req.variant.clone(),
         req.agent.clone(),
+        parts,
     )
     .await?;
 
@@ -2618,6 +2640,32 @@ async fn accept_prompt(
     variant: Option<String>,
     agent: Option<String>,
 ) -> Result<AcceptedPrompt> {
+    accept_prompt_with_parts(
+        state,
+        session_id,
+        prompt_text,
+        provider,
+        provider_id,
+        model_id,
+        variant,
+        agent,
+        Vec::new(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn accept_prompt_with_parts(
+    state: &Arc<ServerState>,
+    session_id: &str,
+    prompt_text: String,
+    provider: Arc<dyn opencode_provider::Provider>,
+    provider_id: String,
+    model_id: String,
+    variant: Option<String>,
+    agent: Option<String>,
+    parts: Vec<opencode_session::PartInput>,
+) -> Result<AcceptedPrompt> {
     let message_id = format!("msg_{}", Uuid::new_v4());
     let (position, depth, started) = {
         let mut queues = SESSION_QUEUES.lock().await;
@@ -2650,6 +2698,7 @@ async fn accept_prompt(
         queue.pending.push_back(PendingPrompt {
             message_id: message_id.clone(),
             prompt_text,
+            parts,
             provider,
             provider_id,
             model_id,
@@ -3920,6 +3969,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
     let task_provider = pending.provider_id.clone();
     let prompt_text = pending.prompt_text.clone();
     let pending_message_id = pending.message_id.clone();
+    let explicit_parts = pending.parts.clone();
 
     // Queued-but-not-yet-active prompts are visible in shared session state so
     // every client can render them, but they must not reach the model as
@@ -4448,6 +4498,26 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
             return;
         }
     };
+
+    // CLI file attachments (and other explicit non-text parts) are appended to
+    // the text-derived parts. Text parts are already represented by the resolved
+    // prompt text, so only non-text parts are added; file URLs that also arrived
+    // via an `@mention` are deduped.
+    let mut parts = parts;
+    for explicit in explicit_parts {
+        if let opencode_session::PartInput::Text { .. } = explicit {
+            continue;
+        }
+        if let opencode_session::PartInput::File { url, .. } = &explicit {
+            let already_present = parts.iter().any(|existing| {
+                matches!(existing, opencode_session::PartInput::File { url: existing_url, .. } if existing_url == url)
+            });
+            if already_present {
+                continue;
+            }
+        }
+        parts.push(explicit);
+    }
 
     let input = opencode_session::PromptInput {
         session_id: session_id.clone(),

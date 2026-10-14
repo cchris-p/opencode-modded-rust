@@ -299,6 +299,8 @@ enum TaskCommands {
     New {
         #[arg(value_name = "PROMPT")]
         prompt: Vec<String>,
+        #[arg(short = 'f', long = "file", value_name = "PATH")]
+        file: Vec<PathBuf>,
         #[arg(long = "server", value_name = "URL")]
         server: Option<String>,
         #[arg(long, default_value_t = false)]
@@ -308,6 +310,8 @@ enum TaskCommands {
     Send {
         #[arg(value_name = "PROMPT")]
         prompt: Vec<String>,
+        #[arg(short = 'f', long = "file", value_name = "PATH")]
+        file: Vec<PathBuf>,
         #[arg(long = "server", value_name = "URL")]
         server: Option<String>,
         #[arg(long = "session", value_name = "SESSION_ID")]
@@ -3049,16 +3053,130 @@ async fn send_task_prompt(
     server: &str,
     session_id: &str,
     prompt: String,
+    parts: &[serde_json::Value],
 ) -> anyhow::Result<TaskPromptResponse> {
     let endpoint = server_url(server, &format!("/session/{}/prompt", session_id));
-    parse_http_json(
-        client
-            .post(endpoint)
-            .json(&serde_json::json!({ "message": prompt }))
-            .send()
-            .await?,
-    )
-    .await
+    let mut body = serde_json::json!({ "message": prompt });
+    if !parts.is_empty() {
+        body["parts"] = serde_json::Value::Array(parts.to_vec());
+    }
+    parse_http_json(client.post(endpoint).json(&body).send().await?).await
+}
+
+/// Maximum size of a file inlined into a prompt for a target without a shared
+/// filesystem (remote server). Mirrors the reference CLI's 10 MiB cap.
+const TASK_ATTACH_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+/// A target is treated as sharing this machine's filesystem only when its host
+/// is loopback. Everything else must receive inline `data:` bytes, because the
+/// server cannot open the client's local path.
+fn server_is_loopback(server: &str) -> bool {
+    match url::Url::parse(server) {
+        Ok(parsed) => match parsed.host() {
+            Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => true,
+        },
+        Err(_) => true,
+    }
+}
+
+/// Classify an attachment as text (UTF-8 round-trip) or by file extension,
+/// matching the reference CLI's text/binary discrimination.
+fn guess_attachment_mime(path: &Path, bytes: &[u8]) -> String {
+    if std::str::from_utf8(bytes)
+        .map(|text| text.as_bytes() == bytes)
+        .unwrap_or(false)
+    {
+        return "text/plain".to_string();
+    }
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// Build the explicit file parts for a task prompt. On a shared filesystem the
+/// part is a `file://` reference the server reads through normal tools; on a
+/// remote target the bytes are inlined as a `data:` URL within the size cap.
+fn build_task_file_parts(
+    server: &str,
+    files: &[PathBuf],
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    use base64::Engine as _;
+
+    let loopback = server_is_loopback(server);
+    let mut parts = Vec::new();
+
+    for raw in files {
+        let path = fs::canonicalize(raw)
+            .map_err(|error| anyhow::anyhow!("Cannot read '{}': {}", raw.display(), error))?;
+        let metadata = fs::metadata(&path)
+            .map_err(|error| anyhow::anyhow!("Cannot read '{}': {}", raw.display(), error))?;
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("attachment")
+            .to_string();
+
+        if metadata.is_dir() {
+            if !loopback {
+                anyhow::bail!(
+                    "Cannot attach local directory to a remote server: {}",
+                    raw.display()
+                );
+            }
+            parts.push(serde_json::json!({
+                "type": "file",
+                "url": format!("file://{}", path.display()),
+                "filename": filename,
+                "mime": "application/x-directory",
+            }));
+            continue;
+        }
+
+        let bytes = fs::read(&path)
+            .map_err(|error| anyhow::anyhow!("Cannot read '{}': {}", raw.display(), error))?;
+        if bytes.len() as u64 > TASK_ATTACH_MAX_BYTES {
+            anyhow::bail!(
+                "Attachment '{}' is {} bytes; the limit is {} bytes",
+                raw.display(),
+                bytes.len(),
+                TASK_ATTACH_MAX_BYTES
+            );
+        }
+        let mime = guess_attachment_mime(&path, &bytes);
+
+        if loopback {
+            parts.push(serde_json::json!({
+                "type": "file",
+                "url": format!("file://{}", path.display()),
+                "filename": filename,
+                "mime": mime,
+            }));
+        } else {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            parts.push(serde_json::json!({
+                "type": "file",
+                "url": format!("data:{};base64,{}", mime, encoded),
+                "filename": filename,
+                "mime": mime,
+            }));
+        }
+    }
+
+    Ok(parts)
 }
 
 fn print_task_prompt_response(session_id: &str, response: &TaskPromptResponse) {
@@ -3210,15 +3328,17 @@ async fn handle_task_command(action: TaskCommands) -> anyhow::Result<()> {
     match action {
         TaskCommands::New {
             prompt,
+            file,
             server,
             stream,
-        } => handle_task_new(prompt, server, stream).await,
+        } => handle_task_new(prompt, file, server, stream).await,
         TaskCommands::Send {
             prompt,
+            file,
             server,
             session,
             stream,
-        } => handle_task_send(prompt, server, session, stream).await,
+        } => handle_task_send(prompt, file, server, session, stream).await,
         TaskCommands::View {
             server,
             session,
@@ -3235,6 +3355,7 @@ async fn handle_task_command(action: TaskCommands) -> anyhow::Result<()> {
 
 async fn handle_task_new(
     prompt: Vec<String>,
+    file: Vec<PathBuf>,
     server: Option<String>,
     stream: bool,
 ) -> anyhow::Result<()> {
@@ -3247,9 +3368,10 @@ async fn handle_task_new(
         .build()?;
     let target = selected_task_target(server, None, false)?;
     ensure_task_target_available(&client, &target).await?;
+    let parts = build_task_file_parts(&target.server, &file)?;
     let title = input.lines().next().map(truncate_text_for_title);
     let session_id = create_task_session(&client, &target.server, title.as_deref()).await?;
-    let response = send_task_prompt(&client, &target.server, &session_id, input).await?;
+    let response = send_task_prompt(&client, &target.server, &session_id, input, &parts).await?;
     let workspace = std::env::current_dir()?.display().to_string();
     save_task_target_selection(&TaskTargetSelection {
         server: target.server.clone(),
@@ -3267,6 +3389,7 @@ async fn handle_task_new(
 
 async fn handle_task_send(
     prompt: Vec<String>,
+    file: Vec<PathBuf>,
     server: Option<String>,
     session: Option<String>,
     stream: bool,
@@ -3281,7 +3404,8 @@ async fn handle_task_send(
     let target = selected_task_target(server, session, true)?;
     ensure_task_target_available(&client, &target).await?;
     let session_id = target.session.as_deref().expect("session required");
-    let response = send_task_prompt(&client, &target.server, session_id, input).await?;
+    let parts = build_task_file_parts(&target.server, &file)?;
+    let response = send_task_prompt(&client, &target.server, session_id, input, &parts).await?;
     print_task_prompt_response(session_id, &response);
     if stream {
         let stream_client = reqwest::Client::new();
@@ -7625,5 +7749,83 @@ mod tests {
             contents.contains("main.rs:"),
             "missing location: {contents}"
         );
+    }
+
+    #[test]
+    fn server_is_loopback_classifies_local_and_remote_targets() {
+        assert!(server_is_loopback("http://127.0.0.1:4096"));
+        assert!(server_is_loopback("http://localhost:4096"));
+        assert!(server_is_loopback("http://[::1]:4096"));
+        assert!(!server_is_loopback("http://10.0.0.5:4096"));
+        assert!(!server_is_loopback("https://example.com"));
+    }
+
+    #[test]
+    fn guess_attachment_mime_detects_text_and_binary() {
+        let path = Path::new("/tmp/notes.txt");
+        assert_eq!(guess_attachment_mime(path, b"hello world"), "text/plain");
+        assert_eq!(
+            guess_attachment_mime(Path::new("/tmp/pic.png"), &[0x89, 0x50, 0x4e, 0x47]),
+            "image/png"
+        );
+        assert_eq!(
+            guess_attachment_mime(Path::new("/tmp/blob.bin"), &[0x00, 0xff, 0x00]),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn build_task_file_parts_uses_file_url_for_loopback() {
+        let dir = std::env::temp_dir().join(format!("opencode-cli012-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"attach me").unwrap();
+
+        let parts = build_task_file_parts("http://127.0.0.1:4096", &[file.clone()]).unwrap();
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["type"], "file");
+        assert_eq!(parts[0]["mime"], "text/plain");
+        assert!(
+            parts[0]["url"].as_str().unwrap().starts_with("file://"),
+            "expected file:// url, got {}",
+            parts[0]["url"]
+        );
+    }
+
+    #[test]
+    fn build_task_file_parts_inlines_data_url_for_remote() {
+        let dir = std::env::temp_dir().join(format!("opencode-cli012r-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"attach me").unwrap();
+
+        let parts = build_task_file_parts("http://10.0.0.5:4096", &[file.clone()]).unwrap();
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["mime"], "text/plain");
+        assert!(
+            parts[0]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:text/plain;base64,"),
+            "expected inline data url, got {}",
+            parts[0]["url"]
+        );
+    }
+
+    #[test]
+    fn build_task_file_parts_rejects_remote_directory() {
+        let dir = std::env::temp_dir().join(format!("opencode-cli012d-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let result = build_task_file_parts("http://10.0.0.5:4096", &[dir.clone()]);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert!(result.is_err(), "remote directory attach must fail");
     }
 }
