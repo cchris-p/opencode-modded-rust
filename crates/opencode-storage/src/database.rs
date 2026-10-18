@@ -170,7 +170,21 @@ impl Database {
         Ok(())
     }
 
-    fn get_database_path() -> Result<PathBuf, DatabaseError> {
+    /// Resolve the path of the shared `opencode.db`.
+    ///
+    /// `OPENCODE_DATA_DIR`, when set to a non-empty value, names the directory
+    /// that holds the database file. Honoring it keeps ORT's session store
+    /// separate from vanilla `opencode`'s on hosts that run both harnesses.
+    /// When the variable is unset (or blank) the historical default,
+    /// `dirs::data_local_dir()/opencode/opencode.db`, is preserved.
+    pub fn get_database_path() -> Result<PathBuf, DatabaseError> {
+        if let Ok(value) = std::env::var("OPENCODE_DATA_DIR") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Ok(PathBuf::from(value).join("opencode.db"));
+            }
+        }
+
         let data_dir = dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("opencode");
