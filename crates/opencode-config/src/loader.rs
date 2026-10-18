@@ -725,6 +725,17 @@ fn collect_opencode_directories(project_dir: &Path) -> Vec<PathBuf> {
         directories.push(global_config);
     }
 
+    // Vanilla opencode stores global commands under ~/.config/opencode on every
+    // OS. On macOS `dirs::config_dir()` is ~/Library/Application Support, so the
+    // XDG-style path must be added explicitly to keep command discovery at
+    // parity with vanilla (skills already scan it directly).
+    if let Some(home) = dirs::home_dir() {
+        let home_config = home.join(".config/opencode");
+        if home_config.exists() && !directories.contains(&home_config) {
+            directories.push(home_config);
+        }
+    }
+
     // Project .opencode directories (walk up from project_dir to worktree root)
     let start_dir = normalize_existing_path(project_dir);
     let stop_dir = detect_worktree_stop(&start_dir);
@@ -1912,6 +1923,39 @@ mod tests {
         }
 
         assert_eq!(result.unwrap().as_deref(), Some(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn home_xdg_config_commands_are_discovered_on_every_platform() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_home = std::env::var_os("HOME");
+        let temp = TestDir::new("opencode_home_xdg_commands");
+        let home = temp.path.join("home");
+        let project = temp.path.join("repo");
+        let command_dir = home.join(".config/opencode/command");
+        fs::create_dir_all(&command_dir).unwrap();
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            command_dir.join("sessions.md"),
+            "---\ndescription: sessions\n---\n\nquery the archive\n",
+        )
+        .unwrap();
+        std::env::set_var("HOME", &home);
+
+        let directories = collect_opencode_directories(&project);
+        let commands = load_commands_from_dir(&home.join(".config/opencode"));
+
+        if let Some(value) = old_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        assert!(
+            directories.contains(&home.join(".config/opencode")),
+            "global ~/.config/opencode must be scanned for commands on every platform"
+        );
+        assert!(commands.contains_key("sessions"));
     }
 
     #[test]
