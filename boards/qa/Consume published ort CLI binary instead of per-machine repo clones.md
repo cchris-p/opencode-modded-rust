@@ -199,3 +199,13 @@ Not covered: `moldavite` is offline in Tailscale (last seen 1d) and
 `webappssub2` is disabled. `standards-sync --apply-all` was still CPU-bound
 archiving mb1's 5.4 GB session store when this pass ended; the git sync for
 every reachable machine is complete.
+
+### Session-archive note - 2026-10-23
+
+`standards-sync --apply-all` was stopped during matrillobase1's session-archive
+hook: staging grew 33 GB -> 36 GB in 90 s with free space falling to 34 GB, a
+disk-exhaustion risk unrelated to this card. The disposable staging directory
+was removed (36 GB reclaimed; mb1 free 34 GB -> 74 GB). The git sync for every
+reachable machine had already completed. The archive pass can be rerun later
+with `STANDARDS_SESSION_ARCHIVE_SYNC=0` for sync-only, or after pruning the
+local store.
