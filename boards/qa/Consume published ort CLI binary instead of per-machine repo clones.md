@@ -5,7 +5,7 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-10-23"
 updated: "2026-10-23"
 ---
@@ -159,3 +159,43 @@ Remaining (needs explicit commit/push authorization):
   checkout per platform for publishing). Do not strip before the config is
   distributed or `ort` breaks on hosts that still expect the checkout.
 - Next CI `development` push will attach a `.rev` to the macOS asset as well.
+### Fleet rollout and cleanup - 2026-10-23
+
+Committed product `bebe3ab` and standards `53a1486`. CI republished both the
+linux and darwin assets at `bebe3ab` with `<asset>.tar.gz.rev`; `ort-install`
+keys them under the commit and runs `0.1.0`.
+
+Standards config reached every reachable host (`standards-sync --apply-all` for
+jasper/webapps/webappssub1; direct `standards-sync` for matrillo/matrillosub1/
+matrillosub2/j8rsxy while `--apply-all` was still archiving mb1's session store).
+Each host then installed the artifact and was cleaned to the artifact-only
+pattern: removed `~/apps/opencode-modded-rust` and the superseded
+`~/standards/vendor/opencode-modded-rust`.
+
+| Host | Reclaimed |
+| --- | --- |
+| jasper | ~12.0 GB |
+| webapps | ~4.2 GB |
+| webappssub1 | ~4.1 GB |
+| matrillo | ~4.1 GB |
+| matrillosub1 | ~8.4 GB |
+| matrillosub2 | ~4.6 GB |
+| j8rsxy | ~3.6 GB (was at 323 MiB free) |
+| matrillobase1 | ~9.2 GB (legacy checkout; builder checkout kept) |
+
+Total: ~50 GB.
+
+Builder decision: **matrillobase1** keeps the single Linux checkout
+(`~/apps/opencode-modded-rust` @ `bebe3ab`, 5.3 GB) for `ort-build` and
+`publish-cli-artifact.sh`. `webapps` stays an app host and binary-only;
+`matrillosub1` is a cold spare (one `vendor-setup opencode-modded-rust` away).
+macOS builds stay on the CI `macos-14` job, so `j8rsxy` is binary-only too.
+
+Verified on every cleaned host: `opencode-rust version` reports `0.1.0` from
+`~/.local/share/ort/bin/current`, and `sc` prints the binary-only guidance
+instead of a raw `cd` error.
+
+Not covered: `moldavite` is offline in Tailscale (last seen 1d) and
+`webappssub2` is disabled. `standards-sync --apply-all` was still CPU-bound
+archiving mb1's 5.4 GB session store when this pass ended; the git sync for
+every reachable machine is complete.
