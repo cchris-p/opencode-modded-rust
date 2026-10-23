@@ -12,8 +12,19 @@ on:
         type: boolean
         default: true
   push:
+    branches:
+      - development
     tags:
       - "v*"
+    paths:
+      - ".github/workflows/native-artifacts.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "scripts/fetch-scopemux-core.sh"
+      - "scripts/package-native-artifacts.sh"
+      - "scripts/ensure-native-artifacts.sh"
+      - "scripts/publish-cli-artifact.sh"
   pull_request:
     paths:
       - ".github/workflows/native-artifacts.yml"
@@ -21,6 +32,7 @@ on:
       - "scripts/fetch-scopemux-core.sh"
       - "scripts/package-native-artifacts.sh"
       - "scripts/ensure-native-artifacts.sh"
+      - "scripts/publish-cli-artifact.sh"
 
 permissions:
   contents: write
@@ -37,7 +49,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          # Build the Linux CLI asset on the oldest supported fleet glibc
+          # (Ubuntu 22.04 = 2.35). A ubuntu-24.04 build requires GLIBC_2.39 and
+          # fails on the 22.04 hosts that consume the artifact.
+          - os: ubuntu-22.04
             deps: |
               sudo add-apt-repository -y ppa:deadsnakes/ppa
               sudo apt-get update
@@ -86,6 +101,9 @@ jobs:
           else
             ( cd native-dist && sha256sum "${pkg}.tar.gz" > "${pkg}.tar.gz.sha256" )
           fi
+          # Revision sidecar so consumers can key a cache dir by commit.
+          # Name it `<asset>.rev`; `ort-install` downloads `<asset>*`.
+          printf '%s\n' "${GITHUB_SHA}" > "native-dist/${pkg}.tar.gz.rev"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -94,6 +112,9 @@ jobs:
           path: native-dist/*
           if-no-files-found: error
 
+      # `development` pushes refresh the rolling native-artifacts release so
+      # binary-only hosts can pull a current CLI without cloning the repo
+      # (INFRA-007). Tags and manual dispatches publish the same way.
       - name: Publish to the native-artifacts release
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
         env:
@@ -104,6 +125,6 @@ jobs:
             gh release create native-artifacts \
               --repo "$GITHUB_REPOSITORY" \
               --title "Native artifacts" \
-              --notes "Prebuilt native ScopeMux provider bundles and CLI binaries (INFRA-006). Assets are keyed by platform and the pinned scopemux-core revision."
-          gh release upload native-artifacts native-dist/*.tar.gz native-dist/*.sha256 \
+              --notes "Prebuilt native ScopeMux provider bundles and CLI binaries (INFRA-006/INFRA-007). Assets are keyed by platform and the pinned scopemux-core revision; .rev carries the source commit."
+          gh release upload native-artifacts native-dist/*.tar.gz native-dist/*.sha256 native-dist/*.rev \
             --repo "$GITHUB_REPOSITORY" --clobber

@@ -170,6 +170,25 @@ build needs are public, so CI clones them over anonymous HTTPS (the workflow set
 `scopemux-test-cases` submodules are intentionally not initialized. If
 `scopemux-core` is ever made private, add token auth to the workflow.
 
+## CLI binary artifacts
+
+`INFRA-007` makes the CLI a downloadable artifact, so most machines run `ort`
+without cloning this repo or installing a Rust toolchain.
+
+- Publish from a builder: `scripts/publish-cli-artifact.sh` builds
+  `target/release/opencode-modded-rust`, packages
+  `opencode-modded-rust-<os>-<arch>.tar.gz` (+ `.sha256` and `.rev`), and uploads
+  it to the rolling `native-artifacts` release. `--dry-run` packages only.
+- CI also publishes on `development` pushes. The Linux asset is built on
+  `ubuntu-22.04` (glibc 2.35, the oldest fleet host); a `ubuntu-24.04` build
+  requires GLIBC 2.39 and fails on 22.04 machines.
+- Consumers install with `~/standards/utilities/ort-install` (no checkout
+  required). It verifies the checksum and installs to
+  `~/.local/share/ort/bin/<rev>/`, with `current` pointing at the newest
+  revision. `ort` auto-installs when no binary is present; use
+  `OPENCODE_RUST_USE_CHECKOUT=1` on a builder to prefer a local
+  `target/debug`/`target/release` binary.
+
 ## Development and validation
 
 ```bash

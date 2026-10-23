@@ -27,3 +27,4 @@
 
 # Vendored native dependency (scopemux-core), fetched via scripts/fetch-scopemux-core.sh
 /third_party/
+/dist/
