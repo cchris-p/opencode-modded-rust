@@ -93,6 +93,22 @@ A change that fails a test is a core change and needs explicit justification.
 - `FUTURE-PROOFING-011` Future-proof the durable and cloud runtime
 - `FUTURE-PROOFING-012` Future-proof trust and spend controls
 
+## Execution order
+
+1. `FUTURE-PROOFING-002` — boundaries (foundation).
+2. `FUTURE-PROOFING-005` — eight-test suite (after 002; can run in parallel with 003).
+3. `FUTURE-PROOFING-003` — capability profiles and shim registry.
+4. `FUTURE-PROOFING-004` — policy versioning (after 003).
+5. `FUTURE-PROOFING-007` — efficiency scoreboard (parallel; establishes the baseline).
+6. `FUTURE-PROOFING-006` — absorption cadence (after 003 and 007).
+7. `FUTURE-PROOFING-008` — decision-log egress policy (prerequisite for `DECISION-005`).
+8. `FUTURE-PROOFING-009` — data-flywheel contract (after 008).
+9. `FUTURE-PROOFING-012` — trust and spend (parallel, after 002).
+10. `FUTURE-PROOFING-010` — event/wake primitives (P2, parallel).
+11. `FUTURE-PROOFING-011` — durable/cloud runtime (after 002 and 010).
+
+The `DECISION-*` epic depends on 002, 003, and 008; the rest can proceed in parallel.
+
 ## Non-goals
 
 - Predicting the next model or vendor.

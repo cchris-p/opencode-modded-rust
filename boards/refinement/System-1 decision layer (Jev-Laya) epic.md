@@ -113,6 +113,24 @@ hard dependency.
 - Every class declares an authority tier; promotion above `advisory` requires evidence
   and an owner decision.
 
+## Execution order
+
+1. `DECISION-002` — inventory and baseline (no code).
+2. `DECISION-003` — boundary and registry (after 002 and `FUTURE-PROOFING-002`).
+3. `DECISION-004` — engine client and degradation (after 003).
+4. `DECISION-005` — shadow, log, and replay (after 004 and
+   `FUTURE-PROOFING-008`).
+5. `DECISION-006` — evaluation harness (parallel after 002; required before
+   promotion).
+6. `DECISION-007`, `DECISION-008`, `DECISION-009` — Wave 1 (after 005 and 006).
+7. `DECISION-010`, `DECISION-011` — Wave 2 (after Wave 1 and the V1 task-stage
+   runtime).
+8. `DECISION-012`, `DECISION-013` — Wave 3 (advisory only; after Wave 2).
+9. `DECISION-014` — Laya alignment (after a usable log volume and 006).
+10. `DECISION-015` — post-Jev audit (after at least one Wave 2 class is live).
+
+Wave 1 deliberately avoids decisions that depend on the V1 task-stage rewrite.
+
 ## Metrics
 
 - decision density (% of decisions served by System 1)
