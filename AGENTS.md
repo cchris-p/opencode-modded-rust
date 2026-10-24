@@ -45,6 +45,16 @@
 - Full parity with OpenCode is deferred.
 - Upstream sync is optional and selective, not a standing maintenance obligation.
 
+## Future-Proofing And Decision Layer
+
+- The product must remain **absorption-resistant**: a small stable core, a volatile policy layer, deletion-ready shims, owned data, and first-class efficiency/trust.
+- Canonical substrate docs: `wiki/harness-substrate.md` and `invariants/future-proofing.md`.
+- System-1 decision layer docs: `wiki/decision-layer.md`, `wiki/decision-log-egress.md`, `wiki/post-jev-roadmap.md`, and `invariants/decision-layer.md`.
+- Board: `FUTURE-PROOFING-001` is the living guidance epic; `DECISION-001` is the Jev/Laya implementation epic.
+- Jev means the TypeSafe System One decision API (`POST https://api.typesafe.ai/v1/systemone`), not the `jev-ultrafast` browser agent. Jev is not a CLI; do not probe PATH for it.
+- Classifiers propose; deterministic rules, invariants, and humans dispose. No classifier may grant permission, change a disposition, merge, or weaken an invariant.
+- Structural changes must pass the eight future-proofing tests in `invariants/future-proofing.md` before implementation.
+
 ## ScopeMux Integration Scope
 
 - Integration work includes the `scopemux` development it depends on.

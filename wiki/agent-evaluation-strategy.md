@@ -138,9 +138,45 @@ Periodically sample real personal-use tasks and classify them with the same eval
 
 This prevents the system from optimizing only for a canned benchmark set.
 
-## Signals that matter more than speed
+## Decision and efficiency evaluation
 
-These signals outrank raw speed for V1 through V3:
+The harness substrate (see `wiki/harness-substrate.md`) adds two evaluation axes
+that are not absorbed by model improvements.
+
+### Decision quality
+
+For every System-1 decision class, record:
+
+- accuracy and per-class precision/recall
+- calibration (ECE or a reliability curve)
+- cost per decision
+- p50/p95 latency
+- escalation rate to the model
+- agreement with the current behavior in shadow mode
+- held-out and out-of-distribution results
+
+A decision class is not promoted on in-distribution gains alone. A null or
+negative result is a valid outcome.
+
+### Harness efficiency
+
+Compare `ort` against vanilla OpenCode on the same real tasks and record:
+
+- input and output tokens
+- cost per successful task
+- prompt-cache hit rate
+- p50/p95 turn latency
+- startup time
+- peak RSS
+- binary and disk footprint
+- recovery behavior after interruption
+
+These are harness properties. They do not improve just because the model gets
+better, which is why they are first-class rather than tie-breakers.
+
+## Signals that matter more than raw model speed
+
+These signals outrank raw model speed for V1 through V3:
 
 - completion rate on bounded real tasks
 - correctness after verification and review
@@ -149,8 +185,12 @@ These signals outrank raw speed for V1 through V3:
 - stability of task-state and lifecycle transitions
 - context quality relative to task scope
 - consistency across repeated runs of the same task pack
+- cost per successful task and decision density
+- trust: permission blast radius, secret scope, and spend caps
 
-Speed is still useful, but mainly as a secondary tie-breaker once reliability is acceptable.
+Raw model speed remains a secondary tie-breaker once reliability is acceptable.
+Harness-induced cost, latency, and trust are not tie-breakers; they are part of the
+product thesis.
 
 ## Suggested scorecard
 
@@ -162,6 +202,8 @@ Each evaluation run should produce a compact scorecard containing:
 - verification status
 - review outcome
 - reopen required or not
+- tokens, cost, cache hit rate, and p50/p95 turn latency
+- decision density and escalation rate where the decision layer is active
 - short notes on the root cause of failure or success
 
 This should be simple enough to maintain manually at first and easy to structure later.
@@ -188,9 +230,12 @@ This should be simple enough to maintain manually at first and easy to structure
 
 ## Immediate follow-up work
 
-This strategy implies at least four concrete follow-ups:
+This strategy implies at least six concrete follow-ups:
 
 - define the first stable V1 evaluation task pack
 - define a reusable review-quality rubric and review fixtures
 - persist structured evaluation results so regressions can be compared over time
 - add a lightweight evaluation runner or operator workflow for repeated reruns
+- build the harness efficiency scoreboard against vanilla OpenCode
+  (`FUTURE-PROOFING-007`)
+- build the per-class decision evaluation harness (`DECISION-006`)

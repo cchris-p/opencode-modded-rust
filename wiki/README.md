@@ -14,7 +14,11 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `vision.md` defines the product intent and near-term posture.
 - `product-boundary.md` defines what this product is and is not.
 - `reference-strategy.md` explains how the TypeScript repo is used as a reference line.
-- `agent-evaluation-strategy.md` defines how the Rust runtime is judged across V1 through V3.
+- `agent-evaluation-strategy.md` defines how the Rust runtime is judged across V1 through V3, including decision quality and harness efficiency.
+- `harness-substrate.md` defines the absorption-resistant substrate: the flywheel, stable core versus volatile policy, the decision boundary, capability profiles, shim retirement, and the eight future-proofing tests.
+- `decision-layer.md` defines the System-1 decision layer (Jev/Laya), the decision inventory, authority tiers, waves, evaluation, and rollout.
+- `decision-log-egress.md` defines the decision-log schema, sensitivity tiers, egress rules, retention, deletion, and fine-tune export policy.
+- `post-jev-roadmap.md` defines the phases after the first Jev implementation, including Laya fine-tuning, engine swap, absorption review, and the next frontier.
 - `scopemux-integration-plan.md` defines the deferred retrieval boundary, how `scopemux-core` can help this project, and the guardrails for integrating it.
 - `scopemux-map-integration.md` defines the idealized `scopemux` map model: current/target state, delta views, observability and refactor nodes, incremental reconciliation, and the runtime integration phases.
 - `laya-integration.md` defines what `laya` is, its candidate integration surfaces (MCP tools or a decision-provider boundary), and the guardrails that keep runtime authority intact.
