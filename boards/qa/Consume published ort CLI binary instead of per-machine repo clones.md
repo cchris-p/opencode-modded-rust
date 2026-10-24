@@ -209,3 +209,28 @@ was removed (36 GB reclaimed; mb1 free 34 GB -> 74 GB). The git sync for every
 reachable machine had already completed. The archive pass can be rerun later
 with `STANDARDS_SESSION_ARCHIVE_SYNC=0` for sync-only, or after pruning the
 local store.
+
+### Auto-update - 2026-10-24
+
+Standards now keeps an installed artifact current instead of only installing once:
+
+- `utilities/ort-install` is update-aware by default: it fetches the rolling
+  `native-artifacts` `.rev` sidecar and replaces the installed revision only
+  when it changed. Added `--if-installed`, `--no-update`, and `--quiet`.
+- `opencode-config` refreshes an installed artifact in a throttled background
+  job at `ort` launch (default every 15 minutes; `OPENCODE_RUST_AUTO_UPDATE=0`
+  disables it) and adds `ort-update`. `ort-doctor` shows the installed revision.
+- `standards-sync` runs the same refresh on every sync, so a fleet sync
+  converges installed hosts (`STANDARDS_SYNC_ORT_UPDATE=0` disables it).
+- CI already republishes both assets and the `.rev` on `development` code
+  pushes; the last published rev is `bebe3ab`.
+
+Rollout: webapps, webappssub1, matrillo, matrillosub1, and j8rsxy are at
+standards `a39e285` with `auto-update=yes` and the `bebe3ab` artifact.
+matrillobase1 is at `a39e285` and remains the builder with no artifact cache, so
+its checkout is used by default (`OPENCODE_RUST_USE_CHECKOUT=1` is still the
+explicit switch once an artifact exists there). jasper, moldavite, and
+matrillosub2 were unreachable.
+
+Next product code push on `development` publishes a new `.rev`; hosts converge on
+their next `ort` launch or `standards-sync` without manual reinstalls.
