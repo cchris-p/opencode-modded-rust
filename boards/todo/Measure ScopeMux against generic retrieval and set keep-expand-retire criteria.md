@@ -17,7 +17,7 @@ Measure the Workspace Intelligence provider against the generic repository-local
 on real tasks, and use the result to decide whether to keep, expand, or retire it.
 
 This is the card that makes ScopeMux earn its place. It is a strategic bet, not an
-invariant.
+invariant. Decision on 2026-10-24: **B + D (tiered, time-boxed)**.
 
 ## Why this exists
 
@@ -50,25 +50,43 @@ decision.
 - Write a report in `wiki/` or `docs/`, linked from this card.
 - Record the keep/expand/retire decision and rationale.
 
-## Keep/expand/retire options (decision pending)
+## Keep/expand/retire decision (2026-10-24)
+
+**Selected: B + D — tiered, time-boxed.**
+
+- **B (tiered):** keep WIP as an optional profile for local models and subagents if it
+  helps there; expand to other models only when it beats generic retrieval on both cost
+  and outcome.
+- **D (time-boxed):** first review when 20 real tasks and 10 subagent tasks are recorded,
+  or after 6 weeks, whichever comes first. Fixed evaluation budget; no open-ended
+  expansion before the review.
+- **Expand** only if the comparison shows at least one of:
+  - >= 10% token reduction per successful task,
+  - a measurable task-success or review-quality improvement,
+  and no task-success regression and no worse cost per successful task.
+- **Keep tiered** if WIP helps local models/subagents but not frontier models.
+- **Retire or keep experimental** if there is no measurable benefit after the review.
+- The System-1 routing treatment arm (`DECISION-017`) is evaluated alongside static
+  profiles. A null result there does not block the tiered keep; it only means static
+  profiles are sufficient for routing.
+
+Options retained for future review:
 
 - **A. Strict:** retire or keep experimental if no measurable token or task improvement
   after the defined sample.
-- **B. Tiered:** keep as an optional profile for local models and subagents if it helps
-  there; expand to other models only when it beats generic on both cost and outcome.
+- **B. Tiered:** keep as an optional profile for local models and subagents; expand only
+  on evidence.
 - **C. Strategic:** keep regardless as part of the owned context/data pillar, but cap
   investment and measure annually.
-- **D. Time-boxed:** keep for one quarter with a fixed budget, then decide.
-
-The operator will choose in the next planning pass; this card records the options and
-blocks further expansion until the choice is made.
+- **D. Time-boxed:** keep for a fixed window with a fixed budget, then decide.
 
 ## Acceptance criteria
 
 - The comparison runs end to end on the task pack.
 - Results are committed as a report, not only in chat.
 - The report separates harness effects from model effects.
-- A keep/expand/retire decision is recorded.
+- The B+D decision is recorded, and the 20-task / 10-subagent / 6-week review trigger is
+  tracked.
 - If the decision is expand, a follow-up profile/activation card is opened.
 - If the decision is retire, a removal/fallback card is opened and the generic path is
   verified.

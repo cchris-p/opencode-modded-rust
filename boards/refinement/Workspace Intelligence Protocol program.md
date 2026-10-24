@@ -64,6 +64,7 @@ WIP closes those gaps without making ScopeMux a hard dependency.
 - Measure ScopeMux against generic retrieval and set keep/expand/retire criteria
   (`FUTURE-PROOFING-017`).
 - Wire map signals into decision classes (`DECISION-016`).
+- Evaluate System-1 routing of WIP provider/rung/budget at runtime (`DECISION-017`).
 - Own the scope-specific cards:
   - `SCOPE-006` map-backed locate tool with grep fallback (one capability, not the role),
   - `SCOPE-007` subagent-scoped workspace intelligence,
@@ -90,6 +91,8 @@ WIP closes those gaps without making ScopeMux a hard dependency.
 5. `SCOPE-007`..`SCOPE-011` — capability work, ordered by value:
    subagents, data, freshness, language coverage, transport.
 6. `DECISION-016` — decision integration after 014/015.
+7. `DECISION-017` — System-1 WIP routing after 015 and the decision boundary; shadow
+   first, profile-bounded.
 
 ## Non-goals
 

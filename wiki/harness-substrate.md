@@ -293,6 +293,8 @@ concrete implementation of the context/data pillar for code workspaces.
 - It is optional and evidence-only. The harness must pass the eight tests without it.
 - It is activated by a capability profile, not a model-ID branch. The Qwen-via-Ollama
   path is the initial experiment profile.
+- System-1 routing may choose generic vs WIP, the rung, and the budget within the
+  profile; the profile is a hard bound and the runtime disposes.
 - Its capabilities form a ladder: parser/index, map, task projection/reconciliation,
   map-backed tools, decision integration. Each rung is independently enableable,
   measurable, and removable.

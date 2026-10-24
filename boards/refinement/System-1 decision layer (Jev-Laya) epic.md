@@ -71,6 +71,7 @@ hard dependency.
 | Tool-call normalization | provider parsers | repair/classification gate |
 | Loop continuation | stream/timeout/budget | continue/stop/escalate |
 | Retrieval sufficiency | context assembly/ScopeMux | sufficient/insufficient, next source |
+| Workspace-intelligence routing | capability profile + config | generic vs WIP, rung, budget, sufficiency |
 | Failure classification | logs/manual triage | transport vs model vs harness |
 | Review severity | review agent/operator | blocking/non-blocking/noise |
 | Board/task classification | boards workflow | lane/next-action suggestion |
@@ -89,6 +90,7 @@ hard dependency.
 
 - `DECISION-010` tool-call normalization and repair
 - `DECISION-011` model-tier routing and board/task classification
+- `DECISION-017` workspace-intelligence routing (generic vs WIP, rung, budget)
 
 ### Wave 3 — advisory, higher stakes
 
@@ -105,6 +107,7 @@ hard dependency.
 - `DECISION-014` Align Laya to Jev from the decision log and add the engine-swap playbook
 - `DECISION-015` Post-Jev absorption audit and demotion plan
 - `DECISION-016` Wire workspace-intelligence signals into retrieval, compaction, and review decisions
+- `DECISION-017` Use System-1 decisions to govern workspace-intelligence routing at runtime
 
 ## Authority
 
@@ -131,6 +134,8 @@ hard dependency.
 10. `DECISION-015` — post-Jev audit (after at least one Wave 2 class is live).
 11. `DECISION-016` — workspace-intelligence signals (parallel with Wave 1/2; depends on
     `FUTURE-PROOFING-014`/`015`).
+12. `DECISION-017` — System-1 WIP routing (after 015 and the decision boundary; shadow
+    first, profile-bounded).
 
 Wave 1 deliberately avoids decisions that depend on the V1 task-stage rewrite.
 

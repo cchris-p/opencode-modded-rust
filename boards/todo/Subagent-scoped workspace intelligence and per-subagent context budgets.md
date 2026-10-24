@@ -31,6 +31,8 @@ can anchor the subagent to the relevant nodes and return a compact delta.
 - Extend the retrieval request with a subagent identity and parent task id.
 - Derive the subagent's seed nodes from its own objective, not the parent transcript.
 - Enforce a per-subagent token and cost budget.
+- Allow System-1 routing (`DECISION-017`) to choose generic vs WIP and the rung for the
+  subagent, within the profile and budget bounds.
 - Return a slice scoped to the subagent's stage and role.
 - Keep the parent task record authoritative; the subagent result is evidence.
 - Record the subagent's map request, provider, budget, and fallback.
@@ -60,6 +62,7 @@ can anchor the subagent to the relevant nodes and return a compact delta.
 - `FUTURE-PROOFING-015`
 - `FUTURE-PROOFING-017`
 - `DECISION-016`
+- `DECISION-017` System-1 WIP routing
 - `DECISION-011` model-tier routing (subagent routing)
 - `wiki/workspace-intelligence.md`
 - `invariants/workspace-intelligence.md`

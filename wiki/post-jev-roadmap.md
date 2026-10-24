@@ -108,7 +108,10 @@ Workspace Intelligence Protocol (`wiki/workspace-intelligence.md`):
 - small models and subagents get scoped, token-budgeted slices;
 - retrieval provenance and map outcomes join the decision log;
 - activation moves from the Qwen-only experiment to capability profiles;
-- the keep/expand/retire decision is made from measured token and task outcomes.
+- System-1 routing may choose generic vs WIP, the rung, budget, and sufficiency within
+  those profile bounds (`DECISION-017`);
+- the keep/expand/retire decision is made from measured token and task outcomes (B+D:
+  tiered, time-boxed).
 
 This track is not a prerequisite for Jev, but the two reinforce each other: the map
 supplies evidence for retrieval/compaction/review decisions, and the decision layer

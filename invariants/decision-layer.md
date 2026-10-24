@@ -81,6 +81,9 @@ engine). Explanatory detail lives in `wiki/decision-layer.md`.
   the deterministic ruleset. A classifier is advisory input, not the ruleset.
 - Provider selection still follows `invariants/providers.md`. A router may
   recommend; configuration and policy dispose.
+- Workspace-intelligence provider/rung routing is a decision class. It MAY narrow a
+  capability profile, MUST NOT widen it, and MUST NOT bypass WIP fallback or egress rules
+  (`invariants/workspace-intelligence.md`).
 
 ## Governance
 

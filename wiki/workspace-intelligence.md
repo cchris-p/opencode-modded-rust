@@ -223,6 +223,33 @@ Activation is policy, not a model-ID branch in code.
 This replaces the permanent `ollama + qwen*` rule in `invariants/providers.md` with a
 profile-driven rule (`FUTURE-PROOFING-015`).
 
+## System-1 runtime governance
+
+A static profile is the bound; a System-1 decision can choose within it. The decision
+layer may route, per task or subagent:
+
+- `generic` — skip WIP,
+- `wip:w0`..`wip:w3` — use a specific rung,
+- `escalate` — switch model or ask,
+- and a follow-up **context sufficiency** decision (enough / one more slice / different
+  source / fall back).
+
+Why: a one-line edit does not need a map; an unfamiliar multi-file change does; a subagent
+has a different budget from its parent; a stale map should fall back to generic. A cheap,
+calibrated decision can make that call without a model turn.
+
+Guardrails:
+
+- the capability profile is a hard bound; the classifier cannot enable a rung, provider,
+  or budget outside it,
+- low confidence falls back to the profile default,
+- the runtime enforces; the classifier only proposes,
+- no authority over stage, verification, review, completion, or disposition,
+- local-first egress; no sensitive content to a hosted engine,
+- shadow first; promotion only after evaluation.
+
+This is an evaluation hypothesis, not a settled behavior. Tracked by `DECISION-017`.
+
 ## Subagents and small models
 
 Subagents are the clearest use case:
@@ -244,7 +271,13 @@ Tracked by `SCOPE-007`.
 
 ## Evaluation and exit criteria
 
-Compare generic retrieval vs WIP on real tasks:
+Compare three arms on real tasks:
+
+1. generic only,
+2. static WIP profile,
+3. System-1 routing within the profile bounds (`DECISION-017`).
+
+Record:
 
 - tokens saved per task and per subagent,
 - context precision/recall,
@@ -253,22 +286,28 @@ Compare generic retrieval vs WIP on real tasks:
 - p50/p95 latency,
 - map freshness/staleness,
 - fallback rate,
-- cost per successful task.
+- cost per successful task,
+- routing accuracy against the arm that would have been best.
 
 Evaluation must use held-out and out-of-distribution tasks, not only the repo the map was
 tuned on.
 
-### Keep/expand/retire options (decision pending)
+### Keep/expand/retire decision (2026-10-24)
 
-- **A. Strict:** retire or keep experimental if there is no measurable token or task
-  improvement after a defined sample.
-- **B. Tiered:** keep as an optional profile for local models and subagents if it helps
-  there, expand to other models only when it beats generic on both cost and outcome.
-- **C. Strategic:** keep regardless because it is part of the owned context/data pillar,
-  but cap investment and measure annually.
-- **D. Time-boxed:** keep for one quarter with a fixed budget, then decide.
+**Selected: B + D — tiered, time-boxed.**
 
-The decision is recorded in `FUTURE-PROOFING-017` when the first evaluation completes.
+- **B (tiered):** keep WIP as an optional profile for local models and subagents if it
+  helps there; expand to other models only when it beats generic on both cost and outcome.
+- **D (time-boxed):** first review when 20 real tasks and 10 subagent tasks are recorded,
+  or after 6 weeks, whichever comes first. Fixed evaluation budget.
+- **Expand** only with >= 10% token reduction or a measurable task/review improvement,
+  no task-success regression, and no worse cost per successful task.
+- **Keep tiered** if it helps local models/subagents but not frontier models.
+- **Retire or keep experimental** if there is no measurable benefit after the review.
+- A null result for System-1 routing does not block the tiered keep; it only means static
+  profiles are sufficient for routing.
+
+The decision is recorded in `FUTURE-PROOFING-017`; the review trigger is tracked there.
 
 ## Data and provenance
 
@@ -301,17 +340,19 @@ Tracked by `FUTURE-PROOFING-016`.
 
 WIP supplies evidence; the decision layer decides:
 
-| Decision class | WIP input |
+| Decision class | WIP input / output |
 |---|---|
+| WIP routing | choose generic vs WIP, rung, budget, and sufficiency within profile bounds |
 | Retrieval sufficiency | candidate coverage, anchors, confidence, token estimate |
 | Compaction trigger | delta size, token estimates, which spans must survive |
 | Review triage | delta, observability, duplicate/refactor signals |
 | Model/tier routing | task complexity signal (advisory only) |
 
 One-way rule: map -> decision -> runtime. The map never advances state, and the decision
-layer never lets the map widen its own authority.
+layer never lets the map widen its own authority. A WIP-routing decision can narrow the
+profile, never widen it.
 
-Tracked by `DECISION-016`.
+Tracked by `DECISION-016` and `DECISION-017`.
 
 ## Gaps this closes
 
@@ -345,6 +386,7 @@ Tracked by `DECISION-016`.
 - `FUTURE-PROOFING-016` — artifact packaging and map schema versioning
 - `FUTURE-PROOFING-017` — evaluation and keep/expand/retire criteria
 - `DECISION-016` — map signals into retrieval, compaction, and review decisions
+- `DECISION-017` — System-1 routing of WIP provider/rung/budget at runtime
 - `SCOPE-007` — subagent-scoped workspace intelligence
 - `SCOPE-008` — retrieval provenance and outcomes into the data flywheel
 - `SCOPE-009` — map freshness/staleness SLOs
@@ -353,7 +395,8 @@ Tracked by `DECISION-016`.
 
 ## Open decisions
 
-- Keep/expand/retire criteria (options above).
 - Whether WIP transport should be stdio/JSON-RPC or another protocol.
 - Whether a profile may enable WIP for frontier models, or only local/subagent paths in
   the first phase.
+- Whether System-1 WIP routing is advisory or gated after evaluation. It cannot widen a
+  profile either way.

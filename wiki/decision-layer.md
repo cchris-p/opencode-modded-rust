@@ -70,6 +70,7 @@ already contains decision points that are either deterministic or generative:
 | Tool-call normalization | provider parsers | Repair/classification gate |
 | Loop continuation | stream/timeout/budget logic | Continue/stop/escalate classification |
 | Retrieval sufficiency | context assembly and ScopeMux | Sufficient/insufficient and next source |
+| Workspace-intelligence routing | capability profile + config | Generic vs WIP, rung, budget, sufficiency |
 | Failure classification | logs and manual triage | Transport vs model vs harness |
 | Review severity | review agent and operator | Blocking/non-blocking/noise |
 | Board/task classification | boards workflow | Lane/next-action suggestion |
@@ -135,7 +136,8 @@ decision layer decide.
 
 The direction is one-way: **map -> decision -> runtime**. The map never advances a task
 stage or widens its own authority. The runtime still owns inclusion thresholds, token
-budgets, and stage. Tracked by `DECISION-016`.
+budgets, and stage. A WIP-routing decision may narrow a capability profile, never widen
+it. Tracked by `DECISION-016` and `DECISION-017`.
 
 ## Decision classes and waves
 
@@ -158,8 +160,10 @@ These survive the V1 task-stage rewrite and can ship first:
   before they waste a turn. This is a local-model reliability lever.
 - **Model/tier routing and escalation** — choose cheap vs strong model; escalate on
   low confidence or task complexity.
-- **Board/task classification** — suggest lane, type, or next action; never mutate
-  a disposition.
+- **Workspace-intelligence routing** — choose generic vs WIP, the map rung, budget, and
+  slice sufficiency within the capability profile (`DECISION-017`).
+- **Board/task classification** — suggest lane, type, or next action; never mutate a
+  disposition.
 
 ### Wave 3 — advisory, higher stakes
 
@@ -274,6 +278,7 @@ and the next frontier. The short version:
 - `DECISION-015` — post-Jev absorption audit and demotion plan
 - `DECISION-016` — wire workspace-intelligence signals into retrieval, compaction, and
   review-triage decisions
+- `DECISION-017` — System-1 routing of the WIP provider, rung, and budget at runtime
 
 ## Related
 

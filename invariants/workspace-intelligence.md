@@ -62,6 +62,21 @@ implementation, ScopeMux. Explanatory detail lives in `wiki/workspace-intelligen
   budgets, and fallback.
 - The profile MUST be recorded in the session and the decision log.
 
+## System-1 routing
+
+- The WIP provider, rung, budget, and slice sufficiency MAY be proposed by a System-1
+  decision provider.
+- The capability profile is a hard bound. A classifier MUST NOT enable a rung, provider,
+  or budget outside the profile.
+- A low-confidence routing decision MUST fall back to the profile default.
+- The runtime MUST enforce; the classifier only proposes.
+- A routing decision MUST NOT advance a stage, verify, review, complete, or change a
+  disposition.
+- Routing decisions MUST be logged with profile, engine, confidence, cost, and fallback
+  reason, and MUST be replayable.
+- Routing MUST start in shadow mode and MUST NOT be promoted without evaluation.
+- A null routing result is valid; static profiles MAY be sufficient.
+
 ## Subagents
 
 - A subagent request MUST carry its own objective, stage, seeds, and budget.

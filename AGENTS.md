@@ -52,6 +52,7 @@
 - System-1 decision layer docs: `wiki/decision-layer.md`, `wiki/decision-log-egress.md`, `wiki/post-jev-roadmap.md`, and `invariants/decision-layer.md`.
 - Workspace Intelligence Protocol docs: `wiki/workspace-intelligence.md` and `invariants/workspace-intelligence.md`. ScopeMux is the first WIP implementation and part of the project substrate; this repository is its main utilizer.
 - ScopeMux is optional and evidence-only. Activation is capability-profile-driven; the Qwen-via-Ollama path is the initial experiment profile, not a permanent model-ID rule. It composes with `opencode-lsp` and does not replace it.
+- System-1 routing may propose generic vs WIP, the rung, budget, and slice sufficiency within the capability profile. The profile is a hard bound; the runtime disposes; the classifier cannot widen it or bypass fallback/egress.
 - Board: `FUTURE-PROOFING-001` is the living guidance epic; `FUTURE-PROOFING-013` is the Workspace Intelligence Protocol program; `DECISION-001` is the Jev/Laya implementation epic.
 - Jev means the TypeSafe System One decision API (`POST https://api.typesafe.ai/v1/systemone`), not the `jev-ultrafast` browser agent. Jev is not a CLI; do not probe PATH for it.
 - Classifiers propose; deterministic rules, invariants, and humans dispose. No classifier may grant permission, change a disposition, merge, or weaken an invariant.

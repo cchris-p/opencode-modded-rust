@@ -44,6 +44,8 @@ however, it is a future-proofing anti-pattern:
 - Select the profile at session start; record it in the session and decision log.
 - Keep the Qwen-via-Ollama path as a named experiment profile with identical behavior.
 - Allow a profile to enable ScopeMux for a subagent task class.
+- The profile is the hard bound for System-1 runtime routing (`DECISION-017`); the
+  classifier may select within it, never outside it.
 - Reject an unknown provider/rung with a clear error and fall back to generic.
 - Remove the model-id branch from the core; keep `model_scope_enabled` only if it
   implements the Qwen profile, not the policy.
@@ -74,6 +76,7 @@ however, it is a future-proofing anti-pattern:
 - `FUTURE-PROOFING-014`
 - `FUTURE-PROOFING-017`
 - `FUTURE-PROOFING-003` capability profiles and shim registry
+- `DECISION-017` System-1 WIP routing
 - `SCOPE-005` Qwen-only activation (predecessor)
 - `invariants/providers.md`
 - `invariants/workspace-intelligence.md`
