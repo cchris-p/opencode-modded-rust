@@ -50,7 +50,9 @@
 - The product must remain **absorption-resistant**: a small stable core, a volatile policy layer, deletion-ready shims, owned data, and first-class efficiency/trust.
 - Canonical substrate docs: `wiki/harness-substrate.md` and `invariants/future-proofing.md`.
 - System-1 decision layer docs: `wiki/decision-layer.md`, `wiki/decision-log-egress.md`, `wiki/post-jev-roadmap.md`, and `invariants/decision-layer.md`.
-- Board: `FUTURE-PROOFING-001` is the living guidance epic; `DECISION-001` is the Jev/Laya implementation epic.
+- Workspace Intelligence Protocol docs: `wiki/workspace-intelligence.md` and `invariants/workspace-intelligence.md`. ScopeMux is the first WIP implementation and part of the project substrate; this repository is its main utilizer.
+- ScopeMux is optional and evidence-only. Activation is capability-profile-driven; the Qwen-via-Ollama path is the initial experiment profile, not a permanent model-ID rule. It composes with `opencode-lsp` and does not replace it.
+- Board: `FUTURE-PROOFING-001` is the living guidance epic; `FUTURE-PROOFING-013` is the Workspace Intelligence Protocol program; `DECISION-001` is the Jev/Laya implementation epic.
 - Jev means the TypeSafe System One decision API (`POST https://api.typesafe.ai/v1/systemone`), not the `jev-ultrafast` browser agent. Jev is not a CLI; do not probe PATH for it.
 - Classifiers propose; deterministic rules, invariants, and humans dispose. No classifier may grant permission, change a disposition, merge, or weaken an invariant.
 - Structural changes must pass the eight future-proofing tests in `invariants/future-proofing.md` before implementation.
@@ -61,7 +63,8 @@
 - The ScopeMux integration program owns the required `scopemux-core` engine changes and the `scopemux-notes` planning/board work that gates them; upstream `FIX-*`/`WI-*` items are in-scope deliverables, not external prerequisites.
 - Upstream artifacts are edited in their own repositories (`$HOME/apps/scopemux-core`, `$HOME/apps/scopemux-notes`); cross-repo ownership rules still apply.
 - This does not make `scopemux` a V1 dependency or change runtime authority over task state, lifecycle, verification, or review.
-- The native ScopeMux provider is compiled into the product binary but activates only for the local Qwen-via-Ollama model (`ollama` + a model id starting with `qwen`); every other model and unsupported workspace uses the generic provider. Canonical rule: `invariants/providers.md`.
+- The native ScopeMux provider is compiled into the product binary. The current implementation uses a temporary `ollama` + `qwen*` selection gate as the initial experiment profile; every other model and unsupported workspace uses the generic provider. The target policy is capability-profile-driven activation, not a permanent model-ID rule (`FUTURE-PROOFING-015`). Canonical rules: `invariants/providers.md` and `invariants/workspace-intelligence.md`.
+- The long-term role is the Workspace Intelligence Protocol: an optional, evidence-only context/data capability. It composes with `opencode-lsp` and does not replace it. See `wiki/workspace-intelligence.md`.
 - Canonical rule: `invariants/integration-scope.md`.
 - In this repository (`opencode-modded-rust`), ScopeMux work must always use a separate git worktree for PR flows. This rule does not apply to the `scopemux` repositories themselves.
 

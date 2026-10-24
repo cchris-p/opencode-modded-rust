@@ -104,6 +104,7 @@ hard dependency.
 - `DECISION-006` Build the per-class decision evaluation harness
 - `DECISION-014` Align Laya to Jev from the decision log and add the engine-swap playbook
 - `DECISION-015` Post-Jev absorption audit and demotion plan
+- `DECISION-016` Wire workspace-intelligence signals into retrieval, compaction, and review decisions
 
 ## Authority
 
@@ -128,6 +129,8 @@ hard dependency.
 8. `DECISION-012`, `DECISION-013` — Wave 3 (advisory only; after Wave 2).
 9. `DECISION-014` — Laya alignment (after a usable log volume and 006).
 10. `DECISION-015` — post-Jev audit (after at least one Wave 2 class is live).
+11. `DECISION-016` — workspace-intelligence signals (parallel with Wave 1/2; depends on
+    `FUTURE-PROOFING-014`/`015`).
 
 Wave 1 deliberately avoids decisions that depend on the V1 task-stage rewrite.
 

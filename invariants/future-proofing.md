@@ -29,6 +29,20 @@ govern how the harness absorbs change. Explanatory detail lives in
 - A decision provider MUST be replaceable without changing the runtime loop.
 - A decision provider MUST NOT be required for the harness to complete work.
 
+## Workspace intelligence
+
+- The Workspace Intelligence Protocol (WIP) and its first implementation (ScopeMux) are
+  optional context/data capabilities, not runtime authority.
+- The harness MUST pass the eight tests without WIP; generic retrieval MUST remain the
+  default and fallback.
+- WIP activation MUST be capability-profile-driven, not hardcoded to a model id.
+- WIP capabilities MUST be individually enableable, measurable, and removable.
+- Plan nodes MUST be projections of the authoritative task record; the task record wins.
+- WIP MUST compose with `opencode-lsp`; it MUST NOT replace or duplicate the LSP client.
+- WIP data MUST follow `invariants/workspace-intelligence.md` and
+  `wiki/decision-log-egress.md`.
+- WIP's keep/expand/retire decision MUST be evidence-based and recorded.
+
 ## Deletion-ready
 
 - Every shim and policy item MUST have one owner, a firing or usage metric, a kill
@@ -111,5 +125,7 @@ A change that fails a test is a core change and requires explicit justification.
 - `wiki/decision-layer.md`
 - `wiki/decision-log-egress.md`
 - `wiki/post-jev-roadmap.md`
+- `wiki/workspace-intelligence.md`
 - `invariants/decision-layer.md`
+- `invariants/workspace-intelligence.md`
 - `invariants/verification.md`

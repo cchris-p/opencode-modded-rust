@@ -99,6 +99,22 @@ Exit criteria:
 - the cost saving is measured, not assumed,
 - data egress is reduced for at least one sensitive class.
 
+## Context/data track — Workspace Intelligence
+
+In parallel with the decision phases, the context/data pillar matures through the
+Workspace Intelligence Protocol (`wiki/workspace-intelligence.md`):
+
+- ScopeMux provides a persistent map of current and target state;
+- small models and subagents get scoped, token-budgeted slices;
+- retrieval provenance and map outcomes join the decision log;
+- activation moves from the Qwen-only experiment to capability profiles;
+- the keep/expand/retire decision is made from measured token and task outcomes.
+
+This track is not a prerequisite for Jev, but the two reinforce each other: the map
+supplies evidence for retrieval/compaction/review decisions, and the decision layer
+decides when and how much map context to use. It remains optional and must pass the eight
+future-proofing tests.
+
 ## Phase 4 — Expansion and absorption
 
 Expand the decision layer and let the flywheel work:
@@ -201,3 +217,5 @@ The post-Jev state is successful when:
 - `DECISION-001` — System-1 decision layer epic.
 - `DECISION-015` — post-Jev absorption audit and demotion plan.
 - `FUTURE-PROOFING-001` — guidance epic.
+- `FUTURE-PROOFING-013` — Workspace Intelligence Protocol program.
+- `FUTURE-PROOFING-017` — ScopeMux evaluation and keep/expand/retire criteria.

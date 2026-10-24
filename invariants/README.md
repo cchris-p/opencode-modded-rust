@@ -40,6 +40,7 @@ The `invariants/` directory contains absolute truths for the final desired `open
 - `verification.md` defines verification requirements.
 - `future-proofing.md` defines the absorption-resistant substrate: stable core versus volatile policy, deletion-ready shims, capability profiles, the eight tests, and first-class efficiency/trust.
 - `decision-layer.md` defines the System-1 decision-layer authority rule, engine neutrality, typed/calibrated/budgeted/audited decisions, egress, degradation, and post-Jev swap requirements.
+- `workspace-intelligence.md` defines the Workspace Intelligence Protocol role, optionality, evidence-only authority, capability ladder, profile-driven activation, subagent scoping, protocol versioning, data/egress, packaging, and evaluation.
 - `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.
 - `integration-scope.md` defines that ScopeMux integration work includes the `scopemux-core` and `scopemux-notes` development it depends on.
 - Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.

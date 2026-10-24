@@ -19,6 +19,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `decision-layer.md` defines the System-1 decision layer (Jev/Laya), the decision inventory, authority tiers, waves, evaluation, and rollout.
 - `decision-log-egress.md` defines the decision-log schema, sensitivity tiers, egress rules, retention, deletion, and fine-tune export policy.
 - `post-jev-roadmap.md` defines the phases after the first Jev implementation, including Laya fine-tuning, engine swap, absorption review, and the next frontier.
+- `workspace-intelligence.md` defines the Workspace Intelligence Protocol (WIP), ScopeMux's role in the context/data pillar, the LSP analogy and its limits, the capability ladder, capability-profile activation, and the keep/expand/retire decision.
 - `scopemux-integration-plan.md` defines the deferred retrieval boundary, how `scopemux-core` can help this project, and the guardrails for integrating it.
 - `scopemux-map-integration.md` defines the idealized `scopemux` map model: current/target state, delta views, observability and refactor nodes, incremental reconciliation, and the runtime integration phases.
 - `laya-integration.md` defines what `laya` is, its candidate integration surfaces (MCP tools or a decision-provider boundary), and the guardrails that keep runtime authority intact.

@@ -1,12 +1,19 @@
 # ScopeMux Integration Plan
 
+> **Future-proofing role:** `wiki/workspace-intelligence.md` defines the long-term
+> Workspace Intelligence Protocol (WIP), ScopeMux's placement in the context/data pillar,
+> capability profiles, and the keep/expand/retire decision. This document remains the
+> near-term integration and retrieval-boundary plan.
+
 ## Purpose
 
 Define the minimum architecture boundary the Rust runtime should preserve so `ScopeMux` can improve retrieval and context quality later without expanding V1 scope now.
 
 ## Current Position
 
-`ScopeMux` is not a V1 requirement.
+`ScopeMux` is not a V1 requirement. It is, however, part of the project substrate as the
+first implementation of the Workspace Intelligence Protocol (`wiki/workspace-intelligence.md`),
+and `opencode-modded-rust` is its main utilizer.
 
 V1 still needs to ship as a useful personal daily-driver with explicit task state, runtime-owned lifecycle stages, focused context construction, verification, and fresh-context review.
 

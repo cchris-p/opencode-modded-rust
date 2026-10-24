@@ -93,6 +93,15 @@ A change that fails a test is a core change and needs explicit justification.
 - `FUTURE-PROOFING-011` Future-proof the durable and cloud runtime
 - `FUTURE-PROOFING-012` Future-proof trust and spend controls
 
+### Workspace intelligence
+
+- `FUTURE-PROOFING-013` Workspace Intelligence Protocol program (epic)
+- `FUTURE-PROOFING-014` Define the WIP contract and capability negotiation
+- `FUTURE-PROOFING-015` Replace hardcoded Qwen-only ScopeMux activation with capability-profile policy
+- `FUTURE-PROOFING-016` Package the native workspace-intelligence provider as an artifact
+- `FUTURE-PROOFING-017` Measure ScopeMux against generic retrieval and set keep-expand-retire criteria
+- `DECISION-016` Wire workspace-intelligence signals into retrieval, compaction, and review decisions
+
 ## Execution order
 
 1. `FUTURE-PROOFING-002` — boundaries (foundation).
@@ -107,7 +116,19 @@ A change that fails a test is a core change and needs explicit justification.
 10. `FUTURE-PROOFING-010` — event/wake primitives (P2, parallel).
 11. `FUTURE-PROOFING-011` — durable/cloud runtime (after 002 and 010).
 
-The `DECISION-*` epic depends on 002, 003, and 008; the rest can proceed in parallel.
+### Workspace intelligence track
+
+1. `FUTURE-PROOFING-013` — program and role definition.
+2. `FUTURE-PROOFING-014` — WIP contract and capability negotiation.
+3. `FUTURE-PROOFING-015` — capability-profile activation (replaces the Qwen-only gate).
+4. `FUTURE-PROOFING-016` — artifact packaging and schema versioning (parallel).
+5. `FUTURE-PROOFING-017` — evaluation and keep/expand/retire criteria (parallel; gates
+   further investment).
+6. `SCOPE-007`..`SCOPE-011` — subagent scoping, data, freshness, language coverage,
+   out-of-process transport.
+
+The `DECISION-*` epic depends on 002, 003, and 008; the rest can proceed in parallel. The
+workspace-intelligence track is optional for the decision layer but feeds `DECISION-016`.
 
 ## Non-goals
 

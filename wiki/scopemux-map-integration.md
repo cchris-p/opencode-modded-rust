@@ -1,5 +1,10 @@
 # ScopeMux Map Integration
 
+> **Future-proofing role:** `wiki/workspace-intelligence.md` defines the Workspace
+> Intelligence Protocol (WIP), ScopeMux's placement in the context/data pillar, capability
+> profiles, and the keep/expand/retire decision. This document remains the target map
+> model and stage-consumption design.
+
 ## Purpose
 
 Define the idealized way `scopemux-core` should serve `opencode-modded-rust`: not as a search index bolted onto the runtime, but as a live **map** of the workspace that lets an agent understand a task, change it, and verify it using as little context as possible.

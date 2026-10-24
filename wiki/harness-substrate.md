@@ -284,6 +284,28 @@ The data contract exists for three reasons:
 The third reason is the compounding advantage. A generic harness can copy a
 feature; it cannot copy your private outcomes.
 
+## Workspace intelligence and retrieval
+
+ScopeMux is the first implementation of the **Workspace Intelligence Protocol (WIP)**
+defined in `wiki/workspace-intelligence.md`. It is not a separate moat; it is the
+concrete implementation of the context/data pillar for code workspaces.
+
+- It is optional and evidence-only. The harness must pass the eight tests without it.
+- It is activated by a capability profile, not a model-ID branch. The Qwen-via-Ollama
+  path is the initial experiment profile.
+- Its capabilities form a ladder: parser/index, map, task projection/reconciliation,
+  map-backed tools, decision integration. Each rung is independently enableable,
+  measurable, and removable.
+- Its highest-value use case is a small model or a spawned subagent that cannot afford a
+  file dump and needs the smallest faithful slice.
+- It composes with `opencode-lsp`; it does not replace it.
+- Its plan nodes are projections of the authoritative task record.
+- Its retrieval provenance and outcomes feed the decision log and the owned data flywheel.
+
+The WIP contract is versioned and capability-negotiated, with an in-process transport
+first and an out-of-process transport later. It is LSP-like in contract discipline, not in
+scope.
+
 ## Degradation ladder
 
 The harness must complete work without a single hosted dependency:
@@ -349,6 +371,8 @@ a quiet exception.
   shim becoming obsolete to its removal.
 - **Decision density** — share of harness decisions served by System 1.
 - **Cost per successful task** — total tokens, credits, and compute.
+- **Context tokens saved** — WIP vs generic retrieval, per task and per subagent.
+- **Map freshness and fallback rate** — how often WIP is stale or unavailable.
 - **Escalation rate** — share of System 1 decisions escalated to the model.
 - **Replay fidelity** — share of logged decisions reproduced exactly.
 - **Offline completion** — task success with the hosted engine unavailable.
@@ -382,4 +406,5 @@ in `wiki/post-jev-roadmap.md`.
 ## Board
 
 - `FUTURE-PROOFING-001` — guidance epic (stays open; action items spawn from it).
+- `FUTURE-PROOFING-013` — Workspace Intelligence Protocol program (epic).
 - `DECISION-001` — System-1 decision layer (Jev/Laya) epic.

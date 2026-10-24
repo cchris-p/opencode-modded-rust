@@ -12,6 +12,11 @@ request_id: "191c814a-1e0b-45f6-8ad0-20db0d46f3eb"
 
 # Replace the code grep tool with ScopeMux node search, keeping grep as fallback
 
+> **Role note:** This card is one Workspace Intelligence Protocol capability (a map-backed
+> locate tool with grep fallback), not the definition of ScopeMux. The program is
+> `FUTURE-PROOFING-013`; the contract is `FUTURE-PROOFING-014`; activation is
+> `FUTURE-PROOFING-015`.
+
 ## Summary
 
 Add an agent tool call that searches the workspace through the ScopeMux map instead of walking the filesystem. The call queries the registered node set (symbols, InfoBlocks, structural IR) across the whole tree in one shot, so the agent "transcends" the file/directory-tree walk that `grep` does today and finds what it needs faster and cheaper.
@@ -41,6 +46,9 @@ Implement the grep replacement with ScopeMux after that verification. Expected e
 
 ## Related Items
 
+- `FUTURE-PROOFING-013` Workspace Intelligence Protocol program.
+- `FUTURE-PROOFING-014` WIP contract and capability negotiation.
+- `FUTURE-PROOFING-015` capability-profile activation.
 - `SCOPE-001` Idealized scopemux map integration - the locate/slice model this tool instantiates.
 - `SCOPE-002` Integrate scopemux-core behind the retrieval-provider boundary - provider plumbing to reuse.
 - `SCOPE-005` Activate the ScopeMux provider only for the local Qwen-via-Ollama model - activation scope.

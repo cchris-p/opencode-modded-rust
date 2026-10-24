@@ -120,6 +120,23 @@ Components:
    latency, escalation rate, and held-out/out-of-distribution behavior.
 7. **Capability profiles** — which classes are delegated for which model.
 
+## Workspace-intelligence inputs
+
+The Workspace Intelligence Protocol (`wiki/workspace-intelligence.md`) is a decision
+**input**, not a decision maker. It supplies structured evidence; the runtime and the
+decision layer decide.
+
+| Decision class | Map input |
+| --- | --- |
+| Retrieval sufficiency | candidate coverage, anchors, confidence, token estimate |
+| Compaction trigger | delta size, token estimates, spans that must survive |
+| Review triage | delta, observability, duplicate/refactor signals |
+| Model/tier routing | task complexity signal (advisory only) |
+
+The direction is one-way: **map -> decision -> runtime**. The map never advances a task
+stage or widens its own authority. The runtime still owns inclusion thresholds, token
+budgets, and stage. Tracked by `DECISION-016`.
+
 ## Decision classes and waves
 
 ### Wave 1 — low risk, stable boundaries
@@ -255,12 +272,16 @@ and the next frontier. The short version:
 - `DECISION-013` — Wave 3: safety screening and memory write policy
 - `DECISION-014` — Laya alignment and engine-swap playbook
 - `DECISION-015` — post-Jev absorption audit and demotion plan
+- `DECISION-016` — wire workspace-intelligence signals into retrieval, compaction, and
+  review-triage decisions
 
 ## Related
 
 - `wiki/harness-substrate.md`
 - `wiki/decision-log-egress.md`
 - `wiki/post-jev-roadmap.md`
+- `wiki/workspace-intelligence.md`
 - `invariants/decision-layer.md`
 - `invariants/future-proofing.md`
+- `invariants/workspace-intelligence.md`
 - `boards/refinement/System-1 decision layer (Jev-Laya) epic.md`
