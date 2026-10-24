@@ -25,6 +25,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `laya-integration.md` defines what `laya` is, its candidate integration surfaces (MCP tools or a decision-provider boundary), and the guardrails that keep runtime authority intact.
 - `jev-ultrafast-integration.md` defines what Jev UltraFast is, records that it is not planned for integration, and scopes the boundary and guardrails that would apply if a browser-automation capability were ever adopted.
 - `agent-debugging-without-tui.md` defines the preferred non-TUI QA/debug path for agent-session runtime work.
+- `ort-auto-update.md` defines how the published CLI artifact is built, distributed, verified, and auto-updated on artifact-only hosts (`INFRA-006`/`INFRA-007`).
 - `cli-surface.md` is the canonical reference for CLI task-surface and TUI launch/detach/attach behavior, and maps the owning `CLI-*` board items.
 - `advanced-coding-session-polling.md` defines the low-context waits on coding-session state, including the agreed first agent-tool slice and its follow-up cards.
 - `coding-session-parity-audit.md` audits the Rust coding-session agentic path against the reference behavior (`BUG-004` evidence).
