@@ -387,6 +387,10 @@ impl Default for SessionRunStatus {
 static SESSION_RUN_STATUS: Lazy<RwLock<HashMap<String, SessionRunStatus>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// How long abort waits for the cooperative prompt-token path (which lets tools
+/// kill their child processes) before the hard run-cancel drops the run future.
+const ABORT_HARD_CANCEL_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
+
 static ACTIVE_PROMPTS: Lazy<RwLock<HashMap<String, Arc<opencode_session::SessionPrompt>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
@@ -4662,8 +4666,23 @@ async fn abort_active_session_prompt(
     }
 
     let prompt_runner = ACTIVE_PROMPTS.read().await.get(&id).cloned();
+    // Capture the run token before any await so a later turn cannot be cancelled
+    // by mistake once this run finishes during the grace period below.
+    let run_cancel = {
+        let queues = SESSION_QUEUES.lock().await;
+        queues
+            .get(&id)
+            .and_then(|queue| queue.run_cancel.as_ref())
+            .cloned()
+    };
     let aborted = if let Some(prompt_runner) = prompt_runner {
         prompt_runner.cancel(&id).await;
+        // The prompt token is the cooperative path: tools observe it and a bash
+        // tool kills its process tree from that branch. Give that unwinding a
+        // moment before the hard cancel below drops the run future; otherwise a
+        // spawned child process can outlive the interrupt and keep mutating
+        // files (BUG-064).
+        tokio::time::sleep(ABORT_HARD_CANCEL_GRACE).await;
         true
     } else {
         false
@@ -4672,11 +4691,8 @@ async fn abort_active_session_prompt(
     // Also cancel the run-scoped token that `drain_session_queue` selects on, so
     // a run parked on an await that ignores the prompt token is dropped and
     // finalized rather than left wedged (BUG-043).
-    {
-        let queues = SESSION_QUEUES.lock().await;
-        if let Some(cancel) = queues.get(&id).and_then(|queue| queue.run_cancel.as_ref()) {
-            cancel.cancel();
-        }
+    if let Some(cancel) = run_cancel {
+        cancel.cancel();
     }
 
     // A pending question blocks inside its tool call, where the prompt loop does
