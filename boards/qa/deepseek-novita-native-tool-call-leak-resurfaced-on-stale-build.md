@@ -5,8 +5,9 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/providers.md"
-status: "doing"
+status: "qa"
 created: "2026-10-12"
+updated: "2026-10-24"
 ---
 
 # Novita DeepSeek native tool-call leak resurfaced from a build without the BUG-060/BUG-061 normalization

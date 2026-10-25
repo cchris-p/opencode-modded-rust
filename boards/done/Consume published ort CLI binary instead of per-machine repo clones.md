@@ -5,9 +5,9 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-10-23"
-updated: "2026-10-23"
+updated: "2026-10-25"
 ---
 
 # Consume The Published ort CLI Binary Instead Of Per-Machine Repo Clones
@@ -234,3 +234,28 @@ matrillosub2 were unreachable.
 
 Next product code push on `development` publishes a new `.rev`; hosts converge on
 their next `ort` launch or `standards-sync` without manual reinstalls.
+
+## QA - 2026-10-25 (agent self-QA, matrillobase1)
+
+Verified the consumer contract from the published assets, without touching the builder's
+default resolver state.
+
+- **Asset + checksum:** downloaded `opencode-modded-rust-linux-x86_64.tar.gz` (+ `.sha256` and
+  `.tar.gz.rev`) from the rolling `native-artifacts` release; `sha256sum -c` -> `OK`. The `.rev`
+  sidecar reads `bebe3ab0e8cfab90ef4d36a452cc4df5cace4381`.
+- **Runs:** extracted binary reports `opencode-modded-rust 0.1.0`.
+- **glibc floor:** `objdump -T` max required symbol version is `GLIBC_2.34`, so the asset runs on the
+  fleet's Ubuntu 22.04 (2.35) hosts; the prior ubuntu-24.04-only `GLIBC_2.39` requirement is gone.
+- **Consumer install:** `utilities/ort-install --dir <tmp> --force` downloaded, checksum-verified, and
+  installed `bin/<rev>/opencode-modded-rust` with a `bin/current` symlink; the installed binary runs
+  `version` -> `0.1.0`.
+- **No-checkout host:** spot-checked `webapps` over SSH: no `~/apps/opencode-modded-rust`, artifact
+  cache resolves to `~/.local/share/ort/bin/bebe3ab...`, and the binary reports `0.1.0`.
+- **Rev currency:** `bebe3ab` is an ancestor of `development` `13336f2`, and `git diff bebe3ab..HEAD`
+  over `crates/`, `Cargo.*`, `scripts/`, `.github/`, `build.rs` is empty (only docs/board/wiki commits
+  since), so the published rev still matches the shipped product code.
+- **Publish path:** `.github/workflows/native-artifacts.yml` publishes both platform tarballs plus
+  `.sha256`/`.rev` on `development` pushes, paths-filtered to code and artifact scripts.
+
+Residual: only one binary-only host (`webapps`) was re-spot-checked in this pass; the fleet-wide
+cleanup table above is the prior evidence for the rest. Nothing blocking remains.

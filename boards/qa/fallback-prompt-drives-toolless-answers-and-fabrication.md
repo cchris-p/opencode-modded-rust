@@ -5,8 +5,9 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-10-12"
+updated: "2026-10-25"
 ---
 
 # Fallback system prompt drives Qwen (and default DeepSeek) to answer without tools and fabricate state
@@ -102,3 +103,39 @@ DeepSeek model, which currently tolerates it better.
 - A deterministic check reproduces the transcript shape (skill loaded -> tool-call-free terminal
   answer) on the pre-fix prompt and shows the corrected behavior on the fixed prompt.
 - `cargo test -p opencode-session` / `-p opencode-provider` pass; `cargo fmt --all` clean.
+## Implementation - 2026-10-25
+
+Landed the prompt and skill-tool halves; the optional post-skill loop guard was deliberately not
+added (it would change loop control and is not needed for the acceptance bar).
+
+- **Fallback prompt** (`crates/opencode-session/src/prompt_templates/qwen.txt`): added a `# Grounding`
+  section (verify with tools before asserting, never invent file/tool/board/session state, never
+  pretend a tool ran, do the work with tools, ask when information is missing) and a `# Skills`
+  section (loading a skill starts a workflow; execute it with tools; never summarize it as the
+  result). Removed the "One word answers are best" instruction, the toy examples (`2 + 2`, prime
+  numbers, golf balls), and the hard "fewer than 4 lines" cap; the tone section now says correctness
+  and grounding come before brevity while staying concise. This also changes the default
+  `deepseek/deepseek-flash` path, which uses the same fallback.
+- **Skill-tool output** (`crates/opencode-tool/src/skill.rs`): `SKILL_EXECUTION_DIRECTIVE` is emitted
+  inside `<skill_content>` before the skill body, stating the skill defines a workflow to execute with
+  tools, not an answer to summarize. The tool description stays vanilla-compatible.
+- **Deterministic regression coverage** (reproduces the transcript shape without a live model):
+  - `opencode-session` `system::tests::fallback_prompt_requires_tool_grounding_and_skill_execution`
+    asserts, for `ollama/qwen3:30b` and `deepseek/deepseek-flash`, that the pre-fix "One word answers"
+    conflict is gone and the grounding + skill-execution clauses are present.
+  - `opencode-server`
+    `agentic::tests::build_system_prompt_grounds_fallback_models_on_tools_and_skills` covers the
+    actual assembly path (`build` agent has no prompt -> model fallback).
+  - `opencode-tool` `skill::tests::skill_output_instructs_executing_the_workflow_with_tools` executes
+    the tool and asserts the directive precedes the skill body.
+
+Verification (2026-10-25):
+
+- `cargo fmt --all` clean.
+- `cargo test -p opencode-session -p opencode-provider`: 171 + 124 + 11 + 9 + 7 + 4 + 2 passed, 0
+  failed (offline, `SCOPEMUX_SKIP_NATIVE_BUILD=1`).
+- `cargo test -p opencode-tool`: 67 passed; `cargo test -p opencode-server agentic::tests`: 4 passed.
+
+Remaining QA: a live replay on `ollama/qwen3:30b` (and one `deepseek/deepseek-flash` turn) that loads
+`board-where-left-off` and must actually call tools. The deterministic tests prove the conflicting
+instruction is gone and the directive is present, not that a given model complies.
