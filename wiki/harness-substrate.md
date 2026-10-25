@@ -163,6 +163,61 @@ Rules:
    change, not a core change.
 4. Removing a policy item must not require a core change.
 
+### Crate boundary map (as implemented)
+
+Every workspace crate is classified as core, boundary, policy, or interface, and the
+classification is enforced by `crates/opencode-core/tests/architecture_layers.rs`
+(`FUTURE-PROOFING-002`). The test reads each crate's normal `[dependencies]` and
+fails on a forbidden edge, so the rule is not a convention.
+
+| Layer | Crates | Rule |
+| --- | --- | --- |
+| Stable core | `opencode-core`, `opencode-types`, `opencode-util`, `opencode-storage`, `opencode-permission`, `opencode-plugin`, `opencode-retrieval` | May depend only on stable core. |
+| Boundary | `opencode-provider`, `opencode-tool`, `opencode-grep`, `opencode-lsp`, `opencode-mcp`, `opencode-config`, `opencode-command`, `opencode-agent`, `opencode-session`, `opencode-server`, `opencode-watcher` | May wire core and policy; must not depend on a process interface. |
+| Policy | `opencode-scopemux` | May depend only on stable core contracts. |
+| Interface | `opencode-cli`, `opencode-tui` | Process entry points; may wire anything. |
+
+Why the classification looks this way:
+
+- `opencode-retrieval` is core: it owns the generic retrieval contract and the
+  default/fallback provider, which the harness must keep when WIP is unavailable.
+- `opencode-scopemux` is policy: it is one optional Workspace Intelligence Protocol
+  implementation, not runtime authority.
+- `opencode-plugin` is core: it is the extension contract/bus, not a set of plugins.
+- `opencode-session` is boundary, not core: it assembles prompts and selects a
+  retrieval provider, so it legitimately depends on policy (`opencode-scopemux`).
+  Durable session/task state contracts live in `opencode-storage`/`opencode-types`.
+  Extracting prompt assembly into its own policy crate is a later refactor, not a
+  prerequisite for the boundary.
+- `opencode-provider` is boundary: it is the vendor transport. The provider
+  *abstraction* that the core relies on lives in the core types.
+
+The boundary is enforced in three directions:
+
+1. core -> core only (no core crate reaches a boundary, policy, or interface crate);
+2. policy -> core only (no policy crate reaches an adapter or interface);
+3. boundary -> core, boundary, or policy, but never a process interface.
+
+Adding a crate requires updating the map; adding or removing a decision class, shim,
+prompt, or profile does not.
+
+### Decision boundary stub
+
+`opencode_core::decision` is the only policy entry point. It defines the typed
+`DecisionRequest`/`DecisionResult` contract, the `DecisionProvider` trait, and the
+`DeterministicProvider` stub (rules rung of the degradation ladder). Decision classes
+are data-driven strings registered by policy code, so:
+
+- adding a class is a `with_rule(...)` registration (add test);
+- removing a class is `without_class(...)` and a typed `UnsupportedClass` error (delete test);
+- swapping a hosted engine for the stub is a provider substitution at the call site
+  (swap test);
+- the stub runs offline with no Jev/Laya dependency (offline test).
+
+The V1 task-stage runtime can call the same trait: the request/result types are
+serializable and runtime-owned, so a new loop consumes the boundary without a core
+change. Rule/engine implementations and the registry expansion belong to `DECISION-003`.
+
 ## Decision versus generation
 
 A harness makes two kinds of calls:

@@ -21,6 +21,15 @@ govern how the harness absorbs change. Explanatory detail lives in
 - The stable core MUST NOT import a specific decision engine, model, or prompt.
 - Adding or removing a decision class, shim, prompt, or model profile MUST be a
   policy change, not a core change.
+- Every crate MUST be classified as core, boundary, policy, or interface in the map
+  recorded in `wiki/harness-substrate.md`, and the dependency rule MUST be enforced
+  by a test (`crates/opencode-core/tests/architecture_layers.rs`), not by convention.
+- Core, policy, and boundary crates MUST NOT acquire a forbidden edge: core depends
+  only on core, policy only on core contracts, and boundary never on a process
+  interface. Any new edge is a core change that requires justification.
+- The core's decision boundary (`opencode_core::decision`) MUST be the only policy
+  entry point. Decision classes are data-driven; no core edit may be required to add
+  or remove one.
 
 ## Decision and generation
 
