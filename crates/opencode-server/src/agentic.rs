@@ -394,6 +394,20 @@ mod tests {
     }
 
     #[test]
+    fn build_system_prompt_grounds_fallback_models_on_tools_and_skills() {
+        // Reproduces the BUG-065 shape: the `build` agent defines no system prompt, so the
+        // fallback model prompt is used. It must demand tool grounding and skill execution.
+        let agent = AgentInfo::build();
+        for model in ["deepseek/deepseek-flash", "ollama/qwen3:30b"] {
+            let prompt = build_system_prompt(&agent, model, "test-provider", "/tmp/test-proj");
+            assert!(!prompt.contains("One word answers are best"));
+            assert!(prompt.contains("Investigate before you assert"));
+            assert!(prompt.contains("NEVER invent file contents"));
+            assert!(prompt.contains("execute that workflow with tools"));
+        }
+    }
+
+    #[test]
     fn build_system_prompt_uses_agent_prompt_when_set() {
         let agent = AgentInfo::build().with_system_prompt("Custom agent prompt body");
         let prompt = build_system_prompt(

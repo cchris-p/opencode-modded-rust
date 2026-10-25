@@ -199,6 +199,33 @@ mod tests {
     }
 
     #[test]
+    fn fallback_prompt_requires_tool_grounding_and_skill_execution() {
+        for model in ["ollama/qwen3:30b", "deepseek/deepseek-flash"] {
+            let prompt = SystemPrompt::for_model(model);
+            assert!(
+                !prompt.contains("One word answers are best"),
+                "{model} fallback prompt must not request one-word answers"
+            );
+            assert!(
+                prompt.contains("Investigate before you assert"),
+                "{model} fallback prompt must require verification before asserting"
+            );
+            assert!(
+                prompt.contains("NEVER invent file contents"),
+                "{model} fallback prompt must forbid fabricated state"
+            );
+            assert!(
+                prompt.contains("Loading a skill does not complete the task"),
+                "{model} fallback prompt must state that loading a skill starts a workflow"
+            );
+            assert!(
+                prompt.contains("execute that workflow with tools"),
+                "{model} fallback prompt must require executing a loaded skill with tools"
+            );
+        }
+    }
+
+    #[test]
     fn test_environment_output() {
         let ctx = EnvironmentContext {
             model_api_id: "claude-sonnet-4-20250514".to_string(),
