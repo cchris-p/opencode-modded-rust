@@ -7,7 +7,7 @@ area: "INFRA"
 spec: ""
 status: "done"
 created: "2026-10-23"
-updated: "2026-10-25"
+updated: "2026-10-28"
 ---
 
 # Consume The Published ort CLI Binary Instead Of Per-Machine Repo Clones
@@ -259,3 +259,22 @@ default resolver state.
 
 Residual: only one binary-only host (`webapps`) was re-spot-checked in this pass; the fleet-wide
 cleanup table above is the prior evidence for the rest. Nothing blocking remains.
+
+### Artifact-only conversion - 2026-10-28 (OIZG-REM-034)
+
+Converted the macOS host `OIZG-REM-034` (`Mac16,7`, `darwin-aarch64`) to the consumer pattern and
+confirmed `matrillobase1` as the single builder.
+
+- **Builder (`matrillobase1`):** checkout at `development` `4aa625d`, clean, no
+  `~/.local/share/ort` artifact cache, `scripts/publish-cli-artifact.sh` present, `gh` authenticated
+  as `cchris-p`. Left unchanged.
+- **Consumer (`OIZG-REM-034`):** `ort-install` downloaded and checksum-verified
+  `opencode-modded-rust-darwin-aarch64.tar.gz` (`.rev` `4aa625d`); `ort-doctor` reports
+  `installed_rev=4aa625da50a6...` and `source=artifact-first`; the installed binary runs and reports
+  `opencode-modded-rust 0.1.0`.
+- **Removed the local dev tree:** `~/apps/opencode-modded-rust` (4.6 GB, mostly `target/`),
+  `~/.cache/opencode-modded-rust` (8.1 MB native build cache), and the empty
+  `~/worktrees/opencode-modded-rust` worktree-build config.
+
+Residual: `matrillobase1`'s root filesystem is 99% full (16 GB free of 983 GB), which is tight for
+the designated builder. Freeing space there is separate infrastructure work.
