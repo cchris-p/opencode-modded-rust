@@ -131,6 +131,7 @@ exists; `invariants/qa/README.md` was added with the evidence-backed rules).
 ## Disposition
 
 Closed 2026-11-04 by direct closeout after self-QA, per owner direction.
+Fix commit: `9953279` on `development`.
 
 ## Related Items
 
