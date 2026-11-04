@@ -5,9 +5,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{AgentInfo, Conversation, ToolCall};
+use opencode_permission::{evaluate as evaluate_permission, PermissionAction, PermissionRuleset};
 use opencode_plugin::{HookContext, HookEvent};
 use opencode_provider::{ChatRequest, Provider, ProviderRegistry, StreamEvent, ToolDefinition};
-use opencode_tool::{ToolContext, ToolError, ToolRegistry};
+use opencode_tool::{PermissionRequest, ToolContext, ToolError, ToolRegistry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
@@ -42,6 +43,7 @@ pub struct AgentExecutor {
     disabled_tools: HashSet<String>,
     subsessions: Arc<Mutex<HashMap<String, SubsessionState>>>,
     max_steps: u32,
+    ask_callback: opencode_tool::AskCallback,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,7 @@ impl AgentExecutor {
     ) -> Self {
         let max_steps = agent.max_steps.unwrap_or(100);
         let conversation = Conversation::new();
+        let ask_callback = noninteractive_permission_callback(agent.permission.clone());
 
         Self {
             agent,
@@ -76,6 +79,7 @@ impl AgentExecutor {
             disabled_tools: HashSet::new(),
             subsessions: Arc::new(Mutex::new(HashMap::new())),
             max_steps,
+            ask_callback,
         }
     }
 
@@ -481,6 +485,10 @@ impl AgentExecutor {
                     let current_model = current_model.clone();
                     async move { Ok(current_model) }
                 }
+            })
+            .with_ask({
+                let ask_callback = self.ask_callback.clone();
+                move |request| ask_callback(request)
             });
         let ctx = self.with_subsession_callbacks(base_ctx);
 
@@ -516,6 +524,10 @@ impl AgentExecutor {
                     let current_model = current_model.clone();
                     async move { Ok(current_model) }
                 }
+            })
+            .with_ask({
+                let ask_callback = self.ask_callback.clone();
+                move |request| ask_callback(request)
             });
         let ctx = self.with_subsession_callbacks(base_ctx);
 
@@ -656,6 +668,63 @@ impl AgentExecutor {
     }
 }
 
+/// Fail-closed permission callback for non-interactive execution.
+///
+/// The TUI/server path wires an ask callback that can route `Ask` decisions to
+/// the user. Non-interactive CLI runs have no user to ask, so they must still
+/// evaluate path- and command-scoped rules instead of silently allowing every
+/// tool request. `Allow` proceeds, `Deny` is rejected, and `Ask` fails closed.
+fn noninteractive_permission_callback(ruleset: PermissionRuleset) -> opencode_tool::AskCallback {
+    Arc::new(move |request: PermissionRequest| {
+        let ruleset = ruleset.clone();
+        Box::pin(async move {
+            let patterns = if request.patterns.is_empty() {
+                vec![request.permission.clone()]
+            } else {
+                request.patterns.clone()
+            };
+
+            let mut action = PermissionAction::Allow;
+            for pattern in &patterns {
+                let rule = evaluate_permission(
+                    &request.permission,
+                    pattern,
+                    std::slice::from_ref(&ruleset),
+                );
+                action = strictest_permission_action(action, rule.action);
+            }
+
+            match action {
+                PermissionAction::Allow => Ok(()),
+                PermissionAction::Ask => Err(ToolError::PermissionDenied(format!(
+                    "Tool '{}' requires approval, but this non-interactive run cannot ask; use the TUI or a server session",
+                    request.permission
+                ))),
+                PermissionAction::Deny => Err(ToolError::PermissionDenied(format!(
+                    "Tool '{}' is denied by agent permission rules",
+                    request.permission
+                ))),
+            }
+        })
+    })
+}
+
+fn strictest_permission_action(
+    current: PermissionAction,
+    next: PermissionAction,
+) -> PermissionAction {
+    let rank = |action: PermissionAction| match action {
+        PermissionAction::Allow => 0,
+        PermissionAction::Ask => 1,
+        PermissionAction::Deny => 2,
+    };
+    if rank(next) > rank(current) {
+        next
+    } else {
+        current
+    }
+}
+
 fn unavailable_provider_hint(provider_id: &str) -> String {
     let env_vars: &[&str] = match provider_id {
         "anthropic" => &["ANTHROPIC_API_KEY"],
@@ -789,6 +858,103 @@ mod tests {
         assert!(names.contains("grep"));
         assert!(!names.contains("write"));
         assert!(!names.contains("invalid"));
+    }
+
+    fn callback_with(rules: &[PermissionRule]) -> opencode_tool::AskCallback {
+        noninteractive_permission_callback(opencode_permission::build_agent_ruleset(
+            "review", rules,
+        ))
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_denies_path_scoped_edit() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "edit".to_string(),
+            pattern: "/tmp/demo/*".to_string(),
+            action: PermissionAction::Deny,
+        }]);
+
+        let result =
+            callback(PermissionRequest::new("edit").with_pattern("/tmp/demo/file.ts")).await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "expected path-scoped deny, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_allows_unmatched_request() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "edit".to_string(),
+            pattern: "/tmp/demo/*".to_string(),
+            action: PermissionAction::Deny,
+        }]);
+
+        let result =
+            callback(PermissionRequest::new("edit").with_pattern("/tmp/other/file.md")).await;
+
+        assert!(result.is_ok(), "expected allow, got: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_fails_closed_on_ask() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "bash".to_string(),
+            pattern: "*".to_string(),
+            action: PermissionAction::Ask,
+        }]);
+
+        let result = callback(PermissionRequest::new("bash").with_pattern("git push")).await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "ask must fail closed without a user, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_takes_strictest_pattern() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "bash".to_string(),
+            pattern: "git push*".to_string(),
+            action: PermissionAction::Deny,
+        }]);
+
+        let result = callback(PermissionRequest::new("bash").with_patterns(vec![
+            "git status".to_string(),
+            "git push origin".to_string(),
+        ]))
+        .await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "one denied pattern must not be auto-allowed, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn executor_wires_fail_closed_callback() {
+        let agent =
+            AgentInfo::custom("review").with_permission(opencode_permission::build_agent_ruleset(
+                "review",
+                &[PermissionRule {
+                    permission: "edit".to_string(),
+                    pattern: "/tmp/demo/*".to_string(),
+                    action: PermissionAction::Deny,
+                }],
+            ));
+        let executor = build_executor(agent);
+
+        let result = (executor.ask_callback)(
+            PermissionRequest::new("edit").with_pattern("/tmp/demo/file.ts"),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "executor must enforce path-scoped rules without a host callback, got: {result:?}"
+        );
     }
 
     #[test]

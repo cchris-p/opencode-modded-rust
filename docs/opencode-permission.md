@@ -21,6 +21,19 @@
 - `opencode-session` in-session approval flow
 - TUI/Server permission request and response
 
+## Non-interactive execution
+
+`AgentExecutor` supplies a fail-closed ask callback for every tool context. It
+evaluates each requested pattern against the agent ruleset:
+
+- `allow` proceeds;
+- `deny` returns `ToolError::PermissionDenied`;
+- `ask` also fails closed because a non-interactive run has no user to prompt.
+
+This keeps plain `opencode-modded-rust run` (and the GitHub run path) consistent
+with the TUI/server permission callback. Use the TUI or a server session when an
+`ask` decision must reach a human.
+
 ## Development notes
 
 - New rules should start from a minimal default policy
