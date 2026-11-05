@@ -65,13 +65,24 @@ pub fn provider_for(
     provider_id: Option<&str>,
     model_id: Option<&str>,
 ) -> Box<dyn RetrievalProvider> {
+    provider_for_with_facts(provider_id, model_id, None)
+}
+
+/// Same selection as [`provider_for`], but optionally attaches an exact-fact source.
+/// LSP is never required: `None`, a missing server, or a failed query leaves the
+/// heuristic map behavior intact.
+pub fn provider_for_with_facts(
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+    exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>>,
+) -> Box<dyn RetrievalProvider> {
     // Only consulted by native builds; keep the parameters used either way.
-    let _ = (provider_id, model_id);
+    let _ = (provider_id, model_id, &exact_facts);
 
     #[cfg(feature = "native")]
     {
         if model_scope_enabled(provider_id, model_id) {
-            return Box::new(ScopemuxProvider::new());
+            return Box::new(ScopemuxProvider::with_exact_facts(exact_facts));
         }
     }
 
@@ -109,13 +120,29 @@ pub fn workspace_supported(request: &RetrievalRequest) -> bool {
 
 /// The native provider. See the module docs.
 #[cfg(feature = "native")]
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ScopemuxProvider;
+#[derive(Clone)]
+pub struct ScopemuxProvider {
+    exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>>,
+}
 
 #[cfg(feature = "native")]
 impl ScopemuxProvider {
     pub fn new() -> Self {
-        Self
+        Self { exact_facts: None }
+    }
+
+    /// Attach an optional exact-fact source (for example LSP-backed facts).
+    pub fn with_exact_facts(
+        exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>>,
+    ) -> Self {
+        Self { exact_facts }
+    }
+}
+
+#[cfg(feature = "native")]
+impl Default for ScopemuxProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -409,7 +436,7 @@ impl RetrievalProvider for ScopemuxProvider {
         let root = CString::new(request.workspace_root.as_str())
             .map_err(|e| RetrievalError::Failed(format!("invalid workspace root: {e}")))?;
 
-        unsafe {
+        let (candidates, plan_signals) = unsafe {
             let ctx = ffi::project_context_create(root.as_ptr());
             if ctx.is_null() {
                 return Err(RetrievalError::Failed(
@@ -458,15 +485,149 @@ impl RetrievalProvider for ScopemuxProvider {
             let plan_signals = reconcile_plan_nodes(ctx);
 
             drop(guard);
+            (candidates, plan_signals)
+        };
 
-            Ok(opencode_types::RetrievalResponse {
-                candidates,
-                provider: self.name().to_string(),
-                representation: request.representation,
-                plan_signals,
-            })
+        // SCOPE-013: optional exact-fact enrichment at the anchors the map already
+        // selected. Kept outside the FFI block so no non-Send core pointer is held
+        // across the await. Bounded, best-effort, and never required.
+        let (candidates, provider_notes) =
+            enrich_with_exact_facts(candidates, self.exact_facts.as_ref(), request).await;
+
+        Ok(opencode_types::RetrievalResponse {
+            candidates,
+            provider: self.name().to_string(),
+            representation: request.representation,
+            plan_signals,
+            provider_notes,
+        })
+    }
+}
+
+/// Maximum exact-fact queries one retrieval request may issue. LSP is expensive at
+/// scale; enrichment only follows anchors the map already selected.
+#[cfg(feature = "native")]
+const MAX_EXACT_FACT_ANCHORS: usize = 8;
+
+/// Enrich map candidates with optional exact semantic facts at their anchors.
+///
+/// The map's heuristic candidates are the anchor set; LSP is asked only for a
+/// definition at a bounded number of them. Exact results become `confidence = exact`
+/// candidates with server provenance. No provider, an unsupported server, a timeout,
+/// or a failure leaves the candidates unchanged and records a fallback note.
+#[cfg(feature = "native")]
+async fn enrich_with_exact_facts(
+    mut candidates: Vec<opencode_types::RetrievalCandidate>,
+    exact_facts: Option<&std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>>,
+    request: &RetrievalRequest,
+) -> (Vec<opencode_types::RetrievalCandidate>, Vec<String>) {
+    use std::collections::HashSet;
+
+    use opencode_retrieval::{ExactFactKind, ExactFactOutcome, ExactFactRequest};
+    use opencode_types::{RetrievalCandidateKind, RetrievalConfidence, RetrievalOrigin};
+
+    let Some(provider) = exact_facts else {
+        return (candidates, Vec::new());
+    };
+
+    if !matches!(
+        request.representation,
+        opencode_types::RetrievalRepresentation::Search
+            | opencode_types::RetrievalRepresentation::Anchors
+            | opencode_types::RetrievalRepresentation::Impact
+            | opencode_types::RetrievalRepresentation::Review
+    ) {
+        return (candidates, Vec::new());
+    }
+
+    let mut anchors: Vec<(String, String)> = Vec::new();
+    let mut seen = HashSet::new();
+    for candidate in &candidates {
+        let Some(symbol) = &candidate.symbol else {
+            continue;
+        };
+        let path = candidate
+            .path
+            .strip_prefix("file://")
+            .unwrap_or(&candidate.path)
+            .to_string();
+        if language_for_path(&path).is_none() {
+            continue;
+        }
+        if seen.insert((path.clone(), symbol.clone())) {
+            anchors.push((path, symbol.clone()));
+        }
+        if anchors.len() >= MAX_EXACT_FACT_ANCHORS {
+            break;
         }
     }
+
+    let mut notes = Vec::new();
+    let mut added = HashSet::new();
+    for (path, symbol) in anchors {
+        let Some((line, character)) = symbol_anchor_position(&path, &symbol) else {
+            continue;
+        };
+        let outcome = provider
+            .exact_facts(ExactFactRequest {
+                path: path.clone(),
+                line,
+                character,
+                kind: ExactFactKind::Definition,
+            })
+            .await;
+        match outcome {
+            ExactFactOutcome::Exact(fact) => {
+                for location in fact.locations {
+                    if !added.insert((location.file.clone(), location.start_line)) {
+                        continue;
+                    }
+                    candidates.push(opencode_types::RetrievalCandidate {
+                        kind: RetrievalCandidateKind::Symbol,
+                        path: location.file,
+                        symbol: None,
+                        snippet: None,
+                        provenance: format!(
+                            "scopemux: exact definition for {symbol} at {path}:{line} (server: {})",
+                            fact.server_id
+                        ),
+                        confidence: RetrievalConfidence::Exact,
+                        score: 1.0,
+                        estimated_tokens: None,
+                        origin: Some(RetrievalOrigin::Parsed),
+                        lifecycle: None,
+                    });
+                }
+            }
+            ExactFactOutcome::Unavailable { reason } => {
+                notes.push(format!(
+                    "exact semantic facts unavailable ({reason:?}); heuristic edges retained"
+                ));
+                break;
+            }
+        }
+    }
+
+    (candidates, notes)
+}
+
+/// Locate a symbol's first occurrence in a file for use as an LSP anchor. This is a
+/// best-effort anchor for an already-selected map candidate, not a resolver.
+#[cfg(feature = "native")]
+fn symbol_anchor_position(path: &str, symbol: &str) -> Option<(u32, u32)> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let name = symbol.rsplit("::").next().unwrap_or(symbol);
+    let name = name.rsplit('.').next().unwrap_or(name);
+    if name.is_empty() {
+        return None;
+    }
+    for (line_index, line) in content.lines().enumerate() {
+        if let Some(byte_index) = line.find(name) {
+            let character = line[..byte_index].chars().count() as u32;
+            return Some((line_index as u32, character));
+        }
+    }
+    None
 }
 
 /// Search over the canonical InfoBlock registry (`Search` representation).
@@ -1507,5 +1668,216 @@ mod tests {
         assert_eq!(provider.name(), "generic");
         #[cfg(feature = "native")]
         assert_eq!(provider.name(), "scopemux");
+    }
+
+    /// Stub exact-fact source for enrichment tests.
+    #[cfg(feature = "native")]
+    #[derive(Clone)]
+    struct StubExactFacts {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        outcome: opencode_retrieval::ExactFactOutcome,
+    }
+
+    #[cfg(feature = "native")]
+    #[async_trait::async_trait]
+    impl opencode_retrieval::ExactFactProvider for StubExactFacts {
+        async fn exact_facts(
+            &self,
+            _request: opencode_retrieval::ExactFactRequest,
+        ) -> opencode_retrieval::ExactFactOutcome {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.outcome.clone()
+        }
+    }
+
+    #[cfg(feature = "native")]
+    fn exact_fact(target: &str) -> opencode_retrieval::ExactFact {
+        opencode_retrieval::ExactFact {
+            kind: opencode_retrieval::ExactFactKind::Definition,
+            locations: vec![opencode_retrieval::ExactFactLocation {
+                file: target.to_string(),
+                start_line: 0,
+                start_character: 0,
+                end_line: 0,
+                end_character: 1,
+            }],
+            server_id: "stub-server".to_string(),
+            document_version: Some(1),
+            file_hash: 7,
+            cached: false,
+        }
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn exact_fact_enrichment_labels_edges_exact_with_provenance() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "pub fn add(a: u32, b: u32) -> u32 { a + b }\n",
+        )
+        .unwrap();
+        let target = dir.path().join("target.rs");
+        std::fs::write(&target, "pub struct Target;\n").unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["lib.rs"]);
+        req.objective = "add".to_string();
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider =
+            ScopemuxProvider::with_exact_facts(Some(std::sync::Arc::new(StubExactFacts {
+                calls: calls.clone(),
+                outcome: opencode_retrieval::ExactFactOutcome::Exact(exact_fact(
+                    &target.to_string_lossy(),
+                )),
+            })));
+
+        let response = provider.retrieve(&req).await.unwrap();
+
+        assert_eq!(
+            response.provider, "scopemux",
+            "enrichment must not change the provider identity"
+        );
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+            "expected at least one exact-fact anchor query"
+        );
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) <= MAX_EXACT_FACT_ANCHORS,
+            "exact-fact queries must stay bounded"
+        );
+        let exact = response
+            .candidates
+            .iter()
+            .find(|candidate| candidate.provenance.contains("exact definition"))
+            .expect("exact edge should be present");
+        assert_eq!(exact.confidence, opencode_types::RetrievalConfidence::Exact);
+        assert!(exact.provenance.contains("stub-server"));
+        assert!(response.provider_notes.is_empty());
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn unavailable_exact_facts_keep_heuristic_candidates() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "pub fn add(a: u32, b: u32) -> u32 { a + b }\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["lib.rs"]);
+        req.objective = "add".to_string();
+
+        let baseline = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider =
+            ScopemuxProvider::with_exact_facts(Some(std::sync::Arc::new(StubExactFacts {
+                calls: calls.clone(),
+                outcome: opencode_retrieval::ExactFactOutcome::Unavailable {
+                    reason: opencode_retrieval::ExactFactUnavailable::NoServer,
+                },
+            })));
+
+        let response = provider.retrieve(&req).await.unwrap();
+
+        assert_eq!(
+            response.candidates, baseline.candidates,
+            "an unavailable exact-fact source must leave the map result unchanged"
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.provenance.contains("exact definition")),
+            "unavailable facts must not produce exact edges"
+        );
+        assert!(
+            response
+                .provider_notes
+                .iter()
+                .any(|note| note.contains("unavailable")),
+            "fallback reason should be recorded: {:?}",
+            response.provider_notes
+        );
+        assert!(
+            !response.candidates.is_empty(),
+            "heuristic map candidates must remain"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn exact_fact_queries_are_bounded_per_request() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let mut source = String::new();
+        for i in 0..40 {
+            source.push_str(&format!("pub fn helper_{i}() -> u32 {{ {i} }}\n"));
+        }
+        std::fs::write(dir.path().join("lib.rs"), source).unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["lib.rs"]);
+        req.objective = "helper".to_string();
+        req.token_budget = Some(40);
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider =
+            ScopemuxProvider::with_exact_facts(Some(std::sync::Arc::new(StubExactFacts {
+                calls: calls.clone(),
+                outcome: opencode_retrieval::ExactFactOutcome::Exact(
+                    opencode_retrieval::ExactFact {
+                        kind: opencode_retrieval::ExactFactKind::Definition,
+                        locations: Vec::new(),
+                        server_id: "stub-server".to_string(),
+                        document_version: None,
+                        file_hash: 0,
+                        cached: false,
+                    },
+                ),
+            })));
+
+        provider.retrieve(&req).await.unwrap();
+
+        let calls = calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(calls > 0, "expected at least one anchor to be queried");
+        assert!(
+            calls <= MAX_EXACT_FACT_ANCHORS,
+            "expected at most {MAX_EXACT_FACT_ANCHORS} exact-fact queries, got {calls}"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn without_a_fact_provider_the_map_is_unchanged() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "pub fn add(a: u32, b: u32) -> u32 { a + b }\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["lib.rs"]);
+        req.objective = "add".to_string();
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert!(response.provider_notes.is_empty());
+        assert!(response
+            .candidates
+            .iter()
+            .all(|candidate| !candidate.provenance.contains("exact definition")));
     }
 }

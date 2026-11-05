@@ -20,8 +20,10 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{debug, error};
 use url::Url;
 
+pub mod exact_facts;
 pub mod facts;
 
+pub use exact_facts::LspExactFactProvider;
 pub use facts::{
     file_content_hash, FactConfidence, FactLocation, FactPosition, FactUnavailable, SemanticFact,
     SemanticFactKind, SemanticFactOutcome, SemanticFactRequest, SemanticFactResponse,

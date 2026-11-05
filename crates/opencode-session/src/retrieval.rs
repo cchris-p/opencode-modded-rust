@@ -10,7 +10,9 @@
 //! for the representation it needs. The runtime keeps authority over inclusion
 //! thresholds and token budgets.
 
-use opencode_retrieval::{GenericRepositoryProvider, RetrievalProvider};
+use std::sync::Arc;
+
+use opencode_retrieval::{ExactFactProvider, GenericRepositoryProvider, RetrievalProvider};
 use opencode_types::{
     stage_retrieval, RetrievalConfidence, RetrievalRepresentation, RetrievalRequest,
     RetrievalResponse, TaskStage,
@@ -93,14 +95,17 @@ pub async fn retrieve(
     session: &Session,
     seed_files: Vec<String>,
     model: Option<&ModelRef>,
+    exact_facts: Option<Arc<dyn ExactFactProvider>>,
 ) -> Option<RetrievalResponse> {
     let request = build_request(session, seed_files);
 
     // Select by the active model: scopemux only for local qwen, generic
     // otherwise. Fall back to the generic provider when scopemux is unavailable.
-    let provider = opencode_scopemux::provider_for(
+    // Exact facts are optional enrichment; the provider works without them.
+    let provider = opencode_scopemux::provider_for_with_facts(
         model.map(|m| m.provider_id.as_str()),
         model.map(|m| m.model_id.as_str()),
+        exact_facts,
     );
     let response = match provider.retrieve(&request).await {
         Ok(response) => Some(response),
@@ -196,6 +201,7 @@ mod tests {
             provider: "scopemux".to_string(),
             representation: RetrievalRepresentation::Review,
             plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
         };
 
         let filtered = apply_inclusion_threshold(response);
@@ -215,6 +221,7 @@ mod tests {
             provider: "scopemux".to_string(),
             representation: RetrievalRepresentation::Delta,
             plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
         };
 
         let filtered = apply_inclusion_threshold(response);
@@ -228,7 +235,7 @@ mod tests {
         std::fs::write(dir.path().join("a.rs"), "fn main() {}").unwrap();
         let session = session_with_task(&dir.path().to_string_lossy());
 
-        let response = retrieve(&session, vec!["a.rs".to_string()], None)
+        let response = retrieve(&session, vec!["a.rs".to_string()], None, None)
             .await
             .expect("generic provider should succeed");
 
@@ -247,7 +254,7 @@ mod tests {
             model_id: "deepseek-flash".to_string(),
         };
 
-        let response = retrieve(&session, vec!["a.rs".to_string()], Some(&model))
+        let response = retrieve(&session, vec!["a.rs".to_string()], Some(&model), None)
             .await
             .expect("generic provider should succeed");
 

@@ -2247,6 +2247,7 @@ dependencies = [
  "async-trait",
  "futures",
  "lsp-types",
+ "opencode-retrieval",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

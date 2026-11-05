@@ -125,6 +125,21 @@ Type facts are cheap at a few anchors and expensive project-wide. The rule is:
 3. The result is cached and invalidated by file hash/document version.
 4. Without LSP, heuristic edges remain and the task still completes.
 
+### Implementation (`SCOPE-013`)
+
+- The neutral contract lives in `opencode-retrieval`
+  (`ExactFactProvider`/`ExactFactRequest`/`ExactFactOutcome`); `opencode-scopemux`
+  depends on that trait, not on `opencode-lsp`.
+- `opencode-lsp` provides `LspExactFactProvider`, the only adapter that sees LSP types.
+  The runtime injects it only when a workspace configured LSP.
+- The native provider enriches `Search`, `Anchors`, `Impact`, and `Review` slices at the
+  anchors the map already selected, at most 8 definition queries per request. Exact results
+  enter as `confidence = exact` candidates with server provenance. No provider, an
+  unsupported server, a timeout, or a failure leaves the candidate set unchanged and adds a
+  `provider_notes` fallback reason.
+- No C schema change was needed; exactness is carried on the retrieval candidate contract,
+  so the pinned `scopemux-core` revision and FFI layout are unchanged.
+
 ## Composition and precedence
 
 | Concern | Owner |
