@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "INFRA"
 spec: "wiki/workspace-intelligence.md"
-status: "todo"
+status: "doing"
 created: "2026-11-05"
 updated: "2026-11-05"
 ---
@@ -149,3 +149,49 @@ clean_cwd="$(mktemp -d)"
 - `SCOPE-014` exact-fact evaluation (opt-in `OPENCODE_SCOPEMUX_EXACT_FACTS`).
 - `H-018` remaining ScopeMux program handoff (independent; do not fold this card into it).
 - `wiki/workspace-intelligence.md`, `invariants/retrieval.md`
+
+## Implementation (2026-11-05)
+
+Branch `feature/INFRA-008-embed-scopemux-queries` (dedicated worktree
+`$HOME/worktrees/opencode-modded-rust/infra-008-portable-queries`). PR:
+https://github.com/cchris-p/opencode-modded-rust/pull/160 (base `development`, awaiting review).
+
+- `build.rs` stages the query set into `OUT_DIR` and generates
+  `scopemux_queries.rs` with `include_bytes!` entries plus a content hash
+  (`SCOPEMUX_QUERIES_KEY`). Works for both source and `SCOPEMUX_PREBUILT_DIR`
+  builds; the `SCOPEMUX_SKIP_NATIVE_BUILD` check path gets an empty stub.
+- `ensure_queries_dir()` materializes the embedded set atomically into
+  `dirs::cache_dir()/opencode/scopemux/queries/<content-key>/` on first use and
+  sets `SCMU_QUERIES_DIR`. An explicit `SCMU_QUERIES_DIR` directory wins; an
+  invalid override falls back to the embedded set.
+- `retrieve` now returns `Unavailable("scopemux_queries_missing: ...")` when no
+  query directory is usable instead of depending on an absolute build path.
+- New `debug scopemux-queries` CLI command prints the resolved directory.
+- Release workflow smoke test runs the binary from a clean `HOME`/cwd and fails
+  if a build/cache `queries/` path is embedded.
+- `AGENTS.md`, `docs/opencode-cli.md`, and `wiki/workspace-intelligence.md`
+  updated to describe the portability contract.
+
+Verification (dedicated target directory; the shared worktree target was
+polluted by concurrent builds from another worktree and is not a reliable
+verification environment):
+
+- `cargo fmt --all --check`: pass.
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-scopemux --features native`: pass.
+- `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-cli`: pass.
+- `cargo clippy -p opencode-scopemux -p opencode-cli --all-targets`: pass
+  (pre-existing warnings only).
+- `cargo test -p opencode-scopemux --features native embedded_queries`: 2/2 pass.
+- Full native suite: 18 passed, 1 known pre-existing failure
+  (`native_delta_slice_returns_projected_entries`), 1 known pre-existing SIGSEGV
+  skipped (`native_provider_reports_plan_reconciliation_evidence`). Both are the
+  failures `SCOPE-013` documented on base `development`.
+- Release binary clean-host smoke:
+  `HOME=<tmp> XDG_CACHE_HOME=<tmp> <binary> debug scopemux-queries` resolved the
+  cache path and `rust/docstrings.scm`; the release binary contains no
+  build-machine `queries/` path.
+
+Not covered here: the prebuilt C archive still embeds its CI `__FILE__` source
+paths in log strings. Those are not query paths and are pre-existing.
+
+Keep in `doing` until PR #160 merges, then move to `qa` for post-merge QA.

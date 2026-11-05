@@ -81,7 +81,9 @@ five cards in `qa` and six in `todo`. The `doing` lane is empty.
 - `INFRA-008` Embed ScopeMux queries so the published ort binary is portable - the native
   provider is statically linked, but the Tree-sitter `.scm` queries are resolved from a
   build-machine absolute path that does not exist on artifact-only hosts, so ScopeMux
-  silently falls back to generic. Tracked separately; independent of the program handoff.
+  silently falls back to generic. Implemented on
+  `feature/INFRA-008-embed-scopemux-queries`; PR #160 open, card in `doing`. Independent of
+  the program handoff.
 
 ## Best Next Step
 
