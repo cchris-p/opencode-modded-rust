@@ -303,8 +303,6 @@ async fn get_lsp_diagnostics_with_meta(
 ) -> (String, Vec<serde_json::Value>) {
     #[cfg(feature = "lsp")]
     {
-        use opencode_lsp::detect_language;
-
         if let Some(lsp_registry) = &ctx.lsp_registry {
             return get_lsp_diagnostics_impl_with_meta(path, lsp_registry.clone()).await;
         }
@@ -326,14 +324,8 @@ async fn get_lsp_diagnostics_impl_with_meta(
     use opencode_lsp::detect_language;
 
     let language = detect_language(path);
-    let clients = lsp_registry.list().await;
 
-    let client = clients
-        .iter()
-        .find(|(id, _)| id.contains(language))
-        .map(|(_, c)| c.clone());
-
-    match client {
+    match lsp_registry.client_for_file(path).await {
         Some(client) => {
             if let Ok(content) = tokio::fs::read_to_string(path).await {
                 let _ = client.open_document(path, &content, language).await;

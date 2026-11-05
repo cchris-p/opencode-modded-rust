@@ -5207,14 +5207,20 @@ async fn create_lsp_client(file_hint: Option<&Path>) -> anyhow::Result<LspClient
         .map(serde_json::to_value)
         .transpose()?;
 
+    let root = file_hint
+        .map(opencode_lsp::detect_root)
+        .unwrap_or_else(|| opencode_lsp::detect_root(&cwd));
     LspClient::start(
         LspServerConfig {
             id,
             command,
             args,
+            extensions: server.extensions.clone(),
+            env: server.env.clone().unwrap_or_default(),
             initialization_options,
+            disabled: server.disabled.unwrap_or(false),
         },
-        cwd,
+        root,
     )
     .await
     .map_err(|e| anyhow::anyhow!(e.to_string()))

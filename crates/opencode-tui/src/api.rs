@@ -368,8 +368,15 @@ struct ApiAuthWriteRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LspServerStatusInfo {
+    pub id: String,
+    pub root: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LspStatusResponse {
-    servers: Vec<String>,
+    servers: Vec<LspServerStatusInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1079,7 +1086,7 @@ impl ApiClient {
         Ok(messages)
     }
 
-    pub fn get_lsp_servers(&self) -> anyhow::Result<Vec<String>> {
+    pub fn get_lsp_servers(&self) -> anyhow::Result<Vec<LspServerStatusInfo>> {
         let url = format!("{}/lsp", self.base_url);
         let response = self.client.get(&url).send()?;
         if !response.status().is_success() {

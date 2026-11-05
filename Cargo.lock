@@ -2387,6 +2387,7 @@ dependencies = [
  "opencode-agent",
  "opencode-config",
  "opencode-core",
+ "opencode-lsp",
  "opencode-mcp",
  "opencode-permission",
  "opencode-plugin",

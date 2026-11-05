@@ -146,21 +146,24 @@ Precedence rules:
 
 ## Current ORT state (2026-11-05)
 
-The LSP capability exists but is not wired end-to-end:
+`LSP-001` wired the capability end-to-end:
 
 - `crates/opencode-lsp/src/lib.rs` implements the client and registry, including
   definition, references, hover, document/workspace symbols, implementations, type
-  definitions, rename, diagnostics, and call hierarchy.
-- `crates/opencode-tool/src/lsp_tool.rs` exposes the tool; `write.rs`, `edit/tool.rs`, and
-  `apply_patch.rs` collect post-edit diagnostics when a registry is present.
-- The `opencode-tool` `lsp` feature is not default, the tool is registered unconditionally
-  (`crates/opencode-tool/src/registry.rs:248`) and emits placeholder output without the
-  feature, and no runtime path constructs or attaches `LspClientRegistry` outside tests.
-- The server `/lsp` endpoint is a stub returning an empty list
-  (`crates/opencode-server/src/routes.rs:8160`).
+  definitions, rename, diagnostics, and call hierarchy. The registry is config-driven and
+  lazily spawns per `(workspace root, server)` with extension gating, broken-server
+  suppression, `Content-Length` framing, env propagation, shutdown, and status.
+- `opencode-tool`'s `lsp` feature is now a default feature, so released binaries expose
+  the real tool instead of placeholder output.
+- The server configures the shared registry from the `lsp` block per workspace and
+  attaches it to `SessionPrompt` and `ToolContext`; `write`, `edit`, and `apply_patch`
+  collect bounded post-edit diagnostics when a server is available.
+- The server `/lsp` endpoint returns actual connected servers and roots (plus failed
+  servers), and the TUI renders the same data.
+- With no `lsp` config, no server is spawned and behavior is unchanged.
 
-Therefore LSP parity is currently an assumption, not a fact. Standardizing it is a
-prerequisite for using LSP-derived facts in the map.
+The remaining boundary layer is `LSP-002`: a narrow, capability-negotiated semantic-fact
+interface for consumers such as `SCOPE-013`.
 
 ## Standardization decisions
 
