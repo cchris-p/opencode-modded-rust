@@ -5,7 +5,7 @@ priority: "P1"
 type: "refactor"
 area: "SCOPE"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "qa"
+status: "done"
 created: "2026-11-05"
 updated: "2026-11-05"
 ---
@@ -90,3 +90,23 @@ competing ways to answer the same question.
 - `invariants/workspace-intelligence.md`
 - `invariants/retrieval.md`
 - `wiki/scopemux-lsp-boundary.md`
+
+## QA Re-confirmation (2026-11-05, H-018 step 2)
+
+Re-ran the enforcement guards on merged `development` `a701afd`:
+
+```bash
+$ cargo test -p opencode-core --test scope_lsp_boundary
+test scopemux_does_not_depend_on_the_lsp_client ... ok
+test map_layer_has_no_lsp_point_query_or_diagnostics_path ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored
+
+$ cargo test -p opencode-tool ownership_tests
+test registry::ownership_tests::only_the_lsp_tool_exposes_lsp_point_queries ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 68 filtered out
+
+$ cargo fmt --all --check
+(exit 0)
+```
+
+Docs and guards still match PR #148. Promoting `qa` -> `done`.
