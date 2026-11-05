@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "SCOPE"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "qa"
+status: "done"
 created: "2026-11-05"
 updated: "2026-11-05"
 ---
@@ -90,3 +90,31 @@ The product should not keep an enrichment just because it is technically possibl
 - `SCOPE-008` Feed retrieval provenance and map outcomes into the data flywheel.
 - `wiki/scopemux-lsp-boundary.md`
 - `invariants/workspace-intelligence.md`
+
+## QA Re-confirmation (2026-11-05, H-018 step 4)
+
+The code changed after the original report (PR #158 FFI fix), so the harness was re-run on
+merged `development`:
+
+```bash
+$ SCOPEMUX_PREBUILT_DIR=~/.cache/opencode-modded-rust/native/linux-x86_64-2a642c10534f   cargo run -p opencode-scopemux --example evaluate_exact_facts --features native -- --help
+```
+
+(The example has no `--help` handling; it executes the evaluation. Fresh run:)
+
+- heuristic: 1/3 success, avg precision 0.11, p95 488.1 ms, exact edges 0
+- heuristic+exact: 1/3 success, avg precision 0.11, p95 840.7 ms, exact edges 0,
+  4 fact calls
+- heuristic+exact(cache): 1/3 success, p95 1430.1 ms, 1 fallback
+- generic: 0/3 success
+
+```bash
+$ rg -n "OPENCODE_SCOPEMUX_EXACT_FACTS" crates/opencode-session/src/prompt.rs
+306:                std::env::var("OPENCODE_SCOPEMUX_EXACT_FACTS").as_deref(),
+```
+
+The fresh run still shows no task-success gain, no precision gain, and a latency increase
+(p95 488 -> 841 ms), so the recorded **RETIRE from default activation** decision stands.
+`docs/research/SCOPE-014-exact-facts-evaluation.md` remains accurate in its conclusion;
+enrichment stays opt-in via `OPENCODE_SCOPEMUX_EXACT_FACTS=1`. Promoting `qa` -> `done`
+(the decision is the deliverable).
