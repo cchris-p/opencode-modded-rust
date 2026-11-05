@@ -184,6 +184,8 @@ This plan requires explicit follow-up items:
 - building a full repository graph now
 - replacing normal file reads for straightforward small tasks
 - making `ScopeMux` the owner of task state or runtime progression
+- replacing `opencode-lsp` or duplicating its point semantic queries; see
+  `wiki/scopemux-lsp-boundary.md`
 
 ## Bottom Line
 

@@ -22,6 +22,7 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `workspace-intelligence.md` defines the Workspace Intelligence Protocol (WIP), ScopeMux's role in the context/data pillar, the LSP analogy and its limits, the capability ladder, capability-profile activation, and the keep/expand/retire decision.
 - `scopemux-integration-plan.md` defines the deferred retrieval boundary, how `scopemux-core` can help this project, and the guardrails for integrating it.
 - `scopemux-map-integration.md` defines the idealized `scopemux` map model: current/target state, delta views, observability and refactor nodes, incremental reconciliation, and the runtime integration phases.
+- `scopemux-lsp-boundary.md` defines how ScopeMux and LSP divide responsibility: LSP as the exact semantic oracle, ScopeMux as the context producer, the redundancies to remove, and the optional LSP-derived type-fact enrichment.
 - `laya-integration.md` defines what `laya` is, its candidate integration surfaces (MCP tools or a decision-provider boundary), and the guardrails that keep runtime authority intact.
 - `jev-ultrafast-integration.md` defines what Jev UltraFast is, records that it is not planned for integration, and scopes the boundary and guardrails that would apply if a browser-automation capability were ever adopted.
 - `agent-debugging-without-tui.md` defines the preferred non-TUI QA/debug path for agent-session runtime work.

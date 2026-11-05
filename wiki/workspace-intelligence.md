@@ -106,7 +106,9 @@ Misleading parts:
 | Does not fit a token budget | Explicitly token-budgeted and stage-aware |
 
 The right sentence is: **WIP is an LSP-like protocol for workspace intelligence, not an
-LSP.** Compose with `opencode-lsp`; do not replace it.
+LSP.** Compose with `opencode-lsp`; do not replace it. The concrete division of labor,
+redundancies to remove, and optional LSP-derived type-fact policy are defined in
+`wiki/scopemux-lsp-boundary.md`.
 
 ## Why ScopeMux matters
 
