@@ -299,7 +299,16 @@ impl SessionPrompt {
         let retrieval_response = if seed_files.is_empty() {
             None
         } else {
-            crate::retrieval::retrieve(session, seed_files, input.model.as_ref()).await
+            // Optional exact-fact enrichment: only when a workspace configured LSP.
+            let exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>> =
+                self.lsp_registry.as_ref().map(|registry| {
+                    let provider: std::sync::Arc<dyn opencode_retrieval::ExactFactProvider> =
+                        std::sync::Arc::new(opencode_lsp::LspExactFactProvider::new(
+                            registry.clone(),
+                        ));
+                    provider
+                });
+            crate::retrieval::retrieve(session, seed_files, input.model.as_ref(), exact_facts).await
         };
 
         // Accept-time materialization: when the server has already persisted the

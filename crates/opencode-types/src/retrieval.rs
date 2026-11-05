@@ -203,6 +203,9 @@ pub struct RetrievalResponse {
     /// whether to act on it. Never advances task stage or completion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plan_signals: Vec<PlanReconciliationSignal>,
+    /// Provider diagnostics, including an optional enrichment fallback reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_notes: Vec<String>,
 }
 
 impl RetrievalResponse {
@@ -212,6 +215,7 @@ impl RetrievalResponse {
             provider: provider.into(),
             representation: RetrievalRepresentation::Search,
             plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
         }
     }
 
@@ -222,6 +226,7 @@ impl RetrievalResponse {
             provider: provider.into(),
             representation,
             plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
         }
     }
 }
