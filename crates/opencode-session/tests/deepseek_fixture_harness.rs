@@ -106,6 +106,7 @@ async fn run_fixture(body: &'static str) -> (bool, Session) {
             &mut session,
             provider,
             None,
+            None,
             Vec::new(),
             AgentParams::default(),
             None,

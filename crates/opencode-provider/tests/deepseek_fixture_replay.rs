@@ -185,7 +185,8 @@ fn usage_and_reasoning_in_one_payload() {
         event,
         StreamEvent::Usage {
             prompt_tokens: 1,
-            completion_tokens: 2
+            completion_tokens: 2,
+            ..
         }
     )));
     assert_eq!(reasoning_text(&events), "r");

@@ -947,6 +947,7 @@ impl SessionPrompt {
             session,
             provider,
             system_prompt,
+            None,
             tools,
             agent_params,
             None,
@@ -960,6 +961,7 @@ impl SessionPrompt {
         session: &mut Session,
         provider: Arc<dyn Provider>,
         system_prompt: Option<String>,
+        dynamic_context: Option<String>,
         tools: Vec<ToolDefinition>,
         agent_params: AgentParams,
         update_hook: Option<SessionUpdateHook>,
@@ -1008,6 +1010,7 @@ impl SessionPrompt {
             input.agent.as_deref(),
             input.variant.clone(),
             system_prompt,
+            dynamic_context,
             tools,
             &agent_params,
             self.ask_callback.clone(),
@@ -1103,6 +1106,7 @@ impl SessionPrompt {
             resume_agent.as_deref(),
             resume_variant,
             system_prompt,
+            None,
             tools,
             &agent_params,
             self.ask_callback.clone(),
@@ -1138,6 +1142,7 @@ impl SessionPrompt {
         agent_name: Option<&str>,
         variant: Option<String>,
         system_prompt: Option<String>,
+        dynamic_context: Option<String>,
         tools: Vec<ToolDefinition>,
         agent_params: &AgentParams,
         ask_callback: Option<opencode_tool::AskCallback>,
@@ -1272,8 +1277,11 @@ impl SessionPrompt {
                     insert_reminders(&prompt_messages, agent, last_assistant_was_plan, &plan);
             }
 
-            let mut chat_messages =
-                Self::build_chat_messages(&prompt_messages, system_prompt.as_deref())?;
+            let mut chat_messages = Self::build_chat_messages(
+                &prompt_messages,
+                system_prompt.as_deref(),
+                dynamic_context.as_deref(),
+            )?;
 
             apply_caching(&mut chat_messages, provider_type);
             let resolved_tools =
@@ -1348,6 +1356,8 @@ impl SessionPrompt {
             let mut finish_reason: Option<String> = None;
             let mut prompt_tokens: u64 = 0;
             let mut completion_tokens: u64 = 0;
+            let mut cache_read_tokens: u64 = 0;
+            let mut cache_miss_tokens: u64 = 0;
             let mut last_emit = Instant::now() - Duration::from_millis(50);
 
             loop {
@@ -1436,13 +1446,20 @@ impl SessionPrompt {
                         finish_reason = fr;
                         prompt_tokens = usage.prompt_tokens;
                         completion_tokens = usage.completion_tokens;
+                        cache_read_tokens = usage.cache_read_tokens;
+                        cache_miss_tokens =
+                            usage.prompt_tokens.saturating_sub(usage.cache_read_tokens);
                     }
                     Ok(StreamEvent::Usage {
                         prompt_tokens: pt,
                         completion_tokens: ct,
+                        cache_read_tokens: crt,
+                        cache_miss_tokens: cmt,
                     }) => {
                         prompt_tokens = pt;
                         completion_tokens = ct;
+                        cache_read_tokens = crt;
+                        cache_miss_tokens = cmt;
                     }
                     Ok(StreamEvent::Done | StreamEvent::Finish) => break,
                     Ok(StreamEvent::Start) => {}
@@ -1491,11 +1508,14 @@ impl SessionPrompt {
                     serde_json::json!({
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
+                        "cache_read_tokens": cache_read_tokens,
+                        "cache_miss_tokens": cache_miss_tokens,
                     }),
                 );
                 assistant_msg.usage = Some(crate::message::MessageUsage {
                     input_tokens: prompt_tokens,
                     output_tokens: completion_tokens,
+                    cache_read_tokens,
                     ..Default::default()
                 });
             }
@@ -2159,11 +2179,20 @@ impl SessionPrompt {
     fn build_chat_messages(
         session_messages: &[SessionMessage],
         system_prompt: Option<&str>,
+        dynamic_context: Option<&str>,
     ) -> anyhow::Result<Vec<Message>> {
         let mut messages = Vec::new();
 
+        // The stable system prompt leads so a date/environment/skills change
+        // cannot rewrite the cached prefix; dynamic context follows as its own
+        // system message and the conversation history stays byte-identical.
         if let Some(system) = system_prompt {
             messages.push(Message::system(system));
+        }
+        if let Some(dynamic) = dynamic_context {
+            if !dynamic.is_empty() {
+                messages.push(Message::system(dynamic));
+            }
         }
 
         for msg in session_messages {
@@ -2339,6 +2368,14 @@ impl SessionPrompt {
                     m.insert(
                         "tokens_output".to_string(),
                         serde_json::json!(usage.completion_tokens),
+                    );
+                    m.insert(
+                        "cache_read_tokens".to_string(),
+                        serde_json::json!(usage.cache_read_tokens()),
+                    );
+                    m.insert(
+                        "cache_miss_tokens".to_string(),
+                        serde_json::json!(usage.cache_miss_tokens()),
                     );
                 }
                 if let Some(reason) = finish_reason {
@@ -4353,6 +4390,7 @@ mod tests {
                 &mut session,
                 provider,
                 None,
+                None,
                 Vec::new(),
                 AgentParams::default(),
                 Some(hook),
@@ -4446,6 +4484,7 @@ mod tests {
                 input,
                 &mut session,
                 provider,
+                None,
                 None,
                 Vec::new(),
                 AgentParams::default(),
@@ -5639,6 +5678,7 @@ mod tests {
                     &mut session,
                     provider.clone(),
                     None,
+                    None,
                     Vec::new(),
                     AgentParams::default(),
                     None,
@@ -5666,5 +5706,36 @@ mod tests {
                 i + 1
             );
         }
+    }
+
+    #[test]
+    fn dynamic_context_does_not_rewrite_the_stable_system_prefix() {
+        let stable = "stable base prompt body";
+        let messages_a =
+            SessionPrompt::build_chat_messages(&[], Some(stable), Some("Today's date: Monday"))
+                .expect("messages build");
+        let messages_b =
+            SessionPrompt::build_chat_messages(&[], Some(stable), Some("Today's date: Tuesday"))
+                .expect("messages build");
+
+        let leading_a = match &messages_a[0].content {
+            Content::Text(text) => text.clone(),
+            _ => panic!("stable system prompt must be text"),
+        };
+        let leading_b = match &messages_b[0].content {
+            Content::Text(text) => text.clone(),
+            _ => panic!("stable system prompt must be text"),
+        };
+
+        assert_eq!(leading_a, stable);
+        assert_eq!(leading_a, leading_b, "leading prefix must not change");
+        assert!(
+            matches!(messages_a[1].content, Content::Text(ref text) if text.contains("Monday")),
+            "dynamic context is a separate system message"
+        );
+        assert!(
+            matches!(messages_b[1].content, Content::Text(ref text) if text.contains("Tuesday")),
+            "dynamic context is a separate system message"
+        );
     }
 }

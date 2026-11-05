@@ -2382,6 +2382,7 @@ async fn stream_message(
                         Ok(opencode_provider::StreamEvent::Usage {
                             prompt_tokens,
                             completion_tokens,
+                            ..
                         }) => {
                             send_sse_event(
                                 &tx,
@@ -3401,6 +3402,7 @@ async fn prompt_child_subagent(
             &mut child,
             provider,
             Some(resolved.system_prompt.clone()),
+            resolved.dynamic_context.clone(),
             resolved.tools.clone(),
             resolved.params.clone(),
             None,
@@ -4548,6 +4550,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
             &mut session,
             provider,
             Some(resolved.system_prompt.clone()),
+            resolved.dynamic_context.clone(),
             resolved.tools.clone(),
             resolved.params.clone(),
             Some(update_hook),

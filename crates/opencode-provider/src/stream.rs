@@ -82,6 +82,10 @@ pub enum StreamEvent {
     Usage {
         prompt_tokens: u64,
         completion_tokens: u64,
+        #[serde(default)]
+        cache_read_tokens: u64,
+        #[serde(default)]
+        cache_miss_tokens: u64,
     },
     /// Stream finished (maps to "finish" in TS).
     Finish,
@@ -918,10 +922,23 @@ pub fn parse_openai_sse_stateful(
         .and_then(|u| u.get("completion_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let cache_read_tokens = usage
+        .and_then(|u| {
+            u.get("prompt_cache_hit_tokens")
+                .or_else(|| u.get("cache_read_input_tokens"))
+        })
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_miss_tokens = usage
+        .and_then(|u| u.get("prompt_cache_miss_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| prompt_tokens.saturating_sub(cache_read_tokens));
     if usage.is_some() {
         events.push(StreamEvent::Usage {
             prompt_tokens,
             completion_tokens,
+            cache_read_tokens,
+            cache_miss_tokens,
         });
     }
 
@@ -1348,6 +1365,10 @@ pub struct OpenAIUsage {
     pub prompt_tokens: u64,
     #[serde(default)]
     pub completion_tokens: u64,
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: u64,
+    #[serde(default)]
+    pub prompt_cache_miss_tokens: u64,
 }
 
 fn openai_tool_call_id(tc: &OpenAIToolCall) -> String {
@@ -1404,6 +1425,12 @@ pub fn parse_openai_sse(data: &str) -> Option<StreamEvent> {
         return Some(StreamEvent::Usage {
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
+            cache_read_tokens: usage.prompt_cache_hit_tokens,
+            cache_miss_tokens: usage.prompt_cache_miss_tokens.max(
+                usage
+                    .prompt_tokens
+                    .saturating_sub(usage.prompt_cache_hit_tokens),
+            ),
         });
     }
 
@@ -1492,6 +1519,8 @@ pub fn parse_anthropic_sse(data: &str) -> Option<StreamEvent> {
                     return Some(StreamEvent::Usage {
                         prompt_tokens: usage.input_tokens,
                         completion_tokens: usage.output_tokens,
+                        cache_read_tokens: 0,
+                        cache_miss_tokens: usage.input_tokens,
                     });
                 }
             }
@@ -2130,5 +2159,34 @@ mod tests {
         events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
         assert!(collect_calls(&events).is_empty());
         assert!(collect_text(&events).contains("<tool_call>"));
+    }
+
+    #[test]
+    fn stateful_usage_exposes_deepseek_cache_counters() {
+        let mut state = OpenAiCompatParserState::default();
+        let events = parse_openai_sse_stateful(
+            r#"{"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}"#,
+            &mut state,
+        );
+
+        let usage = events
+            .iter()
+            .find_map(|event| match event {
+                StreamEvent::Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    cache_miss_tokens,
+                } => Some((
+                    *prompt_tokens,
+                    *completion_tokens,
+                    *cache_read_tokens,
+                    *cache_miss_tokens,
+                )),
+                _ => None,
+            })
+            .expect("usage event");
+
+        assert_eq!(usage, (100, 5, 80, 20));
     }
 }
