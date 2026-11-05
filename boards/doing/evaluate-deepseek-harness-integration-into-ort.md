@@ -199,3 +199,42 @@ an operator-approved scope change, not a silently cleared gate.
   --workspace` (with `SCOPEMUX_SKIP_NATIVE_BUILD=1`), `cargo clippy --workspace
   --all-targets` (no new warnings in the touched files), `cargo test -p
   opencode-provider` (148 tests pass).
+
+### Pass 2 — Reasoning effort control
+
+- `transform::variants` now returns `low`/`high`/`max` for direct DeepSeek
+  (`@ai-sdk/openai-compatible`) models and leaves DeepSeek models routed through
+  other providers on their provider's policy.
+- The session runner previously dropped `PromptInput.variant` on the floor: it now
+  threads the variant through `loop_inner` into `ChatRequest.variant`, and
+  `resume_session` restores it from session metadata `model_variant`.
+- `DeepSeekProvider` maps the selected variant to the OpenAI-compatible
+  `reasoning_effort` field in both `chat` and `chat_stream`. Non-advertised values
+  (`medium`/`none`/etc.) are rejected with `InvalidRequest` before network I/O.
+  No variant leaves the field absent, so the endpoint default `high` applies.
+- `/provider` listing (`synthetic_variant_names`) now advertises `low`/`high`/`max`
+  for direct DeepSeek models only.
+
+Bounded A/B against `POST https://api.deepseek.com/chat/completions`
+(`deepseek-flash`, same fixed prompt, `max_tokens=1200`, 2026-11-05):
+
+| effort | completion tokens | reasoning tokens | latency |
+|---|---|---|---|
+| default | 55 | 53 | 1093 ms |
+| `low` | 51 | 49 | 1020 ms |
+| `high` | 64 | 62 | 1301 ms |
+| `max` | 69 | 67 | 1291 ms |
+
+The control changes behavior (reasoning tokens and latency both move), so it ships.
+The endpoint also accepted `medium`/`none`/`minimal` with HTTP 200, but the live
+listing advertises only `low`/`high`/`max`; the client rejects anything else before
+sending.
+- Tests: `test_variants_deepseek_direct_uses_live_efforts`,
+  `test_variants_deepseek_via_other_provider_is_unchanged`,
+  `reasoning_effort_maps_supported_levels_and_rejects_others`,
+  `deepseek_lists_live_reasoning_efforts`,
+  `deepseek_models_via_other_providers_keep_their_policy`.
+- Verification (2026-11-05): `cargo test -p opencode-provider` (151 tests),
+  `cargo test -p opencode-session` (184 tests), `cargo test -p opencode-server
+  variant_listing` (2 tests), `cargo check --workspace` and `cargo clippy
+  --workspace --all-targets` (no new warnings in touched files) all pass.

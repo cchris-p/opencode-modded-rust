@@ -5198,6 +5198,14 @@ fn synthetic_variant_names(provider_id: &str, model: &ModelsDevInfo) -> Vec<Stri
 
     let provider = provider_id.to_ascii_lowercase();
     let model_id = model.id.to_ascii_lowercase();
+
+    // The direct DeepSeek API advertises effort `low`/`high`/`max` (default
+    // `high`) on both current models. DeepSeek models routed through a different
+    // provider keep that provider's policy.
+    if provider == "deepseek" {
+        return vec!["low".to_string(), "high".to_string(), "max".to_string()];
+    }
+
     let is_anthropic = provider.contains("anthropic") || model_id.contains("claude");
     if is_anthropic {
         return vec!["high".to_string(), "max".to_string()];
@@ -9434,5 +9442,40 @@ mod persistence_fingerprint_tests {
         session.add_user_message("hello");
         let after = session_content_fingerprint(&session);
         assert_ne!(before, after);
+    }
+}
+
+#[cfg(test)]
+mod variant_listing_tests {
+    use super::*;
+
+    fn reasoning_model(id: &str) -> ModelsDevInfo {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "reasoning": true,
+            "limit": {"context": 1_048_576, "output": 393_216}
+        }))
+        .expect("model fixture parses")
+    }
+
+    #[test]
+    fn deepseek_lists_live_reasoning_efforts() {
+        assert_eq!(
+            synthetic_variant_names("deepseek", &reasoning_model("deepseek-flash")),
+            vec!["low", "high", "max"]
+        );
+        assert_eq!(
+            synthetic_variant_names("deepseek", &reasoning_model("deepseek-v4-pro")),
+            vec!["low", "high", "max"]
+        );
+    }
+
+    #[test]
+    fn deepseek_models_via_other_providers_keep_their_policy() {
+        assert_eq!(
+            synthetic_variant_names("openrouter", &reasoning_model("deepseek/deepseek-v4-pro")),
+            vec!["low", "medium", "high"]
+        );
     }
 }
