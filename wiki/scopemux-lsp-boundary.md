@@ -162,8 +162,12 @@ Precedence rules:
   servers), and the TUI renders the same data.
 - With no `lsp` config, no server is spawned and behavior is unchanged.
 
-The remaining boundary layer is `LSP-002`: a narrow, capability-negotiated semantic-fact
-interface for consumers such as `SCOPE-013`.
+`LSP-002` adds the narrow, capability-negotiated semantic-fact interface
+(`opencode_lsp::facts`) for consumers such as `SCOPE-013`: neutral request/response
+structs, capability negotiation against the server, exact facts with provenance and
+document version/file hash, hash-keyed caching, bounded request timeouts, and explicit
+`NoServer`/`Unsupported`/`Timeout`/`Failure` outcomes. Consumers never import `lsp_types`
+and never treat unavailability as a task failure.
 
 ## Standardization decisions
 
