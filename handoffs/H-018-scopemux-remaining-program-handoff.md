@@ -7,7 +7,7 @@ updated: "2026-11-05"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: ""
+needs_human: "Step 5 PR #159 (SCOPE-004 follow-ups) awaits explicit human review and merge approval before H-018 continues."
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -449,3 +449,14 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
   4 fact calls; generic 0/3. The **RETIRE from default** decision still stands; opt-in gate
   confirmed at `crates/opencode-session/src/prompt.rs:306`. Promoted `qa` -> `done`.
 - Board commits pushed to `development` (`ce79448`).
+
+### Step 5 — SCOPE-004 follow-ups (2026-11-05)
+
+- PR #159 (`feature/SCOPE-004-followups`, commit `e8f459e`): prompt-budget injection of the
+  selected map slice (runtime-owned 400-token budget, scopemux-only, synthetic reminder) and
+  end-to-end repair re-anchor coverage (`Repairing` -> `Impact`, reopen reason -> anchored
+  plan node, prior plan nodes retained).
+- Verification: session 175 + 2 + 11, retrieval 6, native scopemux 19/19, fmt clean,
+  clippy exit 0 (pre-existing warnings only).
+- Card moved to `doing` before implementation and stays there until merge. **STOPPED for
+  human merge approval per the one-PR-at-a-time gate; step 6 has not started.**
