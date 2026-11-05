@@ -59,6 +59,7 @@ impl ExactFactProvider for LspExactFactProvider {
             ))
             .await;
 
+        let cached = response.cached;
         match response.outcome {
             SemanticFactOutcome::Exact(fact) => ExactFactOutcome::Exact(ExactFact {
                 kind: request.kind,
@@ -76,6 +77,7 @@ impl ExactFactProvider for LspExactFactProvider {
                 server_id: fact.server_id,
                 document_version: fact.document_version,
                 file_hash: fact.file_hash,
+                cached,
             }),
             SemanticFactOutcome::Unavailable { reason, .. } => ExactFactOutcome::Unavailable {
                 reason: reason_to_neutral(reason),

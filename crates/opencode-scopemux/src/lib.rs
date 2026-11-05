@@ -1704,6 +1704,7 @@ mod tests {
             server_id: "stub-server".to_string(),
             document_version: Some(1),
             file_hash: 7,
+            cached: false,
         }
     }
 
@@ -1840,6 +1841,7 @@ mod tests {
                         server_id: "stub-server".to_string(),
                         document_version: None,
                         file_hash: 0,
+                        cached: false,
                     },
                 ),
             })));

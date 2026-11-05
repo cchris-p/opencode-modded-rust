@@ -72,6 +72,8 @@ pub struct ExactFact {
     pub server_id: String,
     pub document_version: Option<i32>,
     pub file_hash: u64,
+    /// True when the source served this fact from its own cache.
+    pub cached: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
