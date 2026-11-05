@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "qa"
+status: "done"
 created: "2026-11-05"
 updated: "2026-11-05"
 ---
@@ -83,9 +83,10 @@ fallbacks.
 - Tests: new native tests for exact provenance, bounded calls, unavailable-equals-baseline,
   and no-provider-unchanged all pass. Non-native suite and the workspace suite (excluding
   the documented pre-existing native artifact failures) pass.
-- Known pre-existing native failures reproduced on base `development`:
+- At PR #152 time, two native failures were present on base `development`:
   `native_delta_slice_returns_projected_entries` and
-  `native_provider_reports_plan_reconciliation_evidence` (segfault). Unrelated to this card.
+  `native_provider_reports_plan_reconciliation_evidence` (segfault). They were unrelated to
+  this card and were fixed in PR #158 (stale `scopemux-core` FFI layout, `SCOPE-003`).
 
 ## Related Items
 
@@ -96,3 +97,26 @@ fallbacks.
 - `SCOPE-010` Language coverage and fallback matrix.
 - `wiki/scopemux-lsp-boundary.md`
 - `invariants/retrieval.md`
+
+## QA Re-confirmation (2026-11-05, H-018 step 3)
+
+Re-ran on merged `development` (`a701afd` + board commits):
+
+```bash
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-retrieval -p opencode-scopemux
+opencode_retrieval: test result: ok. 6 passed; 0 failed
+opencode_scopemux:  test result: ok. 5 passed; 0 failed
+
+$ cargo test -p opencode-scopemux --features native
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 filtered out
+
+$ cargo test -p opencode-scopemux --features native exact_fact
+test result: ok. 3 passed; 0 failed; 15 filtered out
+
+$ cargo test -p opencode-scopemux --features native native_
+test result: ok. 8 passed; 0 failed; 10 filtered out
+```
+
+Both previously recorded native failures now pass after the `SCOPE-003` FFI fix; the card
+text above was corrected accordingly. Exact facts remain opt-in only
+(`OPENCODE_SCOPEMUX_EXACT_FACTS=1`). Promoting `qa` -> `done`.
