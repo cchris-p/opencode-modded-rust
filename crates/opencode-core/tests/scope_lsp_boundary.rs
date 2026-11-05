@@ -56,18 +56,39 @@ const FORBIDDEN_IN_MAP_LAYER: &[&str] = &[
     "prepare_call_hierarchy",
 ];
 
+fn runtime_dependencies_only(manifest: &str) -> String {
+    let mut in_dependencies = false;
+    let mut dependencies = String::new();
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_dependencies = trimmed == "[dependencies]";
+            continue;
+        }
+        if in_dependencies {
+            dependencies.push_str(line);
+            dependencies.push('\n');
+        }
+    }
+    dependencies
+}
+
 #[test]
 fn scopemux_does_not_depend_on_the_lsp_client() {
     let manifest = fs::read_to_string(workspace_root().join("crates/opencode-scopemux/Cargo.toml"))
         .expect("scopemux manifest should exist");
+    // Dev-dependencies are allowed for evaluation/test tooling (SCOPE-014 uses the
+    // real LSP adapter in an example); the runtime dependency must stay neutral.
+    let runtime = runtime_dependencies_only(&manifest);
     assert!(
-        !manifest.contains("opencode-lsp"),
-        "opencode-scopemux must not depend on opencode-lsp; LSP is a separate capability \
-         (wiki/scopemux-lsp-boundary.md)"
+        !runtime.contains("opencode-lsp"),
+        "opencode-scopemux must not have a runtime dependency on opencode-lsp; LSP is a \
+         separate capability (wiki/scopemux-lsp-boundary.md)"
     );
     assert!(
-        !manifest.contains("lsp-types"),
-        "opencode-scopemux must not depend on lsp_types; consumers use neutral fact structs"
+        !runtime.contains("lsp-types"),
+        "opencode-scopemux must not have a runtime dependency on lsp_types; consumers use \
+         neutral fact structs"
     );
 }
 

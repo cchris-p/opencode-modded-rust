@@ -26,5 +26,12 @@ tree-sitter = { workspace = true, optional = true }
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
+# Evaluation/test tooling only (SCOPE-014): the runtime dependency stays neutral,
+# and the example is what injects the LSP-backed exact-fact adapter.
+opencode-lsp = { path = "../opencode-lsp" }
 
 [build-dependencies]
+
+[[example]]
+name = "evaluate_exact_facts"
+required-features = ["native"]

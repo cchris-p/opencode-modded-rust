@@ -131,12 +131,16 @@ Type facts are cheap at a few anchors and expensive project-wide. The rule is:
   (`ExactFactProvider`/`ExactFactRequest`/`ExactFactOutcome`); `opencode-scopemux`
   depends on that trait, not on `opencode-lsp`.
 - `opencode-lsp` provides `LspExactFactProvider`, the only adapter that sees LSP types.
-  The runtime injects it only when a workspace configured LSP.
-- The native provider enriches `Search`, `Anchors`, `Impact`, and `Review` slices at the
+- The native provider can enrich `Search`, `Anchors`, `Impact`, and `Review` slices at the
   anchors the map already selected, at most 8 definition queries per request. Exact results
   enter as `confidence = exact` candidates with server provenance. No provider, an
   unsupported server, a timeout, or a failure leaves the candidate set unchanged and adds a
   `provider_notes` fallback reason.
+- **`SCOPE-014` retired the enrichment from default activation.** Configuring LSP is not
+  enough to trigger it. It is opt-in via `OPENCODE_SCOPEMUX_EXACT_FACTS=1` for evaluation,
+  because the measured benefit did not justify added latency or variance. The neutral
+  contract and adapter remain for that evaluation path; see
+  `docs/research/SCOPE-014-exact-facts-evaluation.md`.
 - No C schema change was needed; exactness is carried on the retrieval candidate contract,
   so the pinned `scopemux-core` revision and FFI layout are unchanged.
 
