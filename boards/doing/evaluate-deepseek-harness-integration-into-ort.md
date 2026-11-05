@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "RESEARCH"
 spec: "invariants/research-department.md"
-status: "todo"
+status: "doing"
 created: "2026-10-14"
 ---
 
@@ -120,8 +120,26 @@ Feynman baseline) already produce for the same task?
 - Confirm no disposition, invariant, or authority was changed by this card, and
   no private content was committed.
 
+## Decision (2026-11-05)
+
+**Do not integrate dsh.** Recorded verdict and evidence in
+[`docs/research/RESEARCH-008-deepseek-harness-vs-opencode.md`](../../docs/research/RESEARCH-008-deepseek-harness-vs-opencode.md) §6.
+Instead, borrow targeted DeepSeek-API efficiency capabilities product-side; the
+implementation handoff is
+[`handoffs/H-017-deepseek-api-efficiency-handoff.md`](../../handoffs/H-017-deepseek-api-efficiency-handoff.md).
+
+Adopted scope: live model metadata, reasoning-effort/thinking control, cache-safe
+prompt/tool prefix handling, and an evidence-gated Anthropic-Messages transport.
+Rejected: Cordis/profiles/bundles, `dsh_session_log`/plugin-inventory egress,
+DeepSeek account auth, Files-API image plumbing, and any vendored dsh code.
+
+The original A/B-run requirement is superseded by explicit operator direction
+(2026-11-05): implementing these capabilities is this card's deliverable. This is
+an operator-approved scope change, not a silently cleared gate.
+
 ## Related Items
 
+- `H-017` DeepSeek API efficiency implementation handoff
 - `RESEARCH-001` Feynman research-method vs opencode/ort (local-corpus null result; comparable baseline)
 - `RESEARCH-002` Automate the Feynman-to-ort workable-chunk pipeline via the CLI (hold)
 - `RESEARCH-003` Evaluate the external R&D department's evidence supplementation (open value gate)
@@ -132,6 +150,25 @@ Feynman baseline) already produce for the same task?
 
 ## Notes
 
+- Research phase started 2026-11-05. Source-level comparison recorded in
+  [`docs/research/RESEARCH-008-deepseek-harness-vs-opencode.md`](../../docs/research/RESEARCH-008-deepseek-harness-vs-opencode.md),
+  pinned to dsh `fcc0ad4` (package `0.2.2-rc.1`) and vanilla OpenCode
+  `f54ce313b` (`1.18.31`).
+- Headline source-level findings: dsh makes the model adapter, tool registry,
+  session log, and agent loop replaceable from configuration (Cordis
+  "everything-is-a-plugin" profiles/bundles/patches/HMR), while OpenCode has a
+  fixed Effect service graph with a bounded runtime hook/transform set and
+  build-time `LayerNode` replacement; dsh also ships an OS-level filesystem
+  sandbox seam, fail-closed one-shot approval, agent teams (shared task DAG),
+  workflow scripts, goals/schedules/jobs/deliverables, and browser/computer-use.
+  OpenCode remains TUI-first and coding-first and has no OS sandbox.
+- Implementation is tracked in `handoffs/H-017-deepseek-api-efficiency-handoff.md`.
+  The card moves to `qa` after that handoff's verification pass; it is not
+  `done` until a QA pass or explicit owner direction.
+- Live probe (2026-11-05): `deepseek-flash` is 1,048,576 context / 393,216 output
+  with effort `low`/`high`/`max` and `anthropic_messages` capabilities
+  `system_prompt_update: in-history`, `tool_update: addition-only`; `ort`'s
+  bundled fallback and dedicated DeepSeek struct are stale (128k/32k and 64k/8k).
 - Model is not the variable; this is a harness/tooling question, not a
   model-strength comparison.
 - dsh is in developer preview with warned breaking changes — treat the checkout
