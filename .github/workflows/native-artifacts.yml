@@ -86,6 +86,25 @@ jobs:
       - name: Build CLI binary (release)
         run: cargo build --release -p opencode-cli
 
+      # INFRA-008: prove the published binary carries its own query set and
+      # does not depend on the build machine's checkout or native cache.
+      - name: Smoke test bundled ScopeMux queries
+        run: |
+          set -euo pipefail
+          clean_home="$(mktemp -d)"
+          clean_cwd="$(mktemp -d)"
+          binary="$GITHUB_WORKSPACE/target/release/opencode-modded-rust"
+          resolved="$( cd "$clean_cwd" && \
+            HOME="$clean_home" XDG_CACHE_HOME="$clean_home/cache" \
+            "$binary" debug scopemux-queries )"
+          test -d "$resolved"
+          test -f "$resolved/rust/docstrings.scm"
+          if strings "$binary" \
+              | grep -E '(/target/(debug|release)/build/[^[:space:]]*/out/queries|\.cache/opencode-modded-rust/native/[^[:space:]]*/queries)'; then
+            echo "published binary embeds a build-machine query path" >&2
+            exit 1
+          fi
+
       - name: Package CLI binary
         run: |
           set -euo pipefail
