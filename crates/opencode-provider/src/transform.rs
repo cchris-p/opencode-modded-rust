@@ -760,13 +760,16 @@ pub fn apply_caching_per_part(messages: &mut [Message], provider_type: &Provider
 // max_output_tokens
 // ---------------------------------------------------------------------------
 
-/// Get the maximum output tokens for a model, capped at OUTPUT_TOKEN_MAX.
+/// Get the maximum output tokens for a model.
+///
+/// The catalog-derived per-model limit wins so a model is never silently capped
+/// below its advertised output (for example DeepSeek at 393,216). The legacy
+/// `OUTPUT_TOKEN_MAX` value is only a fallback for models with no metadata.
 pub fn max_output_tokens(model: &models::ModelInfo) -> u64 {
-    let capped = model.limit.output.min(OUTPUT_TOKEN_MAX);
-    if capped == 0 {
+    if model.limit.output == 0 {
         OUTPUT_TOKEN_MAX
     } else {
-        capped
+        model.limit.output
     }
 }
 
@@ -1699,7 +1702,7 @@ mod tests {
             },
             ..default_model_info()
         };
-        assert_eq!(max_output_tokens(&model), OUTPUT_TOKEN_MAX);
+        assert_eq!(max_output_tokens(&model), 64000);
     }
 
     #[test]
@@ -1713,6 +1716,19 @@ mod tests {
             ..default_model_info()
         };
         assert_eq!(max_output_tokens(&model), 4096);
+    }
+
+    #[test]
+    fn test_max_output_tokens_falls_back_without_metadata() {
+        let model = models::ModelInfo {
+            limit: models::ModelLimit {
+                context: 128000,
+                input: None,
+                output: 0,
+            },
+            ..default_model_info()
+        };
+        assert_eq!(max_output_tokens(&model), OUTPUT_TOKEN_MAX);
     }
 
     #[test]

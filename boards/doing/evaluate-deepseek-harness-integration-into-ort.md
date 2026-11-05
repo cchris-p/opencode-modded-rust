@@ -175,3 +175,27 @@ an operator-approved scope change, not a silently cleared gate.
   as a moving target and pin the revision used for any recorded run.
 - A null or negative result (no advantage, or not worth integrating) closes this
   card the same as a positive one.
+
+## Implementation Log (H-017)
+
+### Pass 1 — Metadata alignment
+
+- Single source of truth: added `DeepSeekModelSpec` / `DEEPSEEK_MODELS` and
+  `bundled_models()` / `bundled_models_dev()` in
+  `crates/opencode-provider/src/deepseek.rs`. Both the direct provider and the
+  bundled fallback catalog now consume it; the stale `deepseek-chat` /
+  `deepseek-reasoner` 64k/8k entries are deleted.
+- Bundled fallback now declares `deepseek-flash` and `deepseek-v4-pro` at
+  1,048,576 context / 393,216 output, reasoning + tool capable, with
+  `deepseek-flash` also text+image.
+- `transform::max_output_tokens` now returns the catalog per-model limit and uses
+  `OUTPUT_TOKEN_MAX` (32k) only when metadata is absent, so DeepSeek is never
+  silently capped below its advertised output.
+- Tests: `deepseek_metadata_matches_live_listing_in_bundled_and_models_dev_paths`
+  (bundled + models.dev fixture, runtime mapping),
+  `catalog_matches_live_listing`, `models_dev_view_keeps_reasoning_and_image_input`,
+  and the updated `max_output_tokens` cases.
+- Verification (2026-11-05): `cargo fmt --all -- --check`, `cargo check
+  --workspace` (with `SCOPEMUX_SKIP_NATIVE_BUILD=1`), `cargo clippy --workspace
+  --all-targets` (no new warnings in the touched files), `cargo test -p
+  opencode-provider` (148 tests pass).
