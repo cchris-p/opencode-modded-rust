@@ -114,3 +114,24 @@ with a provider/model-id allowlist.
   and reasoning passback), same class on a different wire signal.
 - `FEAT-013` - model capability gating.
 - `invariants/providers.md` - the normative rule.
+
+## Related DeepSeek provider behavior (RESEARCH-008 / H-017)
+
+The same provider work also covers metadata and request shaping; see
+`docs/research/RESEARCH-008-deepseek-harness-vs-opencode.md` and
+`handoffs/H-017-deepseek-api-efficiency-handoff.md`.
+
+- Model metadata (`deepseek-flash`, `deepseek-v4-pro`: 1,048,576 context /
+  393,216 output) comes from one canonical spec shared by the direct provider and
+  the bundled fallback catalog.
+- Reasoning effort `low`/`high`/`max` maps to `reasoning_effort` on
+  `/chat/completions` and `output_config.effort` on the opt-in Anthropic
+  transport; non-advertised values fail before network I/O.
+- The leading system prompt is a byte-stable prefix; environment/date/skills are
+  sent as a separate dynamic system message so a context change does not rewrite
+  the cached prefix.
+- Cache counters come from `prompt_cache_hit_tokens`/`prompt_cache_miss_tokens`
+  (OpenAI-compatible) and `cache_read_input_tokens`/`cache_creation_input_tokens`
+  (Anthropic), normalized into the session usage metadata.
+- The Anthropic transport remains opt-in: the recorded fixed-workload measurement
+  showed identical cache hit rate and equivalent tokens, with no latency win.

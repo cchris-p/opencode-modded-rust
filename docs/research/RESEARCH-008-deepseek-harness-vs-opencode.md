@@ -1,9 +1,10 @@
 # RESEARCH-008 — DeepSeek Harness (dsh) vs vanilla OpenCode: architecture comparison
 
 **Date:** 2026-11-05
-**Card:** `RESEARCH-008` (`boards/todo/evaluate-deepseek-harness-integration-into-ort.md`)
-**Status:** Research phase — source-level comparison recorded. The end-to-end A/B run
-required by the card's `Done when` is **not** done yet.
+**Card:** `RESEARCH-008` (`boards/qa/evaluate-deepseek-harness-integration-into-ort.md`)
+**Status:** Verdict locked and implemented through H-017. The original dsh A/B run
+is superseded by operator direction; the card's deliverable is the adopted
+DeepSeek-API efficiency work, implemented and measured (see §6.1).
 **Non-goals honored:** no runtime dependency added, nothing vendored, no invariant or
 disposition changed, no private content committed.
 
@@ -391,16 +392,53 @@ implementation of the adopted DeepSeek capabilities is the card's deliverable.
 The comparison and decision are recorded here; implementation lives in
 `handoffs/H-017-deepseek-api-efficiency-handoff.md`.
 
+## 6.1 Implementation results (2026-11-05, H-017)
+
+Passes 1–4 of `handoffs/H-017-deepseek-api-efficiency-handoff.md` landed on
+`development` (PRs #151, #153, #155, #156); Pass 5 is the closeout.
+
+1. **Metadata alignment.** One canonical spec in
+   `crates/opencode-provider/src/deepseek.rs` feeds both the direct provider and
+   the bundled fallback: `deepseek-flash` and `deepseek-v4-pro` at 1,048,576
+   context / 393,216 output, reasoning + tools, `deepseek-flash` text+image. The
+   stale `deepseek-chat`/`deepseek-reasoner` 64k/8k entries are gone, and
+   `transform::max_output_tokens` no longer caps below the catalog limit.
+2. **Reasoning effort.** Direct DeepSeek advertises `low`/`high`/`max`; the
+   session runner now carries the selected variant into the request instead of
+   dropping it. Bounded A/B (same prompt): reasoning tokens 49 (`low`), 53
+   (default), 62 (`high`), 67 (`max`); latency 1020/1093/1301/1291 ms. The control
+   is real. Non-advertised values are rejected client-side.
+3. **Cache-safe prefix and counters.** The stable agent/model prompt leads; the
+   environment/date/skills block is a separate dynamic system message, so a
+   dynamic change does not rewrite the leading prefix. Cache hit/miss counters are
+   parsed from both transports and persisted on assistant usage. Repeated turns
+   with an unchanged prefix keep identical leading bytes (tested).
+4. **Anthropic transport.** Implemented opt-in at
+   `https://api.deepseek.com/anthropic/v1/messages` with the `in-history` system
+   shape, tool blocks, thinking passback (empty signature accepted), and streaming.
+   Fixed-workload comparison (≈2.9k-token stable prefix, 6 runs, warm): both
+   transports returned 2,896 total input tokens with 2,688 cache reads (92.8% hit
+   rate); output 12.3 vs 15.2 tokens; p50 854 vs 1,008 ms; p95 1,484 vs 1,433 ms.
+   No measurable win, so `/chat/completions` stays the default and the transport
+   remains opt-in. This is a recorded null result, not a promotion.
+
 ## 7. Residual open questions (not blockers)
 
-1. Does the OpenAI-compatible `reasoning_effort` field change model behavior, or
-   is it only accepted/ignored? (Probe with a bounded task before trusting it.)
+1. Does the OpenAI-compatible `reasoning_effort` field change model behavior?
+   **Answered:** yes. `low`/`high`/`max` move reasoning tokens and latency
+   measurably, so the control ships.
 2. Does the Anthropic transport measurably improve cache hit rate and latency over
-   `/chat/completions` for the same workload?
-3. Can cache-safe system updates be expressed on `/chat/completions` (append a
-   system message) without switching transports?
-4. Do in-history / addition-only semantics apply to `deepseek-v4-pro` (which
-   declares `leading-only`), or only to `deepseek-flash`?
+   `/chat/completions`? **Answered:** no. Cache hit rate was identical and latency
+   was within noise; kept opt-in.
+3. Can cache-safe system updates be expressed on `/chat/completions` without
+   switching transports? **Answered:** yes. A byte-stable leading system message
+   plus a separate dynamic system message preserves the cached prefix on both
+   transports.
+4. Do in-history / addition-only semantics apply to `deepseek-v4-pro`?
+   **Answered:** the live listing says `leading-only` for `deepseek-v4-pro` and
+   `in-history` for `deepseek-flash`. The chosen pipeline always emits leading
+   system messages, which is valid for both; late system updates are only used
+   where the model advertises `in-history`.
 
 ## 9. Provenance
 
