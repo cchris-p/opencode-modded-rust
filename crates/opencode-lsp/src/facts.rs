@@ -408,7 +408,10 @@ impl LspClientRegistry {
             file_hash,
         };
 
-        {
+        // Do not cache an empty answer: a server may still be indexing when the
+        // first anchor is asked. Empty results stay uncached so a later request can
+        // resolve once the server is warm.
+        if !fact.locations.is_empty() {
             let mut cache = self.facts_cache.write().await;
             // A changed file invalidates every cached anchor for that path.
             cache.retain(|existing, _| existing.path != path || existing.file_hash == file_hash);

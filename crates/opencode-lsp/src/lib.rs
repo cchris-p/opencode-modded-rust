@@ -1759,28 +1759,40 @@ while True:
             .await;
 
         let main = root.join("src/main.rs");
-        let response = registry
-            .semantic_facts(SemanticFactRequest::new(
-                &main,
-                1,
-                13,
-                SemanticFactKind::Definition,
-            ))
-            .await;
-        match response.outcome {
-            SemanticFactOutcome::Exact(fact) => {
-                assert_eq!(fact.confidence, FactConfidence::Exact);
-                assert_eq!(fact.server_id, "rust-analyzer");
-                assert!(
-                    fact.locations
+        // rust-analyzer indexes asynchronously; retry until the definition resolves.
+        let mut last = None;
+        let mut found = false;
+        for _ in 0..40 {
+            let response = registry
+                .semantic_facts(SemanticFactRequest::new(
+                    &main,
+                    1,
+                    18,
+                    SemanticFactKind::Definition,
+                ))
+                .await;
+            match response.outcome {
+                SemanticFactOutcome::Exact(fact) => {
+                    assert_eq!(fact.confidence, FactConfidence::Exact);
+                    assert_eq!(fact.server_id, "rust-analyzer");
+                    if fact
+                        .locations
                         .iter()
-                        .any(|loc| loc.file.ends_with("def.rs")),
-                    "expected definition in def.rs, got {:?}",
-                    fact.locations
-                );
+                        .any(|loc| loc.file.ends_with("def.rs"))
+                    {
+                        found = true;
+                        break;
+                    }
+                    last = Some(format!("exact fact without def.rs: {:?}", fact.locations));
+                }
+                other => last = Some(format!("{other:?}")),
             }
-            other => panic!("expected exact definition from rust-analyzer, got {other:?}"),
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        assert!(
+            found,
+            "expected a definition in def.rs from rust-analyzer; last outcome: {last:?}"
+        );
 
         registry.shutdown_all().await;
         let _ = std::fs::remove_dir_all(&root);

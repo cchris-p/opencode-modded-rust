@@ -299,15 +299,25 @@ impl SessionPrompt {
         let retrieval_response = if seed_files.is_empty() {
             None
         } else {
-            // Optional exact-fact enrichment: only when a workspace configured LSP.
+            // SCOPE-014: exact-fact enrichment is retired from default activation.
+            // It stays available opt-in for evaluation, but no LSP fact queries run
+            // unless explicitly requested. LSP being configured is not enough.
+            let exact_facts_enabled = matches!(
+                std::env::var("OPENCODE_SCOPEMUX_EXACT_FACTS").as_deref(),
+                Ok("1") | Ok("true") | Ok("on")
+            );
             let exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>> =
-                self.lsp_registry.as_ref().map(|registry| {
-                    let provider: std::sync::Arc<dyn opencode_retrieval::ExactFactProvider> =
-                        std::sync::Arc::new(opencode_lsp::LspExactFactProvider::new(
-                            registry.clone(),
-                        ));
-                    provider
-                });
+                if exact_facts_enabled {
+                    self.lsp_registry.as_ref().map(|registry| {
+                        let provider: std::sync::Arc<dyn opencode_retrieval::ExactFactProvider> =
+                            std::sync::Arc::new(opencode_lsp::LspExactFactProvider::new(
+                                registry.clone(),
+                            ));
+                        provider
+                    })
+                } else {
+                    None
+                };
             crate::retrieval::retrieve(session, seed_files, input.model.as_ref(), exact_facts).await
         };
 
