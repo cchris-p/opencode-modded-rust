@@ -238,3 +238,33 @@ sending.
   `cargo test -p opencode-session` (184 tests), `cargo test -p opencode-server
   variant_listing` (2 tests), `cargo check --workspace` and `cargo clippy
   --workspace --all-targets` (no new warnings in touched files) all pass.
+
+### Pass 3 — Cache-safe prompt prefix and cache counters
+
+- Split the system prompt at `build_system_prompt_parts` in
+  `crates/opencode-server/src/agentic.rs`: the byte-stable part is the agent/model
+  base prompt; the environment block, date, and available-skills list are
+  `dynamic_context`.
+- `ResolvedAgenticContext` carries `dynamic_context`; the server passes it through
+  `prompt_with_update_hook` → `loop_inner` → `build_chat_messages`, which emits the
+  stable system message first and the dynamic context as its own system message.
+  Model-visible content and ordering are unchanged (same two blocks, still before
+  history), but a date/skills change no longer rewrites the leading bytes.
+- Cache counters: `Usage` now aliases DeepSeek's `prompt_cache_hit_tokens` into
+  `cache_read_input_tokens` and derives miss from the prompt total; streaming
+  usage events carry `cache_read_tokens`/`cache_miss_tokens`; DeepSeek streaming
+  requests send `stream_options.include_usage=true` so the terminal usage chunk
+  arrives. The session loop persists `cache_read_tokens`/`cache_miss_tokens` in
+  the assistant usage metadata and `MessageUsage.cache_read_tokens`.
+- Tests: `dynamic_context_does_not_rewrite_the_stable_system_prefix` (session),
+  `build_system_prompt_parts_keeps_dynamic_context_out_of_the_stable_prefix`
+  (server), `deepseek_cache_hit_alias_populates_cache_read` and
+  `stateful_usage_exposes_deepseek_cache_counters` (provider).
+- Live check (2026-11-05): a streaming `deepseek-flash` request with
+  `stream_options.include_usage` ended with
+  `prompt_cache_hit_tokens: 0`, `prompt_cache_miss_tokens: 33`, and a non-streaming
+  request returned the same fields.
+- Verification (2026-11-05): `cargo test -p opencode-provider` (154 tests),
+  `cargo test -p opencode-session` (185 tests), `cargo test -p opencode-server`
+  (78 tests), `cargo check --workspace`, and `cargo clippy --workspace
+  --all-targets` (no new warnings in touched files) all pass.

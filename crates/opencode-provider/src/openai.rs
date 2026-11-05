@@ -381,11 +381,24 @@ impl OpenAIProvider {
             .and_then(|u| u.get("completion_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        let cache_read_tokens = usage
+            .and_then(|u| {
+                u.get("prompt_cache_hit_tokens")
+                    .or_else(|| u.get("cache_read_input_tokens"))
+            })
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let cache_miss_tokens = usage
+            .and_then(|u| u.get("prompt_cache_miss_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| prompt_tokens.saturating_sub(cache_read_tokens));
 
         if usage.is_some() {
             events.push(StreamEvent::Usage {
                 prompt_tokens,
                 completion_tokens,
+                cache_read_tokens,
+                cache_miss_tokens,
             });
         }
 
@@ -1270,7 +1283,9 @@ mod tests {
             &events[1],
             StreamEvent::Usage {
                 prompt_tokens: 1,
-                completion_tokens: 2
+                completion_tokens: 2,
+                cache_read_tokens: 0,
+                cache_miss_tokens: 1
             }
         ));
     }

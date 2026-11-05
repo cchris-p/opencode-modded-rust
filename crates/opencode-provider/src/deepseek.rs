@@ -129,6 +129,18 @@ pub struct DeepSeekProvider {
 /// field. The live listing advertises `low`/`high`/`max` (default `high`), so an
 /// unsupported value is rejected before any network I/O instead of silently
 /// falling back to the endpoint default.
+/// Ask the endpoint to include the terminal usage chunk on streaming responses so
+/// cache hit/miss counters are observable (DeepSeek supports OpenAI
+/// `stream_options.include_usage`).
+fn apply_stream_usage_option(body: &mut serde_json::Value) {
+    if let Some(object) = body.as_object_mut() {
+        object.insert(
+            "stream_options".to_string(),
+            serde_json::json!({"include_usage": true}),
+        );
+    }
+}
+
 fn apply_reasoning_effort(
     body: &mut serde_json::Value,
     variant: Option<&str>,
@@ -211,6 +223,7 @@ impl Provider for DeepSeekProvider {
         let mut stream_request = request;
         stream_request.stream = Some(true);
         let mut body = crate::openai_chat::openai_chat_completions_body(&stream_request)?;
+        apply_stream_usage_option(&mut body);
         apply_reasoning_effort(&mut body, stream_request.variant.as_deref())?;
 
         let response = self
@@ -274,6 +287,16 @@ mod tests {
         let input = &flash.modalities.as_ref().unwrap().input;
         assert!(input.contains(&"text".to_string()));
         assert!(input.contains(&"image".to_string()));
+    }
+
+    #[test]
+    fn streaming_requests_ask_for_the_usage_chunk() {
+        let mut body = serde_json::json!({"model": "deepseek-flash", "stream": true});
+        apply_stream_usage_option(&mut body);
+        assert_eq!(
+            body["stream_options"],
+            serde_json::json!({"include_usage": true})
+        );
     }
 
     #[test]
