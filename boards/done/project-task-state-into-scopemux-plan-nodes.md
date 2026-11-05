@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 updated: "2026-11-05"
 predecessor: "SCOPE-002"
@@ -144,3 +144,12 @@ $ cargo fmt --all --check
 
 Authority check: no task stage, verification, review, or completion is written from plan
 evidence; the fix only restores the FFI layout.
+### Post-merge QA (2026-11-05)
+
+- PR #158 merged into `development` as `a701afd`; feature branch deleted.
+- Re-ran on merged `development`:
+  - `cargo test -p opencode-scopemux --features native` -> 18 passed, 0 failed.
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session` -> 172 + 2 + 11 passed, 0 failed.
+  - `cargo fmt --all --check` -> exit 0.
+- Promoted `qa` -> `done`. The reconciliation test and the delta-slice test both pass on the
+  merged base; no segfault remains.
