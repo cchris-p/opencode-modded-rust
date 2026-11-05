@@ -6,6 +6,7 @@ use crate::cerebras::CerebrasProvider;
 use crate::cohere::CohereProvider;
 use crate::deepinfra::DeepInfraProvider;
 use crate::deepseek::DeepSeekProvider;
+use crate::deepseek_anthropic::DeepSeekAnthropicProvider;
 use crate::github_copilot::GitHubCopilotProvider;
 use crate::gitlab::GitLabProvider;
 use crate::google::GoogleProvider;
@@ -2750,6 +2751,13 @@ fn env_any(keys: &[&str]) -> Option<String> {
     None
 }
 
+fn deepseek_transport_is_anthropic(provider: &ProviderState) -> bool {
+    provider_option_string(provider, &["transport"])
+        .or_else(|| env_any(&["DEEPSEEK_TRANSPORT"]))
+        .map(|transport| transport.eq_ignore_ascii_case("anthropic"))
+        .unwrap_or(false)
+}
+
 fn provider_option_string(provider: &ProviderState, keys: &[&str]) -> Option<String> {
     for key in keys {
         let Some(value) = provider.options.get(*key) else {
@@ -2896,7 +2904,11 @@ fn create_concrete_provider(
         }
         "deepseek" => {
             let api_key = provider_secret(provider, &["DEEPSEEK_API_KEY"])?;
-            Some(Arc::new(DeepSeekProvider::new(api_key)))
+            if deepseek_transport_is_anthropic(provider) {
+                Some(Arc::new(DeepSeekAnthropicProvider::new(api_key)))
+            } else {
+                Some(Arc::new(DeepSeekProvider::new(api_key)))
+            }
         }
         "xai" => {
             let api_key = provider_secret(provider, &["XAI_API_KEY"])?;
@@ -3571,6 +3583,22 @@ mod tests {
         assert!(fixture_flash.capabilities.reasoning);
         assert!(fixture_flash.capabilities.toolcall);
         assert!(fixture_flash.capabilities.input.image);
+    }
+
+    #[test]
+    fn deepseek_transport_option_selects_anthropic() {
+        let mut state = provider_state("deepseek");
+        assert!(!deepseek_transport_is_anthropic(&state));
+
+        state
+            .options
+            .insert("transport".to_string(), serde_json::json!("anthropic"));
+        assert!(deepseek_transport_is_anthropic(&state));
+
+        state
+            .options
+            .insert("transport".to_string(), serde_json::json!("chat"));
+        assert!(!deepseek_transport_is_anthropic(&state));
     }
 
     #[test]

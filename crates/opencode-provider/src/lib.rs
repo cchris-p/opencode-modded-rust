@@ -8,6 +8,7 @@ pub mod cohere;
 pub mod custom_fetch;
 pub mod deepinfra;
 pub mod deepseek;
+pub mod deepseek_anthropic;
 pub mod github_copilot;
 pub mod gitlab;
 pub mod google;
