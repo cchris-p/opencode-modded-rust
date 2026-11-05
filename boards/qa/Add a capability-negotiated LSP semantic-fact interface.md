@@ -84,7 +84,8 @@ logic or depend directly on LSP types and availability.
 - `cargo test -p opencode-lsp`: 17/17, including fake-server exact/cache/invalidation,
   unsupported capability, and hung-server timeout.
 - Real server: `cargo test -p opencode-lsp real_rust_analyzer_definition_smoke -- --ignored`
-  passed against installed `rust-analyzer`.
+  passes against `rust-analyzer 1.98.1` (installed via `rustup component add rust-analyzer`);
+  the test retries while the server is indexing and resolves a cross-file definition.
 
 ## Related Items
 

@@ -5,8 +5,9 @@ priority: "P2"
 type: "research"
 area: "SCOPE"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "todo"
+status: "qa"
 created: "2026-11-05"
+updated: "2026-11-05"
 ---
 
 # Measure the context value of LSP-derived semantic facts
@@ -57,6 +58,28 @@ The product should not keep an enrichment just because it is technically possibl
 - Keep task sets fixed before comparing arms.
 - Separate latency added by LSP from latency added by map construction.
 - Report exact vs heuristic edge counts so the effect is attributable.
+
+## QA Verification
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/154 (merged into `development`).
+- Evaluation recorded in `docs/research/SCOPE-014-exact-facts-evaluation.md`.
+- Harness: `crates/opencode-scopemux/examples/evaluate_exact_facts.rs` (native, real
+  `rust-analyzer` for the exact arm).
+- Three arms on the same fixed held-out set:
+  - heuristic ScopeMux: 1/3 success, precision 0.11, p95 448 ms
+  - ScopeMux + exact LSP facts: 1/3 success, precision 0.13, 1 exact edge, p95 762 ms
+  - generic: 0/3 success
+- **Decision: RETIRE from default activation.** No task-success gain, marginal precision,
+  and a large latency increase. Enrichment is opt-in via
+  `OPENCODE_SCOPEMUX_EXACT_FACTS=1`; default behavior is the heuristic map, identical to
+  the no-LSP path.
+- Retirement criterion: fully remove enrichment unless a >=20-task held-out set shows a
+  task-success or >=10% relative precision gain with <=+20% p95 latency and <10% fallback
+  rate.
+- No-server completion is covered by the SCOPE-013 equality test and the heuristic/generic
+  arms in this run.
+- Real-server smoke: `cargo test -p opencode-lsp real_rust_analyzer_definition_smoke --
+  --ignored` passes against `rust-analyzer 1.98.1`.
 
 ## Related Items
 

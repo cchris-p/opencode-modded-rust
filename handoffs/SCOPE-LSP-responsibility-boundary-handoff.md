@@ -1,7 +1,7 @@
 ---
 id: "H-016"
 title: "SCOPE/LSP responsibility boundary and semantic-fact enrichment - Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-11-05"
 updated: "2026-11-05"
 owner: ""
@@ -201,6 +201,42 @@ enrichment is kept without measured benefit.
 - The enrichment has measured evidence and a recorded keep/expand/retire decision.
 - No new task-state, lifecycle, verification, or review authority moves into either
   capability.
+
+## Completion (2026-11-05)
+
+All covered PRs are merged into `development`:
+
+| Item | PR | Outcome |
+|---|---|---|
+| `LSP-001` | #149 | Config-driven lazy LSP registry, default `lsp` feature, real `/lsp` + TUI status, bounded request timeout |
+| `SCOPE-012` | #148 | Ownership matrix + docs, architecture guard, tool-surface guard |
+| `LSP-002` | #150 | Neutral capability-negotiated semantic-fact interface with cache and explicit unavailability |
+| `SCOPE-013` | #152 | Optional exact-fact ingestion at bounded map anchors; no C schema change |
+| `SCOPE-014` | #154 | Three-arm evaluation; **retired default activation**, opt-in via `OPENCODE_SCOPEMUX_EXACT_FACTS=1` |
+
+Cards are in `qa` with evidence recorded. No card is `done`; a QA pass or explicit owner
+direction is still required.
+
+Key decisions:
+- LSP stays optional and config-gated; no task requires it.
+- ScopeMux never depends on `opencode-lsp` at runtime; the neutral contract lives in
+  `opencode-retrieval`.
+- Exact-fact enrichment is retired from default behavior after measuring no task-success
+  gain and a ~70% p95 latency increase. The interface and adapter remain for a larger
+  evaluation. See `docs/research/SCOPE-014-exact-facts-evaluation.md`.
+
+Known pre-existing issue (not introduced here; reproduced on base `development`): the pinned
+native `scopemux-core` artifact fails `native_delta_slice_returns_projected_entries` and
+segfaults in `native_provider_reports_plan_reconciliation_evidence`. The rest of the native
+suite passes. The `opencode-tui` test `tab_autocomplete_uses_first_candidate` also fails on
+base. Investigate these before relying on a fully green `cargo test --workspace`.
+
+Next-agent notes:
+- Re-run QA with `scopemux-self-qa` and move cards to `done` only with recorded QA.
+- If expanding exact facts, start from the evaluation doc's "what would justify expanding"
+  and use a >=20-task held-out set before changing the default.
+- `LSP-001` manual `/lsp`/TUI checks still need a human or QA session with a configured
+  server.
 
 ## Next Agent Instructions
 
