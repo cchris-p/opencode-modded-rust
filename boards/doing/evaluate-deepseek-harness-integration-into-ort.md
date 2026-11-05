@@ -268,3 +268,51 @@ sending.
   `cargo test -p opencode-session` (185 tests), `cargo test -p opencode-server`
   (78 tests), `cargo check --workspace`, and `cargo clippy --workspace
   --all-targets` (no new warnings in touched files) all pass.
+
+### Pass 4 — Anthropic Messages transport (evidence-gated)
+
+- Added `crates/opencode-provider/src/deepseek_anthropic.rs`, selected by
+  `provider.deepseek.options.transport = "anthropic"` (or
+  `DEEPSEEK_TRANSPORT=anthropic`). The default remains `/chat/completions`.
+- Requests use `https://api.deepseek.com/anthropic/v1/messages`, `x-api-key`, and
+  `anthropic-version: 2023-06-01`. Leading system messages become a `system` block
+  array; late system messages stay in history (the `in-history` shape). Tools map
+  to `{name,description,input_schema}`. Assistant reasoning is echoed back as a
+  `thinking` block (empty signature; the endpoint accepts it on tool follow-ups,
+  where it is mandatory). Tool results map to user `tool_result` blocks and
+  consecutive results merge into one user message.
+- Streaming uses a new stateful Anthropic SSE parser
+  (`parse_anthropic_sse_stateful` / `anthropic_compat_sse_stream`) that keeps the
+  content-block index table, so thinking closes correctly and tool-input deltas
+  carry the real `tool_use` id. Usage events carry the full prompt total and the
+  cache-read/miss split.
+- `output_config.effort` accepts `low`/`high`/`max`; unsupported values fail before
+  network I/O.
+
+End-to-end probes (live, 2026-11-05, `deepseek-flash`):
+
+- system as a block array accepted; in-history `role: system` accepted.
+- tools returned `stop_reason: tool_use` with a `thinking` + `tool_use` block; a
+  tool-result follow-up without the thinking block is rejected, with an empty
+  signature it succeeds.
+- streaming emitted `thinking_delta`, `text_delta`, `input_json_delta`, and a
+  terminal `message_delta` usage frame.
+
+Fixed-workload comparison (same ~2.9k-token stable prefix, 6 runs each, second run
+onward warm):
+
+| transport | total input | output | cache read | hit rate | p50 | p95 |
+|---|---|---|---|---|---|---|
+| `/chat/completions` | 2896 | 12.3 | 2688 | 92.8% | 854 ms | 1484 ms |
+| `/anthropic/v1/messages` | 2896 | 15.2 | 2688 | 92.8% | 1008 ms | 1433 ms |
+
+The Anthropic transport does **not** measurably win: cache hit rate is identical,
+token counts are equivalent, and latency is within noise (chat is slightly faster
+at p50). Per the handoff it stays opt-in and `/chat/completions` remains the
+default; the null result is recorded rather than promoted.
+- Tests: 4 conversion/response tests in `deepseek_anthropic`, the stateful SSE
+  parser test, and `deepseek_transport_option_selects_anthropic`.
+- Verification (2026-11-05): `cargo test -p opencode-provider` (160 tests),
+  `cargo test -p opencode-session` (185 tests), `cargo test -p opencode-server`
+  (78 tests), `cargo check --workspace`, and `cargo clippy --workspace
+  --all-targets` (no new warnings in touched files) all pass.
