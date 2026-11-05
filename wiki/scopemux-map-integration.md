@@ -163,6 +163,18 @@ Every result carries file/symbol/block provenance, confidence, and a token estim
 
 The generic repository-local provider stays the default and the fallback. When `scopemux` is absent, fails, or cannot parse the workspace language, context assembly still completes. Unsupported language is an explicit provenance signal, not a silent downgrade.
 
+### ScopeMux/LSP boundary
+
+The map owns syntax, project/task context, delta, plan nodes, observability, duplication,
+and reconciliation. `opencode-lsp` owns exact point semantics and diagnostics. The map is
+never a second LSP client: it does not expose go-to-definition, find-references, hover,
+document symbols, implementations, type definitions, call hierarchy, or diagnostics as
+map-backed queries, and it does not resolve types itself. Optional LSP-derived type facts
+enter as `confidence = exact` edges only when a configured server is available; otherwise
+heuristic edges remain and the task still completes. The full matrix and precedence rule
+are in `wiki/scopemux-lsp-boundary.md`, and the boundary is enforced by
+`crates/opencode-core/tests/scope_lsp_boundary.rs`.
+
 ## Language Coverage
 
 The product's own repository is Rust, so Rust grammar and reference resolution were phase-one enabling work. `WI-030` (merged 2026-09-25) added Rust parsing, symbol extraction, `use`-path module following, and reference resolution to `scopemux-core`, so the Rust workspace is now parseable. Rust resolution is not yet at C/C++ parity: trait-object dispatch, macro expansion, and generic type-parameter binding remain open gaps tracked on `WI-030`, and the generic provider stays the fallback.
@@ -193,6 +205,8 @@ Each phase is independently useful and must not make the previous phase a hard d
 - Letting `scopemux` own task state, lifecycle, verification, review, or completion.
 - Treating heuristic links as semantic truth.
 - Replacing direct file reads for small, obvious tasks.
+- Owning point semantic queries or diagnostics; those belong to `opencode-lsp`.
+- Adding a type checker, inference engine, compiler frontend, or second LSP client.
 
 ## Open Questions
 

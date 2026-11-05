@@ -186,6 +186,8 @@ This plan requires explicit follow-up items:
 - making `ScopeMux` the owner of task state or runtime progression
 - replacing `opencode-lsp` or duplicating its point semantic queries; see
   `wiki/scopemux-lsp-boundary.md`
+- becoming a second LSP client, or adding a type checker, inference engine, or compiler
+  frontend to `ScopeMux`
 
 ## Bottom Line
 

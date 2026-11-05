@@ -71,8 +71,13 @@ The map is more than an index. An index answers "what exists"; a map also repres
 
 ## What WIP is not
 
-- It is not an LSP. It does not implement hover, completion, diagnostics, formatting, or
-  rename. `opencode-lsp` remains the language-semantics client.
+- It is not an LSP and not a second LSP client. It does not implement hover, completion,
+  diagnostics, formatting, rename, go-to-definition, find-references, document symbols,
+  implementations, type definitions, or call hierarchy. `opencode-lsp` remains the sole
+  language-semantics client.
+- It does not add a type checker, inference engine, or compiler frontend. Exact semantic
+  facts may enter the map as optional `confidence = exact` enrichment, but ScopeMux never
+  resolves types itself.
 - It is not a second task store. Plan nodes are projections of the authoritative task
   record; the task record wins.
 - It is not a runtime authority. It cannot advance a stage, declare completion, verify,
@@ -109,6 +114,24 @@ The right sentence is: **WIP is an LSP-like protocol for workspace intelligence,
 LSP.** Compose with `opencode-lsp`; do not replace it. The concrete division of labor,
 redundancies to remove, and optional LSP-derived type-fact policy are defined in
 `wiki/scopemux-lsp-boundary.md`.
+
+### Ownership boundary with `opencode-lsp`
+
+One owner per query class:
+
+| Concern | Owner |
+|---|---|
+| CST/AST, ranges, InfoBlocks, token estimates, slicing | ScopeMux parser |
+| Project map, delta, plan nodes, observability, duplication, reconciliation | ScopeMux |
+| Exact definition/reference/type/implementation/call-hierarchy facts | `opencode-lsp` (optional) |
+| Diagnostics | `opencode-lsp` (optional) |
+| Semantic edge confidence | LSP = exact; ScopeMux = heuristic |
+| Budgets, stage, inclusion, disposition | Runtime |
+
+Precedence: exact LSP facts outrank heuristic ScopeMux edges, ScopeMux may consume LSP
+facts as optional enrichment, ScopeMux must never require LSP, and low-confidence links
+must not override explicit task scope (`invariants/retrieval.md`). This boundary is
+enforced by the architecture guard in `crates/opencode-core/tests/scope_lsp_boundary.rs`.
 
 ## Why ScopeMux matters
 
@@ -371,7 +394,8 @@ Tracked by `DECISION-016` and `DECISION-017`.
 
 ## Non-goals
 
-- Replacing `opencode-lsp`.
+- Replacing `opencode-lsp` or building a second LSP client.
+- Adding a type checker, inference engine, or compiler frontend to ScopeMux.
 - Owning task state, lifecycle, verification, review, or completion.
 - Making ScopeMux a V1 hard dependency.
 - A general-purpose platform for every harness.
