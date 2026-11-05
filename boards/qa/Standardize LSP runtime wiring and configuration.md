@@ -5,8 +5,9 @@ priority: "P1"
 type: "feature"
 area: "LSP"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "doing"
+status: "qa"
 created: "2026-11-05"
+updated: "2026-11-05"
 ---
 
 # Standardize LSP runtime wiring and configuration
@@ -76,6 +77,21 @@ So the product advertises LSP but does not actually start or use it.
 - Diagnostics must be best-effort; a server that never responds must not hang the tool.
 - The server and TUI already have status types to reuse
   (`crates/opencode-tui/src/context/app_context.rs:51`).
+
+## QA Verification
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/149 (merged into `development`).
+- `cargo fmt --all`, `cargo check --workspace`, `cargo clippy --workspace --all-targets`: pass.
+- `cargo test -p opencode-lsp`: 12/12, including a fake JSON-RPC server that starts lazily
+  and answers requests, broken-server suppression, extension gating, disabled server, and
+  root selection.
+- `cargo test -p opencode-tool`: 68/68.
+- `cargo test --workspace --exclude opencode-scopemux --exclude opencode-tui`: all green.
+- Pre-existing/environmental, reproduced on an untouched branch: `opencode-scopemux
+  --features native` segfaults in the pinned FFI artifact; `opencode-tui
+  tab_autocomplete_uses_first_candidate` fails. Neither is touched by this card.
+- Manual `/lsp`/TUI and slow-server checks remain for QA. A bounded request timeout is
+  delivered with `LSP-002` because it shares the same client.
 
 ## Related Items
 

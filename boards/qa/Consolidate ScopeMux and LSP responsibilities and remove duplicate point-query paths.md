@@ -5,8 +5,9 @@ priority: "P1"
 type: "refactor"
 area: "SCOPE"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "doing"
+status: "qa"
 created: "2026-11-05"
+updated: "2026-11-05"
 ---
 
 # Consolidate ScopeMux and LSP responsibilities and remove duplicate point-query paths
@@ -64,6 +65,21 @@ competing ways to answer the same question.
 - The enforcement point should be cheap: a unit/architecture test plus a tool-surface
   assertion is enough.
 - Do not weaken the existing fallback guarantees to satisfy the guard.
+
+## QA Verification
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/148 (merged into `development`).
+- Ownership matrix and precedence rule documented in `wiki/workspace-intelligence.md`,
+  `wiki/scopemux-integration-plan.md`, and `wiki/scopemux-map-integration.md`, all pointing
+  at `wiki/scopemux-lsp-boundary.md`.
+- New architecture guard `crates/opencode-core/tests/scope_lsp_boundary.rs` (2 tests) fails
+  if `opencode-scopemux` depends on LSP or if the map/retrieval layers contain LSP
+  point-query or diagnostics strings.
+- New tool-surface test in `opencode-tool` asserts only the `lsp` tool advertises LSP
+  point-query operations.
+- `cargo test -p opencode-core --test scope_lsp_boundary` and
+  `cargo test -p opencode-tool ownership_tests`: pass. No behavior change; the map still
+  works with LSP absent.
 
 ## Related Items
 
