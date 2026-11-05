@@ -7,7 +7,7 @@ updated: "2026-11-05"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: "Step 1 fix PR #158 (SCOPE-003 FFI layout) awaits explicit human review and merge approval before H-018 continues."
+needs_human: ""
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -435,3 +435,17 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
   `cargo fmt --all --check` clean.
 - Card stays in `qa` with the QA section recorded. **STOPPED for human merge approval per
   the one-PR-at-a-time gate; step 2 has not started.**
+
+### Steps 2-4 — SCOPE-012/013/014 closeouts (2026-11-05)
+
+- `SCOPE-012`: re-ran `cargo test -p opencode-core --test scope_lsp_boundary` (2/2) and
+  `cargo test -p opencode-tool ownership_tests` (1/1), fmt clean. Promoted `qa` -> `done`.
+- `SCOPE-013`: re-ran `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-retrieval
+  -p opencode-scopemux` (6/6, 5/5), full native suite 18/18, focused `native_` 8/8 and
+  `exact_fact` 3/3. The two previously "pre-existing" native failures now pass after the
+  SCOPE-003 FFI fix, and the card text was corrected. Promoted `qa` -> `done`.
+- `SCOPE-014`: re-ran the evaluation harness on the merged base. Fresh result: heuristic
+  1/3, precision 0.11, p95 488 ms; heuristic+exact 1/3, precision 0.11, p95 841 ms,
+  4 fact calls; generic 0/3. The **RETIRE from default** decision still stands; opt-in gate
+  confirmed at `crates/opencode-session/src/prompt.rs:306`. Promoted `qa` -> `done`.
+- Board commits pushed to `development` (`ce79448`).
