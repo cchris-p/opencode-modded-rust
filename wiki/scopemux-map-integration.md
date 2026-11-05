@@ -159,6 +159,15 @@ Each runtime stage maps to a retrieval role and a representation slice:
 
 Every result carries file/symbol/block provenance, confidence, and a token estimate. The runtime keeps authority over budgets, inclusion thresholds, and role filtering; review context uses a stricter inclusion threshold than implementation context.
 
+Selected map slices are injected into prompt context as a synthetic evidence block,
+bounded by the runtime-owned `RetrievalRequest::token_budget` (default 400 tokens). The
+generic provider is never injected; only a `scopemux` response is rendered, and the
+runtime truncates the candidate list when the budget is exhausted. The map still does not
+decide inclusion. Repair requests carry the recorded `reopen_reason` and project it to a
+`refactor_opportunity` plan node anchored to the task's artifacts, alongside the prior
+objective/criteria plan nodes, so the `Impact` slice re-anchors the repair to the affected
+files and target state.
+
 ### Fallback
 
 The generic repository-local provider stays the default and the fallback. When `scopemux` is absent, fails, or cannot parse the workspace language, context assembly still completes. Unsupported language is an explicit provenance signal, not a silent downgrade.

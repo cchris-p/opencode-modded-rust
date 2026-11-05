@@ -21,6 +21,12 @@ use opencode_types::{
 use crate::prompt::ModelRef;
 use crate::session::Session;
 
+/// Default token budget the runtime gives the map for one retrieval request.
+///
+/// The runtime owns the budget; providers return evidence and never decide what
+/// enters the prompt.
+pub const RETRIEVAL_TOKEN_BUDGET: usize = 400;
+
 /// Build the retrieval request for a session from authoritative task state.
 ///
 /// The role and representation are derived from the task stage; a session with
@@ -30,6 +36,7 @@ pub fn build_request(session: &Session, seed_files: Vec<String>) -> RetrievalReq
         Some(task) => {
             let mut request = RetrievalRequest::from_task(task);
             request.seed_files = seed_files;
+            request.token_budget = Some(RETRIEVAL_TOKEN_BUDGET);
             request
         }
         None => {
@@ -43,7 +50,7 @@ pub fn build_request(session: &Session, seed_files: Vec<String>) -> RetrievalReq
                 changed_files: Vec::new(),
                 role: stage.role,
                 representation: stage.representation,
-                token_budget: None,
+                token_budget: Some(RETRIEVAL_TOKEN_BUDGET),
                 task_id: None,
                 reopen_reason: None,
                 plan_nodes: Vec::new(),
@@ -83,6 +90,88 @@ pub fn apply_inclusion_threshold(mut response: RetrievalResponse) -> RetrievalRe
         .candidates
         .retain(|candidate| confidence_rank(candidate.confidence) >= minimum);
     response
+}
+
+fn confidence_label(confidence: RetrievalConfidence) -> &'static str {
+    match confidence {
+        RetrievalConfidence::Exact => "exact",
+        RetrievalConfidence::High => "high",
+        RetrievalConfidence::Medium => "medium",
+        RetrievalConfidence::Low => "low",
+    }
+}
+
+fn representation_label(representation: RetrievalRepresentation) -> &'static str {
+    match representation {
+        RetrievalRepresentation::Search => "search",
+        RetrievalRepresentation::Delta => "delta",
+        RetrievalRepresentation::Anchors => "anchors",
+        RetrievalRepresentation::Observability => "observability",
+        RetrievalRepresentation::Duplicates => "duplicates",
+        RetrievalRepresentation::Impact => "impact",
+        RetrievalRepresentation::Review => "review",
+        RetrievalRepresentation::Reconcile => "reconcile",
+    }
+}
+
+/// Render the selected map slice as a bounded synthetic prompt reminder.
+///
+/// Only map-backed (`scopemux`) responses are injected; the generic provider
+/// path is unchanged. The runtime owns the budget and truncates the slice, so
+/// the map never gains authority over inclusion.
+pub fn retrieval_context_reminder(
+    response: &RetrievalResponse,
+    token_budget: usize,
+) -> Option<String> {
+    use crate::compaction::CompactionEngine;
+    use crate::system::SystemPrompt;
+
+    if response.provider != "scopemux" || response.candidates.is_empty() || token_budget == 0 {
+        return None;
+    }
+
+    let header = format!(
+        "ScopeMux {} context (evidence only; the runtime decides what to include):",
+        representation_label(response.representation)
+    );
+    let mut lines = vec![header];
+
+    for candidate in &response.candidates {
+        let mut line = format!(
+            "- [{}] {}",
+            confidence_label(candidate.confidence),
+            candidate.path
+        );
+        if let Some(symbol) = &candidate.symbol {
+            line.push_str(&format!(" :: {symbol}"));
+        }
+        line.push_str(&format!(" - {}", candidate.provenance));
+        if let Some(snippet) = &candidate.snippet {
+            let snippet: String = snippet
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(160)
+                .collect();
+            if !snippet.is_empty() {
+                line.push_str(&format!(": {snippet}"));
+            }
+        }
+
+        let mut preview = lines.clone();
+        preview.push(line.clone());
+        let reminder = SystemPrompt::system_reminder(&preview.join("\n"));
+        if CompactionEngine::estimate_tokens(&reminder) > token_budget as u64 {
+            break;
+        }
+        lines.push(line);
+    }
+
+    if lines.len() == 1 {
+        return None;
+    }
+    Some(SystemPrompt::system_reminder(&lines.join("\n")))
 }
 
 /// Ask the provider selected for the active model for candidates.
@@ -135,7 +224,8 @@ pub async fn retrieve(
 mod tests {
     use super::*;
     use opencode_types::{
-        RetrievalCandidate, RetrievalCandidateKind, RetrievalOrigin, SessionTask, TaskStage,
+        PlanNodeKind, RetrievalCandidate, RetrievalCandidateKind, RetrievalOrigin, SessionTask,
+        TaskStage,
     };
 
     fn session_with_task(root: &str) -> Session {
@@ -242,6 +332,103 @@ mod tests {
         assert_eq!(response.provider, "generic");
         assert_eq!(response.candidates.len(), 1);
         assert!(response.candidates[0].path.ends_with("a.rs"));
+    }
+
+    #[test]
+    fn repair_stage_carries_reopen_reason_into_plan_anchors() {
+        let mut session = session_with_task("/tmp/ws");
+        {
+            let task = session.task.as_mut().unwrap();
+            task.stage = TaskStage::Repairing;
+            task.reopen_reason = Some("verification failed for `parse`".to_string());
+            task.artifacts = vec!["src/parser.c".to_string()];
+        }
+
+        let request = build_request(&session, vec!["src/parser.c".to_string()]);
+
+        assert_eq!(request.stage, TaskStage::Repairing);
+        assert_eq!(request.representation, RetrievalRepresentation::Impact);
+        assert_eq!(
+            request.reopen_reason.as_deref(),
+            Some("verification failed for `parse`")
+        );
+
+        let reopen = request
+            .plan_nodes
+            .iter()
+            .find(|node| node.slug.starts_with("reopen-"))
+            .expect("reopen reason should project a plan node");
+        assert_eq!(reopen.kind, PlanNodeKind::RefactorOpportunity);
+        assert!(reopen
+            .rationale
+            .as_deref()
+            .is_some_and(|rationale| rationale.contains("verification failed")));
+        assert_eq!(reopen.anchors, vec!["file:src/parser.c".to_string()]);
+
+        assert!(
+            request
+                .plan_nodes
+                .iter()
+                .any(|node| node.slug == "objective"),
+            "prior objective plan node should be retained"
+        );
+        assert!(
+            request
+                .plan_nodes
+                .iter()
+                .any(|node| node.slug == "criterion-1"),
+            "prior criterion plan node should be retained"
+        );
+    }
+
+    #[test]
+    fn retrieval_context_reminder_respects_the_token_budget() {
+        let candidates: Vec<RetrievalCandidate> = (0..12)
+            .map(|index| RetrievalCandidate {
+                kind: RetrievalCandidateKind::Symbol,
+                path: format!("src/very/long/path/component_{index}.rs"),
+                symbol: Some(format!("symbol_{index}")),
+                snippet: Some("a reasonably long snippet of source text".to_string()),
+                provenance: "scopemux: delta: parsed".to_string(),
+                confidence: RetrievalConfidence::High,
+                score: 0.5,
+                estimated_tokens: Some(12),
+                origin: Some(RetrievalOrigin::Parsed),
+                lifecycle: None,
+            })
+            .collect();
+        let response = RetrievalResponse {
+            candidates,
+            provider: "scopemux".to_string(),
+            representation: RetrievalRepresentation::Delta,
+            plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
+        };
+
+        let reminder =
+            retrieval_context_reminder(&response, 200).expect("budgeted map context should render");
+
+        assert!(
+            crate::compaction::CompactionEngine::estimate_tokens(&reminder) <= 200,
+            "reminder must stay within the runtime token budget"
+        );
+        assert!(
+            reminder.matches("\n- [").count() < 12,
+            "budget should truncate the candidate list: {reminder}"
+        );
+    }
+
+    #[test]
+    fn generic_provider_is_not_injected_into_the_prompt() {
+        let response = RetrievalResponse {
+            candidates: vec![candidate(RetrievalConfidence::High, "a.rs")],
+            provider: "generic".to_string(),
+            representation: RetrievalRepresentation::Search,
+            plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
+        };
+
+        assert!(retrieval_context_reminder(&response, 400).is_none());
     }
 
     #[tokio::test]

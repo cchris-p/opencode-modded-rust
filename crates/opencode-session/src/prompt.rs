@@ -417,6 +417,14 @@ impl SessionPrompt {
                 candidates = response.candidates.len(),
                 "retrieval provider selected"
             );
+            // SCOPE-004: inject the selected map slice as bounded evidence. The
+            // runtime owns the budget; the generic provider path is unchanged.
+            if let Some(reminder) = crate::retrieval::retrieval_context_reminder(
+                &response,
+                crate::retrieval::RETRIEVAL_TOKEN_BUDGET,
+            ) {
+                push_synthetic_reminder(msg, reminder);
+            }
             msg.metadata.insert(
                 "retrieval_provider".to_string(),
                 serde_json::Value::String(response.provider),
