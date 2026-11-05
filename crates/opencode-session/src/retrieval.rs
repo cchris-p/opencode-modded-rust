@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use opencode_retrieval::{ExactFactProvider, GenericRepositoryProvider, RetrievalProvider};
 use opencode_types::{
-    stage_retrieval, RetrievalConfidence, RetrievalRepresentation, RetrievalRequest,
-    RetrievalResponse, TaskStage,
+    stage_retrieval, RetrievalConfidence, RetrievalFallbackReason, RetrievalRepresentation,
+    RetrievalRequest, RetrievalResponse, TaskStage,
 };
 
 use crate::prompt::ModelRef;
@@ -174,6 +174,18 @@ pub fn retrieval_context_reminder(
     Some(SystemPrompt::system_reminder(&lines.join("\n")))
 }
 
+/// Classify why the map-backed provider could not answer.
+///
+/// Unsupported language is a first-class fallback (generic search still works);
+/// any other provider error is recorded as provider-unavailable.
+fn fallback_reason(request: &RetrievalRequest) -> RetrievalFallbackReason {
+    if opencode_scopemux::workspace_supported(request) {
+        RetrievalFallbackReason::ProviderUnavailable
+    } else {
+        RetrievalFallbackReason::UnsupportedLanguage
+    }
+}
+
 /// Ask the provider selected for the active model for candidates.
 ///
 /// The scopemux provider is scoped to the local Qwen-via-Ollama model; every
@@ -208,7 +220,10 @@ pub async fn retrieve(
                 "retrieval provider unavailable ({error}); falling back to generic"
             );
             match GenericRepositoryProvider::new().retrieve(&request).await {
-                Ok(response) => Some(response),
+                Ok(mut response) => {
+                    response.fallback_reason = Some(fallback_reason(&request));
+                    Some(response)
+                }
                 Err(error) => {
                     tracing::warn!("generic retrieval provider failed: {error}");
                     None
@@ -292,6 +307,7 @@ mod tests {
             representation: RetrievalRepresentation::Review,
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
+            fallback_reason: None,
         };
 
         let filtered = apply_inclusion_threshold(response);
@@ -312,6 +328,7 @@ mod tests {
             representation: RetrievalRepresentation::Delta,
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
+            fallback_reason: None,
         };
 
         let filtered = apply_inclusion_threshold(response);
@@ -403,6 +420,7 @@ mod tests {
             representation: RetrievalRepresentation::Delta,
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
+            fallback_reason: None,
         };
 
         let reminder =
@@ -426,9 +444,41 @@ mod tests {
             representation: RetrievalRepresentation::Search,
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
+            fallback_reason: None,
         };
 
         assert!(retrieval_context_reminder(&response, 400).is_none());
+    }
+
+    #[test]
+    fn fallback_reason_distinguishes_unsupported_from_unavailable() {
+        let unsupported = RetrievalRequest {
+            objective: "read the notes".to_string(),
+            stage: TaskStage::Selected,
+            workspace_root: "/tmp/ws".to_string(),
+            seed_files: vec!["notes.md".to_string()],
+            seed_symbols: Vec::new(),
+            changed_files: Vec::new(),
+            role: opencode_types::MapRole::Locate,
+            representation: RetrievalRepresentation::Search,
+            token_budget: Some(RETRIEVAL_TOKEN_BUDGET),
+            task_id: None,
+            reopen_reason: None,
+            plan_nodes: Vec::new(),
+        };
+        assert_eq!(
+            fallback_reason(&unsupported),
+            RetrievalFallbackReason::UnsupportedLanguage
+        );
+
+        let supported = RetrievalRequest {
+            seed_files: vec!["lib.rs".to_string()],
+            ..unsupported
+        };
+        assert_eq!(
+            fallback_reason(&supported),
+            RetrievalFallbackReason::ProviderUnavailable
+        );
     }
 
     #[tokio::test]

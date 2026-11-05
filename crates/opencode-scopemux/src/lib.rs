@@ -427,6 +427,17 @@ impl RetrievalProvider for ScopemuxProvider {
             }
         }
 
+        // Mixed-language workspaces degrade per file: supported files are parsed
+        // and unsupported ones are skipped with explicit provenance rather than
+        // failing the whole request.
+        let unsupported: Vec<String> = request
+            .seed_files
+            .iter()
+            .chain(request.changed_files.iter())
+            .map(|p| p.strip_prefix("file://").unwrap_or(p).to_string())
+            .filter(|p| language_for_path(p).is_none())
+            .collect();
+
         let seeds: Vec<String> = request
             .seed_files
             .iter()
@@ -493,8 +504,14 @@ impl RetrievalProvider for ScopemuxProvider {
         // SCOPE-013: optional exact-fact enrichment at the anchors the map already
         // selected. Kept outside the FFI block so no non-Send core pointer is held
         // across the await. Bounded, best-effort, and never required.
-        let (candidates, provider_notes) =
+        let (candidates, mut provider_notes) =
             enrich_with_exact_facts(candidates, self.exact_facts.as_ref(), request).await;
+        for path in &unsupported {
+            provider_notes.push(format!("skipped unsupported language: {path}"));
+        }
+        let fallback_reason = candidates
+            .is_empty()
+            .then_some(opencode_types::RetrievalFallbackReason::NoMatches);
 
         Ok(opencode_types::RetrievalResponse {
             candidates,
@@ -502,6 +519,7 @@ impl RetrievalProvider for ScopemuxProvider {
             representation: request.representation,
             plan_signals,
             provider_notes,
+            fallback_reason,
         })
     }
 }
@@ -1584,6 +1602,75 @@ mod tests {
                 .any(|signal| signal.plan_node_id.ends_with(":objective")),
             "the realized objective should still reconcile: {:?}",
             response.plan_signals
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_mixed_language_workspace_degrades_per_file() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("add.c"),
+            "int add(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("notes.md"), "# notes\n").unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["add.c", "notes.md"]);
+        req.objective = "add".to_string();
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert!(
+            !response.candidates.is_empty(),
+            "supported files should still produce map candidates"
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.path.ends_with("notes.md")),
+            "prose must not be parsed as code: {:?}",
+            response.candidates
+        );
+        assert!(
+            response
+                .provider_notes
+                .iter()
+                .any(|note| note.contains("skipped unsupported language: notes.md")),
+            "unsupported files should carry explicit provenance: {:?}",
+            response.provider_notes
+        );
+        assert_eq!(response.fallback_reason, None);
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_supported_workspace_with_no_matches_reports_no_matches() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("add.c"),
+            "int add(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["add.c"]);
+        req.representation = RetrievalRepresentation::Reconcile;
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert!(response.candidates.is_empty());
+        assert_eq!(
+            response.fallback_reason,
+            Some(opencode_types::RetrievalFallbackReason::NoMatches)
         );
     }
 
