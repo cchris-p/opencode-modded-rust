@@ -1,7 +1,7 @@
 ---
 id: "H-017"
 title: "DeepSeek API efficiency improvements for ort - Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-11-05"
 updated: "2026-11-05"
 owner: ""
@@ -322,3 +322,19 @@ Capture cache/latency/token evidence for Pass 4 in the card, not only in chat.
 5. Do not adopt dsh code, its plugin runtime, or its egress behavior.
 6. Move `RESEARCH-008` to `qa` when Pass 5 lands; do not mark it `done` without a
    QA pass or explicit owner direction.
+
+## Implementation Results (2026-11-05)
+
+All five passes landed on `development`; `RESEARCH-008` is in `qa` for verification.
+
+| Pass | PR | Result |
+|---|---|---|
+| 1 | #151 | Canonical DeepSeek metadata; stale models removed; output cap respects catalog |
+| 2 | #153 | `low`/`high`/`max` effort wired end to end; measured behavior change; invalid values rejected pre-network |
+| 3 | #155 | Stable leading system prefix + dynamic system message; cache hit/miss counters observable |
+| 4 | #156 | Opt-in Anthropic transport implemented and measured; no win, so `/chat/completions` stays default |
+| 5 | this closeout | Research doc, provider invariants, wiki note, card moved to `qa` |
+
+Manual verification used the built product binary (`run --dir /tmp/opencode/ort-pass5`)
+with `deepseek/deepseek-flash` on the default chat transport, `--variant max`, and
+`DEEPSEEK_TRANSPORT=anthropic --variant low`; all returned the expected reply.

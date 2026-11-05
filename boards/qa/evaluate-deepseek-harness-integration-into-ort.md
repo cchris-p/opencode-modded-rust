@@ -5,8 +5,9 @@ priority: "P2"
 type: "research"
 area: "RESEARCH"
 spec: "invariants/research-department.md"
-status: "doing"
+status: "qa"
 created: "2026-10-14"
+updated: "2026-11-05"
 ---
 
 # Evaluate integrating DeepSeek Harness (dsh) into ort as a research/vetting harness
@@ -316,3 +317,33 @@ default; the null result is recorded rather than promoted.
   `cargo test -p opencode-session` (185 tests), `cargo test -p opencode-server`
   (78 tests), `cargo check --workspace`, and `cargo clippy --workspace
   --all-targets` (no new warnings in touched files) all pass.
+
+## QA Report (2026-11-05)
+
+Scope: H-017 passes 1–4, merged as PRs #151, #153, #155, #156.
+
+**Automated**
+
+- `cargo fmt --all -- --check`
+- `cargo check --workspace` (`SCOPEMUX_SKIP_NATIVE_BUILD=1`; prebuilt bundle used for the binary build)
+- `cargo clippy --workspace --all-targets` — no new warnings in touched files
+- `cargo test -p opencode-provider` — 160 tests pass
+- `cargo test -p opencode-session` — 185 tests pass
+- `cargo test -p opencode-server` — 78 tests pass
+
+**Live / end-to-end**
+
+- `GET https://api.deepseek.com/models` still reports 1,048,576 context / 393,216
+  output and effort `low`/`high`/`max` for both models.
+- Built product binary (`ort-build` from the branch) with
+  `deepseek/deepseek-flash`: default chat transport, `--variant max`, and
+  `DEEPSEEK_TRANSPORT=anthropic --variant low` each returned the expected reply.
+- Reasoning-effort A/B and Anthropic-transport measurement are recorded above and in
+  `docs/research/RESEARCH-008-deepseek-harness-vs-opencode.md` §6.1.
+
+**Known limits / remaining gates**
+
+- The Anthropic transport remains opt-in (measured null result); no default change.
+- `deepseek-v4-pro` in-history system updates are not exercised (it advertises
+  `leading-only`; the pipeline always emits leading system messages).
+- Human/owner QA confirmation is still required before moving this card to `done`.
