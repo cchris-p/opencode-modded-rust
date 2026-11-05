@@ -5,8 +5,9 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "todo"
+status: "qa"
 created: "2026-11-05"
+updated: "2026-11-05"
 ---
 
 # Ingest LSP-derived exact type facts into the ScopeMux map
@@ -66,6 +67,25 @@ fallbacks.
 - Do not change the runtime's inclusion thresholds; this card only improves evidence.
 - Watch FFI/schema compatibility with the pinned `scopemux-core` revision; advance the pin
   in lockstep if the map schema changes.
+
+## QA Verification
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/152 (merged into `development`).
+- Neutral `ExactFactProvider` contract lives in `opencode-retrieval`; `opencode-scopemux`
+  does not depend on `opencode-lsp` at runtime (SCOPE-012 guard still passes).
+- `LspExactFactProvider` is the only LSP-aware adapter; the runtime injects it only when a
+  workspace configured LSP.
+- Native enrichment follows map-selected anchors only (max 8 definition queries per
+  request) and labels exact edges `confidence = exact` with server provenance.
+- Unavailable facts leave the candidate set byte-identical to the no-LSP baseline and add
+  a `provider_notes` fallback reason (test asserts equality).
+- No `scopemux-core` schema/FFI change; pin untouched.
+- Tests: new native tests for exact provenance, bounded calls, unavailable-equals-baseline,
+  and no-provider-unchanged all pass. Non-native suite and the workspace suite (excluding
+  the documented pre-existing native artifact failures) pass.
+- Known pre-existing native failures reproduced on base `development`:
+  `native_delta_slice_returns_projected_entries` and
+  `native_provider_reports_plan_reconciliation_evidence` (segfault). Unrelated to this card.
 
 ## Related Items
 
