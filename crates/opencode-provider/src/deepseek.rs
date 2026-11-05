@@ -125,6 +125,38 @@ pub struct DeepSeekProvider {
     models: Vec<ModelInfo>,
 }
 
+/// Map a selected effort variant onto the OpenAI-compatible `reasoning_effort`
+/// field. The live listing advertises `low`/`high`/`max` (default `high`), so an
+/// unsupported value is rejected before any network I/O instead of silently
+/// falling back to the endpoint default.
+fn apply_reasoning_effort(
+    body: &mut serde_json::Value,
+    variant: Option<&str>,
+) -> Result<(), ProviderError> {
+    let Some(variant) = variant else {
+        return Ok(());
+    };
+    let effort = variant.trim().to_ascii_lowercase();
+    if effort.is_empty() {
+        return Ok(());
+    }
+
+    match effort.as_str() {
+        "low" | "high" | "max" => {
+            if let Some(object) = body.as_object_mut() {
+                object.insert(
+                    "reasoning_effort".to_string(),
+                    serde_json::Value::String(effort),
+                );
+            }
+            Ok(())
+        }
+        other => Err(ProviderError::InvalidRequest(format!(
+            "unsupported DeepSeek reasoning effort '{other}'; expected one of low, high, max"
+        ))),
+    }
+}
+
 impl DeepSeekProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
@@ -151,7 +183,8 @@ impl Provider for DeepSeekProvider {
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-        let body = crate::openai_chat::openai_chat_completions_body(&request)?;
+        let mut body = crate::openai_chat::openai_chat_completions_body(&request)?;
+        apply_reasoning_effort(&mut body, request.variant.as_deref())?;
         let response = self
             .client
             .post(DEEPSEEK_API_URL)
@@ -177,7 +210,8 @@ impl Provider for DeepSeekProvider {
     async fn chat_stream(&self, request: ChatRequest) -> Result<StreamResult, ProviderError> {
         let mut stream_request = request;
         stream_request.stream = Some(true);
-        let body = crate::openai_chat::openai_chat_completions_body(&stream_request)?;
+        let mut body = crate::openai_chat::openai_chat_completions_body(&stream_request)?;
+        apply_reasoning_effort(&mut body, stream_request.variant.as_deref())?;
 
         let response = self
             .client
@@ -240,5 +274,26 @@ mod tests {
         let input = &flash.modalities.as_ref().unwrap().input;
         assert!(input.contains(&"text".to_string()));
         assert!(input.contains(&"image".to_string()));
+    }
+
+    #[test]
+    fn reasoning_effort_maps_supported_levels_and_rejects_others() {
+        let mut body = serde_json::json!({"model": "deepseek-flash"});
+        apply_reasoning_effort(&mut body, Some(" HIGH ")).expect("high is supported");
+        assert_eq!(body["reasoning_effort"], serde_json::json!("high"));
+
+        let mut body = serde_json::json!({"model": "deepseek-flash"});
+        apply_reasoning_effort(&mut body, Some("max")).expect("max is supported");
+        assert_eq!(body["reasoning_effort"], serde_json::json!("max"));
+
+        let mut body = serde_json::json!({"model": "deepseek-flash"});
+        let error = apply_reasoning_effort(&mut body, Some("medium"))
+            .expect_err("medium is not advertised");
+        assert!(error.to_string().contains("unsupported"));
+        assert!(body.get("reasoning_effort").is_none());
+
+        let mut body = serde_json::json!({"model": "deepseek-flash"});
+        apply_reasoning_effort(&mut body, None).expect("no variant leaves the default");
+        assert!(body.get("reasoning_effort").is_none());
     }
 }

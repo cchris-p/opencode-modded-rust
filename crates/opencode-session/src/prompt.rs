@@ -997,6 +997,7 @@ impl SessionPrompt {
             provider_id,
             session,
             input.agent.as_deref(),
+            input.variant.clone(),
             system_prompt,
             tools,
             &agent_params,
@@ -1072,6 +1073,11 @@ impl SessionPrompt {
             .get("agent")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let resume_variant = session
+            .metadata
+            .get("model_variant")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         {
             let mut session_state = self.session_state.write().await;
@@ -1086,6 +1092,7 @@ impl SessionPrompt {
             provider_id,
             session,
             resume_agent.as_deref(),
+            resume_variant,
             system_prompt,
             tools,
             &agent_params,
@@ -1120,6 +1127,7 @@ impl SessionPrompt {
         provider_id: String,
         session: &mut Session,
         agent_name: Option<&str>,
+        variant: Option<String>,
         system_prompt: Option<String>,
         tools: Vec<ToolDefinition>,
         agent_params: &AgentParams,
@@ -1275,7 +1283,7 @@ impl SessionPrompt {
                 },
                 stream: Some(true),
                 top_p: agent_params.top_p,
-                variant: None,
+                variant: variant.clone(),
                 provider_options: None,
             };
 

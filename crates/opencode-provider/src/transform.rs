@@ -805,10 +805,28 @@ pub fn variants(model: &models::ModelInfo) -> HashMap<String, HashMap<String, se
     }
 
     let id = model.id.to_lowercase();
+    let npm = model
+        .provider
+        .as_ref()
+        .and_then(|p| p.npm.as_deref())
+        .unwrap_or("");
+
+    // DeepSeek's OpenAI-compatible endpoint advertises effort `low`/`high`/`max`
+    // (default `high`) on both current models. Only the direct provider path gets
+    // this control; DeepSeek models routed through other providers keep their
+    // provider's own variant policy.
+    if id.contains("deepseek") {
+        if npm == "@ai-sdk/openai-compatible" {
+            return ["low", "high", "max"]
+                .iter()
+                .map(|e| (e.to_string(), hashmap! {"reasoningEffort" => json!(*e)}))
+                .collect();
+        }
+        return HashMap::new();
+    }
 
     // Models that don't support configurable reasoning
-    if id.contains("deepseek")
-        || id.contains("minimax")
+    if id.contains("minimax")
         || id.contains("glm")
         || id.contains("mistral")
         || id.contains("kimi")
@@ -845,11 +863,6 @@ pub fn variants(model: &models::ModelInfo) -> HashMap<String, HashMap<String, se
         return HashMap::new();
     }
 
-    let npm = model
-        .provider
-        .as_ref()
-        .and_then(|p| p.npm.as_deref())
-        .unwrap_or("");
     let api_id = model
         .provider
         .as_ref()
@@ -1737,6 +1750,48 @@ mod tests {
             reasoning: false,
             ..default_model_info()
         };
+        assert!(variants(&model).is_empty());
+    }
+
+    #[test]
+    fn test_variants_deepseek_direct_uses_live_efforts() {
+        let model = models::ModelInfo {
+            id: "deepseek-flash".to_string(),
+            reasoning: true,
+            provider: Some(models::ModelProvider {
+                npm: Some("@ai-sdk/openai-compatible".to_string()),
+                api: Some("https://api.deepseek.com".to_string()),
+            }),
+            ..default_model_info()
+        };
+
+        let variants = variants(&model);
+        let mut names: Vec<&str> = variants.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["high", "low", "max"]);
+
+        assert_eq!(
+            variants["low"],
+            hashmap! {"reasoningEffort" => serde_json::json!("low")}
+        );
+        assert_eq!(
+            variants["max"],
+            hashmap! {"reasoningEffort" => serde_json::json!("max")}
+        );
+    }
+
+    #[test]
+    fn test_variants_deepseek_via_other_provider_is_unchanged() {
+        let model = models::ModelInfo {
+            id: "deepseek/deepseek-v4-pro".to_string(),
+            reasoning: true,
+            provider: Some(models::ModelProvider {
+                npm: Some("@openrouter/ai-sdk-provider".to_string()),
+                api: Some("https://openrouter.ai/api/v1/chat/completions".to_string()),
+            }),
+            ..default_model_info()
+        };
+
         assert!(variants(&model).is_empty());
     }
 
