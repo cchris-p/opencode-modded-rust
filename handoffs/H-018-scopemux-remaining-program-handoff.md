@@ -7,7 +7,7 @@ updated: "2026-11-05"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: "Step 5 PR #159 (SCOPE-004 follow-ups) awaits explicit human review and merge approval before H-018 continues."
+needs_human: "Step 6 PR #161 (SCOPE-010 coverage/fallback) awaits explicit human review and merge approval before H-018 continues."
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -460,3 +460,14 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
   clippy exit 0 (pre-existing warnings only).
 - Card moved to `doing` before implementation and stays there until merge. **STOPPED for
   human merge approval per the one-PR-at-a-time gate; step 6 has not started.**
+
+### Step 6 — SCOPE-010 (2026-11-05)
+
+- PR #161 (`feature/SCOPE-010-language-coverage-matrix`, commit `bb937d3`): coverage matrix,
+  per-file mixed-language behavior with `provider_notes`, typed
+  `RetrievalFallbackReason` (`unsupported_language`/`no_matches`/`provider_unavailable`),
+  and session fallback classification.
+- Verification: retrieval 7, session 176 + 2 + 11, native scopemux 21/21, fmt and clippy
+  clean.
+- Card moved `todo` -> `doing` and stays there until merge. **STOPPED for human merge
+  approval; step 7 has not started.**
