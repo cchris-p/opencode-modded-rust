@@ -1,7 +1,7 @@
 ---
 id: "H-016"
 title: "SCOPE/LSP responsibility boundary and semantic-fact enrichment - Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-11-05"
 updated: "2026-11-05"
 owner: ""

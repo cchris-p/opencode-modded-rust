@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "LSP"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "todo"
+status: "doing"
 created: "2026-11-05"
 ---
 

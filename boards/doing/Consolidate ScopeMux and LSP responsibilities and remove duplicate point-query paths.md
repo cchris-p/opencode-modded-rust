@@ -5,7 +5,7 @@ priority: "P1"
 type: "refactor"
 area: "SCOPE"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "todo"
+status: "doing"
 created: "2026-11-05"
 ---
 
