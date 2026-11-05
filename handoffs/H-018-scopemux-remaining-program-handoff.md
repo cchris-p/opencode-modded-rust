@@ -1,13 +1,13 @@
 ---
 id: "H-018"
 title: "SCOPE-003/004/006/009/010/012/013/014 ScopeMux Remaining Program — Program Handoff"
-status: "open"
+status: "in_progress"
 created: "2026-11-05"
 updated: "2026-11-05"
-owner: ""
+owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: ""
+needs_human: "Step 1 fix PR #158 (SCOPE-003 FFI layout) awaits explicit human review and merge approval before H-018 continues."
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -415,3 +415,23 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
 > `SCOPE-008`, or `SCOPE-011`. Use a dedicated worktree for implementation PRs, commit
 > board/handoff updates directly on `development`, and stop after each PR for the human
 > liaison's explicit merge approval. Never push `main`.
+
+## Execution Log
+
+### Step 1 — SCOPE-003 (2026-11-05)
+
+- Reproduced the documented pre-existing segfault on base `development` `06448ca`:
+  `native_provider_reports_plan_reconciliation_evidence` dies with `SIGSEGV` in
+  `search_candidates` (`crates/opencode-scopemux/src/lib.rs:698`), reading
+  `provenance = 0x2000000001`.
+- Root cause: the pinned `scopemux-core` `ProjectInfoBlock`/`ProjectPlanNode` gained
+  `observability_kind` (`WI-034`); the Rust FFI mirrors were stale, shifting every field
+  after `kind`. It also explains the recorded `native_delta_slice_returns_projected_entries`
+  failure.
+- Fix PR #158 (`feature/SCOPE-003-plan-reconciliation-ffi-layout`, commit `d67f759`):
+  add the missing field to both structs.
+- Verification on the branch: native suite 18/18 (including both previously failing
+  tests), `opencode-types` 4/4, `opencode-retrieval` 6/6, `opencode-session` 172+2+11,
+  `cargo fmt --all --check` clean.
+- Card stays in `qa` with the QA section recorded. **STOPPED for human merge approval per
+  the one-PR-at-a-time gate; step 2 has not started.**
