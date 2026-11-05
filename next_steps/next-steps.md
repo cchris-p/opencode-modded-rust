@@ -76,6 +76,13 @@ five cards in `qa` and six in `todo`. The `doing` lane is empty.
 - `SCOPE-011` out-of-process transport - depends on `FUTURE-PROOFING-014` protocol and
   `FUTURE-PROOFING-016` artifact packaging.
 
+## Independent (Not In H-018)
+
+- `INFRA-008` Embed ScopeMux queries so the published ort binary is portable - the native
+  provider is statically linked, but the Tree-sitter `.scm` queries are resolved from a
+  build-machine absolute path that does not exist on artifact-only hosts, so ScopeMux
+  silently falls back to generic. Tracked separately; independent of the program handoff.
+
 ## Best Next Step
 
 The program is packaged as handoff `H-018`
