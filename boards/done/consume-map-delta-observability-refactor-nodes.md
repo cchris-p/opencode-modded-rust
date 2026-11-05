@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "doing"
+status: "done"
 created: "2026-09-23"
 predecessor: "SCOPE-003"
 ---
@@ -206,3 +206,12 @@ $ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-session -p opencode-retr
 
 Docs updated in `wiki/scopemux-map-integration.md` (stage-consumption + injection +
 repair re-anchor).
+### Post-merge QA (2026-11-05)
+
+- PR #159 merged into `development` as `3aa27fb`; branch deleted.
+- Re-ran on merged `development`:
+  - `cargo test -p opencode-scopemux --features native` -> 19 passed, 0 failed.
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session -p opencode-retrieval`
+    -> retrieval 6; session 175 + 2 + 11 passed, 0 failed.
+  - `cargo fmt --all --check` -> exit 0.
+- Both deferred follow-ups are now delivered and covered by tests. Promoting `qa` -> `done`.
