@@ -2238,6 +2238,17 @@ impl SessionPrompt {
                     media_type: None,
                     provider_options: None,
                 }),
+                PartType::File { url, filename, mime } => Some(ContentPart {
+                    content_type: "file".to_string(),
+                    text: None,
+                    image_url: Some(opencode_provider::ImageUrl { url: url.clone() }),
+                    tool_use: None,
+                    tool_result: None,
+                    cache_control: None,
+                    filename: Some(filename.clone()),
+                    media_type: Some(mime.clone()),
+                    provider_options: None,
+                }),
                 _ => None,
             })
             .collect();

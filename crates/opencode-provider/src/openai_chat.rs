@@ -345,9 +345,19 @@ fn content_string_from_parts(parts: &[crate::ContentPart]) -> String {
 /// OpenAI chat user content: a string when only text is present, otherwise an
 /// array of `{ type: "text" }` / `{ type: "image_url" }` parts.
 fn openai_user_content(parts: &[crate::ContentPart]) -> Value {
-    let has_image = parts
-        .iter()
-        .any(|p| matches!(p.content_type.as_str(), "image_url" | "image"));
+    // Internal file attachments use `content_type: "file"` with an image
+    // `media_type`; only explicit `image_url`/`image` parts were recognized
+    // here, so image attachments were silently dropped. Treat a "file" part
+    // whose media type is an image as an image part as well.
+    let is_image = |p: &crate::ContentPart| {
+        matches!(p.content_type.as_str(), "image_url" | "image")
+            || (p.content_type == "file"
+                && p.media_type
+                    .as_deref()
+                    .map(|m| m.to_ascii_lowercase().starts_with("image/"))
+                    .unwrap_or(false))
+    };
+    let has_image = parts.iter().any(is_image);
     let mut text: Vec<&str> = Vec::new();
     for p in parts {
         if p.content_type == "text" {
@@ -374,6 +384,11 @@ fn openai_user_content(parts: &[crate::ContentPart]) -> Value {
                 }
             }
             "image_url" | "image" => {
+                if let Some(url) = p.image_url.as_ref().map(|img| img.url.clone()) {
+                    content.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+                }
+            }
+            "file" if is_image(p) => {
                 if let Some(url) = p.image_url.as_ref().map(|img| img.url.clone()) {
                     content.push(json!({ "type": "image_url", "image_url": { "url": url } }));
                 }
@@ -428,6 +443,45 @@ mod tests {
             text: Some(text.to_string()),
             ..Default::default()
         }
+    }
+
+    fn image_file_part(url: &str, mime: &str) -> ContentPart {
+        ContentPart {
+            content_type: "file".to_string(),
+            image_url: Some(crate::message::ImageUrl {
+                url: url.to_string(),
+            }),
+            filename: Some("photo.jpg".to_string()),
+            media_type: Some(mime.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn user_image_file_part_is_sent_as_image_url() {
+        // A user image attachment arrives as content_type "file" with an image
+        // media_type. It must be serialized as an OpenAI image_url content part
+        // instead of being silently dropped.
+        let messages = vec![Message {
+            role: Role::User,
+            content: Content::Parts(vec![
+                text_part("describe this"),
+                image_file_part("data:image/jpeg;base64,/9j/4AAQ", "image/jpeg"),
+            ]),
+            cache_control: None,
+            provider_options: None,
+        }];
+        let out = convert_messages(&messages);
+        assert_eq!(out.len(), 1);
+        let content = &out[0]["content"];
+        assert!(content.is_array(), "expected multimodal content array");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "describe this");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "data:image/jpeg;base64,/9j/4AAQ"
+        );
     }
 
     #[test]
