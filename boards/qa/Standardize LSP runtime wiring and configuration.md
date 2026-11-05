@@ -90,8 +90,9 @@ So the product advertises LSP but does not actually start or use it.
 - Pre-existing/environmental, reproduced on an untouched branch: `opencode-scopemux
   --features native` segfaults in the pinned FFI artifact; `opencode-tui
   tab_autocomplete_uses_first_candidate` fails. Neither is touched by this card.
-- Manual `/lsp`/TUI and slow-server checks remain for QA. A bounded request timeout is
-  delivered with `LSP-002` because it shares the same client.
+- Manual `/lsp`/TUI checks remain for QA. The bounded request timeout (slow-server gate)
+  shipped in `LSP-002` (#150) on the shared client: default 10s, configurable, tested with
+  a hung fake server.
 
 ## Related Items
 

@@ -5,8 +5,9 @@ priority: "P1"
 type: "feature"
 area: "LSP"
 spec: "wiki/scopemux-lsp-boundary.md"
-status: "todo"
+status: "qa"
 created: "2026-11-05"
+updated: "2026-11-05"
 ---
 
 # Add a capability-negotiated LSP semantic-fact interface
@@ -68,6 +69,22 @@ logic or depend directly on LSP types and availability.
 - Keep the fact surface query-shaped (anchor in, facts out), not a bulk parser API.
 - Cache key must include server id, workspace root, file version/hash, and capability.
 - Use the same timeout/health rules as the LSP tool.
+
+## QA Verification
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/150 (merged into `development`).
+- `opencode_lsp::facts` exposes neutral request/response types; consumers do not import
+  `lsp_types`.
+- Capability negotiation: unsupported methods return `Unavailable { reason: Unsupported }`
+  and are never called.
+- Cache is keyed by `(server, path, anchor, kind, content hash)`; changing the file misses
+  the cache and prunes older entries for that path.
+- Request timeout is bounded (default 10s, configurable); a hung server returns `Timeout`.
+  This also closes LSP-001's slow-server gate.
+- `cargo test -p opencode-lsp`: 17/17, including fake-server exact/cache/invalidation,
+  unsupported capability, and hung-server timeout.
+- Real server: `cargo test -p opencode-lsp real_rust_analyzer_definition_smoke -- --ignored`
+  passed against installed `rust-analyzer`.
 
 ## Related Items
 
