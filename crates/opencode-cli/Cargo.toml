@@ -10,7 +10,7 @@ default = ["scopemux-native"]
 # Enable the local scopemux-core FFI provider in the shipped binary. It only
 # activates for the scoped local model (ollama + qwen). Requires
 # scripts/fetch-scopemux-core.sh and a C toolchain (see AGENTS.md).
-scopemux-native = ["opencode-session/scopemux-native"]
+scopemux-native = ["opencode-session/scopemux-native", "opencode-scopemux/native"]
 
 [[bin]]
 name = "opencode-modded-rust"
@@ -27,6 +27,7 @@ opencode-agent = { path = "../opencode-agent" }
 opencode-provider = { path = "../opencode-provider" }
 opencode-plugin = { path = "../opencode-plugin" }
 opencode-session = { path = "../opencode-session" }
+opencode-scopemux = { path = "../opencode-scopemux" }
 opencode-storage = { path = "../opencode-storage" }
 opencode-tool = { path = "../opencode-tool" }
 opencode-tui = { path = "../opencode-tui" }

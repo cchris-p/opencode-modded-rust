@@ -2158,6 +2158,7 @@ dependencies = [
  "opencode-permission",
  "opencode-plugin",
  "opencode-provider",
+ "opencode-scopemux",
  "opencode-server",
  "opencode-session",
  "opencode-storage",
@@ -2364,6 +2365,7 @@ name = "opencode-scopemux"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "dirs",
  "opencode-lsp",
  "opencode-retrieval",
  "opencode-types",
