@@ -62,5 +62,5 @@ Found while building image support for the VaM `image-interpretation` skill
 - [x] File/image user parts reach the provider request.
 - [x] OpenAI-compatible chat serializes image file parts as `image_url`.
 - [x] Regression test added and passing.
-- [ ] Shipped binary rebuilt/installed with the fix (owner-gated release).
+- [x] Shipped binary rebuilt/installed with the fix (release `1815b02`, installed as `~/.local/share/ort/bin/current`, 2026-11-05; verified `ask --file` red-PNG -> "Red").
 - [ ] `run --attach` (`/stream`) agentic/tool parity (separate follow-up).
