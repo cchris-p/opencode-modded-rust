@@ -1008,6 +1008,7 @@ impl SessionPrompt {
             self.experimental_background_subagents,
             self.resolve_subagent_callback.clone(),
             self.session_inspect_callback.clone(),
+            self.lsp_registry.clone(),
             update_hook,
         )
         .await;
@@ -1096,6 +1097,7 @@ impl SessionPrompt {
             self.experimental_background_subagents,
             self.resolve_subagent_callback.clone(),
             self.session_inspect_callback.clone(),
+            self.lsp_registry.clone(),
             None,
         )
         .await;
@@ -1129,6 +1131,7 @@ impl SessionPrompt {
         experimental_background_subagents: bool,
         resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
         session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
+        lsp_registry: Option<Arc<opencode_lsp::LspClientRegistry>>,
         update_hook: Option<SessionUpdateHook>,
     ) -> anyhow::Result<()> {
         let mut step = 0u32;
@@ -1551,6 +1554,10 @@ impl SessionPrompt {
                 .with_abort(token.clone())
                 .with_plan_path(Some(plan_path))
                 .with_loaded_instructions(loaded_instructions.clone());
+
+                if let Some(lsp_registry) = lsp_registry.as_ref() {
+                    tool_context = tool_context.with_lsp_registry(lsp_registry.clone());
+                }
 
                 if let Some(ask_callback) = ask_callback.clone() {
                     tool_context = tool_context.with_ask(move |request| {

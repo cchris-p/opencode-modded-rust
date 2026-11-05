@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
@@ -12,7 +12,7 @@ use lsp_types::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{debug, error};
@@ -139,16 +139,54 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
+/// One configured LSP server. `extensions` gates which files the server may handle;
+/// an empty list means the server is considered for every extension. `disabled` keeps
+/// the entry in config without starting it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspServerConfig {
     pub id: String,
     pub command: String,
     pub args: Vec<String>,
+    pub extensions: Vec<String>,
+    pub env: HashMap<String, String>,
     pub initialization_options: Option<Value>,
+    pub disabled: bool,
+}
+
+impl LspServerConfig {
+    /// True when this server should handle a file with the given extension.
+    pub fn matches_extension(&self, extension: &str) -> bool {
+        if self.extensions.is_empty() {
+            return true;
+        }
+        let normalized = extension.trim_start_matches('.');
+        self.extensions.iter().any(|value| {
+            value
+                .trim_start_matches('.')
+                .eq_ignore_ascii_case(normalized)
+        })
+    }
+}
+
+/// Connection state reported by the `/lsp` status surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LspConnectionStatus {
+    Connected,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspServerStatus {
+    pub id: String,
+    pub root: String,
+    pub status: LspConnectionStatus,
 }
 
 pub struct LspClient {
     root: PathBuf,
     stdin: Arc<Mutex<ChildStdin>>,
+    child: Arc<Mutex<Option<tokio::process::Child>>>,
     request_id: Arc<Mutex<u64>>,
     pending_responses:
         Arc<RwLock<HashMap<u64, tokio::sync::oneshot::Sender<Result<Value, LspError>>>>>,
@@ -166,9 +204,11 @@ impl LspClient {
     pub async fn start(config: LspServerConfig, root: PathBuf) -> Result<Self, LspError> {
         let mut child = Command::new(&config.command)
             .args(&config.args)
+            .envs(&config.env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| LspError::ServerStartError(e.to_string()))?;
 
@@ -186,6 +226,7 @@ impl LspClient {
         let client = Self {
             root,
             stdin: Arc::new(Mutex::new(stdin)),
+            child: Arc::new(Mutex::new(Some(child))),
             request_id: Arc::new(Mutex::new(0)),
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
             diagnostics: Arc::new(RwLock::new(HashMap::new())),
@@ -199,13 +240,38 @@ impl LspClient {
         let event_tx_clone = client.event_tx.clone();
 
         tokio::spawn(async move {
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
+            let mut reader = BufReader::new(stdout);
 
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.is_empty() || line.starts_with("Content-Length:") {
+            // Proper LSP framing: read `Content-Length` headers, then exactly that many
+            // bytes. A server is not required to terminate the JSON body with a newline,
+            // so line-splitting the stream deadlocks against valid servers.
+            loop {
+                let mut content_length = 0usize;
+                loop {
+                    let mut header = String::new();
+                    match reader.read_line(&mut header).await {
+                        Ok(0) => return,
+                        Ok(_) => {}
+                        Err(_) => return,
+                    }
+                    let header = header.trim_end_matches(['\r', '\n']);
+                    if header.is_empty() {
+                        break;
+                    }
+                    if let Some(value) = header.strip_prefix("Content-Length:") {
+                        content_length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+
+                if content_length == 0 {
                     continue;
                 }
+
+                let mut body = vec![0u8; content_length];
+                if reader.read_exact(&mut body).await.is_err() {
+                    return;
+                }
+                let line = String::from_utf8_lossy(&body).to_string();
 
                 if let Ok(notification) = serde_json::from_str::<JsonRpcNotification>(&line) {
                     if notification.method == "textDocument/publishDiagnostics" {
@@ -771,6 +837,21 @@ impl LspClient {
         let calls: Vec<CallHierarchyOutgoingCall> = serde_json::from_value(result)?;
         Ok(calls)
     }
+
+    /// Workspace root this client was started for.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Best-effort graceful shutdown, then kill. Safe to call more than once.
+    pub async fn shutdown(&self) {
+        let _ = self.notify("shutdown", Value::Null).await;
+        let _ = self.notify("exit", Value::Null).await;
+        if let Some(mut child) = self.child.lock().await.take() {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        }
+    }
 }
 
 #[allow(deprecated)]
@@ -803,15 +884,29 @@ fn flatten_document_symbol(
 
 pub struct LspClientRegistry {
     clients: RwLock<HashMap<String, Arc<LspClient>>>,
+    configs: RwLock<HashMap<PathBuf, Vec<LspServerConfig>>>,
+    broken: RwLock<HashSet<String>>,
+}
+
+fn canonicalize_or(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn client_key(root: &Path, server_id: &str) -> String {
+    format!("{}\u{0}{}", root.display(), server_id)
 }
 
 impl LspClientRegistry {
     pub fn new() -> Self {
         Self {
             clients: RwLock::new(HashMap::new()),
+            configs: RwLock::new(HashMap::new()),
+            broken: RwLock::new(HashSet::new()),
         }
     }
 
+    /// Register a client directly. Retained for tests and explicit wiring; the runtime
+    /// uses `configure` + `client_for_file` for lazy `(root, server)` spawning.
     pub async fn register(&self, id: String, client: Arc<LspClient>) {
         self.clients.write().await.insert(id, client);
     }
@@ -829,26 +924,147 @@ impl LspClientRegistry {
             .collect()
     }
 
-    /// Returns true if any LSP clients are currently registered.
-    /// Mirrors the TS `LSP.hasClients(file)` which checks whether any server
-    /// could handle the given file. Here we check if any registered client's
-    /// id contains the detected language for the file.
-    pub async fn has_clients(&self, path: &Path) -> bool {
-        let clients = self.clients.read().await;
-        if clients.is_empty() {
-            return false;
+    /// Install the server definitions for a workspace root. Idempotent: configuring the
+    /// same root with the same definitions keeps live clients. A changed definition set
+    /// shuts down that root's clients and drops its broken-server marks so the next
+    /// request retries lazily.
+    pub async fn configure(&self, root: PathBuf, servers: Vec<LspServerConfig>) {
+        let root = canonicalize_or(&root);
+        {
+            let configs = self.configs.read().await;
+            if configs.get(&root) == Some(&servers) {
+                return;
+            }
         }
-        let language = detect_language(path);
-        clients.keys().any(|id| id.contains(language))
+        self.shutdown_root(&root).await;
+        self.configs.write().await.insert(root, servers);
+    }
+
+    async fn shutdown_root(&self, root: &Path) {
+        let prefix = format!("{}\u{0}", root.display());
+        let removed: Vec<Arc<LspClient>> = {
+            let mut clients = self.clients.write().await;
+            let keys: Vec<String> = clients
+                .keys()
+                .filter(|key| key.starts_with(&prefix))
+                .cloned()
+                .collect();
+            keys.into_iter()
+                .filter_map(|key| clients.remove(&key))
+                .collect()
+        };
+        for client in removed {
+            client.shutdown().await;
+        }
+        let mut broken = self.broken.write().await;
+        broken.retain(|key| !key.starts_with(&prefix));
+    }
+
+    /// Shut down every client. Used on server shutdown and by tests.
+    pub async fn shutdown_all(&self) {
+        let removed: Vec<Arc<LspClient>> = {
+            let mut clients = self.clients.write().await;
+            clients.drain().map(|(_, client)| client).collect()
+        };
+        for client in removed {
+            client.shutdown().await;
+        }
+        self.broken.write().await.clear();
+    }
+
+    /// Longest configured root that contains `path`, if any. LSP is opt-in: a file
+    /// outside every configured workspace spawns nothing.
+    pub async fn root_for(&self, path: &Path) -> Option<PathBuf> {
+        let path = canonicalize_or(path);
+        self.configs
+            .read()
+            .await
+            .keys()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+            .cloned()
+    }
+
+    fn matching_servers<'a>(
+        servers: &'a [LspServerConfig],
+        path: &Path,
+    ) -> Vec<&'a LspServerConfig> {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        servers
+            .iter()
+            .filter(|server| !server.disabled && !server.command.is_empty())
+            .filter(|server| server.matches_extension(extension))
+            .collect()
+    }
+
+    /// Lazily spawn (or reuse) every configured server that can handle `path`. A server
+    /// that fails to start is suppressed for this registry lifetime; the caller simply
+    /// gets no client and the task proceeds without LSP.
+    pub async fn ensure_for_file(&self, path: &Path) -> Result<Vec<Arc<LspClient>>, LspError> {
+        let Some(root) = self.root_for(path).await else {
+            return Ok(Vec::new());
+        };
+        let servers = {
+            let configs = self.configs.read().await;
+            Self::matching_servers(configs.get(&root).map(Vec::as_slice).unwrap_or(&[]), path)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        let mut clients = Vec::new();
+        for server in servers {
+            let key = client_key(&root, &server.id);
+            if let Some(client) = self.clients.read().await.get(&key).cloned() {
+                clients.push(client);
+                continue;
+            }
+            if self.broken.read().await.contains(&key) {
+                continue;
+            }
+            match LspClient::start(server.clone(), root.clone()).await {
+                Ok(client) => {
+                    let client = Arc::new(client);
+                    self.clients.write().await.insert(key, client.clone());
+                    clients.push(client);
+                }
+                Err(error) => {
+                    self.broken.write().await.insert(key);
+                    error!(
+                        server = %server.id,
+                        root = %root.display(),
+                        %error,
+                        "LSP server failed to start; suppressing for this registry"
+                    );
+                }
+            }
+        }
+        Ok(clients)
+    }
+
+    /// First live client for `path`, spawning matching configured servers if needed.
+    pub async fn client_for_file(&self, path: &Path) -> Option<Arc<LspClient>> {
+        self.ensure_for_file(path)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+    }
+
+    /// True when at least one configured server can handle `path`. Spawns lazily.
+    pub async fn has_clients(&self, path: &Path) -> bool {
+        !self
+            .ensure_for_file(path)
+            .await
+            .unwrap_or_default()
+            .is_empty()
     }
 
     /// Opens or refreshes a file in all matching LSP clients.
     /// Mirrors the TS `LSP.touchFile(input, waitForDiagnostics)`.
-    ///
-    /// - Reads the file content from disk
-    /// - For each registered client whose id matches the file's language,
-    ///   calls `open_document` (which internally handles didOpen vs didChange)
-    /// - If `wait_for_diagnostics` is true, waits briefly for diagnostics to arrive
     pub async fn touch_file(
         &self,
         path: &Path,
@@ -857,15 +1073,9 @@ impl LspClientRegistry {
         let language = detect_language(path);
         let content = tokio::fs::read_to_string(path)
             .await
-            .map_err(|e| LspError::IoError(e))?;
+            .map_err(LspError::IoError)?;
 
-        let clients = self.clients.read().await;
-        let matching: Vec<Arc<LspClient>> = clients
-            .iter()
-            .filter(|(id, _)| id.contains(language))
-            .map(|(_, c)| c.clone())
-            .collect();
-        drop(clients);
+        let matching = self.ensure_for_file(path).await?;
 
         for client in &matching {
             if let Err(e) = client.open_document(path, &content, language).await {
@@ -884,6 +1094,66 @@ impl LspClientRegistry {
 
         Ok(())
     }
+
+    /// Actual connected servers and roots, plus servers that failed to start. Configured
+    /// but not-yet-started servers are not "connected" and are omitted.
+    pub async fn status(&self) -> Vec<LspServerStatus> {
+        let configs = self.configs.read().await.clone();
+        let clients = self.clients.read().await;
+        let broken = self.broken.read().await;
+        let mut statuses = Vec::new();
+        for (root, servers) in &configs {
+            for server in servers {
+                let key = client_key(root, &server.id);
+                let status = if clients.contains_key(&key) {
+                    Some(LspConnectionStatus::Connected)
+                } else if broken.contains(&key) {
+                    Some(LspConnectionStatus::Error)
+                } else {
+                    None
+                };
+                if let Some(status) = status {
+                    statuses.push(LspServerStatus {
+                        id: server.id.clone(),
+                        root: root.display().to_string(),
+                        status,
+                    });
+                }
+            }
+        }
+        statuses.sort_by(|a, b| a.root.cmp(&b.root).then(a.id.cmp(&b.id)));
+        statuses
+    }
+}
+
+/// Find a plausible workspace root by walking up from `path` looking for a project
+/// marker. Falls back to `path`'s nearest existing ancestor (or `path` itself).
+pub fn detect_root(path: &Path) -> PathBuf {
+    const MARKERS: &[&str] = &[
+        ".git",
+        ".hg",
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+        "pyproject.toml",
+        "setup.py",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+    ];
+    let start = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        if MARKERS.iter().any(|marker| dir.join(marker).exists()) {
+            return canonicalize_or(dir);
+        }
+        current = dir.parent();
+    }
+    canonicalize_or(start)
 }
 
 impl Default for LspClientRegistry {
@@ -971,5 +1241,202 @@ mod tests {
         let registry = LspClientRegistry::default();
         let clients = registry.list().await;
         assert!(clients.is_empty());
+    }
+
+    fn server(id: &str, extensions: &[&str], command: &str) -> LspServerConfig {
+        LspServerConfig {
+            id: id.to_string(),
+            command: command.to_string(),
+            args: Vec::new(),
+            extensions: extensions.iter().map(|ext| ext.to_string()).collect(),
+            env: HashMap::new(),
+            initialization_options: None,
+            disabled: false,
+        }
+    }
+
+    #[test]
+    fn extension_gating_accepts_dot_or_bare_and_empty_matches_all() {
+        let rust = server("rust", &[".rs"], "rust-analyzer");
+        assert!(rust.matches_extension("rs"));
+        assert!(rust.matches_extension(".rs"));
+        assert!(!rust.matches_extension("py"));
+
+        let any = server("any", &[], "server");
+        assert!(any.matches_extension("anything"));
+    }
+
+    #[tokio::test]
+    async fn unconfigured_file_spawns_nothing() {
+        let registry = LspClientRegistry::new();
+        assert!(registry
+            .ensure_for_file(Path::new("/tmp/nowhere/main.rs"))
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(
+            !registry
+                .has_clients(Path::new("/tmp/nowhere/main.rs"))
+                .await
+        );
+        assert!(registry.status().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn broken_server_is_suppressed_and_reported_as_error() {
+        let root = std::env::temp_dir().join("opencode-lsp-broken-server-test");
+        let _ = std::fs::create_dir_all(&root);
+        let registry = LspClientRegistry::new();
+        registry
+            .configure(
+                root.clone(),
+                vec![server("broken", &[".rs"], "/nonexistent/lsp-server-xyz")],
+            )
+            .await;
+
+        let file = root.join("main.rs");
+        assert!(registry.ensure_for_file(&file).await.unwrap().is_empty());
+        assert!(!registry.has_clients(&file).await);
+
+        let status = registry.status().await;
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].id, "broken");
+        assert_eq!(status[0].status, LspConnectionStatus::Error);
+
+        // A second request does not retry the broken server.
+        assert!(registry.ensure_for_file(&file).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn disabled_server_is_never_started() {
+        let root = std::env::temp_dir().join("opencode-lsp-disabled-server-test");
+        let _ = std::fs::create_dir_all(&root);
+        let registry = LspClientRegistry::new();
+        let mut disabled = server("disabled", &[".rs"], "/nonexistent/lsp-server-xyz");
+        disabled.disabled = true;
+        registry.configure(root.clone(), vec![disabled]).await;
+
+        assert!(registry
+            .ensure_for_file(&root.join("main.rs"))
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(registry.status().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn root_for_picks_the_longest_containing_root() {
+        let parent = std::env::temp_dir().join("opencode-lsp-root-parent");
+        let child = parent.join("nested");
+        let _ = std::fs::create_dir_all(&child);
+        let registry = LspClientRegistry::new();
+        registry.configure(parent.clone(), Vec::new()).await;
+        registry.configure(child.clone(), Vec::new()).await;
+
+        let file = child.join("main.rs");
+        let root = registry.root_for(&file).await.unwrap();
+        assert_eq!(
+            root,
+            child.canonicalize().unwrap_or(child),
+            "the nested configured root should win"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_clears_clients() {
+        let registry = LspClientRegistry::new();
+        registry.shutdown_all().await;
+        assert!(registry.list().await.is_empty());
+    }
+
+    fn python3_available() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    const FAKE_LSP_SERVER: &str = r#"#!/usr/bin/env python3
+import json
+import sys
+
+def read_message():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        key, value = line.decode("utf-8").split(":", 1)
+        headers[key.strip().lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length))
+
+def send(payload):
+    data = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("utf-8"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    message = read_message()
+    if message is None:
+        break
+    if "id" not in message:
+        continue
+    if message.get("method") == "initialize":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {"definitionProvider": True}}})
+    else:
+        send({"jsonrpc": "2.0", "id": message["id"], "result": None})
+"#;
+
+    #[tokio::test]
+    async fn configured_fake_server_starts_lazily_and_answers_requests() {
+        if !python3_available() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "opencode-lsp-fake-server-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join("fake_lsp.py");
+        std::fs::write(&script, FAKE_LSP_SERVER).unwrap();
+        let file = root.join("main.rs");
+        std::fs::write(&file, "fn main() {}\n").unwrap();
+
+        let registry = LspClientRegistry::new();
+        registry
+            .configure(
+                root.clone(),
+                vec![LspServerConfig {
+                    id: "fake".to_string(),
+                    command: "python3".to_string(),
+                    args: vec![script.display().to_string()],
+                    extensions: vec![".rs".to_string()],
+                    env: HashMap::new(),
+                    initialization_options: None,
+                    disabled: false,
+                }],
+            )
+            .await;
+
+        let client = registry
+            .client_for_file(&file)
+            .await
+            .expect("configured fake server should start for a matching file");
+        let definition = client.goto_definition(&file, 0, 0).await.unwrap();
+        assert!(definition.is_none(), "fake server returns no definition");
+
+        let status = registry.status().await;
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].status, LspConnectionStatus::Connected);
+
+        registry.shutdown_all().await;
+        assert!(registry.list().await.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

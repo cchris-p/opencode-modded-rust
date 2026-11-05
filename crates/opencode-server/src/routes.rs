@@ -3375,9 +3375,11 @@ async fn prompt_child_subagent(
         .metadata
         .insert("model_id".to_string(), serde_json::json!(&model_id));
 
+    configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&child.directory)).await;
     let runner = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
         opencode_session::SessionStateManager::new(),
-    )));
+    )))
+    .with_lsp_registry(state.lsp_registry.clone());
     let input = opencode_session::PromptInput {
         session_id: child_id.clone(),
         message_id: None,
@@ -4450,10 +4452,12 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         .map(|config| config.experimental_background_subagents())
         .unwrap_or(false);
 
+    configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&session.directory)).await;
     let prompt_runner = Arc::new(
         opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
             opencode_session::SessionStateManager::new(),
         )))
+        .with_lsp_registry(state.lsp_registry.clone())
         .with_ask_callback(permission_callback)
         .with_ask_question_callback(question_callback)
         .with_create_subsession_callback(create_subsession_callback)
@@ -8154,13 +8158,54 @@ async fn list_skills() -> Result<Json<Vec<AvailableSkill>>> {
 
 #[derive(Debug, Serialize)]
 struct LspStatus {
-    servers: Vec<String>,
+    servers: Vec<opencode_lsp::LspServerStatus>,
 }
 
-async fn get_lsp_status() -> Result<Json<LspStatus>> {
+async fn get_lsp_status(State(state): State<Arc<ServerState>>) -> Result<Json<LspStatus>> {
     Ok(Json(LspStatus {
-        servers: Vec::new(),
+        servers: state.lsp_registry.status().await,
     }))
+}
+
+/// Translate the `lsp` config block into runtime server definitions. Disabled or
+/// command-less entries are kept (as disabled) so status can report them; the
+/// registry refuses to spawn them.
+fn lsp_server_configs(config: &AppConfig) -> Vec<opencode_lsp::LspServerConfig> {
+    let Some(opencode_config::LspConfig::Enabled(servers)) = &config.lsp else {
+        return Vec::new();
+    };
+    servers
+        .iter()
+        .filter_map(|(id, server)| {
+            let (command, args) = server.command.split_first()?;
+            Some(opencode_lsp::LspServerConfig {
+                id: id.clone(),
+                command: command.clone(),
+                args: args.to_vec(),
+                extensions: server.extensions.clone(),
+                env: server.env.clone().unwrap_or_default(),
+                initialization_options: server
+                    .initialization
+                    .clone()
+                    .and_then(|value| serde_json::to_value(value).ok()),
+                disabled: server.disabled.unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+/// Install the workspace's LSP definitions into the shared registry. Never fails a
+/// request: an unreadable config or no `lsp` block leaves LSP off.
+pub(crate) async fn configure_lsp_for_directory(
+    registry: &opencode_lsp::LspClientRegistry,
+    directory: &FsPath,
+) {
+    let Ok(config) = load_config(directory) else {
+        return;
+    };
+    registry
+        .configure(directory.to_path_buf(), lsp_server_configs(&config))
+        .await;
 }
 
 #[derive(Debug, Serialize)]

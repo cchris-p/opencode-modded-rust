@@ -152,35 +152,20 @@ async fn execute_with_lsp(
     character: u32,
     ctx: &ToolContext,
 ) -> Result<ToolResult, ToolError> {
-    use opencode_lsp::{detect_language, LspClientRegistry};
+    use opencode_lsp::LspClientRegistry;
     use std::sync::Arc;
 
     let lsp_registry: Option<Arc<LspClientRegistry>> = ctx.lsp_registry.clone();
 
     let output = match &lsp_registry {
-        Some(registry) => {
-            // Check if any LSP client can handle this file type (mirrors TS LSP.hasClients)
-            if !registry.has_clients(path).await {
-                return Err(ToolError::ExecutionError(
-                    "No LSP server available for this file type.".to_string(),
-                ));
-            }
-
-            // Touch the file to open/refresh it in all matching LSP clients,
-            // waiting for diagnostics (mirrors TS LSP.touchFile(file, true))
-            registry.touch_file(path, true).await.map_err(|e| {
-                ToolError::ExecutionError(format!("Failed to touch file in LSP: {}", e))
-            })?;
-
-            let language = detect_language(path);
-            let clients = registry.list().await;
-            let client = clients
-                .iter()
-                .find(|(id, _)| id.contains(language))
-                .map(|(_, c)| c.clone());
-
-            match client {
-                Some(client) => match &params.operation {
+        Some(registry) => match registry.client_for_file(path).await {
+            Some(client) => {
+                // Touch the file to open/refresh it in all matching LSP clients,
+                // waiting for diagnostics (mirrors TS LSP.touchFile(file, true))
+                registry.touch_file(path, true).await.map_err(|e| {
+                    ToolError::ExecutionError(format!("Failed to touch file in LSP: {}", e))
+                })?;
+                match &params.operation {
                     LspOperation::GoToDefinition => {
                         match client.goto_definition(path, line, character).await {
                             Ok(Some(loc)) => format_location_result("Definition", loc),
@@ -250,7 +235,7 @@ async fn execute_with_lsp(
                     LspOperation::Rename => {
                         let new_name = params.new_name.as_deref().unwrap_or("new_name");
                         match client.rename(path, line, character, new_name).await {
-                            Ok(Some(edit)) => format!(
+                            Ok(Some(_edit)) => format!(
                                 "Rename preview available. Workspace edit ready for: {}",
                                 new_name
                             ),
@@ -329,10 +314,10 @@ async fn execute_with_lsp(
                             Err(e) => format!("LSP error: {}", e),
                         }
                     }
-                },
-                None => format!("No LSP client available for language: {}", language),
+                }
             }
-        }
+            None => "No LSP server configured or available for this file type.".to_string(),
+        },
         None => "LSP registry not available. Enable 'lsp' feature and configure LSP servers."
             .to_string(),
     };

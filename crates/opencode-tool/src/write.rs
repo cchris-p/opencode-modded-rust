@@ -218,8 +218,6 @@ fn create_diff(filepath: &str, old_content: &str, new_content: &str) -> String {
 async fn get_lsp_diagnostics(path: &Path, ctx: &ToolContext) -> String {
     #[cfg(feature = "lsp")]
     {
-        use opencode_lsp::detect_language;
-
         if let Some(lsp_registry) = &ctx.lsp_registry {
             return get_lsp_diagnostics_impl(path, lsp_registry.clone()).await;
         }
@@ -236,20 +234,13 @@ async fn get_lsp_diagnostics(path: &Path, ctx: &ToolContext) -> String {
 #[cfg(feature = "lsp")]
 async fn get_lsp_diagnostics_impl(
     path: &Path,
-    lsp_registry: Arc<opencode_lsp::LspClientRegistry>,
+    lsp_registry: std::sync::Arc<opencode_lsp::LspClientRegistry>,
 ) -> String {
     use opencode_lsp::detect_language;
-    use std::collections::HashMap;
 
     let language = detect_language(path);
-    let clients = lsp_registry.list().await;
 
-    let client = clients
-        .iter()
-        .find(|(id, _)| id.contains(language))
-        .map(|(_, c)| c.clone());
-
-    let Some(client) = client else {
+    let Some(client) = lsp_registry.client_for_file(path).await else {
         return String::new();
     };
 

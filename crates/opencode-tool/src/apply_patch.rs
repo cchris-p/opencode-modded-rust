@@ -766,11 +766,6 @@ async fn collect_lsp_diagnostics_for_targets(
             return (String::new(), HashMap::new());
         };
 
-        let clients = lsp_registry.list().await;
-        if clients.is_empty() {
-            return (String::new(), HashMap::new());
-        }
-
         let mut unique_targets = Vec::new();
         let mut seen = HashSet::new();
         for target in targets {
@@ -785,12 +780,7 @@ async fn collect_lsp_diagnostics_for_targets(
         for target in unique_targets {
             let path = base_path.join(&target);
             let language = detect_language(&path);
-            let client = clients
-                .iter()
-                .find(|(id, _)| id.contains(language))
-                .map(|(_, client)| client.clone());
-
-            let Some(client) = client else {
+            let Some(client) = lsp_registry.client_for_file(&path).await else {
                 continue;
             };
 
