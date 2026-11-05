@@ -49,6 +49,25 @@ and suppresses a server that fails to start for the registry's lifetime.
 - Server `/lsp` status and the TUI LSP indicator
 - `opencode-modded-rust debug lsp ...` for one-shot diagnostics and symbols
 
+## Semantic-fact interface
+
+`opencode_lsp::facts` is the narrow contract consumers (notably ScopeMux) use instead of
+importing `lsp_types` or issuing requests directly:
+
+- `SemanticFactRequest { path, line, character, kind }` (0-based LSP positions).
+- `SemanticFactKind`: definition, references, type definition, implementation, supertypes
+  (type hierarchy), incoming/outgoing calls.
+- `SemanticFactOutcome::Exact(SemanticFact)` or
+  `Unavailable { reason: NoServer | Unsupported | Timeout | Failure, detail }`.
+- `SemanticFact` carries `confidence = exact`, the server id, workspace root, document
+  version, and content hash.
+
+`LspClientRegistry::semantic_facts` negotiates against the server's advertised
+capabilities, opens the document, applies the bounded request timeout, caches by
+`(server, path, anchor, kind, content hash)`, and invalidates a file's entries when the
+hash changes. `set_request_timeout` bounds every JSON-RPC request (default 10s). Consumers
+must treat `Unavailable` as a normal fallback, never as a task failure.
+
 ## Development notes
 
 - Handle timeouts, retries, and uninitialized server

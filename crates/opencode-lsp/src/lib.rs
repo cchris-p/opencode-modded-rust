@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use lsp_types::{
     ClientCapabilities, Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
@@ -17,6 +19,14 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{debug, error};
 use url::Url;
+
+pub mod facts;
+
+pub use facts::{
+    file_content_hash, FactConfidence, FactLocation, FactPosition, FactUnavailable, SemanticFact,
+    SemanticFactKind, SemanticFactOutcome, SemanticFactRequest, SemanticFactResponse,
+    DEFAULT_FACT_TIMEOUT,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallHierarchyItem {
@@ -185,6 +195,7 @@ pub struct LspServerStatus {
 
 pub struct LspClient {
     root: PathBuf,
+    server_id: String,
     stdin: Arc<Mutex<ChildStdin>>,
     child: Arc<Mutex<Option<tokio::process::Child>>>,
     request_id: Arc<Mutex<u64>>,
@@ -192,6 +203,10 @@ pub struct LspClient {
         Arc<RwLock<HashMap<u64, tokio::sync::oneshot::Sender<Result<Value, LspError>>>>>,
     diagnostics: Arc<RwLock<HashMap<PathBuf, Vec<Diagnostic>>>>,
     file_versions: Arc<RwLock<HashMap<PathBuf, u32>>>,
+    /// Raw `ServerCapabilities` from the initialize result. Kept as JSON so the fact
+    /// boundary can negotiate methods (including ones the typed crate may not model).
+    capabilities: Arc<RwLock<Option<Value>>>,
+    request_timeout_ms: Arc<AtomicU64>,
     event_tx: broadcast::Sender<LspEvent>,
 }
 
@@ -225,12 +240,15 @@ impl LspClient {
 
         let client = Self {
             root,
+            server_id: config.id.clone(),
             stdin: Arc::new(Mutex::new(stdin)),
             child: Arc::new(Mutex::new(Some(child))),
             request_id: Arc::new(Mutex::new(0)),
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
             diagnostics: Arc::new(RwLock::new(HashMap::new())),
             file_versions: Arc::new(RwLock::new(HashMap::new())),
+            capabilities: Arc::new(RwLock::new(None)),
+            request_timeout_ms: Arc::new(AtomicU64::new(10_000)),
             event_tx,
         };
 
@@ -329,6 +347,8 @@ impl LspClient {
         let result = self
             .request("initialize", serde_json::to_value(params)?)
             .await?;
+        let capabilities = result.get("capabilities").cloned();
+        *self.capabilities.write().await = capabilities;
         debug!(?result, "LSP initialized");
 
         self.notify("initialized", Value::Null).await?;
@@ -362,7 +382,15 @@ impl LspClient {
         stdin.write_all(message.as_bytes()).await?;
         stdin.flush().await?;
 
-        rx.await.map_err(|_| LspError::Timeout)?
+        let timeout = Duration::from_millis(self.request_timeout_ms.load(Ordering::Relaxed));
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(LspError::Timeout),
+            Err(_) => {
+                self.pending_responses.write().await.remove(&id);
+                Err(LspError::Timeout)
+            }
+        }
     }
 
     pub async fn notify(&self, method: &str, params: Value) -> Result<(), LspError> {
@@ -843,6 +871,37 @@ impl LspClient {
         &self.root
     }
 
+    /// Configured server id this client was started for.
+    pub fn server_id(&self) -> &str {
+        &self.server_id
+    }
+
+    /// Timeout applied to every JSON-RPC request.
+    pub fn set_request_timeout(&self, timeout: Duration) {
+        self.request_timeout_ms
+            .store(timeout.as_millis().max(1) as u64, Ordering::Relaxed);
+    }
+
+    /// Current tracked document version for a file, if it was opened.
+    pub async fn document_version(&self, path: &Path) -> Option<i32> {
+        self.file_versions
+            .read()
+            .await
+            .get(path)
+            .map(|version| *version as i32)
+    }
+
+    /// True when the server advertised a truthy capability key.
+    pub async fn supports_capability(&self, key: &str) -> bool {
+        self.capabilities
+            .read()
+            .await
+            .as_ref()
+            .and_then(|capabilities| capabilities.get(key))
+            .map(|value| !value.is_null() && value != &Value::Bool(false))
+            .unwrap_or(false)
+    }
+
     /// Best-effort graceful shutdown, then kill. Safe to call more than once.
     pub async fn shutdown(&self) {
         let _ = self.notify("shutdown", Value::Null).await;
@@ -886,6 +945,8 @@ pub struct LspClientRegistry {
     clients: RwLock<HashMap<String, Arc<LspClient>>>,
     configs: RwLock<HashMap<PathBuf, Vec<LspServerConfig>>>,
     broken: RwLock<HashSet<String>>,
+    request_timeout: RwLock<Duration>,
+    pub(crate) facts_cache: RwLock<HashMap<facts::FactCacheKey, facts::SemanticFact>>,
 }
 
 fn canonicalize_or(path: &Path) -> PathBuf {
@@ -902,6 +963,16 @@ impl LspClientRegistry {
             clients: RwLock::new(HashMap::new()),
             configs: RwLock::new(HashMap::new()),
             broken: RwLock::new(HashSet::new()),
+            request_timeout: RwLock::new(Duration::from_secs(10)),
+            facts_cache: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Set the request timeout applied to all clients, including already-running ones.
+    pub async fn set_request_timeout(&self, timeout: Duration) {
+        *self.request_timeout.write().await = timeout;
+        for client in self.clients.read().await.values() {
+            client.set_request_timeout(timeout);
         }
     }
 
@@ -1027,6 +1098,7 @@ impl LspClientRegistry {
             }
             match LspClient::start(server.clone(), root.clone()).await {
                 Ok(client) => {
+                    client.set_request_timeout(*self.request_timeout.read().await);
                     let client = Arc::new(client);
                     self.clients.write().await.insert(key, client.clone());
                     clients.push(client);
@@ -1392,6 +1464,209 @@ while True:
         send({"jsonrpc": "2.0", "id": message["id"], "result": None})
 "#;
 
+    const FAKE_FACT_SERVER: &str = r#"#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+import time
+
+TARGET = sys.argv[1] if len(sys.argv) > 1 else ""
+MODE = sys.argv[2] if len(sys.argv) > 2 else "answer"
+
+def read_message():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        key, value = line.decode("utf-8").split(":", 1)
+        headers[key.strip().lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length))
+
+def send(payload):
+    data = json.dumps(payload).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("utf-8"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    message = read_message()
+    if message is None:
+        break
+    if "id" not in message:
+        continue
+    method = message.get("method")
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {
+            "definitionProvider": True,
+            "referencesProvider": True,
+            "implementationProvider": True,
+            "callHierarchyProvider": True,
+        }}})
+    elif method == "textDocument/definition":
+        if MODE == "hang":
+            time.sleep(3600)
+        if MODE == "none":
+            send({"jsonrpc": "2.0", "id": message["id"], "result": None})
+        else:
+            send({"jsonrpc": "2.0", "id": message["id"], "result": [{
+                "uri": pathlib.Path(TARGET).as_uri(),
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+            }]})
+    else:
+        send({"jsonrpc": "2.0", "id": message["id"], "result": None})
+"#;
+
+    async fn configure_fact_server(
+        registry: &LspClientRegistry,
+        root: &std::path::Path,
+        target: &std::path::Path,
+        mode: &str,
+    ) {
+        let script = root.join("fake_fact_server.py");
+        std::fs::write(&script, FAKE_FACT_SERVER).unwrap();
+        registry
+            .configure(
+                root.to_path_buf(),
+                vec![LspServerConfig {
+                    id: "fake".to_string(),
+                    command: "python3".to_string(),
+                    args: vec![
+                        script.display().to_string(),
+                        target.display().to_string(),
+                        mode.to_string(),
+                    ],
+                    extensions: vec![".rs".to_string()],
+                    env: HashMap::new(),
+                    initialization_options: None,
+                    disabled: false,
+                }],
+            )
+            .await;
+    }
+
+    fn fact_test_root(name: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("opencode-lsp-fact-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[tokio::test]
+    async fn semantic_facts_are_exact_cached_and_invalidated_by_content() {
+        if !python3_available() {
+            return;
+        }
+        let root = fact_test_root("cache");
+        let main = root.join("main.rs");
+        let target = root.join("def.rs");
+        std::fs::write(&main, "fn main() {}\n").unwrap();
+        std::fs::write(&target, "struct Def;\n").unwrap();
+
+        let registry = LspClientRegistry::new();
+        configure_fact_server(&registry, &root, &target, "answer").await;
+
+        let request = SemanticFactRequest::new(&main, 0, 0, SemanticFactKind::Definition);
+        let first = registry.semantic_facts(request.clone()).await;
+        assert!(!first.cached);
+        let fact = match first.outcome {
+            SemanticFactOutcome::Exact(fact) => fact,
+            other => panic!("expected exact fact, got {other:?}"),
+        };
+        assert_eq!(fact.kind, SemanticFactKind::Definition);
+        assert_eq!(fact.confidence, FactConfidence::Exact);
+        assert_eq!(fact.server_id, "fake");
+        assert_eq!(fact.locations.len(), 1);
+        assert!(fact.locations[0].file.ends_with("def.rs"));
+        assert_ne!(fact.file_hash, 0);
+
+        let second = registry.semantic_facts(request.clone()).await;
+        assert!(second.cached, "identical content should hit the cache");
+
+        std::fs::write(&main, "fn main() { let _ = 1; }\n").unwrap();
+        let third = registry.semantic_facts(request).await;
+        assert!(!third.cached, "changed content must miss the cache");
+
+        registry.shutdown_all().await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn unsupported_capability_is_explicit_and_does_not_fail() {
+        if !python3_available() {
+            return;
+        }
+        let root = fact_test_root("unsupported");
+        let main = root.join("main.rs");
+        let target = root.join("def.rs");
+        std::fs::write(&main, "fn main() {}\n").unwrap();
+        std::fs::write(&target, "struct Def;\n").unwrap();
+
+        let registry = LspClientRegistry::new();
+        configure_fact_server(&registry, &root, &target, "answer").await;
+
+        // The fake server does not advertise typeDefinitionProvider.
+        let response = registry
+            .semantic_facts(SemanticFactRequest::new(
+                &main,
+                0,
+                0,
+                SemanticFactKind::TypeDefinition,
+            ))
+            .await;
+        assert!(matches!(
+            response.outcome,
+            SemanticFactOutcome::Unavailable {
+                reason: FactUnavailable::Unsupported,
+                ..
+            }
+        ));
+
+        registry.shutdown_all().await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn hung_server_times_out_without_failing_the_caller() {
+        if !python3_available() {
+            return;
+        }
+        let root = fact_test_root("timeout");
+        let main = root.join("main.rs");
+        let target = root.join("def.rs");
+        std::fs::write(&main, "fn main() {}\n").unwrap();
+        std::fs::write(&target, "struct Def;\n").unwrap();
+
+        let registry = LspClientRegistry::new();
+        registry
+            .set_request_timeout(Duration::from_millis(250))
+            .await;
+        configure_fact_server(&registry, &root, &target, "hang").await;
+
+        let response = registry
+            .semantic_facts(SemanticFactRequest::new(
+                &main,
+                0,
+                0,
+                SemanticFactKind::Definition,
+            ))
+            .await;
+        assert!(matches!(
+            response.outcome,
+            SemanticFactOutcome::Unavailable {
+                reason: FactUnavailable::Timeout,
+                ..
+            }
+        ));
+
+        registry.shutdown_all().await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[tokio::test]
     async fn configured_fake_server_starts_lazily_and_answers_requests() {
         if !python3_available() {
@@ -1437,6 +1712,75 @@ while True:
 
         registry.shutdown_all().await;
         assert!(registry.list().await.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    #[tokio::test]
+    #[ignore = "requires rust-analyzer; slow real-server smoke test"]
+    async fn real_rust_analyzer_definition_smoke() {
+        let available = std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if !available {
+            return;
+        }
+        let root = fact_test_root("rust-analyzer");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"lsp-smoke\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main.rs"),
+            "mod def;\nfn main() { def::helper(); }\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src/def.rs"), "pub fn helper() {}\n").unwrap();
+
+        let registry = LspClientRegistry::new();
+        registry.set_request_timeout(Duration::from_secs(60)).await;
+        registry
+            .configure(
+                root.clone(),
+                vec![LspServerConfig {
+                    id: "rust-analyzer".to_string(),
+                    command: "rust-analyzer".to_string(),
+                    args: Vec::new(),
+                    extensions: vec![".rs".to_string()],
+                    env: HashMap::new(),
+                    initialization_options: None,
+                    disabled: false,
+                }],
+            )
+            .await;
+
+        let main = root.join("src/main.rs");
+        let response = registry
+            .semantic_facts(SemanticFactRequest::new(
+                &main,
+                1,
+                13,
+                SemanticFactKind::Definition,
+            ))
+            .await;
+        match response.outcome {
+            SemanticFactOutcome::Exact(fact) => {
+                assert_eq!(fact.confidence, FactConfidence::Exact);
+                assert_eq!(fact.server_id, "rust-analyzer");
+                assert!(
+                    fact.locations
+                        .iter()
+                        .any(|loc| loc.file.ends_with("def.rs")),
+                    "expected definition in def.rs, got {:?}",
+                    fact.locations
+                );
+            }
+            other => panic!("expected exact definition from rust-analyzer, got {other:?}"),
+        }
+
+        registry.shutdown_all().await;
         let _ = std::fs::remove_dir_all(&root);
     }
 }
