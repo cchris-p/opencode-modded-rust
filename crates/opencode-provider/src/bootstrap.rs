@@ -500,38 +500,7 @@ fn bundled_v1_models_data() -> ModelsData {
             &["DEEPSEEK_API_KEY"],
             "@ai-sdk/openai-compatible",
             "https://api.deepseek.com/chat/completions",
-            vec![
-                model(
-                    "deepseek-v4-pro",
-                    "DeepSeek V4 Pro",
-                    "2026-08-01",
-                    128_000,
-                    32_768,
-                    true,
-                    true,
-                    true,
-                    false,
-                    0.55,
-                    2.19,
-                    "@ai-sdk/openai-compatible",
-                    "https://api.deepseek.com/chat/completions",
-                ),
-                model(
-                    "deepseek-flash",
-                    "DeepSeek Flash",
-                    "2026-08-01",
-                    128_000,
-                    32_768,
-                    true,
-                    true,
-                    true,
-                    false,
-                    0.27,
-                    1.1,
-                    "@ai-sdk/openai-compatible",
-                    "https://api.deepseek.com/chat/completions",
-                ),
-            ],
+            crate::deepseek::bundled_models_dev(),
         ),
         provider(
             "openrouter",
@@ -3536,6 +3505,72 @@ mod tests {
         assert!(data["openrouter"]
             .models
             .contains_key("anthropic/claude-sonnet-5"));
+    }
+
+    #[test]
+    fn deepseek_metadata_matches_live_listing_in_bundled_and_models_dev_paths() {
+        let bundled = bundled_v1_models_data();
+        let deepseek = bundled.get("deepseek").expect("deepseek catalog exists");
+
+        for (id, vision) in [("deepseek-flash", true), ("deepseek-v4-pro", false)] {
+            let model = deepseek.models.get(id).expect("model is listed");
+            assert_eq!(model.limit.context, 1_048_576, "{id} context");
+            assert_eq!(model.limit.output, 393_216, "{id} output");
+            assert!(model.reasoning, "{id} reasoning");
+            assert!(model.tool_call, "{id} tools");
+            assert_eq!(model.attachment, vision, "{id} vision");
+
+            let runtime = from_models_dev_model(deepseek, model);
+            assert_eq!(runtime.limit.context, 1_048_576, "{id} runtime context");
+            assert_eq!(runtime.limit.output, 393_216, "{id} runtime output");
+        }
+
+        let flash = from_models_dev_model(deepseek, &deepseek.models["deepseek-flash"]);
+        assert!(flash.capabilities.input.image);
+
+        let raw = r#"{
+          "deepseek": {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "env": ["DEEPSEEK_API_KEY"],
+            "npm": "@ai-sdk/openai-compatible",
+            "api": "https://api.deepseek.com/chat/completions",
+            "models": {
+              "deepseek-flash": {
+                "id": "deepseek-flash",
+                "name": "DeepSeek Flash",
+                "release_date": "2026-08-01",
+                "attachment": true,
+                "reasoning": true,
+                "temperature": true,
+                "tool_call": true,
+                "limit": {"context": 1048576, "output": 393216},
+                "modalities": {"input": ["text", "image"], "output": ["text"]}
+              },
+              "deepseek-v4-pro": {
+                "id": "deepseek-v4-pro",
+                "name": "DeepSeek V4 Pro",
+                "release_date": "2026-08-01",
+                "attachment": false,
+                "reasoning": true,
+                "temperature": true,
+                "tool_call": true,
+                "limit": {"context": 1048576, "output": 393216},
+                "modalities": {"input": ["text"], "output": ["text"]}
+              }
+            }
+          }
+        }"#;
+        let fixture: ModelsData = serde_json::from_str(raw).expect("fixture parses");
+        let fixture_provider = fixture.get("deepseek").expect("fixture provider exists");
+        let fixture_flash =
+            from_models_dev_model(fixture_provider, &fixture_provider.models["deepseek-flash"]);
+
+        assert_eq!(fixture_flash.limit.context, 1_048_576);
+        assert_eq!(fixture_flash.limit.output, 393_216);
+        assert!(fixture_flash.capabilities.reasoning);
+        assert!(fixture_flash.capabilities.toolcall);
+        assert!(fixture_flash.capabilities.input.image);
     }
 
     #[test]
