@@ -511,6 +511,13 @@ impl RetrievalProvider for ScopemuxProvider {
 #[cfg(feature = "native")]
 const MAX_EXACT_FACT_ANCHORS: usize = 8;
 
+/// Maximum search hits returned for one `Search` request.
+///
+/// `token_budget` is a prompt budget, not a hit count, so it must not cap the
+/// number of candidates here.
+#[cfg(feature = "native")]
+const SEARCH_MAX_HITS: usize = 20;
+
 /// Enrich map candidates with optional exact semantic facts at their anchors.
 ///
 /// The map's heuristic candidates are the anchor set; LSP is asked only for a
@@ -656,7 +663,7 @@ fn search_candidates(
         max_tier: 4,
         include_related: false,
         include_dependencies: true,
-        max_hits: request.token_budget.unwrap_or(20),
+        max_hits: SEARCH_MAX_HITS,
         origin_mask: 0,    // all origins
         lifecycle_mask: 0, // all lifecycles
     };
@@ -1488,6 +1495,95 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.origin == Some(RetrievalOrigin::Planned)),
             "the projected node should be labeled planned"
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_repair_slice_reanchors_reopen_reason() {
+        use opencode_retrieval::RetrievalProvider;
+        use opencode_types::{
+            MapRole, PlanNodeDraft, PlanNodeKind, RetrievalOrigin, RetrievalRepresentation,
+        };
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("add.c"),
+            "int add(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let add_path = dir.path().join("add.c").to_string_lossy().to_string();
+        let mut req = request(&dir.path().to_string_lossy(), vec!["add.c"]);
+        req.stage = TaskStage::Repairing;
+        req.role = MapRole::Project;
+        req.representation = RetrievalRepresentation::Impact;
+        req.changed_files = vec![add_path.clone()];
+        req.reopen_reason = Some("verification failed for `add`".to_string());
+        req.task_id = Some("task_repair".to_string());
+        req.plan_nodes = vec![
+            PlanNodeDraft {
+                slug: "objective".to_string(),
+                kind: PlanNodeKind::ModifySymbol,
+                title: "add".to_string(),
+                desired_shape: None,
+                rationale: Some("objective: add".to_string()),
+                projected_symbol: Some("add".to_string()),
+                file_path: Some(add_path.clone()),
+                anchors: vec![format!("file:{add_path}")],
+            },
+            PlanNodeDraft {
+                slug: "reopen-verification-failed-for-add".to_string(),
+                kind: PlanNodeKind::RefactorOpportunity,
+                title: "verification failed for `add`".to_string(),
+                desired_shape: None,
+                rationale: Some("reopen: verification failed for `add`".to_string()),
+                projected_symbol: None,
+                file_path: Some(add_path.clone()),
+                anchors: vec![format!("file:{add_path}")],
+            },
+        ];
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+
+        assert_eq!(response.representation, RetrievalRepresentation::Impact);
+        assert!(
+            !response.candidates.is_empty(),
+            "repair slice should re-anchor the reopen reason"
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.path.ends_with("add.c")),
+            "repair slice should include the affected anchor: {:?}",
+            response.candidates
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.provenance.contains("changed file")),
+            "repair slice should carry changed-file impact provenance: {:?}",
+            response.candidates
+        );
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.origin == Some(RetrievalOrigin::Planned)),
+            "prior plan nodes anchored to the changed file should surface: {:?}",
+            response.candidates
+        );
+        assert!(
+            response
+                .plan_signals
+                .iter()
+                .any(|signal| signal.plan_node_id.ends_with(":objective")),
+            "the realized objective should still reconcile: {:?}",
+            response.plan_signals
         );
     }
 
