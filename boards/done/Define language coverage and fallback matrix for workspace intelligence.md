@@ -5,7 +5,7 @@ priority: "P2"
 type: "research"
 area: "SCOPE"
 spec: "wiki/workspace-intelligence.md"
-status: "doing"
+status: "done"
 created: "2026-10-24"
 ---
 
@@ -104,3 +104,13 @@ $ cargo fmt --all --check
 $ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-types -p opencode-retrieval -p opencode-scopemux -p opencode-session --all-targets
 (exit 0)
 ```
+### Post-merge QA (2026-11-05)
+
+- PR #161 merged into `development` as `bc4c8de`; branch deleted.
+- Re-ran on merged `development`:
+  - `cargo test -p opencode-scopemux --features native` -> 21 passed, 0 failed.
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-retrieval -p opencode-session`
+    -> retrieval 7; session 176 + 2 + 11 passed, 0 failed.
+  - `cargo fmt --all --check` -> exit 0.
+- Coverage matrix, mixed-language provenance, and fallback reason all verified on the
+  merged base. Promoting `qa` -> `done`.
