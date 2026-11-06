@@ -7,6 +7,8 @@ area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
 status: "doing"
 created: "2026-10-23"
+updated: "2026-11-06"
+attention: "Blocked prerequisite: persistent whole-workspace ScopeMux node registration/watcher is not implemented in the Rust provider; SCOPE-006 cannot meet the no-filesystem-walk criterion until it lands."
 request_id: "191c814a-1e0b-45f6-8ad0-20db0d46f3eb"
 ---
 
