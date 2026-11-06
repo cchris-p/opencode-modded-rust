@@ -85,6 +85,15 @@ five cards in `qa` and six in `todo`. The `doing` lane is empty.
   `feature/INFRA-008-embed-scopemux-queries`; PR #160 open, card in `doing`. Independent of
   the program handoff.
 
+## Release Automation Program (H-019)
+
+The main-release fleet deployment program is packaged as handoff `H-019`
+(`handoffs/H-019-main-release-fleet-deployment-program-handoff.md`). It defers all
+implementation: required CI, versioned main releases, main protection, stable/preview
+channels, post-deploy verification/rollback, and automatic deployment of every main release
+to all active registered machines. The invariant is that only `main` releases deploy;
+development/preview builds never do.
+
 ## Best Next Step
 
 The program is packaged as handoff `H-018`
