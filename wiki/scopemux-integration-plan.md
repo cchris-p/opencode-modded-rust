@@ -104,6 +104,21 @@ Activation scope (2026-09-25): the native provider is compiled into the product 
 
 Language coverage is per file (C, C++, Python, JavaScript, TypeScript, and Rust; markdown/prose is generic search). The full coverage matrix, mixed-language behavior, and the `unsupported_language` / `no_matches` / `provider_unavailable` fallback provenance are defined in `wiki/workspace-intelligence.md`.
 
+### Known prerequisite: persistent node registration (2026-11-05, `SCOPE-006`)
+
+The Rust provider does **not** maintain a persistent whole-workspace node registry or a
+watcher today. `ScopemuxProvider::retrieve` creates a fresh `ProjectContext` per call, adds
+only the request's `seed_files`/`changed_files`, and drops the context when the call ends
+(`crates/opencode-scopemux/src/lib.rs`). `scopemux-core` has incremental IR/index
+primitives (`WI-018`, `project_update_file`, incremental rebuild counters), but the product
+provider does not use them across calls.
+
+Consequence: a map-backed tool that answers "where is X" for an arbitrary file without a
+filesystem walk is blocked until persistent registration/update lands. `SCOPE-006` therefore
+records this as a prerequisite and does not build on an unverified index. This is separate
+from the old `WI-030` note: the Rust grammar **is** present (`language_for_path("*.rs") ==
+Some(6)`), so the blocker is persistence, not language support.
+
 The larger idealized target is `SCOPE-001` ("Idealized scopemux map integration") and `wiki/scopemux-map-integration.md`, which extend this plan with current/target state, delta views, observability blocks, duplication detection, and incremental reconciliation. Those phases must not disturb the boundary or guardrails defined here.
 
 ## Required Abstraction Boundary
