@@ -3,11 +3,11 @@ id: "H-018"
 title: "SCOPE-003/004/006/009/010/012/013/014 ScopeMux Remaining Program — Program Handoff"
 status: "in_progress"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-06"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: "SCOPE-006 is blocked on a missing prerequisite (persistent whole-workspace node registration/watcher). Evidence PR #162 is merged; H-018 is paused before step 8 (SCOPE-009)."
+needs_human: "Paused before SCOPE-006/SCOPE-009. The persistent workspace map prerequisite is now its own program, H-020 (SCOPE-015/018/016/017/019); resume H-018 after SCOPE-019 lands."
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -29,20 +29,39 @@ ScopeMux is integrated and usable in `opencode-modded-rust`:
 interim activation rule; no capability profiles, artifact packaging, flywheel contract,
 System-1 routing, or out-of-process transport in this program.
 
-Remaining ScopeMux work is four `qa` closeouts plus four implementation cards:
+Steps 1-6 are complete. Two steps remain and are blocked on the persistent map program:
 
-| Board ID | Title | Priority | Status | Type |
+| Board ID | Title | Priority | Status | Next step |
 |---|---|---|---|---|
-| `SCOPE-003` | Project authoritative task state into scopemux plan nodes | P2 | qa | closeout |
-| `SCOPE-012` | Consolidate ScopeMux/LSP responsibilities | P1 | qa | closeout |
-| `SCOPE-013` | Ingest LSP-derived exact type facts | P2 | qa | closeout |
-| `SCOPE-014` | Measure the context value of exact facts | P2 | qa | closeout |
-| `SCOPE-004` | Consume map delta/observability/refactor nodes | P3 | qa | follow-up PR |
-| `SCOPE-010` | Language coverage and fallback matrix | P2 | todo | new PR |
-| `SCOPE-006` | Replace code grep with ScopeMux node search | P2 | todo | new PR |
-| `SCOPE-009` | Map freshness and staleness SLOs | P2 | todo | new PR |
+| `SCOPE-003` | Project authoritative task state into scopemux plan nodes | P2 | done | complete |
+| `SCOPE-012` | Consolidate ScopeMux/LSP responsibilities | P1 | done | complete |
+| `SCOPE-013` | Ingest LSP-derived exact type facts | P2 | done | complete |
+| `SCOPE-014` | Measure the context value of exact facts | P2 | done | complete |
+| `SCOPE-004` | Consume map delta/observability/refactor nodes | P3 | done | complete |
+| `SCOPE-010` | Language coverage and fallback matrix | P2 | done | complete |
+| `SCOPE-006` | Replace code grep with ScopeMux node search | P2 | doing (blocked) | resume after `SCOPE-019` in `H-020` |
+| `SCOPE-009` | Map freshness and staleness SLOs | P2 | todo (deferred) | resume after `SCOPE-019` in `H-020` |
 
-`SCOPE-001`, `SCOPE-002`, and `SCOPE-005` are done. `boards/doing/` is empty.
+`SCOPE-001`, `SCOPE-002`, and `SCOPE-005` are done.
+
+## Program Split — Persistent Map Prerequisite
+
+`SCOPE-006` was verified blocked on 2026-11-06: the product provider has no persistent
+whole-workspace node registry or watcher, so the map-backed tool cannot meet its
+"without a filesystem walk" criterion. `SCOPE-009` cannot measure real freshness for the
+same reason.
+
+Decision A is locked: build the persistent map rather than redefine or retire the cards.
+The prerequisite is now its own program in `H-020`:
+
+- `SCOPE-018` shared contracts/policy
+- `SCOPE-016` safe engine layer and persistent context lifecycle
+- `SCOPE-017` map supervisor and watcher-driven incremental updates
+- `SCOPE-019` provider/tool integration
+
+**Resume this handoff only after `SCOPE-019` merges.** Then run `SCOPE-006` (map-backed
+code search with grep fallback) and `SCOPE-009` (freshness/staleness SLOs) as the final two
+steps. Do not re-litigate the architecture; it is recorded in `H-020`.
 
 ## The 8 Steps, In Order
 

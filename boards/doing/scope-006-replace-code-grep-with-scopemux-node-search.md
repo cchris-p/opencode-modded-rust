@@ -8,7 +8,8 @@ spec: "wiki/scopemux-map-integration.md"
 status: "doing"
 created: "2026-10-23"
 updated: "2026-11-06"
-attention: "Blocked prerequisite: persistent whole-workspace ScopeMux node registration/watcher is not implemented in the Rust provider; SCOPE-006 cannot meet the no-filesystem-walk criterion until it lands."
+attention: "Blocked by SCOPE-015 program (SCOPE-018 -> 016 -> 017 -> 019). Persistent whole-workspace map registration/watcher is not implemented; SCOPE-019 must land before this card can meet the no-filesystem-walk criterion."
+predecessor: "SCOPE-019"
 request_id: "191c814a-1e0b-45f6-8ad0-20db0d46f3eb"
 ---
 
@@ -112,3 +113,12 @@ promote this card on the evidence PR alone.
   - `cargo fmt --all --check` -> exit 0.
 - Card remains **blocked** in `doing` with `attention:` set. The evidence PR does not
   implement the tool and must not promote this card.
+
+### Program dependency (2026-11-06)
+
+- Prerequisite program: `SCOPE-015` (archived plan in `H-020`).
+- Order: `SCOPE-018` contracts/policy -> `SCOPE-016` engine -> `SCOPE-017`
+  supervisor/watcher -> `SCOPE-019` provider/tool integration.
+- This card resumes only after `SCOPE-019` lands. At that point the code-search tool can
+  meet the "without a filesystem walk" criterion; do not implement it before then.
+- `SCOPE-009` is the other consumer and is resumed after this card's tool path exists.

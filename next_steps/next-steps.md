@@ -1,131 +1,76 @@
-# Where We Left Off - 2026-11-05 13:45 EST
+# Where We Left Off - 2026-11-06
 
 ## Where We Left Off
 
-ScopeMux is integrated and usable: the native provider ships by default, activation is still
-the local-Qwen-only gate, and the ScopeMux/LSP ownership boundary plus optional exact-fact
-enrichment have landed on `development`. The Workspace Intelligence Protocol program
-(`FUTURE-PROOFING-013`) is now **on hold by owner direction**, so every `FUTURE-PROOFING-*`
-gate, profile-driven activation, artifact packaging, keep/expand/retire evaluation, and
-System-1 routing are out of scope until further notice. What remains is the `SCOPE-*` work:
-five cards in `qa` and six in `todo`. The `doing` lane is empty.
+`H-018` (remaining ScopeMux program) is **paused before `SCOPE-006`**. Steps 1-6 are
+complete and merged; `SCOPE-003`, `SCOPE-012`, `SCOPE-013`, `SCOPE-014`, `SCOPE-004`, and
+`SCOPE-010` are in `done` with QA evidence.
+
+`SCOPE-006` was verified blocked on 2026-11-06: the Rust provider creates a fresh
+`ProjectContext` per retrieval, registers only seeds/changed files, and has no persistent
+whole-workspace registry or watcher. A map-backed code-search tool cannot meet its
+"without a filesystem walk" criterion, and `SCOPE-009` cannot measure real freshness.
+Evidence: PR #162 (merged `dac31ee`), `SCOPE-006` card, and
+`wiki/scopemux-integration-plan.md`.
+
+**Decision A is locked:** build the persistent map. The prerequisite is its own program,
+`H-020`, with cards `SCOPE-015`/`018`/`016`/`017`/`019`.
 
 ## Needs Human Intervention
 
-- `FUTURE-PROOFING-013` Workspace Intelligence Protocol program (`refinement`): on hold by
-  owner. Not ranked and not resumed.
-- `SCOPE-004` data-flywheel/slice card: intentionally parked in `qa` by its own closeout
-  until repair-context depth and prompt-budget injection land, or the owner explicitly
-  completes it. Needs an owner decision: finish the follow-ups or split them out and ship.
-- `H-016` handoff (`handoffs/SCOPE-LSP-responsibility-boundary-handoff.md`): all covered PRs
-  (#148, #149, #150, #152, #154) are merged and the handoff is `complete`, so it is
-  archive-ready. Not archived because this request was report-only; needs approval.
-
-## Stale Handoffs
-
-- `handoffs/SCOPE-LSP-responsibility-boundary-handoff.md` (`H-016`): archive-ready ->
-  awaiting approval to move to `handoffs/archived/`.
-- `handoffs/H-017-deepseek-api-efficiency-handoff.md`: `complete`; out of ScopeMux scope,
-  also archive-ready. Left in place.
-
-## Doing Review
-
-- None. `boards/doing/` is empty.
-
-## QA / Closeout (code merged, lane not reconciled)
-
-- `SCOPE-003` project task state into plan nodes: PR #107 merged 2026-09-24; the card note
-  still says "open" (stale). No QA section on the card; needs a QA pass before promotion.
-- `SCOPE-004` map delta/observability/refactor nodes: PR #124 merged; agent self-QA recorded
-  2026-09-26, but intentionally kept in `qa` pending prompt-budget injection and the repair
-  `reopen_reason` check.
-- `SCOPE-012` ScopeMux/LSP boundary: PR #148 merged; boundary docs, architecture guard, and
-  tool-surface guard recorded as passing. Promotion candidate.
-- `SCOPE-013` exact type facts: PR #152 merged; native tests pass, unavailable facts are
-  byte-identical to baseline. Two known pre-existing native segfault tests reproduced on
-  base. Promotion candidate.
-- `SCOPE-014` exact-fact value: PR #154 merged; evaluation recorded and **exact-fact
-  enrichment retired from default**, opt-in via `OPENCODE_SCOPEMUX_EXACT_FACTS=1`.
-  Promotion candidate (decision is recorded).
-
-## Recommended Order
-
-1. `SCOPE-003` closeout - fix the stale "PR open" note, run the QA/verification pass, then
-   promote to `done` if it passes. [quick win]
-2. `SCOPE-012`, `SCOPE-013`, `SCOPE-014` - one reconciliation pass over the recorded QA
-   evidence, then promote each to `done` (or leave with the exact failed step). [quick win]
-3. `SCOPE-004` follow-ups - implement prompt-budget slice injection and the repair
-   `reopen_reason`-to-anchor check, then promote. If the owner prefers to ship the current
-   slice, split the follow-ups into their own cards instead.
-4. `SCOPE-010` language coverage and fallback matrix - independent research card that
-   defines the unsupported-language and markdown/prose fallback semantics `SCOPE-006`
-   consumes. [quick win]
-5. `SCOPE-006` code-grep -> ScopeMux node search with grep fallback - first verify node
-   registration/periodic update empirically; the card's `WI-030` Rust-grammar blocker
-   appears stale (the provider now maps `.rs` and has a Rust candidate test), so confirm
-   before planning around it. [highest-value independent feature]
-6. `SCOPE-009` map freshness/staleness SLOs - independent definition work; the
-   `FUTURE-PROOFING-017` link only gates evaluation, not the SLO itself.
-
-## On Hold With Future-Proofing
-
-- `SCOPE-007` subagent-scoped intelligence and per-subagent budgets - tied to
-  `FUTURE-PROOFING-015` profile-driven activation.
-- `SCOPE-008` retrieval provenance/outcomes into the data flywheel - depends on
-  `FUTURE-PROOFING-009` flywheel contract and `FUTURE-PROOFING-017`.
-- `SCOPE-011` out-of-process transport - depends on `FUTURE-PROOFING-014` protocol and
-  `FUTURE-PROOFING-016` artifact packaging.
-
-## Independent (Not In H-018)
-
-- `INFRA-008` Embed ScopeMux queries so the published ort binary is portable - the native
-  provider is statically linked, but the Tree-sitter `.scm` queries are resolved from a
-  build-machine absolute path that does not exist on artifact-only hosts, so ScopeMux
-  silently falls back to generic. Implemented on
-  `feature/INFRA-008-embed-scopemux-queries`; PR #160 open, card in `doing`. Independent of
-  the program handoff.
-
-## Release Automation Program (H-019)
-
-The main-release fleet deployment program is packaged as handoff `H-019`
-(`handoffs/H-019-main-release-fleet-deployment-program-handoff.md`). It defers all
-implementation: required CI, versioned main releases, main protection, stable/preview
-channels, post-deploy verification/rollback, and automatic deployment of every main release
-to all active registered machines. The invariant is that only `main` releases deploy;
-development/preview builds never do.
+- `SCOPE-006` (`doing`): blocked by the persistent-map prerequisite; `attention:` set.
+- `SCOPE-009` (`todo`): deferred until the persistent map is integrated; `attention:` set.
+- `H-018`: paused with `needs_human`; resume only after `SCOPE-019` merges.
+- Future-proofing remains on hold: do not touch `FUTURE-PROOFING-*` or `DECISION-*`.
+- Do not start `SCOPE-007`, `SCOPE-008`, or `SCOPE-011`.
 
 ## Best Next Step
 
-The program is packaged as handoff `H-018`
-(`handoffs/H-018-scopemux-remaining-program-handoff.md`). Start a separate session and
-execute it top to bottom; the first step is the `SCOPE-003` closeout.
+Execute handoff `H-020`
+(`handoffs/H-020-persistent-workspace-map-program-handoff.md`), in this order:
 
-Note: `SCOPE-005`'s local-Qwen-only activation remains the interim activation rule for the
-whole product until the future-proofing program resumes.
+1. `SCOPE-018` shared contracts/policy
+2. `SCOPE-016` safe engine/persistent context
+3. `SCOPE-017` map supervisor/watcher
+4. `SCOPE-019` provider/tool integration
+
+Then resume `H-018` at `SCOPE-006` (map-backed code search with grep fallback) and
+`SCOPE-009` (freshness/staleness SLOs).
 
 ## Session Kickoff Prompt
 
 Paste this into a new session started in `~/apps/opencode-modded-rust`:
 
 ```text
-Execute handoff H-018 (handoffs/H-018-scopemux-remaining-program-handoff.md) using the
-handoff-to-pr skill. Implement all 8 steps in the documented order, one at a time, and
-update the board cards and this handoff as you go.
+Execute handoff H-020 (handoffs/H-020-persistent-workspace-map-program-handoff.md) using
+the handoff-to-pr skill. Implement the 4 prerequisite steps in the documented order, one at
+a time, then resume H-018 at SCOPE-006 and SCOPE-009.
 
 Scope boundary: future-proofing is on hold. Do not touch any FUTURE-PROOFING-* or
 DECISION-* card, and do not start SCOPE-007, SCOPE-008, or SCOPE-011.
 
 Workflow: claim a role with
-  python3 ~/standards/opencode/scripts/agent_roles.py claim --scope "SCOPE-003,004,006,009,010,012,013,014" --items "SCOPE-003,SCOPE-012,SCOPE-013,SCOPE-014,SCOPE-004,SCOPE-010,SCOPE-006,SCOPE-009"
-Use a dedicated worktree for implementation PRs, commit board/handoff updates directly on
-development in the main checkout, and target every PR at development. Never push main.
+  python3 ~/standards/opencode/scripts/agent_roles.py claim --scope "SCOPE-015,016,017,018,019,006,009" --items "SCOPE-018,SCOPE-016,SCOPE-017,SCOPE-019,SCOPE-006,SCOPE-009"
+Use a dedicated worktree under $HOME/worktrees/opencode-modded-rust/persistent-map/ for
+implementation PRs, commit board/handoff updates directly on development in the main
+checkout, and target every PR at development. Never push main.
 
 After each implementation PR, stop and ask me to review and explicitly approve the merge
-before starting the next step. Run the per-step verification in the handoff and paste the
-exact commands and results into the card and PR body.
+before starting the next step. Run the per-step verification in H-020 and paste the exact
+commands and results into the card and PR body.
+
+Known environment trap: the shared worktree target can serve a stale opencode-scopemux
+artifact after switching branches. Run `cargo clean -p opencode-scopemux` before native
+tests when behavior looks like an older revision.
 ```
 
-## Offer
+## Other Independent Work
 
-Handoff `H-018` is created. Start the separate session with the prompt above; I can also
-run individual steps here if you prefer. [awaiting your OK]
+- `H-019` main-release fleet deployment program is `open` and independent of this program.
+- `INFRA-008` portable ScopeMux query bundle is independent.
+
+## Notes
+
+`SCOPE-005`'s local-Qwen-only activation remains the interim rule. The generic provider
+stays the default/fallback. Task stage/verification/review/completion authority stays with
+the runtime; the map is evidence-only.
