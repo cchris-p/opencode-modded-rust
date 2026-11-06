@@ -103,3 +103,12 @@ $ cargo fmt --all --check
 Status: **blocked, not done.** The map-backed code-search tool, markdown/prose split, and
 grep fallback wiring stay deferred until persistent registration/update lands. Do not
 promote this card on the evidence PR alone.
+
+### Post-merge (2026-11-06)
+
+- Evidence PR #162 merged into `development` as `dac31ee`; branch deleted.
+- Re-ran on merged `development`:
+  - `cargo test -p opencode-scopemux --features native tests::native_search_is_scoped_to_seeded_files_without_a_persistent_registry -- --exact` -> 1 passed.
+  - `cargo fmt --all --check` -> exit 0.
+- Card remains **blocked** in `doing` with `attention:` set. The evidence PR does not
+  implement the tool and must not promote this card.

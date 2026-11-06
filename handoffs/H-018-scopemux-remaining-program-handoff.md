@@ -7,7 +7,7 @@ updated: "2026-11-05"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: "SCOPE-006 is blocked on a missing prerequisite (persistent whole-workspace node registration/watcher). Evidence PR #162 is open; H-018 is paused before step 8 (SCOPE-009)."
+needs_human: "SCOPE-006 is blocked on a missing prerequisite (persistent whole-workspace node registration/watcher). Evidence PR #162 is merged; H-018 is paused before step 8 (SCOPE-009)."
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -484,3 +484,12 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
   supported; persistence is the blocker.
 - Card remains in `doing` with `attention:` set and is not promoted. **H-018 is paused
   before step 8; SCOPE-009 depends on the same persistence for real freshness measurement.**
+
+### Step 7 post-merge (2026-11-06)
+
+- PR #162 merged into `development` as `dac31ee`; branch deleted.
+- Post-merge verification on `development`: the scoped-search evidence test passes and
+  `cargo fmt --all --check` is clean.
+- `SCOPE-006` remains blocked in `doing` with `attention:` set; it is not promoted.
+- **H-018 is paused before step 8** until the persistent registration/watcher prerequisite
+  is resolved or the owner changes scope.
