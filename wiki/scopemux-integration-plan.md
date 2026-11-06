@@ -102,6 +102,8 @@ This near-term integration is tracked by `SCOPE-002` ("Integrate scopemux-core b
 
 Activation scope (2026-09-25): the native provider is compiled into the product binary but only activates for the local Qwen-via-Ollama model, so a small local model can be used to experiment with map-driven context compression. Every other model and any unsupported workspace keeps the generic provider as the default and fallback (`invariants/providers.md`).
 
+Language coverage is per file (C, C++, Python, JavaScript, TypeScript, and Rust; markdown/prose is generic search). The full coverage matrix, mixed-language behavior, and the `unsupported_language` / `no_matches` / `provider_unavailable` fallback provenance are defined in `wiki/workspace-intelligence.md`.
+
 The larger idealized target is `SCOPE-001` ("Idealized scopemux map integration") and `wiki/scopemux-map-integration.md`, which extend this plan with current/target state, delta views, observability blocks, duplication detection, and incremental reconciliation. Those phases must not disturb the boundary or guardrails defined here.
 
 ## Required Abstraction Boundary

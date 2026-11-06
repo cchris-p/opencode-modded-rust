@@ -192,6 +192,21 @@ impl RetrievalRequest {
     }
 }
 
+/// Why a retrieval response has no map-backed result.
+///
+/// This distinguishes an unsupported language (fall back to generic search)
+/// from a supported workspace that simply produced no matches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalFallbackReason {
+    /// The workspace language is not parsed by the map.
+    UnsupportedLanguage,
+    /// The map parsed the workspace but returned no candidates.
+    NoMatches,
+    /// The map-backed provider failed and the runtime fell back to generic.
+    ProviderUnavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalResponse {
     pub candidates: Vec<RetrievalCandidate>,
@@ -206,6 +221,10 @@ pub struct RetrievalResponse {
     /// Provider diagnostics, including an optional enrichment fallback reason.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_notes: Vec<String>,
+    /// Why there is no map-backed result: unsupported language vs no matches vs
+    /// provider failure. `None` after a successful map match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<RetrievalFallbackReason>,
 }
 
 impl RetrievalResponse {
@@ -216,6 +235,7 @@ impl RetrievalResponse {
             representation: RetrievalRepresentation::Search,
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
+            fallback_reason: None,
         }
     }
 
@@ -227,6 +247,7 @@ impl RetrievalResponse {
             representation,
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
+            fallback_reason: Some(RetrievalFallbackReason::NoMatches),
         }
     }
 }

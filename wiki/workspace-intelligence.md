@@ -186,6 +186,40 @@ place through measured token savings and task outcomes, and it must remain remov
   to generic behavior; the task still completes.
 - WIP never advances a stage, verifies, reviews, or declares completion.
 
+## Language coverage and fallback matrix
+
+`scopemux-core` parses a fixed grammar set. Coverage is per file, not per workspace:
+mixed-language workspaces parse the supported files and skip the rest with explicit
+provenance instead of failing the whole request.
+
+| Language / file type | Parse | Symbols / references | Confidence | Known gaps | Fallback |
+|---|---|---|---|---|---|
+| C (`.c`, `.h`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Preprocessor/macro-heavy code, complex include graphs | Generic on no match/provider failure |
+| C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Templates, heavy macros, ambiguous overloads | Generic on no match/provider failure |
+| Python (`.py`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Dynamic dispatch, decorators, runtime `__getattr__` | Generic on no match/provider failure |
+| JavaScript (`.js`, `.mjs`, `.cjs`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Dynamic property access, framework conventions | Generic on no match/provider failure |
+| TypeScript (`.ts`, `.tsx`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Complex generics, conditional types, some module resolution | Generic on no match/provider failure |
+| Rust (`.rs`) | Yes, first-class | Yes, with known resolution gaps | Exact parsed facts; heuristic trait/macro edges | Trait-object dispatch, macro expansion, generic binding | Generic on no match/provider failure |
+| Markdown / prose (`.md`, `.txt`, docs) | No | No | Not code | Not a code grammar | Generic text search (grep/path), never code-grammar search |
+| Other / unsupported extensions | No | No | N/A | N/A | Generic search; explicit `unsupported_language` provenance |
+
+Rust is first-class for this product even though its resolution is not at C/C++ parity.
+Markdown and prose are intentionally not parsed as code; they use the generic search path.
+
+Fallback provenance on `RetrievalResponse.fallback_reason`:
+
+| Value | Meaning | Runtime behavior |
+|---|---|---|
+| `None` | The map returned at least one candidate | Use the map slice |
+| `no_matches` | Supported workspace parsed, no candidates matched | Generic retrieval can still answer; the empty map result is not treated as a real absence |
+| `unsupported_language` | No referenced file is in a supported language | Generic search/path retrieval; task still completes |
+| `provider_unavailable` | The map provider errored in a supported workspace | Generic fallback; task still completes |
+
+The provider is selected before parsing, so an all-prose request never enters the code
+grammar path. For mixed workspaces, skipped files are recorded in `provider_notes`
+(`skipped unsupported language: <path>`) so "unsupported" is distinguishable from
+"no matches".
+
 ## Capability ladder
 
 Each rung is independently enableable and measurable. Higher rungs are not prerequisites
