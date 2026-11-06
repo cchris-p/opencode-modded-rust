@@ -7,7 +7,7 @@ updated: "2026-11-05"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: "Step 6 PR #161 (SCOPE-010 coverage/fallback) awaits explicit human review and merge approval before H-018 continues."
+needs_human: "SCOPE-006 is blocked on a missing prerequisite (persistent whole-workspace node registration/watcher). Evidence PR #162 is open; H-018 is paused before step 8 (SCOPE-009)."
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -471,3 +471,16 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
   clean.
 - Card moved `todo` -> `doing` and stays there until merge. **STOPPED for human merge
   approval; step 7 has not started.**
+
+### Step 7 — SCOPE-006 (2026-11-06) — BLOCKED
+
+- Verified the card's prerequisite before building: the Rust provider creates a fresh
+  `ProjectContext` per retrieval, adds only seeds/changed files, and never persists a
+  whole-workspace registry or runs a watcher.
+- Evidence (PR #162, `feature/SCOPE-006-scopemux-code-search`, commit `2becc61`): new native
+  test `native_search_is_scoped_to_seeded_files_without_a_persistent_registry` plus the
+  prerequisite documented in `wiki/scopemux-integration-plan.md`.
+- No map-backed search tool was built. The stale `WI-030` note was corrected: Rust is
+  supported; persistence is the blocker.
+- Card remains in `doing` with `attention:` set and is not promoted. **H-018 is paused
+  before step 8; SCOPE-009 depends on the same persistence for real freshness measurement.**

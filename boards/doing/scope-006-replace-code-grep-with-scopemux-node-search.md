@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "todo"
+status: "doing"
 created: "2026-10-23"
 request_id: "191c814a-1e0b-45f6-8ad0-20db0d46f3eb"
 ---
@@ -41,7 +41,10 @@ Implement the grep replacement with ScopeMux after that verification. Expected e
 - The ScopeMux provider and its Qwen-only activation already exist (`SCOPE-002`, `SCOPE-005`); reuse `opencode-scopemux` and the `START-025` retrieval boundary rather than adding a second integration path.
 - The existing `grep` tool already carries blocking-walk fixes (`spawn_blocking`, build/vendor exclusions, bounded scans; `BUG-040`, commit `1fb80d0`). The fallback mode must inherit those bounds, not regress them.
 - The markdown/code split mirrors how the runtime treats code vs docs contexts; keep the split at the tool-argument/dispatch level so prompt-facing surface stays one tool name with a mode, unless implementation shows two distinct tool names are clearer for the agent.
-- Respect the Phase-1 dependency reality: on Rust workspaces the node search currently cannot work until `WI-030` (upstream, in-scope per `invariants/integration-scope.md`) lands; until then the code-search mode on a Rust workspace is the grep fallback with explicit provenance.
+- **Correction (2026-11-06):** the old `WI-030` note is stale. Rust **is** supported
+  (`language_for_path("*.rs") == Some(6)`) and a Rust candidate test exists. The real
+  blocker is that the provider does not persist a whole-workspace node registry or run a
+  watcher; see the verification section below.
 - Do not break the "replacing direct file reads for small, obvious tasks" non-goal from `SCOPE-001`; the tool complements reads, it does not forbid them.
 
 ## Related Items
@@ -58,3 +61,43 @@ Implement the grep replacement with ScopeMux after that verification. Expected e
 ## Notes
 
 Captured from the 2026-10-23 operator voice request (`request_id: 191c814a-1e0b-45f6-8ad0-20db0d46f3eb`). The operator's words, condensed: "ScopeMux needs to replace the grep functions... a tool call in ORT where the tool call transcends the tree and file directory trees in order for it to quickly find what it needs. All nodes must always be registered and periodically updated - I think this feature is already implemented; we just need to test it out on a code base and implement the grep replacement with ScopeMux... grep should be the fallback. ORT will need two separate greps, one for markdown and one for code bases."
+## Verification (2026-11-06, H-018 step 7) — blocked prerequisite
+
+Card instruction: verify node registration and periodic update before building the tool;
+if not implemented, surface it as a prerequisite instead of building on it.
+
+Findings:
+
+- `ScopemuxProvider::retrieve` creates a fresh `ProjectContext` per call, adds only
+  `request.seed_files`/`changed_files`, and drops it at the end
+  (`crates/opencode-scopemux/src/lib.rs`). There is no persistent registry or watcher in
+  the product provider.
+- `scopemux-core` has incremental IR/index primitives (`WI-018`,
+  `project_update_file`, rebuild counters), but the Rust provider does not use them across
+  calls.
+- New native test `native_search_is_scoped_to_seeded_files_without_a_persistent_registry`
+  proves an unseeded file on disk is invisible to search and becomes visible only when
+  added as a seed. This is empirical confirmation, not just static reading.
+- Rust grammar is present; the stale `WI-030` dependency is corrected above.
+
+Evidence PR: https://github.com/cchris-p/opencode-modded-rust/pull/162
+(branch `feature/SCOPE-006-scopemux-code-search`, commit `2becc61`). It adds the
+verification test and records the prerequisite in `wiki/scopemux-integration-plan.md`; it
+does **not** implement the tool.
+
+Verification:
+
+```bash
+$ cargo test -p opencode-scopemux --features native
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+$ cargo test -p opencode-scopemux --features native tests::native_search_is_scoped_to_seeded_files_without_a_persistent_registry -- --exact
+test tests::native_search_is_scoped_to_seeded_files_without_a_persistent_registry ... ok
+
+$ cargo fmt --all --check
+(exit 0)
+```
+
+Status: **blocked, not done.** The map-backed code-search tool, markdown/prose split, and
+grep fallback wiring stay deferred until persistent registration/update lands. Do not
+promote this card on the evidence PR alone.
