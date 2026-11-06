@@ -1676,6 +1676,46 @@ mod tests {
 
     #[cfg(feature = "native")]
     #[tokio::test]
+    async fn native_search_is_scoped_to_seeded_files_without_a_persistent_registry() {
+        use opencode_retrieval::RetrievalProvider;
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.c"), "int alpha(void) { return 1; }\n").unwrap();
+        std::fs::write(dir.path().join("b.c"), "int beta(void) { return 2; }\n").unwrap();
+
+        // The provider only adds explicit seeds to the registry; `b.c` is on
+        // disk but not in the request, so it is invisible to the search.
+        let mut req = request(&dir.path().to_string_lossy(), vec!["a.c"]);
+        req.objective = "beta".to_string();
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+        assert!(
+            response
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.path.ends_with("b.c")),
+            "an unseeded file must not appear in the map registry: {:?}",
+            response.candidates
+        );
+
+        // Seeding the file makes its symbols visible, confirming the registry is
+        // per-request rather than a persistent whole-workspace index.
+        let mut req = request(&dir.path().to_string_lossy(), vec!["a.c", "b.c"]);
+        req.objective = "beta".to_string();
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+        assert!(
+            response
+                .candidates
+                .iter()
+                .any(|candidate| candidate.path.ends_with("b.c")),
+            "a seeded file should be searchable: {:?}",
+            response.candidates
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
     async fn native_duplicates_slice_flags_matching_symbols() {
         use opencode_retrieval::RetrievalProvider;
         use opencode_types::{RetrievalCandidateKind, RetrievalRepresentation};
