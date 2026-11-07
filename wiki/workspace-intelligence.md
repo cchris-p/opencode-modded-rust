@@ -220,6 +220,25 @@ grammar path. For mixed workspaces, skipped files are recorded in `provider_note
 (`skipped unsupported language: <path>`) so "unsupported" is distinguishable from
 "no matches".
 
+## Shared contracts (single source of truth)
+
+The persistent-map program (`SCOPE-015`/`SCOPE-018`) centralizes vocabulary and policy so
+the engine, supervisor, provider, tool, and watcher cannot drift:
+
+| Contract | Owner | Consumed by |
+|---|---|---|
+| Ignore/exclusion policy (`EXCLUDED_DIRS`, `is_excluded_dir`, `path_has_excluded_dir`, `default_ignore_globs`) | `opencode-types` | grep, watcher, map indexer/supervisor |
+| Code/prose predicate (`SourceLanguage`, `is_code_path`, `is_prose_path`) | `opencode-types` | provider, tool routing, `SCOPE-010` matrix |
+| Evidence shape (`RetrievalCandidate`, including `block_id`) | `opencode-types` | retrieval and the code-search tool; no tool-only result type |
+| Freshness vocabulary (`MapFreshness`, `MapFreshnessReport`, `ReAnchorResult`) | `opencode-types` | supervisor measurement, `SCOPE-009` policy |
+| Fallback vocabulary (`RetrievalFallbackReason`) | `opencode-types` | provider, runtime |
+| Activation + capability (`WorkspaceSearch` injected through `ToolContext`) | runtime decides; trait in `opencode-types` | tool surface; never model-string parsing |
+| Path normalization and token budget (`normalize_path`, `resolve_workspace_path`, `estimate_tokens`, `truncate_to_token_budget`) | `opencode-types` | provider, tool output, prompt assembly |
+
+DRY applies to decisions and vocabulary, not to forcing grep and map search to share an
+algorithm. The map remains evidence-only; the runtime owns activation, inclusion, budgets,
+and the fresh/lagging/stale/unknown response.
+
 ## Capability ladder
 
 Each rung is independently enableable and measurable. Higher rungs are not prerequisites

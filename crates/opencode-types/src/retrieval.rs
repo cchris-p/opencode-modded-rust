@@ -120,6 +120,12 @@ pub struct RetrievalCandidate {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
+    /// Stable map block id for parsed/planned nodes (`sym:`/`file:`/...).
+    ///
+    /// Shared evidence shape for retrieval and the code-search tool; there is no
+    /// tool-only result struct.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
     pub provenance: String,

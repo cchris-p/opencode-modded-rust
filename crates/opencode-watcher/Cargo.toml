@@ -5,6 +5,7 @@ edition = "2021"
 description = "File system watcher for opencode"
 
 [dependencies]
+opencode-types = { path = "../opencode-types" }
 notify = { version = "7.0", features = ["serde"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 serde = { workspace = true, features = ["derive"] }
