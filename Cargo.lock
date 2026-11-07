@@ -2155,6 +2155,7 @@ dependencies = [
  "opencode-core",
  "opencode-grep",
  "opencode-lsp",
+ "opencode-oco",
  "opencode-permission",
  "opencode-plugin",
  "opencode-provider",
@@ -2283,6 +2284,22 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "opencode-oco"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

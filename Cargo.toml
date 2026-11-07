@@ -20,6 +20,7 @@ members = [
     "crates/opencode-mcp",
     "crates/opencode-cli",
     "crates/opencode-command",
+    "crates/opencode-oco",
     "crates/opencode-plugin",
     "crates/opencode-tui",
 ]

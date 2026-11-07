@@ -10,6 +10,7 @@
 - Start, continue, inspect, and list status for task sessions (`task new|send|view|status`)
 - Manage explicit CLI task targets (`task target`)
 - Invoke session, model, MCP, debug, and other subcommands
+- Generate OpenCommit-compatible commit messages (`oco`, also `opencode-modded-rust oco`)
 
 ## Top-level subcommands
 
@@ -18,6 +19,7 @@ As of `opencode-modded-rust --help` (2026-02-23):
 - `tui`
 - `attach`
 - `run`
+- `oco`
 - `task`
 - `serve`
 - `web`
@@ -39,6 +41,31 @@ As of `opencode-modded-rust --help` (2026-02-23):
 - `uninstall`
 - `generate`
 - `version`
+
+### `oco` (OpenCommit-compatible)
+
+`oco` is a native ORT entry point for the OpenCommit workflow (parity baseline
+`di-sukharev/opencommit` 3.2.19). The artifact ships an `oco` symlink beside
+`opencode-modded-rust`, and the binary also dispatches on `argv[0]`, so a binary
+or link named `oco` runs this command directly.
+
+- `oco [--yes] [-c|--context <TEXT>] [--fgm] [git commit args...]` generates one
+  message from the staged diff and commits it. Unknown arguments are forwarded
+  to `git commit`.
+- `$msg` (`OCO_MESSAGE_TEMPLATE_PLACEHOLDER`) in a forwarded argument is
+  replaced by the generated message and that argument is not forwarded.
+- `oco config get|set|describe <keys...>` reads and writes `~/.opencommit`.
+  Precedence is process env > repo `.env` > `~/.opencommit` > defaults.
+- `oco models [--provider <id>] [--refresh]` lists provider models and caches
+  them for 7 days at `~/.cache/ort/oco-models.json`.
+- `oco hook set|unset` manages a `prepare-commit-msg` hook (honours
+  `core.hooksPath`) and preserves unrelated hooks.
+- `oco commitlint get|force` reads a JSON commitlint config
+  (`.commitlintrc`, `.commitlintrc.json`, or `package.json#commitlint`) and
+  writes `.opencommit-commitlint` for `OCO_PROMPT_MODULE=@commitlint`.
+
+Providers: `ollama`, `openai`, `anthropic`, `gemini`, `deepseek`, and
+OpenAI-compatible endpoints (`OCO_AI_PROVIDER=openai` plus `OCO_API_URL`).
 
 ## Common options
 
@@ -116,4 +143,6 @@ cargo check -p opencode-cli
 ./target/debug/opencode-modded-rust --help
 ./target/debug/opencode-modded-rust task --help
 ./target/debug/opencode-modded-rust task target --help
+cargo test -p opencode-oco
+./target/debug/opencode-modded-rust oco --help
 ```
