@@ -5,7 +5,7 @@ priority: "P1"
 type: "refactor"
 area: "SCOPE"
 spec: "wiki/scopemux-integration-plan.md"
-status: "doing"
+status: "done"
 created: "2026-11-06"
 updated: "2026-11-07"
 predecessor: "SCOPE-018"
@@ -135,8 +135,33 @@ Proof tests added: `persistent_context_sees_an_edit_after_incremental_update` (c
 -> edit -> `update_file` -> incremental rebuild -> query sees the new symbol; dirty set
 smaller than the full rebuild) and `remove_file_drops_nodes`.
 
-Status: PR open; card stays in `doing` until explicit review and merge approval. No
-`SCOPE-017` work started.
+Status: PR merged into `development` as `6023d86` (2026-11-07).
+
+## QA Verification — 2026-11-07 (post-merge, development @ 6023d86)
+
+```bash
+$ cargo clean -p opencode-scopemux
+
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 27 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-scopemux
+test result: ok. 3 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session retrieval
+test result: ok. 9 passed; 0 failed; 0 ignored
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+QA result: pass. Persistent-context proof, edit -> incremental update -> query visibility,
+removal, and incremental-vs-full counters all pass on merged `development`; provider
+behavior is unchanged.
 
 ## Related Items
 

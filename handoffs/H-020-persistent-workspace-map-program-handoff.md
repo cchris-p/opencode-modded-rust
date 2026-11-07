@@ -363,4 +363,7 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
 - Verification: native 27 passed (incl. persistent-context and incremental-counter proof
   tests), non-native 3, session retrieval 9, fmt clean, clippy exit 0 with pre-existing
   warnings only.
-- **STOPPED for explicit review/merge approval.** `SCOPE-017` has not started.
+- Owner approved the merge. PR #164 merged into `development` as `6023d86`; branch
+  deleted. Post-merge QA: native 27, non-native 3, session retrieval 9, fmt clean,
+  clippy exit 0. `SCOPE-016` promoted to `done` with QA evidence.
+- Next: `SCOPE-017` (supervisor + watcher-driven incremental updates).
