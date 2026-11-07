@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "CLI"
 spec: "docs/opencode-cli.md; ~/standards/handoffs/H-014-ort-native-oco-handoff.md"
-status: "todo"
+status: "done"
 created: "2026-11-07"
 updated: "2026-11-07"
 ---
@@ -102,3 +102,17 @@ memory.
 - `CLI-016` — hook and commitlint.
 - `INFRA-016` — ship `oco` in the ORT artifact.
 - Standards `H-014` / `STD-155` — umbrella handoff and fork retirement.
+
+## QA Evidence (2026-11-07)
+
+- PR: #165 (merged into `development` at `4a9f630`).
+- `cargo test -p opencode-oco` on the post-merge tree: 36 passed.
+- Coverage: config precedence (process env > repo `.env` > `~/.opencommit` >
+  defaults), `$msg` template substitution/removal, unknown-arg passthrough,
+  prompt selection, one-commit commit flow, and `--no-verify` bypass with a
+  failing pre-commit hook.
+- Binary E2E in a throwaway repo: `oco --yes` created exactly one commit;
+  `oco --yes '#42: $msg' --no-verify` produced `#42: <message>`; `oco config
+  get/set/describe` round-tripped through `~/.opencommit`.
+- Token budget uses a documented chars/4 estimate and truncates the staged diff
+  once; unreachable providers fail with a bounded, actionable error.

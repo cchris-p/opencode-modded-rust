@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "CLI"
 spec: "docs/opencode-provider.md; docs/opencode-cli.md; ~/standards/handoffs/H-014-ort-native-oco-handoff.md"
-status: "todo"
+status: "done"
 created: "2026-11-07"
 updated: "2026-11-07"
 predecessor: "CLI-014"
@@ -86,3 +86,19 @@ Rules:
 - `CLI-016` — hook and commitlint.
 - `INFRA-016` — artifact packaging.
 - Standards `H-014` / `STD-155`.
+
+## QA Evidence (2026-11-07)
+
+- PR: #165 (merged at `4a9f630`); `cargo test -p opencode-oco`: 36 passed.
+- Offline mock coverage: OpenAI-compatible, Anthropic, Gemini, and Ollama
+  request/response shapes; OpenAI Authorization header asserted; unreachable
+  provider returns a bounded error naming provider/model/host.
+- Live on matrillobase1: Anthropic (`claude-haiku-4-5-20251001`) and native
+  DeepSeek (`deepseek-chat`) generated real commits. OpenAI and Gemini reached
+  their APIs but returned `credit_balance_exhausted` / `RESOURCE_EXHAUSTED`.
+  Ollama `192.168.1.152:11434` was connection-refused. The OpenRouter path was
+  blocked by the pre-existing standards mapping (a DeepSeek key sent to
+  OpenRouter); STD-155 switches that sugar to the native DeepSeek endpoint.
+- `oco models --provider ollama --refresh` cached models through a mock `/api/tags`
+  endpoint at `~/.cache/ort/oco-models.json`; static fallback covers every
+  supported provider.

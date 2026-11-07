@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "CLI"
 spec: "docs/opencode-cli.md; ~/standards/handoffs/H-014-ort-native-oco-handoff.md"
-status: "todo"
+status: "done"
 created: "2026-11-07"
 updated: "2026-11-07"
 predecessor: "CLI-014"
@@ -60,3 +60,16 @@ the `prepare-commit-msg` git hook and the `@commitlint` prompt module.
 - `CLI-015` — providers.
 - `INFRA-016` — artifact packaging.
 - Standards `H-014` / `STD-155`.
+
+## QA Evidence (2026-11-07)
+
+- PR: #165 (merged at `4a9f630`); `cargo test -p opencode-oco`: 36 passed.
+- Hook tests: set/run/unset round-trip, unrelated `prepare-commit-msg` preserved
+  and reported, `core.hooksPath` honoured, and `OCO_HOOK_AUTO_UNCOMMENT`.
+- Binary E2E: `oco hook set` then a real `GIT_EDITOR=true git commit` used the
+  generated message; `oco hook unset` restored normal behavior.
+- `oco commitlint force` wrote `.opencommit-commitlint` from a JSON
+  `.commitlintrc.json`; `oco commitlint get` printed it. `OCO_PROMPT_MODULE=@commitlint`
+  generated a commit through the configured prompt module.
+- JavaScript/YAML commitlint configs fail with explicit export guidance; JSON
+  `.commitlintrc`, `.commitlintrc.json`, and `package.json#commitlint` are read.
