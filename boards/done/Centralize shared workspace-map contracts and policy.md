@@ -5,7 +5,7 @@ priority: "P1"
 type: "refactor"
 area: "SCOPE"
 spec: "wiki/workspace-intelligence.md"
-status: "doing"
+status: "done"
 created: "2026-11-06"
 updated: "2026-11-07"
 predecessor: "SCOPE-014"
@@ -133,8 +133,30 @@ $ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-types -p opencode-retrie
 Finished; exit 0 (only pre-existing warnings in untouched files)
 ```
 
-Status: PR open; card stays in `doing` until explicit review and merge approval. No
-`SCOPE-016` work started.
+Status: PR merged into `development` as `81c8f11` (2026-11-07). No `SCOPE-016` work had
+started before the merge.
+
+## QA Verification — 2026-11-07 (post-merge, development @ 81c8f11)
+
+```bash
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-types -p opencode-retrieval -p opencode-tool -p opencode-watcher
+opencode-retrieval: 7 passed; 0 failed
+opencode-tool:      71 passed; 0 failed
+opencode-types:     9 passed; 0 failed
+opencode-watcher:   7 passed; 0 failed
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-scopemux -p opencode-session
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 56.85s
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-types -p opencode-retrieval -p opencode-tool -p opencode-watcher --all-targets
+no warnings in changed code (exit 0; pre-existing warnings only)
+```
+
+QA result: pass. Shared contracts compile and are consumed on merged `development`; grep
+and watcher ignore-policy tests and the `ToolContext` capability test are green.
 
 ## Related Items
 

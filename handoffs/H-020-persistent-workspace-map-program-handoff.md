@@ -345,4 +345,8 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
 - Verification: `opencode-types` 9, `opencode-retrieval` 7, `opencode-tool` 69,
   `opencode-watcher` 7 passed; `opencode-scopemux`/`opencode-session` check clean; fmt clean;
   clippy exit 0 (pre-existing warnings only).
-- **STOPPED for explicit review/merge approval.** `SCOPE-016` has not started.
+- Owner approved the merge. PR #163 merged into `development` as `81c8f11`; branch
+  deleted. Post-merge QA on `development`: types 9, retrieval 7, tool 71, watcher 7
+  passed; scopemux/session check clean; fmt clean; clippy clean for changed code.
+  `SCOPE-018` promoted to `done` with the QA evidence recorded.
+- Next: `SCOPE-016` (safe engine layer) after the post-merge gate.
