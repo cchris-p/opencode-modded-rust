@@ -145,6 +145,14 @@ one evidence shape with `block_id`, one freshness/fallback vocabulary, one path
 normalization helper, and one token-budget/truncation utility. Task authority remains with
 the runtime; the map is evidence-only.
 
+Implementation note (`SCOPE-018`): those shared contracts live in
+`crates/opencode-types/src/workspace.rs`. The ignore policy, code/prose predicate,
+`RetrievalCandidate::block_id`, `MapFreshness`/`MapFreshnessReport`, path normalization,
+token budget, and the neutral `WorkspaceSearch` trait are defined once there. Grep and the
+watcher consume the ignore policy; `opencode-scopemux` maps `SourceLanguage` to the core
+language id; the runtime injects `WorkspaceSearch` into `ToolContext` on the map-backed
+path only.
+
 The larger idealized target is `SCOPE-001` ("Idealized scopemux map integration") and `wiki/scopemux-map-integration.md`, which extend this plan with current/target state, delta views, observability blocks, duplication detection, and incremental reconciliation. Those phases must not disturb the boundary or guardrails defined here.
 
 ## Required Abstraction Boundary

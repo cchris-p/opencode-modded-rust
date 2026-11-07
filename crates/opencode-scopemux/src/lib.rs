@@ -92,20 +92,8 @@ pub fn provider_for_with_facts(
 /// Map a file path to the `scopemux-core` `Language` enum value, or `None` when
 /// the extension is not a language `scopemux-core` parses.
 pub fn language_for_path(path: &str) -> Option<i32> {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "c" | "h" => Some(1),                           // LANG_C
-        "cpp" | "cc" | "cxx" | "hpp" | "hh" => Some(2), // LANG_CPP
-        "py" => Some(3),                                // LANG_PYTHON
-        "js" | "mjs" | "cjs" => Some(4),                // LANG_JAVASCRIPT
-        "ts" | "tsx" => Some(5),                        // LANG_TYPESCRIPT
-        "rs" => Some(6),                                // LANG_RUST
-        _ => None,
-    }
+    opencode_types::SourceLanguage::from_path(path)
+        .map(opencode_types::SourceLanguage::scopemux_language_id)
 }
 
 /// True when at least one referenced file is in a language `scopemux-core`
@@ -613,6 +601,7 @@ async fn enrich_with_exact_facts(
                         kind: RetrievalCandidateKind::Symbol,
                         path: location.file,
                         symbol: None,
+                        block_id: None,
                         snippet: None,
                         provenance: format!(
                             "scopemux: exact definition for {symbol} at {path}:{line} (server: {})",
@@ -1046,6 +1035,11 @@ unsafe fn block_candidate(
         kind,
         path: file_path,
         symbol,
+        block_id: if id.is_empty() {
+            None
+        } else {
+            Some(id.clone())
+        },
         snippet: None,
         provenance,
         confidence,

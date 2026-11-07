@@ -17,23 +17,9 @@ const MAX_FILES_SCANNED: usize = 20_000;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_SCAN_DURATION: Duration = Duration::from_secs(15);
 
-/// Build and dependency directories that are never worth scanning. Without
-/// these exclusions a repo-root search walks build artifacts (for example a
-/// Rust `target/` directory with hundreds of thousands of files) and stalls the
-/// whole session.
-const EXCLUDED_DIRS: &[&str] = &[
-    "target",
-    "node_modules",
-    ".git",
-    ".opencode",
-    "dist",
-    "build",
-    ".next",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".cache",
-];
+// The ignore/exclusion policy is shared with the watcher and the map indexer
+// (`SCOPE-018`); grep must not keep a second list.
+use opencode_types::is_excluded_dir;
 
 pub struct GrepTool {
     directory: PathBuf,
@@ -65,12 +51,6 @@ struct ScanOutcome {
     has_errors: bool,
     files_scanned: usize,
     budget_exhausted: bool,
-}
-
-fn is_excluded_dir(name: &str) -> bool {
-    EXCLUDED_DIRS
-        .iter()
-        .any(|excluded| excluded.eq_ignore_ascii_case(name))
 }
 
 fn truncate_line(line: &str) -> String {

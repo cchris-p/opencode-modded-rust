@@ -511,6 +511,12 @@ pub struct ToolContext {
     pub project_root: String,
     pub loaded_instructions: LoadedInstructions,
     pub registry: Option<Arc<ToolRegistry>>,
+    /// Map-backed code-search capability injected by the runtime (`SCOPE-018`).
+    ///
+    /// The runtime decides activation once and installs this only on the
+    /// map-backed path. `None` means the tool must use grep/generic search; the
+    /// tool never parses model strings or calls FFI directly.
+    pub workspace_search: Option<Arc<dyn opencode_types::WorkspaceSearch>>,
     #[cfg(feature = "lsp")]
     pub lsp_registry: Option<Arc<LspClientRegistry>>,
 }
@@ -549,6 +555,7 @@ impl ToolContext {
             project_root: directory,
             loaded_instructions: LoadedInstructions::new(),
             registry: None,
+            workspace_search: None,
             #[cfg(feature = "lsp")]
             lsp_registry: None,
         }
@@ -573,6 +580,17 @@ impl ToolContext {
 
     pub fn with_registry(mut self, registry: Arc<ToolRegistry>) -> Self {
         self.registry = Some(registry);
+        self
+    }
+
+    /// Install the neutral map-backed search capability.
+    ///
+    /// Activation is decided by the runtime; the tool only sees the capability.
+    pub fn with_workspace_search(
+        mut self,
+        workspace_search: Option<Arc<dyn opencode_types::WorkspaceSearch>>,
+    ) -> Self {
+        self.workspace_search = workspace_search;
         self
     }
 
