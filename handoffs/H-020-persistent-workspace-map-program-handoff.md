@@ -367,3 +367,17 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
   deleted. Post-merge QA: native 27, non-native 3, session retrieval 9, fmt clean,
   clippy exit 0. `SCOPE-016` promoted to `done` with QA evidence.
 - Next: `SCOPE-017` (supervisor + watcher-driven incremental updates).
+
+### Step 3 — SCOPE-017 (2026-11-07)
+
+- Moved `SCOPE-017` `todo` -> `doing`.
+- Branch `feature/SCOPE-017-map-supervisor`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/166 against `development`.
+- Added `WorkspaceMapRegistry`/`MapEntry`/`MapHandle`: one worker-owned engine per
+  canonical root, ref-counted acquire/release, idle TTL eviction/shutdown, watcher-driven
+  debounced incremental updates through the shared ignore policy, freshness measurement,
+  and stale-on-failure (no fallback policy). Provider wiring stays in `SCOPE-019`.
+- Verification: native 34 passed (registry reuse, watcher edit/unlink, ignore agreement,
+  eviction, cross-workspace isolation, freshness, missing-root), non-native scopemux 3,
+  watcher 7, fmt clean, clippy exit 0 with pre-existing warnings only.
+- **STOPPED for explicit review/merge approval.** `SCOPE-019` has not started.

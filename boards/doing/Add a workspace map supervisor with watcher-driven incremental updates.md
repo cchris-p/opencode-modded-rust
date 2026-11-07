@@ -90,6 +90,55 @@ policy agreement with grep, eviction/shutdown, and no cross-workspace leakage.
 - FFI thread affinity; the supervisor must serialize engine access.
 - Stale map after a failed update must be visible, never silent.
 
+## Implementation — 2026-11-07 (H-020 step 3)
+
+Branch `feature/SCOPE-017-map-supervisor`; PR
+https://github.com/cchris-p/opencode-modded-rust/pull/166
+
+Landed:
+
+- `crates/opencode-scopemux/src/supervisor.rs`: `WorkspaceMapRegistry`, `MapEntry`,
+  `MapHandle`, `SupervisorError`. One worker thread owns one `WorkspaceEngine` per canonical
+  root; reference-counted acquire/drop; idle TTL sweep; `shutdown` joins workers.
+- Watcher ingestion through `opencode_watcher::FileWatcher` with debounce/coalescing, the
+  shared `SCOPE-018` ignore policy, and incremental `update_file`/`remove_file` + one
+  IR/InfoBlock rebuild per batch.
+- Initial whole-workspace discovery registers supported code files only.
+- `MapFreshnessReport` records revision, dirty-set size, watcher lag, rebuild duration, and
+  an explicit re-anchor result; no fallback policy.
+- Failed update keeps the previous map and marks freshness `stale`; creation failure is
+  `Unavailable`; no task-state writes.
+- `SearchRequest` made owned so it can cross the worker channel; provider call adjusted.
+- `wiki/scopemux-map-integration.md` supervisor section.
+
+Verification (exact):
+
+```bash
+$ cargo clean -p opencode-scopemux
+
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 34 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-watcher -p opencode-scopemux
+opencode-scopemux: 3 passed; 0 failed
+opencode-watcher:  7 passed; 0 failed
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux -p opencode-watcher --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+Required tests added: registry reuse, edit -> incremental update through the watcher,
+unlink -> removal, ignore-policy agreement (target/ never enters the map), eviction/shutdown,
+no cross-workspace leakage, freshness/re-anchor recording, and missing-root ->
+`Unavailable`.
+
+Status: PR open; card stays in `doing` until explicit review and merge approval. No
+`SCOPE-019` work started.
+
 ## Related Items
 
 - `SCOPE-015` program epic.
