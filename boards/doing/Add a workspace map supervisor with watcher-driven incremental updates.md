@@ -5,9 +5,9 @@ priority: "P1"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "todo"
+status: "doing"
 created: "2026-11-06"
-updated: "2026-11-06"
+updated: "2026-11-07"
 predecessor: "SCOPE-016"
 ---
 
