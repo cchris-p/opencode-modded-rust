@@ -1072,3 +1072,43 @@ impl ToolError {
         }
     }
 }
+
+#[cfg(test)]
+mod workspace_capability_tests {
+    use super::*;
+    use opencode_types::{
+        MapFreshness, WorkspaceSearch, WorkspaceSearchRequest, WorkspaceSearchResponse,
+    };
+
+    struct StubSearch;
+
+    impl WorkspaceSearch for StubSearch {
+        fn search_code(&self, _request: &WorkspaceSearchRequest) -> WorkspaceSearchResponse {
+            WorkspaceSearchResponse {
+                candidates: Vec::new(),
+                freshness: MapFreshness::Fresh,
+                fallback_reason: None,
+            }
+        }
+    }
+
+    #[test]
+    fn tool_context_receives_the_workspace_search_capability() {
+        let capability: Arc<dyn WorkspaceSearch> = Arc::new(StubSearch);
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into())
+            .with_workspace_search(Some(capability));
+
+        let response = ctx
+            .workspace_search
+            .as_ref()
+            .expect("capability should be installed")
+            .search_code(&WorkspaceSearchRequest::new("where is X", 5));
+        assert_eq!(response.freshness, MapFreshness::Fresh);
+    }
+
+    #[test]
+    fn absent_capability_means_grep_fallback() {
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into());
+        assert!(ctx.workspace_search.is_none());
+    }
+}
