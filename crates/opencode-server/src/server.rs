@@ -119,6 +119,9 @@ pub struct ServerState {
     pub providers: RwLock<ProviderRegistry>,
     pub auth_manager: Arc<AuthManager>,
     pub event_bus: broadcast::Sender<String>,
+    /// Lazily populated from `lsp` config per workspace root. Empty until a
+    /// workspace is configured, so an unconfigured product starts no LSP server.
+    pub lsp_registry: Arc<opencode_lsp::LspClientRegistry>,
     session_repo: Option<SessionRepository>,
     message_repo: Option<MessageRepository>,
 }
@@ -131,6 +134,7 @@ impl ServerState {
             providers: RwLock::new(ProviderRegistry::new()),
             auth_manager: Arc::new(AuthManager::new()),
             event_bus: tx,
+            lsp_registry: Arc::new(opencode_lsp::LspClientRegistry::new()),
             session_repo: None,
             message_repo: None,
         }
@@ -565,6 +569,8 @@ fn spawn_models_dev_refresh(state: Arc<ServerState>) {
 pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     let state = Arc::new(ServerState::new_with_storage_for_url(format!("http://{}", addr)).await?);
     spawn_models_dev_refresh(state.clone());
+    let cwd = std::env::current_dir().unwrap_or_default();
+    routes::configure_lsp_for_directory(&state.lsp_registry, &cwd).await;
 
     let app = routes::router()
         .layer(cors_layer())
@@ -585,6 +591,8 @@ pub async fn run_server_with_state(
     state: Arc<ServerState>,
 ) -> anyhow::Result<()> {
     spawn_models_dev_refresh(state.clone());
+    let cwd = std::env::current_dir().unwrap_or_default();
+    routes::configure_lsp_for_directory(&state.lsp_registry, &cwd).await;
 
     let app = routes::router()
         .layer(cors_layer())

@@ -159,9 +159,30 @@ Each runtime stage maps to a retrieval role and a representation slice:
 
 Every result carries file/symbol/block provenance, confidence, and a token estimate. The runtime keeps authority over budgets, inclusion thresholds, and role filtering; review context uses a stricter inclusion threshold than implementation context.
 
+Selected map slices are injected into prompt context as a synthetic evidence block,
+bounded by the runtime-owned `RetrievalRequest::token_budget` (default 400 tokens). The
+generic provider is never injected; only a `scopemux` response is rendered, and the
+runtime truncates the candidate list when the budget is exhausted. The map still does not
+decide inclusion. Repair requests carry the recorded `reopen_reason` and project it to a
+`refactor_opportunity` plan node anchored to the task's artifacts, alongside the prior
+objective/criteria plan nodes, so the `Impact` slice re-anchors the repair to the affected
+files and target state.
+
 ### Fallback
 
 The generic repository-local provider stays the default and the fallback. When `scopemux` is absent, fails, or cannot parse the workspace language, context assembly still completes. Unsupported language is an explicit provenance signal, not a silent downgrade.
+
+### ScopeMux/LSP boundary
+
+The map owns syntax, project/task context, delta, plan nodes, observability, duplication,
+and reconciliation. `opencode-lsp` owns exact point semantics and diagnostics. The map is
+never a second LSP client: it does not expose go-to-definition, find-references, hover,
+document symbols, implementations, type definitions, call hierarchy, or diagnostics as
+map-backed queries, and it does not resolve types itself. Optional LSP-derived type facts
+enter as `confidence = exact` edges only when a configured server is available; otherwise
+heuristic edges remain and the task still completes. The full matrix and precedence rule
+are in `wiki/scopemux-lsp-boundary.md`, and the boundary is enforced by
+`crates/opencode-core/tests/scope_lsp_boundary.rs`.
 
 ## Language Coverage
 
@@ -193,6 +214,8 @@ Each phase is independently useful and must not make the previous phase a hard d
 - Letting `scopemux` own task state, lifecycle, verification, review, or completion.
 - Treating heuristic links as semantic truth.
 - Replacing direct file reads for small, obvious tasks.
+- Owning point semantic queries or diagnostics; those belong to `opencode-lsp`.
+- Adding a type checker, inference engine, compiler frontend, or second LSP client.
 
 ## Open Questions
 

@@ -12,6 +12,12 @@ pub struct SkillTool;
 
 const SKILL_TOOL_DESCRIPTION: &str = "Load a specialized skill when the task at hand matches one of the skills listed in the system prompt.\n\nUse this tool to inject the skill's instructions and resources into current conversation. The output may contain detailed workflow guidance as well as references to scripts, files, etc in the same directory as the skill.\n\nThe skill name must match one of the skills listed in your system prompt.";
 
+/// Emitted inside `<skill_content>` so a loaded skill is treated as a workflow to
+/// execute with tools, not as an answer to summarize. Without this, models with
+/// weak instruction-following (for example the fallback prompt path) reply with a
+/// fabricated answer and never run the workflow (`BUG-065`).
+const SKILL_EXECUTION_DIRECTIVE: &str = "IMPORTANT: This skill defines a workflow, not an answer. Execute its steps with the available tools now. Do not answer from memory and do not summarize this text back to the user; a skill whose workflow was not executed with tools is not complete.";
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SkillInput {
     #[serde(default)]
@@ -387,6 +393,8 @@ impl Tool for SkillTool {
         .await?;
 
         let mut output = format!("<skill_content name=\"{}\">\n\n", skill.name);
+        output.push_str(SKILL_EXECUTION_DIRECTIVE);
+        output.push_str("\n\n");
         output.push_str(&format!("# Skill: {}\n\n", skill.name));
         output.push_str(&skill.content);
         output.push_str("\n\n");
@@ -759,6 +767,44 @@ flat content
         assert!(SkillTool
             .description()
             .contains("listed in the system prompt"));
+    }
+
+    #[tokio::test]
+    async fn skill_output_instructs_executing_the_workflow_with_tools() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let skill_path = root.join(".opencode/skills/board-review/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            r#"---
+name: board-review
+description: review a board
+---
+# Board review
+
+Read the board, then answer.
+"#,
+        )
+        .unwrap();
+
+        let ctx = ToolContext::new(
+            "session".to_string(),
+            "message".to_string(),
+            root.to_string_lossy().to_string(),
+        );
+        let result = SkillTool
+            .execute(serde_json::json!({"name": "board-review"}), ctx)
+            .await
+            .unwrap();
+
+        assert!(result.output.contains(SKILL_EXECUTION_DIRECTIVE));
+        let directive_at = result.output.find(SKILL_EXECUTION_DIRECTIVE).unwrap();
+        let body_at = result.output.find("# Skill: board-review").unwrap();
+        assert!(
+            directive_at < body_at,
+            "execution directive must precede the skill body"
+        );
     }
 
     #[test]

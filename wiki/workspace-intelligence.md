@@ -71,8 +71,13 @@ The map is more than an index. An index answers "what exists"; a map also repres
 
 ## What WIP is not
 
-- It is not an LSP. It does not implement hover, completion, diagnostics, formatting, or
-  rename. `opencode-lsp` remains the language-semantics client.
+- It is not an LSP and not a second LSP client. It does not implement hover, completion,
+  diagnostics, formatting, rename, go-to-definition, find-references, document symbols,
+  implementations, type definitions, or call hierarchy. `opencode-lsp` remains the sole
+  language-semantics client.
+- It does not add a type checker, inference engine, or compiler frontend. Exact semantic
+  facts may enter the map as optional `confidence = exact` enrichment, but ScopeMux never
+  resolves types itself.
 - It is not a second task store. Plan nodes are projections of the authoritative task
   record; the task record wins.
 - It is not a runtime authority. It cannot advance a stage, declare completion, verify,
@@ -106,7 +111,27 @@ Misleading parts:
 | Does not fit a token budget | Explicitly token-budgeted and stage-aware |
 
 The right sentence is: **WIP is an LSP-like protocol for workspace intelligence, not an
-LSP.** Compose with `opencode-lsp`; do not replace it.
+LSP.** Compose with `opencode-lsp`; do not replace it. The concrete division of labor,
+redundancies to remove, and optional LSP-derived type-fact policy are defined in
+`wiki/scopemux-lsp-boundary.md`.
+
+### Ownership boundary with `opencode-lsp`
+
+One owner per query class:
+
+| Concern | Owner |
+|---|---|
+| CST/AST, ranges, InfoBlocks, token estimates, slicing | ScopeMux parser |
+| Project map, delta, plan nodes, observability, duplication, reconciliation | ScopeMux |
+| Exact definition/reference/type/implementation/call-hierarchy facts | `opencode-lsp` (optional) |
+| Diagnostics | `opencode-lsp` (optional) |
+| Semantic edge confidence | LSP = exact; ScopeMux = heuristic |
+| Budgets, stage, inclusion, disposition | Runtime |
+
+Precedence: exact LSP facts outrank heuristic ScopeMux edges, ScopeMux may consume LSP
+facts as optional enrichment, ScopeMux must never require LSP, and low-confidence links
+must not override explicit task scope (`invariants/retrieval.md`). This boundary is
+enforced by the architecture guard in `crates/opencode-core/tests/scope_lsp_boundary.rs`.
 
 ## Why ScopeMux matters
 
@@ -160,6 +185,40 @@ place through measured token savings and task outcomes, and it must remain remov
 - Unsupported language, absent provider, provider failure, or budget exhaustion degrades
   to generic behavior; the task still completes.
 - WIP never advances a stage, verifies, reviews, or declares completion.
+
+## Language coverage and fallback matrix
+
+`scopemux-core` parses a fixed grammar set. Coverage is per file, not per workspace:
+mixed-language workspaces parse the supported files and skip the rest with explicit
+provenance instead of failing the whole request.
+
+| Language / file type | Parse | Symbols / references | Confidence | Known gaps | Fallback |
+|---|---|---|---|---|---|
+| C (`.c`, `.h`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Preprocessor/macro-heavy code, complex include graphs | Generic on no match/provider failure |
+| C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Templates, heavy macros, ambiguous overloads | Generic on no match/provider failure |
+| Python (`.py`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Dynamic dispatch, decorators, runtime `__getattr__` | Generic on no match/provider failure |
+| JavaScript (`.js`, `.mjs`, `.cjs`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Dynamic property access, framework conventions | Generic on no match/provider failure |
+| TypeScript (`.ts`, `.tsx`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Complex generics, conditional types, some module resolution | Generic on no match/provider failure |
+| Rust (`.rs`) | Yes, first-class | Yes, with known resolution gaps | Exact parsed facts; heuristic trait/macro edges | Trait-object dispatch, macro expansion, generic binding | Generic on no match/provider failure |
+| Markdown / prose (`.md`, `.txt`, docs) | No | No | Not code | Not a code grammar | Generic text search (grep/path), never code-grammar search |
+| Other / unsupported extensions | No | No | N/A | N/A | Generic search; explicit `unsupported_language` provenance |
+
+Rust is first-class for this product even though its resolution is not at C/C++ parity.
+Markdown and prose are intentionally not parsed as code; they use the generic search path.
+
+Fallback provenance on `RetrievalResponse.fallback_reason`:
+
+| Value | Meaning | Runtime behavior |
+|---|---|---|
+| `None` | The map returned at least one candidate | Use the map slice |
+| `no_matches` | Supported workspace parsed, no candidates matched | Generic retrieval can still answer; the empty map result is not treated as a real absence |
+| `unsupported_language` | No referenced file is in a supported language | Generic search/path retrieval; task still completes |
+| `provider_unavailable` | The map provider errored in a supported workspace | Generic fallback; task still completes |
+
+The provider is selected before parsing, so an all-prose request never enters the code
+grammar path. For mixed workspaces, skipped files are recorded in `provider_notes`
+(`skipped unsupported language: <path>`) so "unsupported" is distinguishable from
+"no matches".
 
 ## Capability ladder
 
@@ -369,7 +428,8 @@ Tracked by `DECISION-016` and `DECISION-017`.
 
 ## Non-goals
 
-- Replacing `opencode-lsp`.
+- Replacing `opencode-lsp` or building a second LSP client.
+- Adding a type checker, inference engine, or compiler frontend to ScopeMux.
 - Owning task state, lifecycle, verification, review, or completion.
 - Making ScopeMux a V1 hard dependency.
 - A general-purpose platform for every harness.

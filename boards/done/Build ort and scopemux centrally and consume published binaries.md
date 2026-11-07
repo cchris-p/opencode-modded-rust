@@ -5,9 +5,9 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-10-14"
-updated: "2026-10-14"
+updated: "2026-10-25"
 ---
 
 # Build ort And Scopemux Centrally And Consume Published Binaries
@@ -180,3 +180,18 @@ Both tracked follow-ups are done.
   `GH_TOKEN` from OpenBao (`env/shared`, scopes `repo`, `admin:org`), not the
   fine-grained session token; the same token is what triggers
   `workflow_dispatch`.
+
+## QA - 2026-10-25 (agent self-QA, matrillobase1)
+
+- `scripts/ensure-native-artifacts.sh --check` -> cached at
+  `~/.cache/opencode-modded-rust/native/linux-x86_64-2a642c10534f`, so the prebuilt path resolves
+  without a `scopemux-core` source tree, CMake, Python, or Tree-sitter submodules.
+- The rolling `native-artifacts` release carries `opencode-native-linux-x86_64-2a642c10534f.tar.gz`
+  and its `-macos-aarch64` sibling, each with a `.sha256`, keyed by the pinned scopemux-core revision.
+- `README.md` documents the artifact source, the pin-keyed versioning, `SCOPEMUX_PREBUILT_DIR` /
+  `OPENCODE_RUST_PREBUILT_NATIVE=0` overrides, and the source-build fallback, so the download path is
+  documented as the default.
+- CI publishes the bundles on `development` code/pin changes via
+  `.github/workflows/native-artifacts.yml`.
+
+Residual: none found for the stated Done-When criteria.

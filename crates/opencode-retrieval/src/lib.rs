@@ -36,6 +36,79 @@ pub trait RetrievalProvider: Send + Sync {
     ) -> Result<RetrievalResponse, RetrievalError>;
 }
 
+/// Semantic question an exact-fact provider can answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExactFactKind {
+    Definition,
+    References,
+    TypeDefinition,
+    Implementation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExactFactRequest {
+    pub path: String,
+    /// 0-based line.
+    pub line: u32,
+    /// 0-based character offset.
+    pub character: u32,
+    pub kind: ExactFactKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExactFactLocation {
+    pub file: String,
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExactFact {
+    pub kind: ExactFactKind,
+    pub locations: Vec<ExactFactLocation>,
+    pub server_id: String,
+    pub document_version: Option<i32>,
+    pub file_hash: u64,
+    /// True when the source served this fact from its own cache.
+    pub cached: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExactFactUnavailable {
+    NoServer,
+    Unsupported,
+    Timeout,
+    Failure,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExactFactOutcome {
+    Exact(ExactFact),
+    Unavailable { reason: ExactFactUnavailable },
+}
+
+impl ExactFactOutcome {
+    pub fn unavailable_reason(&self) -> Option<ExactFactUnavailable> {
+        match self {
+            ExactFactOutcome::Exact(_) => None,
+            ExactFactOutcome::Unavailable { reason } => Some(*reason),
+        }
+    }
+}
+
+/// Optional source of exact semantic facts. Keeping this neutral trait here means a
+/// consumer can use exact facts without depending on any particular language server
+/// implementation, and no provider is required to have one.
+#[async_trait]
+pub trait ExactFactProvider: Send + Sync {
+    async fn exact_facts(&self, request: ExactFactRequest) -> ExactFactOutcome;
+}
+
 /// Generic repository-local provider.
 ///
 /// It resolves explicit seed files and changed files under the workspace root
@@ -135,11 +208,16 @@ impl RetrievalProvider for GenericRepositoryProvider {
         candidates
             .sort_by_key(|candidate| std::cmp::Reverse(confidence_rank(candidate.confidence)));
 
+        let fallback_reason = candidates
+            .is_empty()
+            .then_some(opencode_types::RetrievalFallbackReason::NoMatches);
         Ok(RetrievalResponse {
             candidates,
             provider: self.name().to_string(),
             representation: request.representation,
             plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
+            fallback_reason,
         })
     }
 }
@@ -203,6 +281,27 @@ mod tests {
         assert_eq!(candidate.confidence, RetrievalConfidence::Exact);
         assert_eq!(candidate.provenance, "seed file");
         assert!(candidate.path.ends_with("lib.rs"));
+    }
+
+    #[tokio::test]
+    async fn no_match_is_distinguished_from_a_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "").unwrap();
+
+        let provider = GenericRepositoryProvider::new();
+        let mut req = request(dir.path());
+        req.seed_files.push("missing.rs".to_string());
+        let response = provider.retrieve(&req).await.unwrap();
+        assert!(response.candidates.is_empty());
+        assert_eq!(
+            response.fallback_reason,
+            Some(opencode_types::RetrievalFallbackReason::NoMatches)
+        );
+
+        req.seed_files = vec!["a.rs".to_string()];
+        let response = provider.retrieve(&req).await.unwrap();
+        assert!(!response.candidates.is_empty());
+        assert_eq!(response.fallback_reason, None);
     }
 
     #[tokio::test]

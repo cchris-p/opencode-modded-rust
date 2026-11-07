@@ -6,6 +6,7 @@ use crate::cerebras::CerebrasProvider;
 use crate::cohere::CohereProvider;
 use crate::deepinfra::DeepInfraProvider;
 use crate::deepseek::DeepSeekProvider;
+use crate::deepseek_anthropic::DeepSeekAnthropicProvider;
 use crate::github_copilot::GitHubCopilotProvider;
 use crate::gitlab::GitLabProvider;
 use crate::google::GoogleProvider;
@@ -500,38 +501,7 @@ fn bundled_v1_models_data() -> ModelsData {
             &["DEEPSEEK_API_KEY"],
             "@ai-sdk/openai-compatible",
             "https://api.deepseek.com/chat/completions",
-            vec![
-                model(
-                    "deepseek-v4-pro",
-                    "DeepSeek V4 Pro",
-                    "2026-08-01",
-                    128_000,
-                    32_768,
-                    true,
-                    true,
-                    true,
-                    false,
-                    0.55,
-                    2.19,
-                    "@ai-sdk/openai-compatible",
-                    "https://api.deepseek.com/chat/completions",
-                ),
-                model(
-                    "deepseek-flash",
-                    "DeepSeek Flash",
-                    "2026-08-01",
-                    128_000,
-                    32_768,
-                    true,
-                    true,
-                    true,
-                    false,
-                    0.27,
-                    1.1,
-                    "@ai-sdk/openai-compatible",
-                    "https://api.deepseek.com/chat/completions",
-                ),
-            ],
+            crate::deepseek::bundled_models_dev(),
         ),
         provider(
             "openrouter",
@@ -2781,6 +2751,13 @@ fn env_any(keys: &[&str]) -> Option<String> {
     None
 }
 
+fn deepseek_transport_is_anthropic(provider: &ProviderState) -> bool {
+    provider_option_string(provider, &["transport"])
+        .or_else(|| env_any(&["DEEPSEEK_TRANSPORT"]))
+        .map(|transport| transport.eq_ignore_ascii_case("anthropic"))
+        .unwrap_or(false)
+}
+
 fn provider_option_string(provider: &ProviderState, keys: &[&str]) -> Option<String> {
     for key in keys {
         let Some(value) = provider.options.get(*key) else {
@@ -2927,7 +2904,11 @@ fn create_concrete_provider(
         }
         "deepseek" => {
             let api_key = provider_secret(provider, &["DEEPSEEK_API_KEY"])?;
-            Some(Arc::new(DeepSeekProvider::new(api_key)))
+            if deepseek_transport_is_anthropic(provider) {
+                Some(Arc::new(DeepSeekAnthropicProvider::new(api_key)))
+            } else {
+                Some(Arc::new(DeepSeekProvider::new(api_key)))
+            }
         }
         "xai" => {
             let api_key = provider_secret(provider, &["XAI_API_KEY"])?;
@@ -3536,6 +3517,88 @@ mod tests {
         assert!(data["openrouter"]
             .models
             .contains_key("anthropic/claude-sonnet-5"));
+    }
+
+    #[test]
+    fn deepseek_metadata_matches_live_listing_in_bundled_and_models_dev_paths() {
+        let bundled = bundled_v1_models_data();
+        let deepseek = bundled.get("deepseek").expect("deepseek catalog exists");
+
+        for (id, vision) in [("deepseek-flash", true), ("deepseek-v4-pro", false)] {
+            let model = deepseek.models.get(id).expect("model is listed");
+            assert_eq!(model.limit.context, 1_048_576, "{id} context");
+            assert_eq!(model.limit.output, 393_216, "{id} output");
+            assert!(model.reasoning, "{id} reasoning");
+            assert!(model.tool_call, "{id} tools");
+            assert_eq!(model.attachment, vision, "{id} vision");
+
+            let runtime = from_models_dev_model(deepseek, model);
+            assert_eq!(runtime.limit.context, 1_048_576, "{id} runtime context");
+            assert_eq!(runtime.limit.output, 393_216, "{id} runtime output");
+        }
+
+        let flash = from_models_dev_model(deepseek, &deepseek.models["deepseek-flash"]);
+        assert!(flash.capabilities.input.image);
+
+        let raw = r#"{
+          "deepseek": {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "env": ["DEEPSEEK_API_KEY"],
+            "npm": "@ai-sdk/openai-compatible",
+            "api": "https://api.deepseek.com/chat/completions",
+            "models": {
+              "deepseek-flash": {
+                "id": "deepseek-flash",
+                "name": "DeepSeek Flash",
+                "release_date": "2026-08-01",
+                "attachment": true,
+                "reasoning": true,
+                "temperature": true,
+                "tool_call": true,
+                "limit": {"context": 1048576, "output": 393216},
+                "modalities": {"input": ["text", "image"], "output": ["text"]}
+              },
+              "deepseek-v4-pro": {
+                "id": "deepseek-v4-pro",
+                "name": "DeepSeek V4 Pro",
+                "release_date": "2026-08-01",
+                "attachment": false,
+                "reasoning": true,
+                "temperature": true,
+                "tool_call": true,
+                "limit": {"context": 1048576, "output": 393216},
+                "modalities": {"input": ["text"], "output": ["text"]}
+              }
+            }
+          }
+        }"#;
+        let fixture: ModelsData = serde_json::from_str(raw).expect("fixture parses");
+        let fixture_provider = fixture.get("deepseek").expect("fixture provider exists");
+        let fixture_flash =
+            from_models_dev_model(fixture_provider, &fixture_provider.models["deepseek-flash"]);
+
+        assert_eq!(fixture_flash.limit.context, 1_048_576);
+        assert_eq!(fixture_flash.limit.output, 393_216);
+        assert!(fixture_flash.capabilities.reasoning);
+        assert!(fixture_flash.capabilities.toolcall);
+        assert!(fixture_flash.capabilities.input.image);
+    }
+
+    #[test]
+    fn deepseek_transport_option_selects_anthropic() {
+        let mut state = provider_state("deepseek");
+        assert!(!deepseek_transport_is_anthropic(&state));
+
+        state
+            .options
+            .insert("transport".to_string(), serde_json::json!("anthropic"));
+        assert!(deepseek_transport_is_anthropic(&state));
+
+        state
+            .options
+            .insert("transport".to_string(), serde_json::json!("chat"));
+        assert!(!deepseek_transport_is_anthropic(&state));
     }
 
     #[test]

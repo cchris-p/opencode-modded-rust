@@ -7,6 +7,9 @@ area: "SCOPE"
 spec: "wiki/workspace-intelligence.md"
 status: "todo"
 created: "2026-10-24"
+updated: "2026-11-06"
+predecessor: "SCOPE-017"
+attention: "Deferred until SCOPE-017 (supervisor/watcher) and SCOPE-019 (integration) provide real freshness measurement; see H-020."
 ---
 
 # Define map freshness and staleness SLOs
@@ -70,3 +73,12 @@ Without one, the map silently degrades.
 - `SCOPE-004` stage-aware slices
 - `wiki/workspace-intelligence.md`
 - `wiki/scopemux-map-integration.md`
+
+## Program dependency (2026-11-06)
+
+- Freshness measurement requires the persistent map from `SCOPE-017` (supervisor/watcher)
+  and the provider/tool integration in `SCOPE-019`; see `H-020`.
+- `SCOPE-018` supplies the shared `MapFreshness` vocabulary and provenance fields.
+- Do not implement measurement against the current per-call provider: it has no persistent
+  revision, dirty set, watcher lag, or re-anchor result to measure.
+- Resume after `SCOPE-019`; this card is the follow-on to `SCOPE-006` in the `H-018` tail.

@@ -5,8 +5,9 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
+updated: "2026-11-05"
 predecessor: "SCOPE-002"
 ---
 
@@ -77,7 +78,7 @@ Do not start implementation until `WI-032`/`WI-033`/`WI-036` land; the runtime m
 
 ## Implementation (2026-09-24)
 
-Implemented in `opencode-modded-rust` PR #107 (open, base `development`), now that `WI-032`/`WI-033`/`WI-036` have merged to `scopemux-core` `main`:
+Implemented in `opencode-modded-rust` PR #107 (merged into `development`, base `development`), now that `WI-032`/`WI-033`/`WI-036` have merged to `scopemux-core` `main`:
 
 - Projection contract in `opencode-types::plan`: `PlanNodeKind`, `PlanLifecycle`, `PlanNodeDraft`, `PlanReconciliationSignal`, and `project_task_to_plan_nodes` mapping `objective`, `completion_criteria`, `workspace_target`, `artifacts`, and `reopen_reason` to plan-node attributes (backticked criterion symbol -> `projected_symbol`).
 - `RetrievalRequest` carries `task_id` + projection-only `plan_nodes`; `RetrievalResponse` carries `plan_signals`; `RetrievalCandidate` carries `origin`/`lifecycle`.
@@ -85,3 +86,70 @@ Implemented in `opencode-modded-rust` PR #107 (open, base `development`), now th
 - Pin advanced to `scopemux-core` `main` `1b3cbbe`.
 - Verified: default `cargo test` for the touched crates, clippy clean on touched files, `cargo check --workspace`, and native `cargo test -p opencode-scopemux --features native` 5/5. (Two pre-existing `opencode-session` instruction path tests fail on macOS, unrelated.)
 - Authority preserved: no stage/verification/review/completion is written from plan evidence.
+
+## QA Verification (2026-11-05, H-018 step 1)
+
+Base: `development` `06448ca` with the pinned prebuilt native bundle
+`~/.cache/opencode-modded-rust/native/linux-x86_64-2a642c10534f`
+(`scopemux-core` `2a642c1`).
+
+### Pre-fix reproduction (real blocker)
+
+```bash
+$ cargo test -p opencode-scopemux --features native tests::native_provider_reports_plan_reconciliation_evidence -- --exact
+...
+error: test failed, to rerun pass `-p opencode-scopemux --lib`
+  process didn't exit successfully: `target/debug/deps/opencode_scopemux-3b2bac0e52545e8f 'tests::native_provider_reports_plan_reconciliation_evidence' --exact --nocapture` (signal: 11, SIGSEGV: invalid memory reference)
+```
+
+`gdb` localized the fault to `cstr(ptr=0x200000001)` in `search_candidates`
+(`crates/opencode-scopemux/src/lib.rs:698`). Root cause: the pinned `scopemux-core`
+`ProjectInfoBlock` and `ProjectPlanNode` structs gained `observability_kind` after `kind`
+(`WI-034`), but the Rust `#[repr(C)]` mirrors omitted it. On a planned InfoBlock the
+misaligned `provenance` field read the packed `origin`/`lifecycle` ints
+(`0x0000000200000001`) instead of a pointer. This also explains the previously recorded
+`native_delta_slice_returns_projected_entries` failure.
+
+### Fix PR
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/158
+- Branch: `feature/SCOPE-003-plan-reconciliation-ffi-layout`
+- Commit: `d67f759` — add `observability_kind` to the `ProjectInfoBlock` and
+  `ProjectPlanNode` FFI mirrors.
+- **Awaiting human merge approval (H-018 one-PR-at-a-time gate).** Card stays in `qa`;
+  promote only after merge + post-merge QA on `development`.
+
+### Post-fix verification
+
+```bash
+$ cargo test -p opencode-scopemux --features native tests::native_provider_reports_plan_reconciliation_evidence -- --exact
+test tests::native_provider_reports_plan_reconciliation_evidence ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 17 filtered out
+
+$ cargo test -p opencode-scopemux --features native
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+$ cargo test -p opencode-types -p opencode-retrieval
+opencode_retrieval: test result: ok. 6 passed; 0 failed
+opencode_types:     test result: ok. 4 passed; 0 failed
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session
+lib:                 test result: ok. 172 passed; 0 failed
+deepseek_fixture:    test result: ok. 2 passed; 0 failed
+session_integration: test result: ok. 11 passed; 0 failed
+
+$ cargo fmt --all --check
+(exit 0)
+```
+
+Authority check: no task stage, verification, review, or completion is written from plan
+evidence; the fix only restores the FFI layout.
+### Post-merge QA (2026-11-05)
+
+- PR #158 merged into `development` as `a701afd`; feature branch deleted.
+- Re-ran on merged `development`:
+  - `cargo test -p opencode-scopemux --features native` -> 18 passed, 0 failed.
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session` -> 172 + 2 + 11 passed, 0 failed.
+  - `cargo fmt --all --check` -> exit 0.
+- Promoted `qa` -> `done`. The reconciliation test and the delta-slice test both pass on the
+  merged base; no segfault remains.

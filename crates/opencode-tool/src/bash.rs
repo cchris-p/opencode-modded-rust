@@ -186,6 +186,11 @@ impl Tool for BashTool {
         };
 
         let mut cmd = tokio::process::Command::new(shell);
+        // A cancelled run can drop this future instead of observing the abort
+        // token (the queue's hard-cancel path). Without kill_on_drop the child
+        // shell survives the drop and can keep mutating files after the user
+        // interrupted the turn (BUG-064).
+        cmd.kill_on_drop(true);
         cmd.arg(flag).arg(&command);
         cmd.current_dir(&workdir);
         for (key, value) in &env_vars {
@@ -441,5 +446,50 @@ fn process_command_node(node: tree_sitter::Node, source: &[u8], result: &mut Par
         result.patterns.insert(command_text);
         let prefix = BashArity::prefix(&tokens);
         result.always.insert(format!("{} *", prefix.join(" ")));
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+    use tokio::time::Duration;
+
+    /// A run can be dropped by the queue's hard-cancel path without the tool
+    /// observing its abort token. The spawned shell must die with the future,
+    /// otherwise it keeps running and mutating files after an interrupt
+    /// (BUG-064).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_the_tool_future_kills_the_child_process() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let marker = dir.path().join("post-drop-marker");
+        let command = format!("sleep 0.7; touch {}", marker.display());
+        let ctx = ToolContext::new(
+            "session".to_string(),
+            "message".to_string(),
+            dir.path().to_string_lossy().to_string(),
+        );
+
+        let task = tokio::spawn(async move {
+            BashTool
+                .execute(
+                    serde_json::json!({
+                        "command": command,
+                        "description": "verify drop kills the child",
+                    }),
+                    ctx,
+                )
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        task.abort();
+        let _ = task.await;
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+
+        assert!(
+            !marker.exists(),
+            "the shell must be killed when the tool future is dropped"
+        );
     }
 }

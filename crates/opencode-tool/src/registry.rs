@@ -252,3 +252,49 @@ pub async fn create_default_registry() -> ToolRegistry {
 
     registry
 }
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    /// LSP point queries and diagnostics belong only to the `lsp` tool. A map-backed or
+    /// search tool that starts advertising them is the duplicate surface
+    /// `wiki/scopemux-lsp-boundary.md` forbids.
+    #[tokio::test]
+    async fn only_the_lsp_tool_exposes_lsp_point_queries() {
+        const LSP_OWNED: &[&str] = &[
+            "goToDefinition",
+            "findReferences",
+            "documentSymbol",
+            "typeDefinition",
+            "goToImplementation",
+            "prepareCallHierarchy",
+            "incomingCalls",
+            "outgoingCalls",
+            "publishDiagnostics",
+        ];
+
+        let registry = create_default_registry().await;
+        assert!(
+            registry.get("lsp").await.is_some(),
+            "the lsp tool must remain registered"
+        );
+
+        for tool in registry.list().await {
+            if tool.id() == "lsp" {
+                continue;
+            }
+            let mut surface = tool.description().to_string();
+            surface.push_str(&tool.parameters().to_string());
+            for operation in LSP_OWNED {
+                assert!(
+                    !surface.contains(operation),
+                    "tool `{}` advertises LSP-owned operation `{}`; point queries and \
+                     diagnostics belong to the lsp tool (wiki/scopemux-lsp-boundary.md)",
+                    tool.id(),
+                    operation
+                );
+            }
+        }
+    }
+}

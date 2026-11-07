@@ -1,5 +1,5 @@
 ---
-id: "RESEARCH-007"
+id: "RESEARCH-010"
 title: "Evaluate ORT agent harnesses on RuneBench (Qwen local + DeepSeek via Novita)"
 priority: "P2"
 type: "research"
@@ -139,3 +139,8 @@ report it as a failure.
   containment" — interesting, but out of scope for this card.
 - Keep the harness comparison honest: a weak score may be model capability, not
   harness quality. State the attribution explicitly in the report.
+
+## Notes
+
+- Renumbered from `RESEARCH-007` to `RESEARCH-010` on 2026-10-25: the id collided with the Qwen
+  effectiveness breadth survey (which keeps `RESEARCH-007`). No other card referenced this one by id.

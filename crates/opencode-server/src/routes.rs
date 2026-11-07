@@ -387,6 +387,10 @@ impl Default for SessionRunStatus {
 static SESSION_RUN_STATUS: Lazy<RwLock<HashMap<String, SessionRunStatus>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// How long abort waits for the cooperative prompt-token path (which lets tools
+/// kill their child processes) before the hard run-cancel drops the run future.
+const ABORT_HARD_CANCEL_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
+
 static ACTIVE_PROMPTS: Lazy<RwLock<HashMap<String, Arc<opencode_session::SessionPrompt>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
@@ -2378,6 +2382,7 @@ async fn stream_message(
                         Ok(opencode_provider::StreamEvent::Usage {
                             prompt_tokens,
                             completion_tokens,
+                            ..
                         }) => {
                             send_sse_event(
                                 &tx,
@@ -3371,9 +3376,11 @@ async fn prompt_child_subagent(
         .metadata
         .insert("model_id".to_string(), serde_json::json!(&model_id));
 
+    configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&child.directory)).await;
     let runner = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
         opencode_session::SessionStateManager::new(),
-    )));
+    )))
+    .with_lsp_registry(state.lsp_registry.clone());
     let input = opencode_session::PromptInput {
         session_id: child_id.clone(),
         message_id: None,
@@ -3395,6 +3402,7 @@ async fn prompt_child_subagent(
             &mut child,
             provider,
             Some(resolved.system_prompt.clone()),
+            resolved.dynamic_context.clone(),
             resolved.tools.clone(),
             resolved.params.clone(),
             None,
@@ -4446,10 +4454,12 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         .map(|config| config.experimental_background_subagents())
         .unwrap_or(false);
 
+    configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&session.directory)).await;
     let prompt_runner = Arc::new(
         opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
             opencode_session::SessionStateManager::new(),
         )))
+        .with_lsp_registry(state.lsp_registry.clone())
         .with_ask_callback(permission_callback)
         .with_ask_question_callback(question_callback)
         .with_create_subsession_callback(create_subsession_callback)
@@ -4540,6 +4550,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
             &mut session,
             provider,
             Some(resolved.system_prompt.clone()),
+            resolved.dynamic_context.clone(),
             resolved.tools.clone(),
             resolved.params.clone(),
             Some(update_hook),
@@ -4662,8 +4673,23 @@ async fn abort_active_session_prompt(
     }
 
     let prompt_runner = ACTIVE_PROMPTS.read().await.get(&id).cloned();
+    // Capture the run token before any await so a later turn cannot be cancelled
+    // by mistake once this run finishes during the grace period below.
+    let run_cancel = {
+        let queues = SESSION_QUEUES.lock().await;
+        queues
+            .get(&id)
+            .and_then(|queue| queue.run_cancel.as_ref())
+            .cloned()
+    };
     let aborted = if let Some(prompt_runner) = prompt_runner {
         prompt_runner.cancel(&id).await;
+        // The prompt token is the cooperative path: tools observe it and a bash
+        // tool kills its process tree from that branch. Give that unwinding a
+        // moment before the hard cancel below drops the run future; otherwise a
+        // spawned child process can outlive the interrupt and keep mutating
+        // files (BUG-064).
+        tokio::time::sleep(ABORT_HARD_CANCEL_GRACE).await;
         true
     } else {
         false
@@ -4672,11 +4698,8 @@ async fn abort_active_session_prompt(
     // Also cancel the run-scoped token that `drain_session_queue` selects on, so
     // a run parked on an await that ignores the prompt token is dropped and
     // finalized rather than left wedged (BUG-043).
-    {
-        let queues = SESSION_QUEUES.lock().await;
-        if let Some(cancel) = queues.get(&id).and_then(|queue| queue.run_cancel.as_ref()) {
-            cancel.cancel();
-        }
+    if let Some(cancel) = run_cancel {
+        cancel.cancel();
     }
 
     // A pending question blocks inside its tool call, where the prompt loop does
@@ -5178,6 +5201,14 @@ fn synthetic_variant_names(provider_id: &str, model: &ModelsDevInfo) -> Vec<Stri
 
     let provider = provider_id.to_ascii_lowercase();
     let model_id = model.id.to_ascii_lowercase();
+
+    // The direct DeepSeek API advertises effort `low`/`high`/`max` (default
+    // `high`) on both current models. DeepSeek models routed through a different
+    // provider keep that provider's policy.
+    if provider == "deepseek" {
+        return vec!["low".to_string(), "high".to_string(), "max".to_string()];
+    }
+
     let is_anthropic = provider.contains("anthropic") || model_id.contains("claude");
     if is_anthropic {
         return vec!["high".to_string(), "max".to_string()];
@@ -8138,13 +8169,54 @@ async fn list_skills() -> Result<Json<Vec<AvailableSkill>>> {
 
 #[derive(Debug, Serialize)]
 struct LspStatus {
-    servers: Vec<String>,
+    servers: Vec<opencode_lsp::LspServerStatus>,
 }
 
-async fn get_lsp_status() -> Result<Json<LspStatus>> {
+async fn get_lsp_status(State(state): State<Arc<ServerState>>) -> Result<Json<LspStatus>> {
     Ok(Json(LspStatus {
-        servers: Vec::new(),
+        servers: state.lsp_registry.status().await,
     }))
+}
+
+/// Translate the `lsp` config block into runtime server definitions. Disabled or
+/// command-less entries are kept (as disabled) so status can report them; the
+/// registry refuses to spawn them.
+fn lsp_server_configs(config: &AppConfig) -> Vec<opencode_lsp::LspServerConfig> {
+    let Some(opencode_config::LspConfig::Enabled(servers)) = &config.lsp else {
+        return Vec::new();
+    };
+    servers
+        .iter()
+        .filter_map(|(id, server)| {
+            let (command, args) = server.command.split_first()?;
+            Some(opencode_lsp::LspServerConfig {
+                id: id.clone(),
+                command: command.clone(),
+                args: args.to_vec(),
+                extensions: server.extensions.clone(),
+                env: server.env.clone().unwrap_or_default(),
+                initialization_options: server
+                    .initialization
+                    .clone()
+                    .and_then(|value| serde_json::to_value(value).ok()),
+                disabled: server.disabled.unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+/// Install the workspace's LSP definitions into the shared registry. Never fails a
+/// request: an unreadable config or no `lsp` block leaves LSP off.
+pub(crate) async fn configure_lsp_for_directory(
+    registry: &opencode_lsp::LspClientRegistry,
+    directory: &FsPath,
+) {
+    let Ok(config) = load_config(directory) else {
+        return;
+    };
+    registry
+        .configure(directory.to_path_buf(), lsp_server_configs(&config))
+        .await;
 }
 
 #[derive(Debug, Serialize)]
@@ -9373,5 +9445,40 @@ mod persistence_fingerprint_tests {
         session.add_user_message("hello");
         let after = session_content_fingerprint(&session);
         assert_ne!(before, after);
+    }
+}
+
+#[cfg(test)]
+mod variant_listing_tests {
+    use super::*;
+
+    fn reasoning_model(id: &str) -> ModelsDevInfo {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "reasoning": true,
+            "limit": {"context": 1_048_576, "output": 393_216}
+        }))
+        .expect("model fixture parses")
+    }
+
+    #[test]
+    fn deepseek_lists_live_reasoning_efforts() {
+        assert_eq!(
+            synthetic_variant_names("deepseek", &reasoning_model("deepseek-flash")),
+            vec!["low", "high", "max"]
+        );
+        assert_eq!(
+            synthetic_variant_names("deepseek", &reasoning_model("deepseek-v4-pro")),
+            vec!["low", "high", "max"]
+        );
+    }
+
+    #[test]
+    fn deepseek_models_via_other_providers_keep_their_policy() {
+        assert_eq!(
+            synthetic_variant_names("openrouter", &reasoning_model("deepseek/deepseek-v4-pro")),
+            vec!["low", "medium", "high"]
+        );
     }
 }

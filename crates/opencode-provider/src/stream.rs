@@ -82,6 +82,10 @@ pub enum StreamEvent {
     Usage {
         prompt_tokens: u64,
         completion_tokens: u64,
+        #[serde(default)]
+        cache_read_tokens: u64,
+        #[serde(default)]
+        cache_miss_tokens: u64,
     },
     /// Stream finished (maps to "finish" in TS).
     Finish,
@@ -918,10 +922,23 @@ pub fn parse_openai_sse_stateful(
         .and_then(|u| u.get("completion_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let cache_read_tokens = usage
+        .and_then(|u| {
+            u.get("prompt_cache_hit_tokens")
+                .or_else(|| u.get("cache_read_input_tokens"))
+        })
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_miss_tokens = usage
+        .and_then(|u| u.get("prompt_cache_miss_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| prompt_tokens.saturating_sub(cache_read_tokens));
     if usage.is_some() {
         events.push(StreamEvent::Usage {
             prompt_tokens,
             completion_tokens,
+            cache_read_tokens,
+            cache_miss_tokens,
         });
     }
 
@@ -1348,6 +1365,10 @@ pub struct OpenAIUsage {
     pub prompt_tokens: u64,
     #[serde(default)]
     pub completion_tokens: u64,
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: u64,
+    #[serde(default)]
+    pub prompt_cache_miss_tokens: u64,
 }
 
 fn openai_tool_call_id(tc: &OpenAIToolCall) -> String {
@@ -1404,6 +1425,12 @@ pub fn parse_openai_sse(data: &str) -> Option<StreamEvent> {
         return Some(StreamEvent::Usage {
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
+            cache_read_tokens: usage.prompt_cache_hit_tokens,
+            cache_miss_tokens: usage.prompt_cache_miss_tokens.max(
+                usage
+                    .prompt_tokens
+                    .saturating_sub(usage.prompt_cache_hit_tokens),
+            ),
         });
     }
 
@@ -1492,6 +1519,8 @@ pub fn parse_anthropic_sse(data: &str) -> Option<StreamEvent> {
                     return Some(StreamEvent::Usage {
                         prompt_tokens: usage.input_tokens,
                         completion_tokens: usage.output_tokens,
+                        cache_read_tokens: 0,
+                        cache_miss_tokens: usage.input_tokens,
                     });
                 }
             }
@@ -1500,6 +1529,263 @@ pub fn parse_anthropic_sse(data: &str) -> Option<StreamEvent> {
     }
 
     None
+}
+
+/// Block kind tracked per Anthropic content-block index so tool deltas can be
+/// attributed to the tool id announced by `content_block_start`.
+#[derive(Debug, Clone, Default)]
+pub enum AnthropicBlockState {
+    #[default]
+    Unknown,
+    Thinking,
+    Text,
+    Tool {
+        id: String,
+    },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AnthropicCompatParserState {
+    blocks: HashMap<u32, AnthropicBlockState>,
+}
+
+fn anthropic_usage_event(usage: &serde_json::Value) -> StreamEvent {
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let completion_tokens = usage
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache_read_tokens = usage
+        .get("cache_read_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation_tokens = usage
+        .get("cache_creation_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    // Anthropic reports `input_tokens` as the uncached remainder only. Expose the
+    // full prompt total internally so cache accounting matches OpenAI-compatible
+    // providers (which include cached tokens in `prompt_tokens`).
+    let prompt_tokens = input_tokens + cache_read_tokens + cache_creation_tokens;
+    let cache_miss_tokens = input_tokens + cache_creation_tokens;
+
+    StreamEvent::Usage {
+        prompt_tokens,
+        completion_tokens,
+        cache_read_tokens,
+        cache_miss_tokens,
+    }
+}
+
+/// Stateful Anthropic Messages SSE parser. Unlike the legacy stateless parser it
+/// retains the content-block index table, so thinking deltas close their block and
+/// tool-input deltas keep the real `tool_use` id.
+pub fn parse_anthropic_sse_stateful(
+    data: &str,
+    state: &mut AnthropicCompatParserState,
+) -> Vec<StreamEvent> {
+    use serde_json::Value;
+
+    let mut events = Vec::new();
+    let payload = match data.strip_prefix("data:") {
+        Some(payload) => payload.trim(),
+        None => data.trim(),
+    };
+    if payload.is_empty() || payload == "[DONE]" {
+        return events;
+    }
+
+    let chunk: Value = match serde_json::from_str(payload) {
+        Ok(value) => value,
+        Err(_) => return events,
+    };
+
+    let index = chunk.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    match chunk.get("type").and_then(Value::as_str).unwrap_or("") {
+        "message_start" => {
+            if let Some(usage) = chunk.pointer("/message/usage") {
+                events.push(anthropic_usage_event(usage));
+            }
+        }
+        "content_block_start" => {
+            let block = chunk.get("content_block").cloned().unwrap_or(Value::Null);
+            match block.get("type").and_then(Value::as_str).unwrap_or("") {
+                "thinking" => {
+                    state.blocks.insert(index, AnthropicBlockState::Thinking);
+                    events.push(StreamEvent::ReasoningStart {
+                        id: format!("reasoning-{index}"),
+                    });
+                }
+                "text" => {
+                    state.blocks.insert(index, AnthropicBlockState::Text);
+                    events.push(StreamEvent::TextStart);
+                }
+                "tool_use" => {
+                    let id = block
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let name = block
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    state
+                        .blocks
+                        .insert(index, AnthropicBlockState::Tool { id: id.clone() });
+                    events.push(StreamEvent::ToolCallStart {
+                        id: id.clone(),
+                        name: name.clone(),
+                    });
+                    events.push(StreamEvent::ToolInputStart {
+                        id,
+                        tool_name: name,
+                    });
+                }
+                _ => {
+                    state.blocks.insert(index, AnthropicBlockState::Unknown);
+                }
+            }
+        }
+        "content_block_delta" => {
+            let delta = chunk.get("delta").cloned().unwrap_or(Value::Null);
+            match delta.get("type").and_then(Value::as_str).unwrap_or("") {
+                "thinking_delta" => {
+                    if let Some(text) = delta.get("thinking").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            events.push(StreamEvent::ReasoningDelta {
+                                id: format!("reasoning-{index}"),
+                                text: text.to_string(),
+                            });
+                        }
+                    }
+                }
+                "text_delta" => {
+                    if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            events.push(StreamEvent::TextDelta(text.to_string()));
+                        }
+                    }
+                }
+                "input_json_delta" => {
+                    if let Some(partial) = delta.get("partial_json").and_then(Value::as_str) {
+                        if !partial.is_empty() {
+                            let id = match state.blocks.get(&index) {
+                                Some(AnthropicBlockState::Tool { id }) => id.clone(),
+                                _ => format!("tool-{index}"),
+                            };
+                            events.push(StreamEvent::ToolCallDelta {
+                                id,
+                                input: partial.to_string(),
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        "content_block_stop" => match state.blocks.remove(&index) {
+            Some(AnthropicBlockState::Thinking) => {
+                events.push(StreamEvent::ReasoningEnd {
+                    id: format!("reasoning-{index}"),
+                });
+            }
+            Some(AnthropicBlockState::Text) => events.push(StreamEvent::TextEnd),
+            Some(AnthropicBlockState::Tool { id }) => {
+                events.push(StreamEvent::ToolInputEnd { id });
+            }
+            _ => {}
+        },
+        "message_delta" => {
+            if let Some(usage) = chunk.get("usage") {
+                events.push(anthropic_usage_event(usage));
+            }
+        }
+        "message_stop" => events.push(StreamEvent::Done),
+        "error" => {
+            let message = chunk
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Anthropic stream error")
+                .to_string();
+            events.push(StreamEvent::Error(message));
+            events.push(StreamEvent::Done);
+        }
+        _ => {}
+    }
+
+    events
+}
+
+/// SSE stream adapter for the stateful Anthropic parser.
+pub fn anthropic_compat_sse_stream<S, B>(chunks: S) -> StreamResult
+where
+    S: Stream<Item = Result<B, reqwest::Error>> + Unpin + Send + 'static,
+    B: AsRef<[u8]> + Send + 'static,
+{
+    use futures::StreamExt;
+    use std::collections::VecDeque;
+
+    let stream = futures::stream::try_unfold(
+        (
+            chunks,
+            String::new(),
+            VecDeque::<StreamEvent>::new(),
+            AnthropicCompatParserState::default(),
+            false,
+        ),
+        |(mut chunks, mut buffer, mut pending, mut state, mut exhausted)| async move {
+            loop {
+                if let Some(event) = pending.pop_front() {
+                    return Ok(Some((event, (chunks, buffer, pending, state, exhausted))));
+                }
+
+                if let Some(idx) = buffer.find('\n') {
+                    let mut line = buffer[..idx].to_string();
+                    buffer.drain(..=idx);
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    pending.extend(parse_anthropic_sse_stateful(&line, &mut state));
+                    continue;
+                }
+
+                if exhausted {
+                    let tail = std::mem::take(&mut buffer);
+                    if !tail.trim().is_empty() {
+                        pending.extend(parse_anthropic_sse_stateful(tail.trim(), &mut state));
+                    }
+                    if let Some(event) = pending.pop_front() {
+                        return Ok(Some((event, (chunks, buffer, pending, state, true))));
+                    }
+                    return Ok(None);
+                }
+
+                match chunks.next().await {
+                    Some(Ok(bytes)) => {
+                        buffer.push_str(&String::from_utf8_lossy(bytes.as_ref()));
+                    }
+                    Some(Err(e)) => {
+                        return Err(ProviderError::NetworkError(e.to_string()));
+                    }
+                    None => {
+                        exhausted = true;
+                    }
+                }
+            }
+        },
+    );
+
+    Box::pin(stream)
 }
 
 #[cfg(test)]
@@ -2130,5 +2416,82 @@ mod tests {
         events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
         assert!(collect_calls(&events).is_empty());
         assert!(collect_text(&events).contains("<tool_call>"));
+    }
+
+    #[test]
+    fn stateful_usage_exposes_deepseek_cache_counters() {
+        let mut state = OpenAiCompatParserState::default();
+        let events = parse_openai_sse_stateful(
+            r#"{"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}"#,
+            &mut state,
+        );
+
+        let usage = events
+            .iter()
+            .find_map(|event| match event {
+                StreamEvent::Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    cache_miss_tokens,
+                } => Some((
+                    *prompt_tokens,
+                    *completion_tokens,
+                    *cache_read_tokens,
+                    *cache_miss_tokens,
+                )),
+                _ => None,
+            })
+            .expect("usage event");
+
+        assert_eq!(usage, (100, 5, 80, 20));
+    }
+
+    #[test]
+    fn stateful_anthropic_parser_maps_thinking_text_tools_and_usage() {
+        let mut state = AnthropicCompatParserState::default();
+        let frames = [
+            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":4,"cache_creation_input_tokens":0,"output_tokens":0}}}"#,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}"#,
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}"#,
+            r#"data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"call_1","name":"bash","input":{}}}"#,
+            r#"data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"ls\"}"}}"#,
+            r#"data: {"type":"content_block_stop","index":2}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":5}}"#,
+            r#"data: {"type":"message_stop"}"#,
+        ];
+        let mut events = Vec::new();
+        for frame in frames {
+            events.extend(parse_anthropic_sse_stateful(frame, &mut state));
+        }
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ReasoningDelta { id, text } if id == "reasoning-0" && text == "plan"
+        )));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::TextDelta(text) if text == "hi")));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ToolCallStart { id, name } if id == "call_1" && name == "bash"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ToolCallDelta { id, input } if id == "call_1" && input.contains("ls")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::Usage {
+                prompt_tokens: 14,
+                completion_tokens: 5,
+                cache_read_tokens: 4,
+                cache_miss_tokens: 10
+            }
+        )));
+        assert!(matches!(events.last(), Some(StreamEvent::Done)));
     }
 }

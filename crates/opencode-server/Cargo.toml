@@ -14,6 +14,7 @@ opencode-storage = { path = "../opencode-storage" }
 opencode-types = { path = "../opencode-types" }
 opencode-config = { path = "../opencode-config" }
 opencode-mcp = { path = "../opencode-mcp" }
+opencode-lsp = { path = "../opencode-lsp" }
 opencode-plugin = { path = "../opencode-plugin" }
 opencode-permission = { path = "../opencode-permission" }
 opencode-tool = { path = "../opencode-tool" }

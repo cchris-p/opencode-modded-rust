@@ -3685,10 +3685,14 @@ impl App {
         let servers = client.get_lsp_servers()?;
         let statuses = servers
             .into_iter()
-            .map(|id| crate::context::LspStatus {
-                id,
-                root: "-".to_string(),
-                status: crate::context::LspConnectionStatus::Connected,
+            .map(|server| crate::context::LspStatus {
+                id: server.id,
+                root: server.root,
+                status: if server.status.eq_ignore_ascii_case("error") {
+                    crate::context::LspConnectionStatus::Error
+                } else {
+                    crate::context::LspConnectionStatus::Connected
+                },
             })
             .collect::<Vec<_>>();
         *self.context.lsp_status.write() = statuses;

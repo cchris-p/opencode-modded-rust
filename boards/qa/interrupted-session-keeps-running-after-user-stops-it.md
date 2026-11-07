@@ -5,8 +5,9 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-10-12"
+updated: "2026-10-25"
 ---
 
 # Interrupted session keeps running after the user stops it
@@ -147,3 +148,53 @@ Initial confidence report:
 - Add or update regression coverage for the confirmed class.
 - Verify that accepted interrupts prevent further model/tool work for the affected path.
 - Record the verification command(s), server-log evidence, and any affected session ids on this card.
+
+## Investigation and fix - 2026-10-25
+
+The original session is not recoverable on this host: the Rust store
+(`~/.local/share/opencode/opencode.db`) holds only 26 sessions, all from 2026-10-07..10-10
+(`c-cpp-projects` and `/tmp/opencode/novita-qa`); there is no 2026-10-12 session and no
+`create-a-board-item-for-this-issue.md` transcript. The report came from another machine, so this
+pass localized the defect class from the interrupt path instead of guessing the original session id.
+
+What the abort path already does (verified by reading `abort_active_session_prompt` in
+`crates/opencode-server/src/routes.rs`):
+
+1. cancels the prompt token that tools receive as `ctx.abort`;
+2. cancels the per-run token that `drain_session_queue` selects on (BUG-043 hard cancel);
+3. rejects pending questions for the session.
+
+Defect found - a race between (1) and (2) that orphans child processes:
+
+- A bash tool observes the prompt token and, on that branch, kills its process tree
+  (`kill_process_tree` + `child.kill()`).
+- The hard run cancel drops the whole run future to satisfy BUG-043. It was issued immediately
+  after the prompt token, so the drop could win before the bash tool's select branch ran.
+- The spawned `tokio::process::Child` did **not** have `kill_on_drop`, so the shell survived the
+  dropped future and could keep running commands and writing files after the user interrupted.
+
+That is failure class "detached/background work escaped cancellation" and matches the reported
+symptom (interrupt accepted, work continues, a file appears afterwards).
+
+Fix (`crates/opencode-tool/src/bash.rs`, `crates/opencode-server/src/routes.rs`):
+
+- `cmd.kill_on_drop(true)` so a dropped bash future kills its shell on every platform.
+- `abort_active_session_prompt` now captures the run token before any await, lets the cooperative
+  prompt-token path unwind for `ABORT_HARD_CANCEL_GRACE` (250 ms), and only then fires the hard
+  cancel. The captured token means a run that finished during the grace cannot make the abort
+  cancel the *next* queued turn.
+
+Deterministic regression (fails on the pre-fix code, passes with it):
+
+- `opencode-tool` `bash::drop_tests::dropping_the_tool_future_kills_the_child_process` starts
+  `sleep 0.7; touch <marker>`, drops the tool future after 150 ms, waits, and asserts the marker
+  does not exist. With `kill_on_drop` removed the test fails (marker created after the drop).
+- Existing `abort_cancels_active_run_without_clearing_queued_prompts` still passes with the grace.
+- `cargo fmt --all` clean.
+
+Relationship to `BUG-057`: that card's leading candidate was C1 "abort never sent" (needs a live TUI
+capture); this pass addresses C3/C5 "cancellation not observed / detached work escaped". They remain
+separate until a live TUI capture distinguishes them.
+
+Remaining QA: live `ort` interrupt during a running bash tool; confirm no file mutation after the
+interrupt and a durable interrupted terminal state. The original transcript cannot be replayed.

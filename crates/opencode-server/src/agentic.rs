@@ -22,7 +22,11 @@ use std::path::Path;
 pub struct ResolvedAgenticContext {
     pub agent_name: String,
     pub agent: AgentInfo,
+    /// Byte-stable leading system prompt (agent or model default).
     pub system_prompt: String,
+    /// Environment, date, and available-skills context. Kept separate so a
+    /// dynamic change does not rewrite the cached leading system prefix.
+    pub dynamic_context: Option<String>,
     pub tools: Vec<ToolDefinition>,
     pub params: AgentParams,
 }
@@ -68,7 +72,8 @@ pub async fn resolve_agentic_context(
             ));
     }
 
-    let system_prompt = build_system_prompt(&agent, model_api_id, provider_id, directory);
+    let (system_prompt, dynamic_context) =
+        build_system_prompt_parts(&agent, model_api_id, provider_id, directory);
     let tools = if supports_tools {
         resolve_tools(&agent).await
     } else {
@@ -85,6 +90,7 @@ pub async fn resolve_agentic_context(
         agent_name,
         agent,
         system_prompt,
+        dynamic_context,
         tools,
         params,
     }
@@ -130,23 +136,40 @@ pub fn build_system_prompt(
     provider_id: &str,
     directory: &str,
 ) -> String {
-    let base = agent
+    let (stable, dynamic) = build_system_prompt_parts(agent, model_api_id, provider_id, directory);
+    match dynamic {
+        Some(dynamic) => format!("{stable}\n\n{dynamic}"),
+        None => stable,
+    }
+}
+
+/// Split the system prompt into a byte-stable leading part and the dynamic
+/// context that can move without invalidating the cached prefix.
+///
+/// The stable part is the agent or model default prompt. The environment block,
+/// date, and available-skills list are dynamic: they are still re-sent on every
+/// step, but as a separate system message after the stable prefix.
+pub fn build_system_prompt_parts(
+    agent: &AgentInfo,
+    model_api_id: &str,
+    provider_id: &str,
+    directory: &str,
+) -> (String, Option<String>) {
+    let stable = agent
         .system_prompt
         .clone()
         .unwrap_or_else(|| SystemPrompt::for_model(model_api_id).to_string());
 
     let env_ctx = EnvironmentContext::from_current(model_api_id, provider_id, directory);
-    let env_block = SystemPrompt::environment(&env_ctx);
-
-    let mut system_prompt = format!("{}\n\n{}", base, env_block);
+    let mut dynamic = SystemPrompt::environment(&env_ctx);
 
     let skills = list_skill_metadata_for_base(Path::new(directory));
     if let Some(skills_block) = skills_block_for(&skills, &agent.permission) {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(&skills_block);
+        dynamic.push_str("\n\n");
+        dynamic.push_str(&skills_block);
     }
 
-    system_prompt
+    (stable, Some(dynamic))
 }
 
 /// Reference preamble from `SystemPrompt.skills(agent)`.
@@ -391,6 +414,33 @@ mod tests {
         assert!(prompt.contains("OpenCode"));
         assert!(prompt.contains("Working directory: /tmp/test-proj"));
         assert!(prompt.contains("anthropic/claude-sonnet-4-20250514"));
+    }
+
+    #[test]
+    fn build_system_prompt_grounds_fallback_models_on_tools_and_skills() {
+        // Reproduces the BUG-065 shape: the `build` agent defines no system prompt, so the
+        // fallback model prompt is used. It must demand tool grounding and skill execution.
+        let agent = AgentInfo::build();
+        for model in ["deepseek/deepseek-flash", "ollama/qwen3:30b"] {
+            let prompt = build_system_prompt(&agent, model, "test-provider", "/tmp/test-proj");
+            assert!(!prompt.contains("One word answers are best"));
+            assert!(prompt.contains("Investigate before you assert"));
+            assert!(prompt.contains("NEVER invent file contents"));
+            assert!(prompt.contains("execute that workflow with tools"));
+        }
+    }
+
+    #[test]
+    fn build_system_prompt_parts_keeps_dynamic_context_out_of_the_stable_prefix() {
+        let agent = AgentInfo::build().with_system_prompt("Custom stable agent prompt");
+        let (stable, dynamic) =
+            build_system_prompt_parts(&agent, "deepseek-flash", "deepseek", "/tmp/test-proj");
+
+        assert_eq!(stable, "Custom stable agent prompt");
+        let dynamic = dynamic.expect("environment context is dynamic");
+        assert!(dynamic.contains("Working directory: /tmp/test-proj"));
+        assert!(dynamic.contains("Today's date:"));
+        assert!(!stable.contains("Today's date:"));
     }
 
     #[test]
