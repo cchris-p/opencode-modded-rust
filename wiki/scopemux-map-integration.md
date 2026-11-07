@@ -139,6 +139,28 @@ Re-index refreshes the derived store and **reconciles** the durable store. It mu
 
 The correctness criterion is strict: an incrementally updated map must be equivalent to a full rebuild of the derived store, with the durable store reconciled rather than regenerated.
 
+### Persistent supervisor (`SCOPE-017`)
+
+`opencode-scopemux::WorkspaceMapRegistry` owns the persistent lifecycle:
+
+- One `MapEntry` (one `WorkspaceEngine`) per canonical workspace root. `acquire` reuses an
+  existing entry and increments a reference count; `MapHandle` decrements it on drop.
+- Each map has one dedicated worker thread that owns the engine and serializes all engine
+  access. Queries run through `with_engine`/typed slice helpers; no context is created per
+  call.
+- The worker subscribes to `opencode_watcher::FileWatcher`, coalesces add/change/unlink into
+  a debounced dirty set, applies `update_file`/`remove_file` (incremental), and then runs one
+  IR + InfoBlock rebuild per batch. The shared ignore policy (`SCOPE-018`) filters events
+  and initial discovery; unsupported/prose paths never enter the code map.
+- Idle eviction uses a TTL (`sweep`/`sweep_idle`) and `shutdown` joins every worker.
+- Creation failure (missing root, engine/watcher failure) is reported as `Unavailable`.
+  A failed incremental update keeps the previous map and marks freshness `stale`; it never
+  silently presents old nodes as fresh.
+- Freshness measurement (`MapFreshnessReport`) records revision, dirty-set size, watcher
+  lag, rebuild duration, and an explicitly recorded re-anchor result. The supervisor does
+  not decide fallback; `SCOPE-009`/the runtime own that policy.
+- The map remains evidence-only: no task stage, verification, review, or completion writes.
+
 ## Runtime Integration
 
 All map use crosses the `START-025` retrieval-provider boundary. The runtime asks; the map answers; prompt construction consumes the answer. No `scopemux`-specific logic leaks into orchestration, lifecycle, verification, or review.

@@ -18,6 +18,7 @@ native = ["dep:tree-sitter"]
 [dependencies]
 opencode-types = { path = "../opencode-types" }
 opencode-retrieval = { path = "../opencode-retrieval" }
+opencode-watcher = { path = "../opencode-watcher" }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
