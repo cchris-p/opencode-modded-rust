@@ -380,4 +380,7 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
 - Verification: native 34 passed (registry reuse, watcher edit/unlink, ignore agreement,
   eviction, cross-workspace isolation, freshness, missing-root), non-native scopemux 3,
   watcher 7, fmt clean, clippy exit 0 with pre-existing warnings only.
-- **STOPPED for explicit review/merge approval.** `SCOPE-019` has not started.
+- Owner approved the merge. PR #166 merged into `development` as `3e3aa4c`; branch
+  deleted. Post-merge QA: native 34, non-native scopemux 3, watcher 7, fmt clean,
+  clippy exit 0. `SCOPE-017` promoted to `done` with QA evidence.
+- Next: `SCOPE-019` (provider + tool integration).

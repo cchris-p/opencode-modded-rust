@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "doing"
+status: "done"
 created: "2026-11-06"
 updated: "2026-11-07"
 predecessor: "SCOPE-016"
@@ -136,8 +136,31 @@ unlink -> removal, ignore-policy agreement (target/ never enters the map), evict
 no cross-workspace leakage, freshness/re-anchor recording, and missing-root ->
 `Unavailable`.
 
-Status: PR open; card stays in `doing` until explicit review and merge approval. No
-`SCOPE-019` work started.
+Status: PR merged into `development` as `3e3aa4c` (2026-11-07).
+
+## QA Verification — 2026-11-07 (post-merge, development @ 3e3aa4c)
+
+```bash
+$ cargo clean -p opencode-scopemux
+
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 34 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-watcher -p opencode-scopemux
+opencode-scopemux: 3 passed; 0 failed
+opencode-watcher:  7 passed; 0 failed
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux -p opencode-watcher --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+QA result: pass. Registry reuse, watcher edit -> incremental update, unlink -> removal,
+ignore-policy exclusion, eviction/shutdown, cross-workspace isolation, freshness/re-anchor,
+and missing-root -> `Unavailable` all pass on merged `development`.
 
 ## Related Items
 
