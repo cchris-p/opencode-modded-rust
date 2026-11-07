@@ -77,10 +77,10 @@ pub struct SearchHitView {
 }
 
 /// Search request for [`WorkspaceEngine::search`].
-#[derive(Debug, Clone, Copy)]
-pub struct SearchRequest<'a> {
-    pub query: &'a str,
-    pub anchor_file: Option<&'a str>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchRequest {
+    pub query: String,
+    pub anchor_file: Option<String>,
     pub max_hits: usize,
 }
 
@@ -267,7 +267,7 @@ impl WorkspaceEngine {
     }
 
     /// Tiered search over the canonical InfoBlock registry.
-    pub fn search(&self, request: SearchRequest<'_>) -> Result<Vec<SearchHitView>, EngineError> {
+    pub fn search(&self, request: SearchRequest) -> Result<Vec<SearchHitView>, EngineError> {
         let query =
             CString::new(request.query).map_err(|e| EngineError(format!("invalid query: {e}")))?;
         let anchor = request.anchor_file.and_then(|path| CString::new(path).ok());
@@ -638,7 +638,7 @@ mod tests {
 
         let hits = engine
             .search(SearchRequest {
-                query: "added_symbol",
+                query: "added_symbol".to_string(),
                 anchor_file: None,
                 max_hits: 20,
             })
@@ -673,7 +673,7 @@ mod tests {
 
         let hits = engine
             .search(SearchRequest {
-                query: "added_symbol",
+                query: "added_symbol".to_string(),
                 anchor_file: None,
                 max_hits: 20,
             })
@@ -706,7 +706,7 @@ mod tests {
 
         let hits = engine
             .search(SearchRequest {
-                query: "removable_symbol",
+                query: "removable_symbol".to_string(),
                 anchor_file: None,
                 max_hits: 20,
             })

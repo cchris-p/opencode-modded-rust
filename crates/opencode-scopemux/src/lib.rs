@@ -22,6 +22,8 @@ mod engine;
 mod ffi;
 #[cfg(feature = "native")]
 mod provider;
+#[cfg(feature = "native")]
+mod supervisor;
 
 #[cfg(feature = "native")]
 pub use engine::{
@@ -30,6 +32,10 @@ pub use engine::{
 };
 #[cfg(feature = "native")]
 pub use provider::ScopemuxProvider;
+#[cfg(feature = "native")]
+pub use supervisor::{
+    MapEntry, MapHandle, SupervisorError, WorkspaceMapRegistry, DEFAULT_DEBOUNCE, DEFAULT_TTL,
+};
 
 /// Select the retrieval provider for the runtime.
 ///

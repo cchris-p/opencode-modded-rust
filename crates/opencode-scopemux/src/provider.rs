@@ -285,8 +285,8 @@ fn search_candidates(
     let anchor_file = seeds.first().map(String::as_str);
     let hits = engine
         .search(SearchRequest {
-            query: &request.objective,
-            anchor_file,
+            query: request.objective.clone(),
+            anchor_file: anchor_file.map(str::to_string),
             max_hits: SEARCH_MAX_HITS,
         })
         .map_err(|error| RetrievalError::Failed(error.0))?;

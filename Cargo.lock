@@ -2367,6 +2367,7 @@ dependencies = [
  "opencode-lsp",
  "opencode-retrieval",
  "opencode-types",
+ "opencode-watcher",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
