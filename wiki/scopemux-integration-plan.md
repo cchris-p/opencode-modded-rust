@@ -153,6 +153,23 @@ watcher consume the ignore policy; `opencode-scopemux` maps `SourceLanguage` to 
 language id; the runtime injects `WorkspaceSearch` into `ToolContext` on the map-backed
 path only.
 
+### Engine boundary (`SCOPE-016`)
+
+`crates/opencode-scopemux` is split into three modules:
+
+- `ffi`: `#[repr(C)]` mirrors and `extern "C"` declarations only.
+- `engine::WorkspaceEngine`: the only owner of a `ProjectContext`. It exposes open,
+  add/parse, `update_file`, `remove_file`, rebuild, counters, and owned query views
+  (`BlockView`, `SearchHitView`, ...). No raw pointer escapes this module.
+- `provider`: the `RetrievalProvider` adapter; it maps engine views to shared
+  `RetrievalCandidate` evidence and owns no pointer.
+
+Thread affinity: one engine is owned by one task/worker and is never held across an
+`await` or moved between workers. The provider opens, uses, and drops the engine before its
+exact-fact enrichment await, so persistent lifecycle (`SCOPE-017`) can move the owner
+without changing the provider contract. The engine contains no activation, prompt,
+task-state, or fallback policy.
+
 The larger idealized target is `SCOPE-001` ("Idealized scopemux map integration") and `wiki/scopemux-map-integration.md`, which extend this plan with current/target state, delta views, observability blocks, duplication detection, and incremental reconciliation. Those phases must not disturb the boundary or guardrails defined here.
 
 ## Required Abstraction Boundary
