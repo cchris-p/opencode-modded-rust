@@ -115,6 +115,22 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         thinking: bool,
     },
+    #[command(
+        about = "Generate a commit message and commit staged changes (OpenCommit-compatible)",
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        disable_help_flag = true,
+        disable_version_flag = true
+    )]
+    Oco {
+        #[arg(
+            value_name = "ARGS",
+            num_args = 0..,
+            allow_hyphen_values = true,
+            trailing_var_arg = true
+        )]
+        args: Vec<String>,
+    },
     #[command(about = "Manage CLI task workflows")]
     Task {
         #[command(subcommand)]
@@ -684,6 +700,22 @@ enum GithubCommands {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let invoked_as_oco = raw_args
+        .first()
+        .and_then(|arg| Path::new(arg).file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| name == "oco" || name == "opencommit")
+        .unwrap_or(false);
+    if invoked_as_oco {
+        let args = raw_args
+            .iter()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        return opencode_oco::run(args).await;
+    }
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -781,6 +813,9 @@ async fn main() -> anyhow::Result<()> {
                 thinking,
             )
             .await?;
+        }
+        Some(Commands::Oco { args }) => {
+            opencode_oco::run(args).await?;
         }
         Some(Commands::Task { action }) => {
             handle_task_command(action).await?;
