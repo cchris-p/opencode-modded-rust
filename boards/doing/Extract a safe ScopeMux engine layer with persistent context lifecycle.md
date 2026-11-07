@@ -88,6 +88,56 @@ incremental-vs-full rebuild counters on a one-file change.
 - Upstream API gaps: if `scopemux-core` lacks a needed call, record it as a prerequisite
   instead of adding a parallel index.
 
+## Implementation — 2026-11-07 (H-020 step 2)
+
+Branch `feature/SCOPE-016-safe-engine`; PR
+https://github.com/cchris-p/opencode-modded-rust/pull/164
+
+Landed:
+
+- `crates/opencode-scopemux/src/ffi.rs`: raw `#[repr(C)]` mirrors + `extern "C"`
+  declarations, including `project_update_file`, `project_context_remove_file`,
+  `project_context_rebuild_ir`, and the WI-018 rebuild counters.
+- `crates/opencode-scopemux/src/engine.rs`: `WorkspaceEngine` is the only owner of a
+  `ProjectContext`; exposes open/add/parse/update/remove/rebuild/counters and owned query
+  views. The engine is not held across an `await` and contains no activation, prompt,
+  task-state, or fallback policy.
+- `crates/opencode-scopemux/src/provider.rs`: `RetrievalProvider` adapter + slice mapping
+  over engine views; it opens/uses/drops the engine before exact-fact enrichment.
+- `project_update_file` resolves project-relative paths against the engine root because
+  the core opens the path on the process CWD.
+- `wiki/scopemux-integration-plan.md`: engine boundary note.
+
+Verification (exact):
+
+```bash
+$ cargo clean -p opencode-scopemux
+Removed 926 files, 326.6MiB total
+
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 27 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-scopemux
+test result: ok. 3 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session retrieval
+test result: ok. 9 passed; 0 failed; 0 ignored
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+Proof tests added: `persistent_context_sees_an_edit_after_incremental_update` (create once
+-> edit -> `update_file` -> incremental rebuild -> query sees the new symbol; dirty set
+smaller than the full rebuild) and `remove_file_drops_nodes`.
+
+Status: PR open; card stays in `doing` until explicit review and merge approval. No
+`SCOPE-017` work started.
+
 ## Related Items
 
 - `SCOPE-015` program epic.

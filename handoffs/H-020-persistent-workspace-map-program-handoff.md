@@ -350,3 +350,17 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
   passed; scopemux/session check clean; fmt clean; clippy clean for changed code.
   `SCOPE-018` promoted to `done` with the QA evidence recorded.
 - Next: `SCOPE-016` (safe engine layer) after the post-merge gate.
+
+### Step 2 — SCOPE-016 (2026-11-07)
+
+- Moved `SCOPE-016` `todo` -> `doing`.
+- Branch `feature/SCOPE-016-safe-engine`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/164 against `development`.
+- Split `opencode-scopemux` into `ffi`, `engine` (`WorkspaceEngine` owning one
+  `ProjectContext`), and `provider`. Added the incremental `update_file`/`remove_file`/
+  rebuild/counter surface and owned query views; the provider no longer touches raw
+  pointers. `project_update_file` resolves project-relative paths against the engine root.
+- Verification: native 27 passed (incl. persistent-context and incremental-counter proof
+  tests), non-native 3, session retrieval 9, fmt clean, clippy exit 0 with pre-existing
+  warnings only.
+- **STOPPED for explicit review/merge approval.** `SCOPE-017` has not started.
