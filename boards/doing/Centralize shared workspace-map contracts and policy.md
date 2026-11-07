@@ -5,9 +5,9 @@ priority: "P1"
 type: "refactor"
 area: "SCOPE"
 spec: "wiki/workspace-intelligence.md"
-status: "todo"
+status: "doing"
 created: "2026-11-06"
-updated: "2026-11-06"
+updated: "2026-11-07"
 predecessor: "SCOPE-014"
 ---
 
