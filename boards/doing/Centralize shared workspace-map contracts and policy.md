@@ -93,6 +93,49 @@ serialization, and capability injection.
 - Type churn: keep `RetrievalCandidate` additions serde-compatible and backward-tolerant.
 - Tool coupling: the tool must not depend on `opencode-scopemux` FFI directly.
 
+## Implementation — 2026-11-07 (H-020 step 1)
+
+Branch `feature/SCOPE-018-shared-map-contracts`, commits `f36d698` and `b13e66e`.
+PR: https://github.com/cchris-p/opencode-modded-rust/pull/163
+
+Landed:
+
+- New `crates/opencode-types/src/workspace.rs` with `SourceLanguage`/`is_code_path`/
+  `is_prose_path` (single extension table), the shared ignore policy (`EXCLUDED_DIRS`,
+  `is_excluded_dir`, `path_has_excluded_dir`, `default_ignore_globs`), `MapFreshness`/
+  `MapFreshnessReport`/`ReAnchorResult`, the neutral `WorkspaceSearch` capability, and the
+  path-normalization and token-budget helpers.
+- `RetrievalCandidate::block_id` populated from the map block id in `opencode-scopemux`;
+  generic/seed candidates leave it `None`.
+- `ToolContext::workspace_search` + `with_workspace_search`; the tool receives a capability,
+  not model strings.
+- `opencode-tool/src/grep_tool.rs` and `opencode-watcher` consume the shared ignore policy;
+  `language_for_path` delegates to `SourceLanguage`.
+- `wiki/workspace-intelligence.md` and `wiki/scopemux-integration-plan.md` document the
+  single-source ownership/DRY rules.
+
+Verification (exact):
+
+```bash
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-types -p opencode-retrieval -p opencode-tool -p opencode-watcher
+opencode-retrieval: 7 passed; 0 failed
+opencode-tool:      71 passed; 0 failed
+opencode-types:     9 passed; 0 failed
+opencode-watcher:   7 passed; 0 failed
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-scopemux -p opencode-session
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.80s
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-types -p opencode-retrieval -p opencode-tool -p opencode-watcher --all-targets
+Finished; exit 0 (only pre-existing warnings in untouched files)
+```
+
+Status: PR open; card stays in `doing` until explicit review and merge approval. No
+`SCOPE-016` work started.
+
 ## Related Items
 
 - `SCOPE-015` program epic.

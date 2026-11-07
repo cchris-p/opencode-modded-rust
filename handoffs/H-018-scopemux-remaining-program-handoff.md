@@ -3,7 +3,7 @@ id: "H-018"
 title: "SCOPE-003/004/006/009/010/012/013/014 ScopeMux Remaining Program — Program Handoff"
 status: "in_progress"
 created: "2026-11-05"
-updated: "2026-11-06"
+updated: "2026-11-07"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
@@ -43,6 +43,13 @@ Steps 1-6 are complete. Two steps remain and are blocked on the persistent map p
 | `SCOPE-009` | Map freshness and staleness SLOs | P2 | todo (deferred) | resume after `SCOPE-019` in `H-020` |
 
 `SCOPE-001`, `SCOPE-002`, and `SCOPE-005` are done.
+
+## Prerequisite Program Progress (H-020)
+
+- 2026-11-07: `SCOPE-018` (shared contracts/policy) is in review in H-020 (PR #163);
+  the card remains in `doing` until the PR merges.
+- This handoff stays paused at `SCOPE-006`/`SCOPE-009`; do not resume until `SCOPE-019`
+  merges and the persistent map is wired into the provider/tool.
 
 ## Program Split — Persistent Map Prerequisite
 

@@ -330,3 +330,19 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
 > `SCOPE-011`. Use a dedicated worktree for implementation PRs, commit board/handoff
 > updates directly on `development`, and stop after each PR for explicit merge approval.
 > Never push `main`. After `SCOPE-019`, resume `H-018` at `SCOPE-006` and then `SCOPE-009`.
+
+## Execution Log
+
+### Step 1 — SCOPE-018 (2026-11-07)
+
+- Moved `SCOPE-018` `todo` -> `doing`.
+- Branch `feature/SCOPE-018-shared-map-contracts`, commit `f36d698`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/163 against `development`.
+- Landed the shared `opencode-types::workspace` contracts (ignore policy, code/prose
+  predicate, `block_id`, `MapFreshness`, `WorkspaceSearch`, path/token helpers), wired grep
+  and the watcher to the shared ignore policy, added the `ToolContext` capability, and
+  updated the two wiki docs.
+- Verification: `opencode-types` 9, `opencode-retrieval` 7, `opencode-tool` 69,
+  `opencode-watcher` 7 passed; `opencode-scopemux`/`opencode-session` check clean; fmt clean;
+  clippy exit 0 (pre-existing warnings only).
+- **STOPPED for explicit review/merge approval.** `SCOPE-016` has not started.
