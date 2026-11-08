@@ -1,0 +1,245 @@
+name: Release
+
+# INFRA-011: every merge to main produces an immutable, versioned release with
+# the native provider bundle, CLI binaries, checksums, provenance, and a
+# machine-readable manifest. The rolling `native-artifacts` tag remains the
+# development preview channel.
+#
+# Deployment is INFRA-012 and is triggered separately after this succeeds.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and stage the release without publishing it"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            deps: |
+              sudo add-apt-repository -y ppa:deadsnakes/ppa
+              sudo apt-get update
+              sudo apt-get install -y cmake python3.11-dev
+          - os: macos-14
+            deps: |
+              brew install cmake python@3.11
+              echo "$(brew --prefix python@3.11)/bin" >> "$GITHUB_PATH"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-release-${{ matrix.os }}-
+
+      - name: Install native build dependencies
+        run: ${{ matrix.deps }}
+
+      - name: Fetch pinned scopemux-core
+        env:
+          SCOPEMUX_CORE_REPO: https://github.com/cchris-p/scopemux-core.git
+        run: bash scripts/fetch-scopemux-core.sh
+
+      - name: Build and stage the native bundle
+        run: |
+          set -euo pipefail
+          bash scripts/package-native-artifacts.sh --no-fetch --out native-dist
+          stage="$(find native-dist -maxdepth 1 -type d -name 'opencode-native-*' | head -n 1)"
+          test -n "$stage"
+          echo "SCOPEMUX_PREBUILT_DIR=$PWD/$stage" >> "$GITHUB_ENV"
+
+      - name: Build CLI (release) against the prebuilt bundle
+        run: cargo build --release -p opencode-cli
+
+      # INFRA-008: the published binary must carry its own query set.
+      - name: Portable query smoke
+        run: |
+          set -euo pipefail
+          clean_home="$(mktemp -d)"
+          clean_cwd="$(mktemp -d)"
+          binary="$GITHUB_WORKSPACE/target/release/opencode-modded-rust"
+          resolved="$( cd "$clean_cwd" && \
+            HOME="$clean_home" XDG_CACHE_HOME="$clean_home/cache" \
+            "$binary" debug scopemux-queries )"
+          test -d "$resolved"
+          test -f "$resolved/rust/docstrings.scm"
+          basename "$resolved" > native-dist/queries-key.txt
+          if strings "$binary" \
+              | grep -E '(/target/(debug|release)/build/[^[:space:]]*/out/queries|\.cache/opencode-modded-rust/native/[^[:space:]]*/queries)'; then
+            echo "release binary embeds a build-machine query path" >&2
+            exit 1
+          fi
+
+      - name: Package CLI asset
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"   # linux | darwin
+          arch="$(uname -m)"
+          case "$arch" in x86_64|amd64) arch=x86_64 ;; arm64|aarch64) arch=aarch64 ;; esac
+          pkg="opencode-modded-rust-${os}-${arch}"
+          mkdir -p bin-dist
+          cp target/release/opencode-modded-rust bin-dist/
+          tar -C bin-dist -czf "native-dist/${pkg}.tar.gz" opencode-modded-rust
+          if command -v shasum >/dev/null 2>&1; then
+            ( cd native-dist && shasum -a 256 "${pkg}.tar.gz" > "${pkg}.tar.gz.sha256" )
+          else
+            ( cd native-dist && sha256sum "${pkg}.tar.gz" > "${pkg}.tar.gz.sha256" )
+          fi
+          printf '%s\n' "${GITHUB_SHA}" > "native-dist/${pkg}.tar.gz.rev"
+
+      - name: Upload release staging artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: native-dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release staging artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve version and verify assets
+        id: meta
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="opencode-cli"))')"
+          tag="v${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # Immutability: never overwrite an existing release tag. Bump
+          # [workspace.package] version in the release PR to cut a new release.
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "release tag ${tag} already exists; bump [workspace.package] version" >&2
+            exit 1
+          fi
+
+          for required in \
+            opencode-modded-rust-linux-x86_64.tar.gz \
+            opencode-modded-rust-darwin-aarch64.tar.gz \
+            opencode-native-linux-x86_64- \
+            opencode-native-macos-aarch64- ; do
+            ls dist | grep -q "^${required}" || {
+              echo "missing release asset: ${required}" >&2; exit 1; }
+          done
+
+          for tarball in dist/*.tar.gz; do
+            test -f "${tarball}.sha256" || {
+              echo "missing checksum for ${tarball}" >&2; exit 1; }
+            ( cd dist && sha256sum -c "$(basename "${tarball}").sha256" )
+          done
+
+          test -f dist/queries-key.txt
+          for rev in dist/*.rev; do test -f "$rev"; done
+
+      - name: Write release manifest
+        run: |
+          set -euo pipefail
+          python3 - "${{ steps.meta.outputs.tag }}" "${{ steps.meta.outputs.version }}" <<'PY'
+          import hashlib, json, os, sys, glob
+          tag, version = sys.argv[1], sys.argv[2]
+          pin = ""
+          with open("scripts/fetch-scopemux-core.sh") as fh:
+              for line in fh:
+                  if line.startswith("PINNED_REV="):
+                      pin = line.split("=", 1)[1].strip().strip('"')
+                      break
+          key = open("dist/queries-key.txt").read().strip()
+          assets = []
+          for path in sorted(glob.glob("dist/*.tar.gz")):
+              name = os.path.basename(path)
+              sha = hashlib.sha256(open(path, "rb").read()).hexdigest()
+              platform = None
+              for part in ("linux", "darwin", "macos"):
+                  if part in name:
+                      platform = part
+                      break
+              assets.append({"name": name, "sha256": sha, "platform": platform})
+          manifest = {
+              "tag": tag,
+              "version": version,
+              "commit": os.environ["GITHUB_SHA"],
+              "scopemux_pin": pin,
+              "queries_key": key,
+              "assets": assets,
+              "created": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+          }
+          with open("dist/release-manifest.json", "w") as fh:
+              json.dump(manifest, fh, indent=2, sort_keys=True)
+              fh.write("\n")
+          PY
+          cat dist/release-manifest.json
+
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: dist/release-manifest.json
+
+      - name: Publish immutable release
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          gh release create "$tag" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "opencode-modded-rust ${tag}" \
+            --generate-notes \
+            --latest
+
+      - name: Summarize release
+        run: |
+          {
+            echo "### Release ${{ steps.meta.outputs.tag }}"
+            echo ""
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo ""
+            echo "Assets:"
+            echo '```'
+            ls -1 dist
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
