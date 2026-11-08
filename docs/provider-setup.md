@@ -23,6 +23,33 @@ Manual selection is **project-level**: it is stored in the workspace's own `open
 
 When Ollama is highlighted, press `u` to edit the Ollama host/base URL from the same screen.
 
+### Remote Ollama endpoints
+
+The product resolves the Ollama endpoint at startup; a shell wrapper does not
+need to probe it or export state. Precedence, high to low:
+
+1. CLI `--model` (`ollama/<tag>`)
+2. `OLLAMA_REMOTE_HOST` / `OLLAMA_REMOTE_MODEL`
+3. `~/.config/opencode/ollama.json` (`{ "host": "...", "model": "..." }`)
+4. `OLLAMA_HOST`
+5. `http://127.0.0.1:11434`
+
+The `ollama` provider is registered as OpenAI-compatible at `<host>/v1`. If
+`--model` is absent and a model is configured, it becomes the default
+(`ollama/<model>`), and the tag is added to the provider catalog. Ollama is
+always reached over HTTP; the `ollama` binary is never required or invoked.
+
+When an endpoint is explicitly configured, startup probes `/v1/models` (falling
+back to `/api/tags`) and prints the resolved URL, the config file consulted, and
+the exact failure reason when the endpoint is unreachable.
+
+Inspect the effective configuration with:
+
+```sh
+opencode-modded-rust debug ollama
+opencode-modded-rust debug ollama --probe
+```
+
 ## OpenAI / Codex authentication
 
 Selecting the `openai` provider and pressing `l` opens an auth-method chooser when the plugin reports more than one method. The Rust product mirrors vanilla OpenCode's OpenAI/Codex auth surface:

@@ -8271,25 +8271,6 @@ fn load_runtime_config_with_source() -> Result<(AppConfig, Option<String>)> {
     load_config_with_source(&cwd).map_err(|error| ApiError::InternalError(error.to_string()))
 }
 
-fn normalize_ollama_host(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return "http://127.0.0.1:11434/v1".to_string();
-    }
-
-    let with_scheme = if trimmed.contains("://") {
-        trimmed.to_string()
-    } else {
-        format!("http://{trimmed}")
-    };
-    let normalized = with_scheme.trim_end_matches('/');
-    if normalized.ends_with("/v1") {
-        normalized.to_string()
-    } else {
-        format!("{normalized}/v1")
-    }
-}
-
 async fn provider_auth_status_from_runtime(
     state: &ServerState,
     provider_id: &str,
@@ -8387,19 +8368,8 @@ fn effective_ollama_base_url(config: &AppConfig) -> (String, String) {
         }
     }
 
-    if let Ok(host) = std::env::var("OLLAMA_HOST") {
-        if !host.trim().is_empty() {
-            return (
-                normalize_ollama_host(&host),
-                "environment (OLLAMA_HOST)".to_string(),
-            );
-        }
-    }
-
-    (
-        "http://127.0.0.1:11434/v1".to_string(),
-        "runtime default".to_string(),
-    )
+    let resolution = opencode_provider::ollama::resolve(None);
+    (resolution.base_url.clone(), resolution.host_label())
 }
 
 async fn effective_provider_setup(
@@ -8407,6 +8377,7 @@ async fn effective_provider_setup(
     config: &AppConfig,
     model_source: Option<&str>,
 ) -> ProviderSetupInfo {
+    let ollama_resolution = opencode_provider::ollama::resolve(None);
     let (effective_provider, effective_model, selection_source) = {
         let providers = state.providers.read().unwrap();
         let resolve_from_model = |model: &str| providers.parse_model_string(model);
@@ -8444,6 +8415,14 @@ async fn effective_provider_setup(
                 .unwrap_or(MODEL_SOURCE_PROJECT_CONFIG)
                 .to_string();
             (provider_id, Some(model.to_string()), source)
+        } else if let Some(model_ref) = ollama_resolution.model_ref.clone() {
+            (
+                Some(opencode_provider::ollama::OLLAMA_PROVIDER_ID.to_string()),
+                Some(model_ref),
+                ollama_resolution
+                    .model_label()
+                    .unwrap_or_else(|| "runtime default".to_string()),
+            )
         } else if let Some(ollama) = providers.get_provider("ollama").ok() {
             if ollama.get_model("qwen3:30b").is_some() {
                 (

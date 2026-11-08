@@ -16,6 +16,7 @@ pub mod groq;
 pub mod message;
 pub mod mistral;
 pub mod models;
+pub mod ollama;
 pub mod openai;
 pub mod openai_chat;
 pub mod openrouter;

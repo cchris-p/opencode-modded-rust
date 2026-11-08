@@ -115,18 +115,15 @@ fn normalize_ollama_base_url(raw: &str) -> String {
 }
 
 fn default_ollama_base_url() -> String {
-    std::env::var("OLLAMA_HOST")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| normalize_ollama_base_url(&value))
-        .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.to_string())
+    crate::ollama::resolve(None).base_url
 }
 
-fn default_ollama_models_provider() -> ModelsProviderInfo {
-    let model = ModelInfo {
-        id: OLLAMA_DEFAULT_MODEL_ID.to_string(),
-        name: "Qwen3 30B".to_string(),
-        family: Some("qwen3".to_string()),
+fn ollama_model_info(id: &str, name: &str) -> ModelInfo {
+    let family = id.split(':').next().unwrap_or(id).to_string();
+    ModelInfo {
+        id: id.to_string(),
+        name: name.to_string(),
+        family: Some(family),
         release_date: None,
         attachment: false,
         reasoning: true,
@@ -158,7 +155,11 @@ fn default_ollama_models_provider() -> ModelsProviderInfo {
             api: Some(OLLAMA_DEFAULT_BASE_URL.to_string()),
         }),
         variants: None,
-    };
+    }
+}
+
+fn default_ollama_models_provider() -> ModelsProviderInfo {
+    let model = ollama_model_info(OLLAMA_DEFAULT_MODEL_ID, "Qwen3 30B");
 
     ModelsProviderInfo {
         api: Some(OLLAMA_DEFAULT_BASE_URL.to_string()),
@@ -170,9 +171,38 @@ fn default_ollama_models_provider() -> ModelsProviderInfo {
     }
 }
 
+/// Apply the resolved Ollama endpoint (and optional configured model) to the
+/// provider catalog. The product supports any configured tag, so the model must
+/// be present in the registry for selection/validation to succeed.
+fn apply_ollama_resolution(
+    provider: &mut ModelsProviderInfo,
+    resolution: &crate::ollama::OllamaResolution,
+) {
+    let base_url = resolution.base_url.clone();
+    provider.api = Some(base_url.clone());
+    provider.npm = Some("@ai-sdk/openai-compatible".to_string());
+    if let Some(tag) = &resolution.model {
+        provider
+            .models
+            .entry(tag.clone())
+            .or_insert_with(|| ollama_model_info(tag, tag));
+    }
+    for model in provider.models.values_mut() {
+        let model_provider = model.provider.get_or_insert_with(|| ModelProvider {
+            npm: Some("@ai-sdk/openai-compatible".to_string()),
+            api: Some(base_url.clone()),
+        });
+        model_provider.npm = Some("@ai-sdk/openai-compatible".to_string());
+        model_provider.api = Some(base_url.clone());
+    }
+}
+
 fn ensure_ollama_provider(data: &mut ModelsData) {
-    data.entry(OLLAMA_PROVIDER_ID.to_string())
+    let resolution = crate::ollama::resolve(None);
+    let provider = data
+        .entry(OLLAMA_PROVIDER_ID.to_string())
         .or_insert_with(default_ollama_models_provider);
+    apply_ollama_resolution(provider, &resolution);
 }
 
 fn bundled_v1_models_data() -> ModelsData {
@@ -3780,6 +3810,37 @@ mod tests {
             .expect("provider should exist");
         assert_eq!(provider.id(), "ollama");
         assert!(provider.get_model(OLLAMA_DEFAULT_MODEL_ID).is_some());
+    }
+
+    #[test]
+    fn ollama_resolution_applies_remote_base_url_and_configured_model() {
+        let mut provider = default_ollama_models_provider();
+        let resolution = crate::ollama::resolve_with(
+            None,
+            &crate::ollama::OllamaEnv::default(),
+            std::path::Path::new("/tmp/ollama.json"),
+            Some(&crate::ollama::OllamaConfigFile {
+                host: Some("http://remote:11434".to_string()),
+                model: Some("custom:7b".to_string()),
+            }),
+        );
+
+        apply_ollama_resolution(&mut provider, &resolution);
+
+        assert_eq!(provider.api.as_deref(), Some("http://remote:11434/v1"));
+        assert!(provider.models.contains_key("custom:7b"));
+        let model = &provider.models["custom:7b"];
+        assert_eq!(
+            model.provider.as_ref().and_then(|p| p.api.as_deref()),
+            Some("http://remote:11434/v1")
+        );
+        assert_eq!(
+            provider.models[OLLAMA_DEFAULT_MODEL_ID]
+                .provider
+                .as_ref()
+                .and_then(|p| p.api.as_deref()),
+            Some("http://remote:11434/v1")
+        );
     }
 
     #[test]
