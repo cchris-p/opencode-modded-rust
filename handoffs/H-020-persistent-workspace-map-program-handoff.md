@@ -397,8 +397,7 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
 - Verification: native scopemux 35 passed; tool/session/retrieval suites green (incl.
   persistent reuse, block id/provenance, absent/stale -> grep, prose, activation scope);
   grep tests 5; fmt clean; clippy exit 0 with pre-existing warnings only.
-- `scripts/scopemux-qa-check.sh` was not runnable: this host has no local Ollama/Qwen
-  (port 11434 closed), which the harness needs to activate scopemux. Recorded as an
-  environment limitation, not a pass.
-- **STOPPED for explicit review/merge approval.** After merge, resume `H-018` at
-  `SCOPE-006`.
+- `scripts/scopemux-qa-check.sh` passed against the LAN Ollama
+  (`OLLAMA_HOST=http://192.168.1.33:11434`, `qwen3:30b`): observed
+  `provider=scopemux representation=Search candidates=5` (`PASS`).
+- Owner approved the merge after the QA pass. After merge, resume `H-018` at `SCOPE-006`.

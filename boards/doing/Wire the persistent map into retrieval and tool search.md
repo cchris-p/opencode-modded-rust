@@ -142,10 +142,23 @@ Required tests added: provider persistent-reuse (same map per root), map search
 block-id/provenance, absent-capability -> grep, stale -> grep/generic, prose -> grep,
 activation scope, and no per-call context creation.
 
-Environment limitation: `scripts/scopemux-qa-check.sh` could not run because this host
-has no local `ollama` binary/model (port 11434 closed); the harness requires the local
-Qwen preset to activate scopemux. Activation is unchanged and covered by the
-activation-scope test. This is recorded as a limitation, not a pass.
+`scripts/scopemux-qa-check.sh` (LAN Ollama, `OLLAMA_HOST=http://192.168.1.33:11434`,
+model `qwen3:30b`):
+
+```bash
+$ scripts/scopemux-qa-check.sh --url http://127.0.0.1:4096 \
+    --workspace ~/worktrees/scopemux-qa --file sample.rs \
+    --log /tmp/scopemux-qa-server-019.log --expect scopemux
+session:    ses_e62481f6a1a44d1c9ebc69dafc8f4aa2
+file:       @sample.rs
+expected:   scopemux
+observed:   scopemux
+candidates: 5
+PASS
+```
+
+Server log: `retrieval provider selected provider=scopemux representation=Search
+candidates=5`. This exercises the branch binary against the real LAN Ollama.
 
 Status: PR open; card stays in `doing` until explicit review and merge approval.
 
