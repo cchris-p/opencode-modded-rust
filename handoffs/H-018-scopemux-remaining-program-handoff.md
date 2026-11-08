@@ -49,7 +49,8 @@ Steps 1-6 are complete. Two steps remain and are blocked on the persistent map p
 - 2026-11-07: `SCOPE-018` (shared contracts/policy) merged in H-020 (PR #163, `81c8f11`)
   and is `done` with post-merge QA; `SCOPE-016` is next.
 - 2026-11-07: `SCOPE-018`, `SCOPE-016`, and `SCOPE-017` are `done` with QA in H-020;
-  `SCOPE-019` (provider/tool integration) is next.
+  `SCOPE-019` (provider/tool integration) is in review (PR #167).
+- On `SCOPE-019` merge, resume this handoff at `SCOPE-006`.
 - This handoff stays paused at `SCOPE-006`/`SCOPE-009`; do not resume until `SCOPE-019`
   merges and the persistent map is wired into the provider/tool.
 

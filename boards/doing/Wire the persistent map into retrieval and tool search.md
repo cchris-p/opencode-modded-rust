@@ -93,6 +93,62 @@ creation.
 - Tool coupling: keep the tool behind the capability trait, not FFI.
 - Fallback parity: preserve grep bounds exactly (no regression to `BUG-040`).
 
+## Implementation — 2026-11-07 (H-020 step 4)
+
+Branch `feature/SCOPE-019-map-integration`; PR
+https://github.com/cchris-p/opencode-modded-rust/pull/167
+
+Landed:
+
+- `ScopemuxProvider` resolves one map per workspace root from the shared
+  `WorkspaceMapRegistry`; no per-call context creation. All slices and plan
+  materialization/reconciliation use the persistent map.
+- `RetrievalResponse.freshness` carries the supervisor measurement; a stale scopemux
+  response falls back to the generic provider in `opencode-session` (runtime policy).
+- `RegistryWorkspaceSearch` implements the neutral `WorkspaceSearch` trait;
+  `workspace_search_for` uses the same `model_scope_enabled` predicate and injects the
+  capability into `ToolContext` only on the Qwen-only scope.
+- New `code_search` tool: map-backed locate with file/symbol/`block_id`/confidence/
+  provenance/freshness, bounded grep fallback, and a `prose` mode.
+- Shared block-to-evidence mapping lives in `engine` so provider and capability agree.
+- Docs updated (`docs/opencode-tool.md`, `wiki/scopemux-map-integration.md`).
+
+Verification (exact):
+
+```bash
+$ cargo clean -p opencode-scopemux
+
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 35 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tool -p opencode-session -p opencode-retrieval
+opencode-retrieval: 7 passed
+opencode-session:   177 passed (+ 2, + 11)
+opencode-tool:      75 passed (+ 2, + 11)
+opencode-types:     9 passed
+
+$ cargo test -p opencode-tool grep
+test result: ok. 5 passed; 0 failed; 0 ignored
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux -p opencode-tool -p opencode-session --all-targets
+Finished; exit 0 (pre-existing warnings only; none in changed paths)
+```
+
+Required tests added: provider persistent-reuse (same map per root), map search
+block-id/provenance, absent-capability -> grep, stale -> grep/generic, prose -> grep,
+activation scope, and no per-call context creation.
+
+Environment limitation: `scripts/scopemux-qa-check.sh` could not run because this host
+has no local `ollama` binary/model (port 11434 closed); the harness requires the local
+Qwen preset to activate scopemux. Activation is unchanged and covered by the
+activation-scope test. This is recorded as a limitation, not a pass.
+
+Status: PR open; card stays in `doing` until explicit review and merge approval.
+
 ## Related Items
 
 - `SCOPE-015` program epic.
