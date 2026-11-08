@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "doing"
+status: "done"
 created: "2026-11-06"
 updated: "2026-11-07"
 predecessor: "SCOPE-017"
@@ -160,7 +160,49 @@ PASS
 Server log: `retrieval provider selected provider=scopemux representation=Search
 candidates=5`. This exercises the branch binary against the real LAN Ollama.
 
-Status: PR open; card stays in `doing` until explicit review and merge approval.
+Status: PR merged into `development` as `ec50ffe` (2026-11-08).
+
+## QA Verification — 2026-11-08 (post-merge, development @ ec50ffe)
+
+```bash
+$ cargo clean -p opencode-scopemux
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 35 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tool -p opencode-session -p opencode-retrieval
+opencode-retrieval: 7 passed
+opencode-session:   177 passed (+ 2, + 11)
+opencode-tool:      75 passed (+ 2, + 11)
+opencode-types:     9 passed
+
+$ cargo test -p opencode-tool grep
+test result: ok. 5 passed; 0 failed; 0 ignored
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux -p opencode-tool -p opencode-session --all-targets
+Finished; exit 0 (pre-existing warnings only; none in changed paths)
+```
+
+Post-merge QA check with the binary built from merged `development` and the LAN Ollama
+(`OLLAMA_HOST=http://192.168.1.33:11434`, `qwen3:30b`):
+
+```bash
+$ scripts/scopemux-qa-check.sh --url http://127.0.0.1:4096 \
+    --workspace ~/worktrees/scopemux-qa --file sample.rs \
+    --log /tmp/scopemux-qa-server-019-postmerge.log --expect scopemux
+session:    ses_27d9a24df6724776a3c5bab8bab4a413
+file:       @sample.rs
+expected:   scopemux
+observed:   scopemux
+candidates: 5
+PASS
+```
+
+Server log: `retrieval provider selected provider=scopemux representation=Search
+candidates=5`. QA result: pass.
 
 ## Related Items
 

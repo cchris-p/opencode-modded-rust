@@ -1,9 +1,9 @@
 ---
 id: "H-020"
 title: "SCOPE-015/016/017/018/019 Persistent Workspace Map Program — Program Handoff"
-status: "open"
+status: "complete"
 created: "2026-11-06"
-updated: "2026-11-06"
+updated: "2026-11-08"
 owner: ""
 target: "opencode-modded-rust"
 blocked_reason: ""
@@ -400,4 +400,10 @@ Open a new session in `~/apps/opencode-modded-rust` and send:
 - `scripts/scopemux-qa-check.sh` passed against the LAN Ollama
   (`OLLAMA_HOST=http://192.168.1.33:11434`, `qwen3:30b`): observed
   `provider=scopemux representation=Search candidates=5` (`PASS`).
-- Owner approved the merge after the QA pass. After merge, resume `H-018` at `SCOPE-006`.
+- Owner approved the merge after the QA pass. PR #167 merged into `development` as
+  `ec50ffe`; branch deleted.
+- Post-merge QA on `development`: native scopemux 35, tool/session/retrieval suites green,
+  grep 5, fmt clean, clippy exit 0. The merged binary + LAN Ollama QA check passed:
+  `provider=scopemux representation=Search candidates=5`.
+- `SCOPE-019` promoted to `done` with QA evidence. **H-020 is complete.**
+- Resume `H-018` at `SCOPE-006`, then `SCOPE-009`.

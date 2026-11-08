@@ -3,11 +3,11 @@ id: "H-018"
 title: "SCOPE-003/004/006/009/010/012/013/014 ScopeMux Remaining Program — Program Handoff"
 status: "in_progress"
 created: "2026-11-05"
-updated: "2026-11-07"
+updated: "2026-11-08"
 owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
-needs_human: "Paused before SCOPE-006/SCOPE-009. The persistent workspace map prerequisite is now its own program, H-020 (SCOPE-015/018/016/017/019); resume H-018 after SCOPE-019 lands."
+needs_human: ""
 items: ["SCOPE-003", "SCOPE-012", "SCOPE-013", "SCOPE-014", "SCOPE-004", "SCOPE-010", "SCOPE-006", "SCOPE-009"]
 ---
 
@@ -48,9 +48,9 @@ Steps 1-6 are complete. Two steps remain and are blocked on the persistent map p
 
 - 2026-11-07: `SCOPE-018` (shared contracts/policy) merged in H-020 (PR #163, `81c8f11`)
   and is `done` with post-merge QA; `SCOPE-016` is next.
-- 2026-11-07: `SCOPE-018`, `SCOPE-016`, and `SCOPE-017` are `done` with QA in H-020;
-  `SCOPE-019` (provider/tool integration) is in review (PR #167).
-- On `SCOPE-019` merge, resume this handoff at `SCOPE-006`.
+- 2026-11-08: H-020 is complete. `SCOPE-018`, `SCOPE-016`, `SCOPE-017`, and `SCOPE-019`
+  are `done` with QA; the persistent map is wired into the provider and `code_search`.
+- This handoff is **resumed at `SCOPE-006`**, then `SCOPE-009`.
 - This handoff stays paused at `SCOPE-006`/`SCOPE-009`; do not resume until `SCOPE-019`
   merges and the persistent map is wired into the provider/tool.
 
