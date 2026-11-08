@@ -81,3 +81,45 @@ Without one, the map silently degrades.
 - Do not implement measurement against the current per-call provider: it has no persistent
   revision, dirty set, watcher lag, or re-anchor result to measure.
 - Resume after `SCOPE-019`; this card is the follow-on to `SCOPE-006` in the `H-018` tail.
+## Implementation — 2026-11-08 (H-018 step 8)
+
+Branch `feature/SCOPE-009-map-freshness-slo`; PR
+https://github.com/cchris-p/opencode-modded-rust/pull/169
+
+Landed:
+
+- Documented `fresh`/`lagging`/`stale`/`unknown`, measurement fields, per-operation
+  SLOs, and runtime behavior in `wiki/workspace-intelligence.md`; cross-referenced from
+  `wiki/scopemux-map-integration.md`.
+- `classify_freshness` in the supervisor: `fresh` within `SLO_WATCHER_LAG_MS = 1000` and
+  `SLO_REBUILD_MS = 500`, `lagging` above, `stale` on a failed update, `unknown` before
+  measurement.
+- Runtime: `fresh` use; `lagging` use + warning note; `stale`/`unknown` -> generic with
+  `RetrievalFallbackReason::StaleMap`.
+- Provider reconciliation records `ReAnchorResult` (anchored/shifted/missing) on the
+  supervisor; divergent plan nodes remain in `PlanReconciliationSignal` and are never
+  silently dropped.
+- Tests: SLO classification, stale/unknown fallback predicate, lagging does not fall back,
+  provider re-anchor recording, and measured watcher lag on edit.
+
+Verification (exact):
+
+```bash
+$ cargo clean -p opencode-scopemux
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 38 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-types -p opencode-session -p opencode-scopemux
+opencode-scopemux: 3 passed
+opencode-session:   177 passed (+ 2, + 11)
+opencode-types:     9 passed
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-types -p opencode-session -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+Status: PR open; card stays in `doing` until explicit review and merge approval.

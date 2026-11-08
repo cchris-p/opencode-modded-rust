@@ -536,3 +536,16 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
   scopemux 36, non-native scopemux 3, tool 75, fmt/clippy clean. `SCOPE-006` promoted
   to `done`.
 - Next: `SCOPE-009` (step 8).
+
+### Step 8 — SCOPE-009 (2026-11-08)
+
+- Branch `feature/SCOPE-009-map-freshness-slo`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/169.
+- Defined freshness states/SLOs and runtime policy (fresh use, lagging warn,
+  stale/unknown -> generic with `stale_map`); supervisor classification uses
+  `SLO_WATCHER_LAG_MS=1000`/`SLO_REBUILD_MS=500`; reconciliation records
+  `ReAnchorResult`.
+- Verification: native scopemux 38 passed; non-native types 9, session 177 (+2, +11),
+  scopemux 3; fmt/clippy clean.
+- **STOPPED for explicit review/merge approval.** After merge, H-018 has no remaining
+  steps.
