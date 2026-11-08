@@ -22,9 +22,12 @@ binary.
 
 ## Config contract (high to low precedence)
 
-1. CLI `--model` (`ollama/<tag>`)
-2. `OLLAMA_REMOTE_HOST` / `OLLAMA_REMOTE_MODEL`
-3. `~/.config/opencode/ollama.json` (`{ "host": "...", "model": "..." }`)
+Endpoint *host* resolution (the `model` key is a provider detail, not a
+default-model source):
+
+1. CLI `--model ollama/<tag>` (selects an Ollama model explicitly)
+2. `OLLAMA_REMOTE_HOST`
+3. `~/.config/opencode/ollama.json` (`host`)
 4. `OLLAMA_HOST`
 5. default `http://127.0.0.1:11434`
 
@@ -32,14 +35,20 @@ binary.
 
 - Register `ollama` as an OpenAI-compatible provider at `<host>/v1` whenever a
   host is configured or the model is `ollama/<tag>`.
-- When `--model` is absent and a configured model exists, default to
-  `ollama/<model>` (and ensure that tag exists in the provider catalog).
+- A bare launch must keep the normal default model
+  (`deepseek/deepseek-flash` unless a workspace config or `--model` says
+  otherwise). The presence of `ollama.json`, including its `model` key, must
+  not change it.
+- Only an explicit Ollama selection (`--model ollama/<tag>` or a workspace
+  config naming it) uses the configured Ollama host/model. The standards `ortq`
+  wrapper passes `--model` explicitly.
 - HTTP only: never require or invoke the `ollama` binary.
 - On connection failure print the resolved URL, the config file consulted, and
   the exact reason.
-- Unit tests for resolver precedence; integration test against a local stub HTTP
-  server serving `/api/tags`, `/v1/models`, and a chat completion with no
-  `ollama` on `PATH`.
+- Unit tests for resolver precedence plus a regression test that a configured
+  `{ "host": ..., "model": "qwen3:30b" }` does not change the bare-run default;
+  integration test against a local stub HTTP server serving `/api/tags`,
+  `/v1/models`, and a chat completion with no `ollama` on `PATH`.
 
 ## Implementation
 
@@ -48,12 +57,14 @@ binary.
   `probe`, `connection_failure_message`, and `debug ollama`.
 - Provider bootstrap applies the resolved base URL to every Ollama model and
   injects a configured non-default tag into the catalog.
-- CLI resolves once before any server child is spawned, exports `OLLAMA_HOST`
-  and the default `OPENCODE_TUI_MODEL`, and probes when explicitly configured.
-- Server `effective_provider_setup` uses the resolved host/model and reports the
-  actual source.
-- Tests: resolver precedence unit tests plus `tests/ollama_remote.rs` against a
-  stub HTTP server.
+- CLI resolves once before any server child is spawned, exports only
+  `OLLAMA_HOST`, and probes when explicitly configured. It never exports
+  `OPENCODE_TUI_MODEL` from `ollama.json`.
+- Server `effective_provider_setup` never derives a default model from the
+  Ollama config file; the model comes from `OPENCODE_TUI_MODEL`, workspace
+  config, or the product default.
+- Tests: resolver precedence unit tests, a bare-run default regression test in
+  `opencode-cli`, plus `tests/ollama_remote.rs` against a stub HTTP server.
 
 ## Evidence
 

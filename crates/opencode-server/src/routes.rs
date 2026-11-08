@@ -8377,7 +8377,6 @@ async fn effective_provider_setup(
     config: &AppConfig,
     model_source: Option<&str>,
 ) -> ProviderSetupInfo {
-    let ollama_resolution = opencode_provider::ollama::resolve(None);
     let (effective_provider, effective_model, selection_source) = {
         let providers = state.providers.read().unwrap();
         let resolve_from_model = |model: &str| providers.parse_model_string(model);
@@ -8415,14 +8414,6 @@ async fn effective_provider_setup(
                 .unwrap_or(MODEL_SOURCE_PROJECT_CONFIG)
                 .to_string();
             (provider_id, Some(model.to_string()), source)
-        } else if let Some(model_ref) = ollama_resolution.model_ref.clone() {
-            (
-                Some(opencode_provider::ollama::OLLAMA_PROVIDER_ID.to_string()),
-                Some(model_ref),
-                ollama_resolution
-                    .model_label()
-                    .unwrap_or_else(|| "runtime default".to_string()),
-            )
         } else if let Some(ollama) = providers.get_provider("ollama").ok() {
             if ollama.get_model("qwen3:30b").is_some() {
                 (
