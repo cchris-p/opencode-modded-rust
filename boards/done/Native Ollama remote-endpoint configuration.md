@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "docs/provider-setup.md"
-status: "qa"
+status: "done"
 created: "2026-11-08"
 updated: "2026-11-08"
 ---
@@ -70,6 +70,16 @@ binary.
 - Known unrelated workspace failures at this commit: `opencode-core`
   architecture-layer tests (`opencode-oco` uncategorized, pre-existing) and
   two `opencode-tui` prompt env-lock tests that pass when run serially.
+
+## Closeout
+
+- Delivered directly on `development` as `b1b173f` (no PR branch was created;
+  direct-commit closeout path). Branch cleanup is not applicable.
+- Owner explicitly directed completion on 2026-11-08 after reviewing the test
+  and artifact evidence; promoted from `qa` to `done`.
+- Release promotion is handled separately in the `development` -> `main`
+  deploy PR, which includes this feature along with the rest of the pending
+  development range.
 
 ## Related Items
 
