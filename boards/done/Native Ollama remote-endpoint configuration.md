@@ -101,6 +101,15 @@ to the default for a bare `ort`/run. That is removed:
   architecture-layer tests (`opencode-oco` uncategorized, pre-existing) and
   two `opencode-tui` prompt env-lock tests that pass when run serially.
 
+## QA
+
+- Owner QA pass recorded 2026-11-08 on the `v0.1.0` fleet build (`eeb608f`,
+  contains `c59ad7e`): bare `ort` keeps `deepseek/deepseek-flash`; explicit
+  `--model ollama/<tag>` still uses the configured host.
+- Automated evidence: regression test
+  `tests::ollama_config_model_is_not_a_bare_run_default` plus the
+  `opencode-cli`/`opencode-provider`/`opencode-server` suites listed above.
+
 ## Closeout
 
 - Delivered directly on `development` at `c59ad7e` (no PR branch; direct-commit
