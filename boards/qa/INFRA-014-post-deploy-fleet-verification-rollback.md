@@ -5,9 +5,9 @@ priority: "P1"
 type: "feature"
 area: "INFRA"
 spec: "invariants/release-deployment.md"
-status: "todo"
+status: "qa"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
 ---
 
 # Verify Every Fleet Deployment And Roll Back On Failure
@@ -81,3 +81,21 @@ bad machine does not leave the fleet in a mixed, silent state.
 - `INFRA-008` portable query bundle and `debug scopemux-queries`.
 - `INFRA-012` automatic fleet deploy.
 - `INFRA-015` invariant and runbook.
+
+## Implementation (2026-11-08)
+
+Implemented in `~/standards` (commit `d34ed93` on `development`):
+
+- `utilities/ort-verify`: read-only. Checks the installed revision (`bin/current`),
+  `opencode-modded-rust version`, and `debug scopemux-queries` resolving
+  `rust/docstrings.scm`. Emits human or tab-separated output; non-zero on failure.
+- Integrated into `utilities/standards-deploy-ort`: verifies the canary before fan-out,
+  verifies every active machine after install, rolls back failed machines to their previous
+  revision, and records a per-machine report (TSV).
+
+Local check on `matrillobase1`: `ort-verify` correctly fails the currently installed
+pre-INFRA-008 binary (no `debug scopemux-queries`), which is expected until the first release
+with the embedded query set is deployed.
+
+Remaining QA gate: run the verifier against the fleet after the first v0.1.0 deploy and
+confirm every active machine passes.

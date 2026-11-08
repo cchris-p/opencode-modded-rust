@@ -1,33 +1,40 @@
-# Where We Left Off - 2026-11-08
+# Where We Left Off - 2026-11-08 (H-019 in progress)
 
-## Done
+## H-019 Main-Release Fleet Deployment Program
 
-`H-020` (persistent workspace map prerequisite program) and `H-018` (remaining ScopeMux
-program) are **complete**. All steps are merged into `development` with QA evidence:
+Merged into `development`:
 
-- H-020: `SCOPE-018` contracts -> `SCOPE-016` safe engine -> `SCOPE-017`
-  supervisor/watcher -> `SCOPE-019` provider/tool integration.
-- H-018: `SCOPE-003`, `SCOPE-012`, `SCOPE-013`, `SCOPE-014`, `SCOPE-004`, `SCOPE-010`,
-  `SCOPE-006`, `SCOPE-009`.
+- `INFRA-015` - `invariants/release-deployment.md` + `docs/release-deployment.md` runbook,
+  AGENTS/README pointers.
+- `INFRA-009` - `.github/workflows/ci.yml` (fmt/check/clippy/test/native + portable query
+  smoke); repaired two stale architecture-guard tests. Card in `qa`.
+- `INFRA-011` - `.github/workflows/release.yml` immutable `v<version>` release + manifest.
+  Card in `qa`.
+- `INFRA-010` - `docs/main-ruleset.json`, `docs/main-protection.md`,
+  `.github/workflows/main-gate.yml` (`release-source`). Ruleset `main-release-only`
+  (id `26794977`) applied to `main` with the OpenBao classic `GH_TOKEN`. Card in `qa`.
 
-PRs: #163, #164, #166, #167, #168, #169 (all targeted `development`; branches deleted).
-The four prerequisite cards, plus `SCOPE-006` and `SCOPE-009`, are in `done` with QA
-sections on the cards.
+Implemented in `~/standards` (commit `d34ed93`):
 
-Final merged verification: native scopemux 38 passed; non-native types 9, session 177
-(+2, +11), scopemux 3; grep 5; fmt clean; clippy exit 0 (pre-existing warnings only).
-Provider QA against the LAN Ollama (`qwen3:30b`): `provider=scopemux
-representation=Search candidates=5` (PASS).
+- `INFRA-013` stable ORT channel (stable default, preview opt-in) - card in `qa`.
+- `INFRA-014` `utilities/ort-verify` + verification integrated in the deploy driver - `qa`.
+- `INFRA-012` `utilities/standards-deploy-ort` (canary, verify, rollback, inactive report,
+  serialized) - card in `doing`.
 
-## Constraints Still In Force
+## Remaining
 
-- Future-proofing remains on hold: do not touch `FUTURE-PROOFING-*` or `DECISION-*`.
-- Do not start `SCOPE-007`, `SCOPE-008`, or `SCOPE-011`.
-- The map is evidence-only; the runtime keeps task stage/verification/review/completion
-  authority. The generic provider remains the default/fallback. Qwen-only activation is
-  unchanged.
+1. Release PR `development -> main` for `v0.1.0`. The ruleset requires 1 approving review and
+   GitHub forbids self-approval: approve from `cchrispivy` (or record a reviewed exception).
+2. After the release publishes, run on `matrillobase1`:
+   `~/standards/utilities/standards-deploy-ort --rev v0.1.0` (dry-run first).
+3. Confirm every active machine passes `ort-verify`; `webappssub2` is `disabled` and is
+   reported/skipped.
+4. Wire a release-triggered control-plane job on `matrillobase1` (systemd unit/timer or a
+   self-hosted runner). Hosted runners must never receive fleet credentials.
 
-## Next Work
+## Known Issues
 
-No remaining steps in this program. Independent work: `H-019` main-release fleet
-deployment program and `INFRA-008` portable ScopeMux query bundle.
+- `native (macos-14)` CI fails at ~0s: the macOS runner is unavailable in this repo
+  (pre-existing `native-artifacts` failure). Linux is authoritative for now.
+- `git push --dry-run` does not evaluate the main ruleset, so the live direct-push rejection
+  is verified during the next release attempt (or by a ruleset test).

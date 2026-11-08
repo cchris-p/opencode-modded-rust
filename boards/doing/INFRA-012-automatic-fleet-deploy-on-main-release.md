@@ -5,9 +5,10 @@ priority: "P1"
 type: "feature"
 area: "INFRA"
 spec: "invariants/release-deployment.md"
-status: "todo"
+status: "doing"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
+attention: "First real fleet deploy + control-plane trigger remain. Run standards-deploy-ort --rev v0.1.0 on matrillobase1 after the v0.1.0 release publishes; wiring a release-triggered systemd job needs owner setup."
 ---
 
 # Automatically Deploy Every Main Release To All Registered Machines
@@ -104,3 +105,21 @@ step rather than weakening key handling.
 - `INFRA-013` stable channel.
 - `INFRA-014` verification and rollback.
 - `INFRA-015` invariant and runbook.
+
+## Implementation (2026-11-08)
+
+Implemented the deploy driver in `~/standards` (commit `d34ed93` on `development`):
+
+- `utilities/standards-deploy-ort --rev <sha>`: reads `standards-machines`, filters with
+  `standards-machine-status` (active only), reports inactive machines with their state,
+  deploys a canary first, verifies it, then fans out serially. Any failure rolls back that
+  machine to its previous revision and fails the deploy. Uses `flock` to refuse overlapping
+  deploys. Supports `--dry-run` and `--no-rollback`; writes a TSV report.
+- Control plane: run on `matrillobase1` (SSH mesh + OpenBao). GitHub-hosted runners never
+  receive fleet credentials, so the release→deploy trigger must be a release-triggered job on
+  that host (systemd timer/unit or a self-hosted runner), not the hosted release workflow.
+- Dry-run validated against the fleet: all active machines enumerated; `webappssub2`
+  reported `disabled`; previous revisions captured.
+
+Remaining: the release-triggered control-plane hook (systemd unit on `matrillobase1`), and
+the first real deploy of `v0.1.0` with per-machine verification.
