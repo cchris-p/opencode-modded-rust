@@ -5,11 +5,10 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/workspace-intelligence.md"
-status: "todo"
+status: "doing"
 created: "2026-10-24"
-updated: "2026-11-06"
+updated: "2026-11-08"
 predecessor: "SCOPE-017"
-attention: "Deferred until SCOPE-017 (supervisor/watcher) and SCOPE-019 (integration) provide real freshness measurement; see H-020."
 ---
 
 # Define map freshness and staleness SLOs
