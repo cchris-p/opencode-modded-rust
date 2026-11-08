@@ -128,7 +128,8 @@ Remaining QA gates before `done`:
 - Direct-push rejection: GitHub `git push --dry-run` does not evaluate the ruleset, so the
   live rejection is verified by the owner during the next release attempt (or by a ruleset
   test). The ruleset config itself is active.
-- **Release review:** the ruleset requires 1 approving review and GitHub forbids
-  self-approval. The only other collaborator is `cchrispivy` (write), so the release PR must
-  be approved from that account (or the owner explicitly records a reviewed exception).
+- **Release review:** the owner removed the human approval requirement on 2026-11-08
+  (`required_approving_review_count: 0`). The ruleset still requires a PR, green required
+  checks, and conversation resolution. Re-add an approval requirement if a second reviewer
+  is available.
 - `native (macos-14)` stays advisory until the macOS runner is available.

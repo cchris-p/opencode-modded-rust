@@ -11,7 +11,7 @@ Applied 2026-11-08 as ruleset id `26794977` (`main-release-only`, enforcement `a
 target `refs/heads/main`). Source of truth: `docs/main-ruleset.json`.
 
 - block deletes and force pushes on `main`;
-- require a pull request with at least one approving review; dismiss stale approvals on new
+- require a pull request (no approving review required); dismiss stale approvals on new
   pushes; require conversation resolution;
 - require the status checks `fmt`, `check`, `clippy`, `test`, `native (ubuntu-22.04)`, and
   `release-source`;
@@ -53,7 +53,7 @@ Use for every PR from `development` to `main`:
 - [ ] `development` is green and current; the merge commit is the intended release tip.
 - [ ] Required checks are green (`fmt`, `check`, `clippy`, `test`, `native (ubuntu-22.04)`,
       `release-source`).
-- [ ] At least one approving review; conversations resolved.
+- [ ] Conversations resolved (review not required by the ruleset).
 - [ ] `[workspace.package] version` is bumped if `v<version>` already exists.
 - [ ] The owner explicitly confirmed this specific release (a bare "update main" is not
       confirmation).
@@ -62,10 +62,10 @@ Use for every PR from `development` to `main`:
 
 ## Review Requirement
 
-A release PR needs one approving review, and GitHub does not allow an author to approve their
-own PR. The other collaborator is `cchrispivy` (write); the release PR must be approved from
-that account, or the owner records an explicit reviewed exception. Do not silently reduce the
-approval count to work around this.
+The owner explicitly removed the human approval requirement (2026-11-08): the ruleset still
+requires a PR, green required checks, and conversation resolution, but no approving review.
+This keeps the release path usable for a single-owner repo. Re-add an approval requirement if
+a second reviewer is available.
 
 ## Verification
 

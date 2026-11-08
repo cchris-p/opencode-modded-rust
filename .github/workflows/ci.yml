@@ -96,7 +96,7 @@ jobs:
       # Native is off for this fast job; `opencode-cli` defaults to the native
       # provider, so it is covered by the `native` job instead of excluded here
       # silently.
-      - run: SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test --workspace --exclude opencode-cli
+      - run: SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test --workspace --exclude opencode-cli -- --test-threads=1
 
   native:
     name: native (${{ matrix.os }})
