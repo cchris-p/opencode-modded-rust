@@ -34,8 +34,8 @@ pub use engine::{
 pub use provider::ScopemuxProvider;
 #[cfg(feature = "native")]
 pub use supervisor::{
-    MapEntry, MapHandle, RegistryWorkspaceSearch, SupervisorError, WorkspaceMapRegistry,
-    DEFAULT_DEBOUNCE, DEFAULT_TTL,
+    classify_freshness, MapEntry, MapHandle, RegistryWorkspaceSearch, SupervisorError,
+    WorkspaceMapRegistry, DEFAULT_DEBOUNCE, DEFAULT_TTL, SLO_REBUILD_MS, SLO_WATCHER_LAG_MS,
 };
 
 /// Select the retrieval provider for the runtime.

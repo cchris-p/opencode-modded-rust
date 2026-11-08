@@ -186,11 +186,16 @@ fn fallback_reason(request: &RetrievalRequest) -> RetrievalFallbackReason {
     }
 }
 
-/// True when a map-backed response must fall back because the map is stale.
+/// True when a map-backed response must fall back because the map is stale or
+/// unmeasured.
 ///
 /// Freshness is measured by the supervisor; the runtime owns this policy.
-fn map_response_is_stale(response: &RetrievalResponse) -> bool {
-    response.provider == "scopemux" && response.freshness == Some(MapFreshness::Stale)
+fn map_response_needs_generic_fallback(response: &RetrievalResponse) -> bool {
+    response.provider == "scopemux"
+        && matches!(
+            response.freshness,
+            Some(MapFreshness::Stale) | Some(MapFreshness::Unknown)
+        )
 }
 
 /// Ask the provider selected for the active model for candidates.
@@ -219,7 +224,7 @@ pub async fn retrieve(
         Ok(response) => {
             // SCOPE-019: a stale map must never be presented as fresh. The
             // provider measures freshness; the runtime owns this fallback.
-            if map_response_is_stale(&response) {
+            if map_response_needs_generic_fallback(&response) {
                 tracing::debug!("scopemux map is stale; falling back to generic retrieval");
                 match GenericRepositoryProvider::new().retrieve(&request).await {
                     Ok(mut generic) => {
@@ -261,7 +266,16 @@ pub async fn retrieve(
         }
     };
 
-    response.map(apply_inclusion_threshold)
+    response.map(|mut response| {
+        // Lagging is usable but must be visible: the runtime warns, it does not
+        // fall back. Freshness thresholds live in the supervisor (`SCOPE-009`).
+        if response.provider == "scopemux" && response.freshness == Some(MapFreshness::Lagging) {
+            response
+                .provider_notes
+                .push("scopemux map lagging; results may be behind".to_string());
+        }
+        apply_inclusion_threshold(response)
+    })
 }
 
 #[cfg(test)]
@@ -486,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_scopemux_response_requests_generic_fallback() {
+    fn stale_or_unknown_scopemux_response_requests_generic_fallback() {
         let stale = RetrievalResponse {
             candidates: Vec::new(),
             provider: "scopemux".to_string(),
@@ -496,15 +510,23 @@ mod tests {
             fallback_reason: None,
             freshness: Some(MapFreshness::Stale),
         };
-        assert!(map_response_is_stale(&stale));
+        assert!(map_response_needs_generic_fallback(&stale));
+
+        let mut unknown = stale.clone();
+        unknown.freshness = Some(MapFreshness::Unknown);
+        assert!(map_response_needs_generic_fallback(&unknown));
 
         let mut fresh = stale.clone();
         fresh.freshness = Some(MapFreshness::Fresh);
-        assert!(!map_response_is_stale(&fresh));
+        assert!(!map_response_needs_generic_fallback(&fresh));
+
+        let mut lagging = stale.clone();
+        lagging.freshness = Some(MapFreshness::Lagging);
+        assert!(!map_response_needs_generic_fallback(&lagging));
 
         let mut generic = stale.clone();
         generic.provider = "generic".to_string();
-        assert!(!map_response_is_stale(&generic));
+        assert!(!map_response_needs_generic_fallback(&generic));
     }
 
     #[test]

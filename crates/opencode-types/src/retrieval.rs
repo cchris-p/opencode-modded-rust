@@ -211,6 +211,8 @@ pub enum RetrievalFallbackReason {
     NoMatches,
     /// The map-backed provider failed and the runtime fell back to generic.
     ProviderUnavailable,
+    /// The persistent map reported stale freshness; the runtime fell back.
+    StaleMap,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

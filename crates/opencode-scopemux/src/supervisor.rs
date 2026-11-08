@@ -36,6 +36,26 @@ pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(100);
 /// Default idle TTL before an unused map is evicted.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(30 * 60);
 
+/// Freshness SLO: watcher-to-apply lag at or below this is `Fresh`.
+pub const SLO_WATCHER_LAG_MS: u64 = 1_000;
+
+/// Freshness SLO: an incremental rebuild at or below this is `Fresh`.
+pub const SLO_REBUILD_MS: u64 = 500;
+
+/// Classify a completed update batch into the shared freshness vocabulary.
+///
+/// Measurement only: the runtime decides whether `Lagging` warns or `Stale`
+/// falls back. A failed update is always `Stale` and keeps the previous map.
+pub fn classify_freshness(failed: bool, watcher_lag_ms: u64, rebuild_ms: u64) -> MapFreshness {
+    if failed {
+        MapFreshness::Stale
+    } else if watcher_lag_ms > SLO_WATCHER_LAG_MS || rebuild_ms > SLO_REBUILD_MS {
+        MapFreshness::Lagging
+    } else {
+        MapFreshness::Fresh
+    }
+}
+
 /// Supervisor/worker error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupervisorError {
@@ -759,20 +779,18 @@ fn apply_file_batch(
     }
     let rebuild_duration = rebuild_started.elapsed();
 
+    let lag_ms = started.elapsed().as_millis() as u64;
+    let rebuild_ms = rebuild_duration.as_millis() as u64;
     let mut report = freshness
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let prior_re_anchor = report.re_anchor;
     let revision = report.last_revision.unwrap_or(0) + 1;
-    report.state = if failed {
-        MapFreshness::Stale
-    } else {
-        MapFreshness::Fresh
-    };
+    report.state = classify_freshness(failed, lag_ms, rebuild_ms);
     report.last_revision = Some(revision);
     report.dirty_set_size = 0;
-    report.watcher_lag_ms = Some(started.elapsed().as_millis() as u64);
-    report.last_rebuild_duration_ms = Some(rebuild_duration.as_millis() as u64);
+    report.watcher_lag_ms = Some(lag_ms);
+    report.last_rebuild_duration_ms = Some(rebuild_ms);
     report.re_anchor = prior_re_anchor;
 }
 
@@ -816,6 +834,20 @@ mod tests {
                 max_hits: 20,
             })
             .expect("search should succeed")
+    }
+
+    #[test]
+    fn freshness_classification_matches_the_slo() {
+        assert_eq!(classify_freshness(false, 0, 0), MapFreshness::Fresh);
+        assert_eq!(
+            classify_freshness(false, SLO_WATCHER_LAG_MS + 1, 0),
+            MapFreshness::Lagging
+        );
+        assert_eq!(
+            classify_freshness(false, 0, SLO_REBUILD_MS + 1),
+            MapFreshness::Lagging
+        );
+        assert_eq!(classify_freshness(true, 0, 0), MapFreshness::Stale);
     }
 
     #[test]
@@ -868,7 +900,17 @@ mod tests {
             counters.last_rebuild_incremental,
             "watcher-driven update should reuse retained entries"
         );
-        assert!(handle.freshness().last_rebuild_duration_ms.is_some());
+        let report = handle.freshness();
+        assert!(report.last_rebuild_duration_ms.is_some());
+        assert!(
+            report.watcher_lag_ms.is_some(),
+            "watcher lag must be measured"
+        );
+        assert_ne!(
+            report.state,
+            MapFreshness::Stale,
+            "successful update is not stale"
+        );
     }
 
     #[test]

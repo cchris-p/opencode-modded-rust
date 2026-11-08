@@ -239,6 +239,41 @@ DRY applies to decisions and vocabulary, not to forcing grep and map search to s
 algorithm. The map remains evidence-only; the runtime owns activation, inclusion, budgets,
 and the fresh/lagging/stale/unknown response.
 
+## Map freshness and staleness SLOs (`SCOPE-009`)
+
+Freshness is part of the capability contract. A correct stale map is worse than no map
+because it can anchor a task to code that no longer exists.
+
+States (`MapFreshness`):
+
+| State | Meaning | Runtime behavior |
+|---|---|---|
+| `fresh` | Last update succeeded within the SLO; dirty set empty | Use the map slice |
+| `lagging` | Update succeeded but exceeded the SLO, or a batch is pending | Use with a warning note; no fallback |
+| `stale` | An update failed and the previous map is retained | Fall back to generic with `fallback_reason=stale_map` |
+| `unknown` | No measurement yet / map unavailable | Fall back to generic |
+
+Measurement (`MapFreshnessReport`): last revision, dirty-set size, watcher-to-apply lag,
+last incremental rebuild duration, and the re-anchor result. Thresholds are implementation
+constants reviewed with this SLO: `SLO_WATCHER_LAG_MS = 1000` and
+`SLO_REBUILD_MS = 500`.
+
+Per-operation SLOs:
+
+| Operation | Target |
+|---|---|
+| Locate/search after an edit | `fresh` when watcher lag <= 1 s and incremental rebuild <= 500 ms; otherwise `lagging` until the next successful batch |
+| Delta after a change | Same as locate/search; the delta slice never invents nodes for a stale map |
+| Plan-node reconciliation | Stale/conflict nodes are surfaced within one update cycle and are never silently dropped; the re-anchor result is recorded |
+| Review slice | Only `fresh` results are presented as current; `lagging` is warned; `stale`/`unknown` fall back |
+
+Plan nodes whose anchors change are marked `stale` or `conflict` through
+`PlanReconciliationSignal`; the runtime decides whether to re-plan. The map never advances
+stage, verification, review, or completion.
+
+Measurement is exercised on a real workspace by the supervisor edit/unlink tests and the
+LAN-Ollama provider QA run (`provider=scopemux`, candidates from the persistent map).
+
 ## Capability ladder
 
 Each rung is independently enableable and measurable. Higher rungs are not prerequisites
