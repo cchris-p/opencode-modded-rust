@@ -5,9 +5,10 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: "invariants/release-deployment.md"
-status: "todo"
+status: "doing"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
+attention: "Admin apply is blocked: the current GH_TOKEN is a fine-grained PAT (403 on branch protection). A repo admin must apply docs/main-ruleset.json and record evidence; do not weaken the ruleset to work around it."
 ---
 
 # Protect Main And Require Green CI For Every Release Merge
@@ -83,3 +84,29 @@ authenticate as an admin. Do not weaken the protection to work around missing pe
 - `INFRA-011` automated versioned release.
 - `INFRA-012` automatic fleet deployment (depends on a trustworthy `main`).
 - `INFRA-015` invariant and runbook.
+
+## Implementation (2026-11-08)
+
+Non-admin parts landed:
+
+- `docs/main-ruleset.json` - the reproducible ruleset (no deletes/force-push, PR + 1
+  approval, conversation resolution, required checks `fmt`, `check`, `clippy`, `test`,
+  `native (ubuntu-22.04)`, `release-source`, no bypass actors).
+- `docs/main-protection.md` - rationale, apply/verify commands with a `gh api` example, the
+  manual UI fallback, and the release PR checklist.
+- `.github/workflows/main-gate.yml` - `release-source` check rejects any PR to `main` whose
+  head is not `development`.
+
+Notes:
+- `native (macos-14)` is intentionally **not** required yet because the macOS runner is
+  unavailable in this repo; requiring it would block every release. Add it once the runner
+  works.
+- The `release.yml` build jobs run after the main merge, so they gate the release/deploy,
+  not the PR.
+
+## Human/Admin Gate (open)
+
+The current `GH_TOKEN` cannot read or apply branch protection (`403 Resource not
+accessible`). A repository admin must apply `docs/main-ruleset.json`, then record evidence
+here: a rejected direct push to `main`, a blocked PR with a failing check, and a blocked PR
+from a non-`development` head. Do not weaken the ruleset to work around missing permissions.

@@ -1,0 +1,35 @@
+name: Main gate
+
+# INFRA-010: main is release-only. Every PR to main must come from development.
+# This is the enforceable part of the policy; the ruleset itself (required checks,
+# review, no direct pushes) is applied by a repository admin from
+# docs/main-ruleset.json.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  release-source:
+    name: release-source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Require development as the head branch
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.ref }}"
+          head="${{ github.event.pull_request.head.ref }}"
+          if [ "$base" != "main" ]; then
+            echo "release-source only applies to PRs targeting main (got $base)" >&2
+            exit 1
+          fi
+          if [ "$head" != "development" ]; then
+            echo "PRs to main must come from 'development' (got '$head')" >&2
+            exit 1
+          fi
+          echo "release PR source ok: development -> main"

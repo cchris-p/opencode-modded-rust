@@ -119,11 +119,12 @@ Repository ruleset for `main`:
 Re-apply example (adjust names to the actual checks):
 
 ```bash
-gh api --method PUT repos/:owner/:repo/rulesets/<id> --input main-ruleset.json
+gh api --method PUT repos/:owner/:repo/rulesets/<id> --input docs/main-ruleset.json
 ```
 
-See the repo `docs/`/`invariants/` record for the exact ruleset JSON. A direct push to
-`main` and a PR with a failing required check must both be rejected.
+See `docs/main-protection.md` and `docs/main-ruleset.json` for the exact ruleset and a
+release PR checklist. A direct push to `main`, a PR with a failing required check, and a PR
+whose head is not `development` must all be rejected.
 
 ## Human Gates Summary
 
