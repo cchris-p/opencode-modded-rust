@@ -1,7 +1,7 @@
 ---
 id: "H-018"
 title: "SCOPE-003/004/006/009/010/012/013/014 ScopeMux Remaining Program — Program Handoff"
-status: "in_progress"
+status: "complete"
 created: "2026-11-05"
 updated: "2026-11-08"
 owner: "agent-2"
@@ -549,3 +549,19 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
   scopemux 3; fmt/clippy clean.
 - **STOPPED for explicit review/merge approval.** After merge, H-018 has no remaining
   steps.
+
+## Completion — 2026-11-08
+
+All eight steps are merged into `development` with QA evidence:
+
+- `SCOPE-003`, `SCOPE-012`, `SCOPE-013`, `SCOPE-014`, `SCOPE-004`, `SCOPE-010`: done.
+- `SCOPE-018`/`SCOPE-016`/`SCOPE-017`/`SCOPE-019` (H-020 persistent map): done.
+- `SCOPE-006` (map-backed code search with grep fallback): PR #168, done.
+- `SCOPE-009` (freshness/staleness SLOs): PR #169, done.
+
+Final verification on merged `development`: native scopemux 38 passed; non-native
+types 9, session 177 (+2, +11), scopemux 3; grep 5; fmt clean; clippy exit 0
+(pre-existing warnings only). The persistent map provider QA ran against the LAN Ollama
+(`qwen3:30b`) and observed `provider=scopemux representation=Search candidates=5`.
+
+Future-proofing remains on hold; no `FUTURE-PROOFING-*`/`DECISION-*` work was touched.

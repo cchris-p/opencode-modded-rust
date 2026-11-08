@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/workspace-intelligence.md"
-status: "doing"
+status: "done"
 created: "2026-10-24"
 updated: "2026-11-08"
 predecessor: "SCOPE-017"
@@ -122,4 +122,27 @@ $ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-types -p opencode-sessio
 Finished; exit 0 (pre-existing warnings only)
 ```
 
-Status: PR open; card stays in `doing` until explicit review and merge approval.
+Status: PR merged into `development` as `ad6ab73` (2026-11-08).
+
+## QA Verification — 2026-11-08 (post-merge, development @ ad6ab73)
+
+```bash
+$ cargo clean -p opencode-scopemux
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 38 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-types -p opencode-session -p opencode-scopemux
+opencode-scopemux: 3 passed
+opencode-session:   177 passed (+ 2, + 11)
+opencode-types:     9 passed
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-types -p opencode-session -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+QA result: pass. SLO classification, stale/unknown -> generic, lagging warning, and
+re-anchor recording all pass on merged `development`.
