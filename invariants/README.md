@@ -43,6 +43,7 @@ The `invariants/` directory contains absolute truths for the final desired `open
 - `workspace-intelligence.md` defines the Workspace Intelligence Protocol role, optionality, evidence-only authority, capability ladder, profile-driven activation, subagent scoping, protocol versioning, data/egress, packaging, and evaluation.
 - `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.
 - `integration-scope.md` defines that ScopeMux integration work includes the `scopemux-core` and `scopemux-notes` development it depends on.
+- `release-deployment.md` defines how `main` becomes an immutable release and how a release reaches every active registered machine.
 - Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
 
 ## CLI invariants group

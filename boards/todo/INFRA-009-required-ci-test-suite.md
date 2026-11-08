@@ -12,6 +12,8 @@ updated: "2026-11-05"
 
 # Add A Required CI Test Suite For Development And Main
 
+See invariant: `invariants/release-deployment.md`.
+
 ## Summary
 
 The repository has only the `native-artifacts` workflow. There is no PR/push test

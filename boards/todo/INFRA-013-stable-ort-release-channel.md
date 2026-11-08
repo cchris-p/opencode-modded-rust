@@ -12,6 +12,8 @@ updated: "2026-11-05"
 
 # Make The Stable Main Release The Default ORT Channel
 
+See invariant: `invariants/release-deployment.md`.
+
 ## Summary
 
 `ort-install` and `opencode-config` currently default to the rolling `native-artifacts`

@@ -12,6 +12,8 @@ updated: "2026-11-05"
 
 # Automate A Complete Versioned Release On Every Main Merge
 
+See invariant: `invariants/release-deployment.md`.
+
 ## Summary
 
 Make a `main` merge produce a complete, immutable release with no manual build or upload

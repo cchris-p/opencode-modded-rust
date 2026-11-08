@@ -100,3 +100,13 @@
 - Install per clone with `./scripts/install-git-hooks.sh` (sets `core.hooksPath=.githooks`). Worktrees of the clone share the setting.
 - Bypass a commit with `git commit --no-verify`, or skip one hook run with `OPENCODE_SKIP_FMT_HOOK=1`.
 - Staged files that also have unstaged edits are intentionally not re-staged; the hook warns instead so unstaged work is never captured.
+
+## Release And Fleet Deployment
+
+- Canonical rules: `invariants/release-deployment.md`; operating steps: `docs/release-deployment.md`.
+- `main` is protected and release-only: it advances only through a `development -> main` release PR with green required checks and an explicit review. Never push directly to `main`.
+- Advancing `main` is a production release and always needs the owner's explicit confirmation for that specific release; a bare "update main" is not sufficient.
+- Every `main` merge produces an immutable `v<version>` release (native bundle + CLI assets + checksums + manifest). `development`/preview builds use the rolling `native-artifacts` tag and never deploy to the fleet automatically.
+- Only `main` releases deploy; every active registered machine is deployed and verified, and any failure fails the release and rolls back the affected machines. Inactive machines are reported and skipped.
+- The stable channel is the default for `ort-install`/`opencode-config`; preview is explicit opt-in (`OPENCODE_RUST_CHANNEL=preview`). Fleet credentials (mesh keys, OpenBao tokens) never reach GitHub-hosted runners.
+- Program tracking: `H-019`, `INFRA-009` (CI), `INFRA-010` (protect `main`), `INFRA-011` (release), `INFRA-012` (deploy), `INFRA-013` (channels), `INFRA-014` (verify/rollback), `INFRA-015` (invariant/runbook).
