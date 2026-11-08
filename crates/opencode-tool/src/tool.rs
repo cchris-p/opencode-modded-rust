@@ -1102,7 +1102,7 @@ mod workspace_capability_tests {
             .workspace_search
             .as_ref()
             .expect("capability should be installed")
-            .search_code(&WorkspaceSearchRequest::new("where is X", 5));
+            .search_code(&WorkspaceSearchRequest::new("/workspace", "where is X", 5));
         assert_eq!(response.freshness, MapFreshness::Fresh);
     }
 

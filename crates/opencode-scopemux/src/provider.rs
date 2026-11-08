@@ -10,7 +10,11 @@ use std::sync::Arc;
 use opencode_retrieval::{RetrievalError, RetrievalProvider};
 use opencode_types::RetrievalRequest;
 
-use crate::engine::{BlockView, MapItemView, PlanNodeInput, SearchRequest, WorkspaceEngine};
+use crate::engine::{
+    candidate_from_block, confidence_from_score, search_hit_candidate, MapItemView, PlanNodeInput,
+    SearchRequest,
+};
+use crate::supervisor::MapHandle;
 use crate::{language_for_path, workspace_supported};
 
 /// The native provider. See the module docs.
@@ -75,51 +79,33 @@ impl RetrievalProvider for ScopemuxProvider {
             .filter(|p| language_for_path(p).is_some())
             .collect();
 
-        // The engine (and its raw context) is opened, used, and dropped inside
-        // this block. It is never held across an await, so the async provider
-        // future stays Send.
-        let (candidates, plan_signals) = {
-            let mut engine = WorkspaceEngine::open(&request.workspace_root)
-                .map_err(|error| RetrievalError::Failed(error.0))?;
+        // SCOPE-019: use the persistent per-workspace map instead of creating a
+        // context per retrieval. The handle is released before the enrichment
+        // await, so the provider never blocks on the worker across an await.
+        let map = crate::shared_registry()
+            .acquire(&request.workspace_root)
+            .map_err(|error| RetrievalError::Unavailable(error.to_string()))?;
+        let freshness = map.freshness().state;
 
-            for seed in &seeds {
-                engine.add_file(seed);
-            }
-
-            if !engine.parse_all() {
-                return Err(RetrievalError::Failed("project parse failed".to_string()));
-            }
-            if !engine.resolve_references() {
-                tracing::warn!("scopemux: project_resolve_references returned false");
-            }
-            if !engine.rebuild_info_blocks() {
-                return Err(RetrievalError::Failed(
-                    "info block rebuild failed".to_string(),
-                ));
-            }
-
-            // SCOPE-003: materialize the task's projected plan nodes into the
-            // map so the delta/observability/duplicate slices can see target
-            // state. SCOPE-004: select the representation the stage asked for.
-            materialize_plan_nodes(&mut engine, request);
-            let candidates = match request.representation {
-                RetrievalRepresentation::Search => search_candidates(&engine, request, &seeds)?,
-                RetrievalRepresentation::Delta => delta_candidates(&engine, request),
-                RetrievalRepresentation::Anchors => resolve_candidates(&engine, request),
-                RetrievalRepresentation::Observability => {
-                    observability_candidates(&engine, request)
-                }
-                RetrievalRepresentation::Duplicates => duplicates_candidates(&engine),
-                RetrievalRepresentation::Impact => impact_candidates(&engine, request),
-                RetrievalRepresentation::Review => review_candidates(&engine, request),
-                RetrievalRepresentation::Reconcile => Vec::new(),
-            };
-
-            // Reconciliation evidence is always reported; the runtime decides
-            // whether to act on it. It never advances task stage or completion.
-            let plan_signals = reconcile_plan_nodes(&engine);
-            (candidates, plan_signals)
+        // SCOPE-003: materialize the task's projected plan nodes into the map so
+        // the delta/observability/duplicate slices can see target state.
+        // SCOPE-004: select the representation the stage asked for.
+        materialize_plan_nodes(&map, request);
+        let candidates = match request.representation {
+            RetrievalRepresentation::Search => search_candidates(&map, request, &seeds)?,
+            RetrievalRepresentation::Delta => delta_candidates(&map, request)?,
+            RetrievalRepresentation::Anchors => resolve_candidates(&map, request)?,
+            RetrievalRepresentation::Observability => observability_candidates(&map, request)?,
+            RetrievalRepresentation::Duplicates => duplicates_candidates(&map)?,
+            RetrievalRepresentation::Impact => impact_candidates(&map, request)?,
+            RetrievalRepresentation::Review => review_candidates(&map, request)?,
+            RetrievalRepresentation::Reconcile => Vec::new(),
         };
+
+        // Reconciliation evidence is always reported; the runtime decides
+        // whether to act on it. It never advances task stage or completion.
+        let plan_signals = reconcile_plan_nodes(&map);
+        drop(map);
 
         // SCOPE-013: optional exact-fact enrichment at the anchors the map already
         // selected. Kept outside the engine block so no core pointer is held
@@ -140,6 +126,7 @@ impl RetrievalProvider for ScopemuxProvider {
             plan_signals,
             provider_notes,
             fallback_reason,
+            freshness: Some(freshness),
         })
     }
 }
@@ -276,57 +263,32 @@ fn symbol_anchor_position(path: &str, symbol: &str) -> Option<(u32, u32)> {
 
 /// Search over the canonical InfoBlock registry (`Search` representation).
 fn search_candidates(
-    engine: &WorkspaceEngine,
+    map: &MapHandle,
     request: &RetrievalRequest,
     seeds: &[String],
 ) -> Result<Vec<opencode_types::RetrievalCandidate>, RetrievalError> {
-    use opencode_types::RetrievalConfidence;
-
-    let anchor_file = seeds.first().map(String::as_str);
-    let hits = engine
+    let anchor_file = seeds.first().cloned();
+    let hits = map
         .search(SearchRequest {
             query: request.objective.clone(),
-            anchor_file: anchor_file.map(str::to_string),
+            anchor_file,
             max_hits: SEARCH_MAX_HITS,
         })
-        .map_err(|error| RetrievalError::Failed(error.0))?;
-
-    let mut candidates = Vec::new();
-    for hit in hits {
-        // Parsed blocks carry confidence 1.0 and are exact facts; otherwise
-        // fall back to the search match type.
-        let confidence = if hit.block.confidence >= 0.99 {
-            RetrievalConfidence::Exact
-        } else if hit.name_match || hit.text_match {
-            RetrievalConfidence::High
-        } else if hit.relationship_match {
-            RetrievalConfidence::Medium
-        } else {
-            RetrievalConfidence::Low
-        };
-
-        let provenance = if hit.block.provenance.is_empty() {
-            format!("scopemux search hit (id: {})", hit.block.id)
-        } else {
-            format!("scopemux: {}", hit.block.provenance)
-        };
-
-        if let Some(candidate) =
-            block_candidate(hit.block, provenance, confidence, hit.score as f32, None)
-        {
-            candidates.push(candidate);
-        }
-    }
-
-    Ok(candidates)
+        .map_err(|error| RetrievalError::Failed(error.to_string()))?;
+    Ok(hits.into_iter().filter_map(search_hit_candidate).collect())
 }
 
 /// Delta between current (parsed) and target (planned) state (`Delta`).
 fn delta_candidates(
-    engine: &WorkspaceEngine,
+    map: &MapHandle,
     request: &RetrievalRequest,
-) -> Vec<opencode_types::RetrievalCandidate> {
-    let entries = engine.delta(request.task_id.as_deref(), stage_label(&request.stage));
+) -> Result<Vec<opencode_types::RetrievalCandidate>, RetrievalError> {
+    let entries = map
+        .delta(
+            request.task_id.clone(),
+            stage_label(&request.stage).to_string(),
+        )
+        .map_err(|error| RetrievalError::Failed(error.to_string()))?;
     let mut candidates = Vec::new();
     for entry in entries {
         let label = match entry.kind {
@@ -344,22 +306,27 @@ fn delta_candidates(
         let confidence = confidence_from_score(entry.confidence);
         if let Some(block) = entry.block {
             if let Some(candidate) =
-                block_candidate(block, provenance, confidence, entry.confidence, None)
+                candidate_from_block(block, provenance, confidence, entry.confidence, None)
             {
                 candidates.push(candidate);
             }
         }
     }
-    candidates
+    Ok(candidates)
 }
 
 /// Seed nodes and anchors resolved for a task and stage (`Anchors`).
 fn resolve_candidates(
-    engine: &WorkspaceEngine,
+    map: &MapHandle,
     request: &RetrievalRequest,
-) -> Vec<opencode_types::RetrievalCandidate> {
-    let items = engine.resolve(request.task_id.as_deref(), stage_label(&request.stage));
-    map_query_candidates(items)
+) -> Result<Vec<opencode_types::RetrievalCandidate>, RetrievalError> {
+    let items = map
+        .resolve(
+            request.task_id.clone(),
+            stage_label(&request.stage).to_string(),
+        )
+        .map_err(|error| RetrievalError::Failed(error.to_string()))?;
+    Ok(map_query_candidates(items))
 }
 
 /// Observability blocks attached to anchored symbols (`Observability`).
@@ -368,9 +335,9 @@ fn resolve_candidates(
 /// symbols of its plan nodes, so a review slice can resolve the symbol a task
 /// intends to touch to its observability points and covering tests.
 fn observability_candidates(
-    engine: &WorkspaceEngine,
+    map: &MapHandle,
     request: &RetrievalRequest,
-) -> Vec<opencode_types::RetrievalCandidate> {
+) -> Result<Vec<opencode_types::RetrievalCandidate>, RetrievalError> {
     let mut symbols = request.seed_symbols.clone();
     for draft in &request.plan_nodes {
         if let Some(symbol) = &draft.projected_symbol {
@@ -382,41 +349,48 @@ fn observability_candidates(
 
     let mut candidates = Vec::new();
     for symbol in &symbols {
-        candidates.extend(map_query_candidates(engine.observability(symbol)));
+        let items = map
+            .observability(symbol.clone())
+            .map_err(|error| RetrievalError::Failed(error.to_string()))?;
+        candidates.extend(map_query_candidates(items));
     }
-    candidates
+    Ok(candidates)
 }
 
 /// Duplicate/refactor-opportunity clusters (`Duplicates`).
-///
-/// Detection is scoped to the whole parsed project rather than one seed file,
-/// because a duplicate is only visible across files. The provider only parses
-/// the request's seeds, so this stays bounded.
-fn duplicates_candidates(engine: &WorkspaceEngine) -> Vec<opencode_types::RetrievalCandidate> {
-    map_query_candidates(engine.duplicates(None))
+fn duplicates_candidates(
+    map: &MapHandle,
+) -> Result<Vec<opencode_types::RetrievalCandidate>, RetrievalError> {
+    let items = map
+        .duplicates(None)
+        .map_err(|error| RetrievalError::Failed(error.to_string()))?;
+    Ok(map_query_candidates(items))
 }
 
 /// Impact of changed files: their blocks plus anchored plans (`Impact`).
 fn impact_candidates(
-    engine: &WorkspaceEngine,
+    map: &MapHandle,
     request: &RetrievalRequest,
-) -> Vec<opencode_types::RetrievalCandidate> {
+) -> Result<Vec<opencode_types::RetrievalCandidate>, RetrievalError> {
     let files: Vec<String> = request
         .changed_files
         .iter()
         .map(|p| p.strip_prefix("file://").unwrap_or(p).to_string())
         .collect();
-    map_query_candidates(engine.change_impact(&files))
+    let items = map
+        .change_impact(files)
+        .map_err(|error| RetrievalError::Failed(error.to_string()))?;
+    Ok(map_query_candidates(items))
 }
 
 /// Composed review slice: delta, then duplicates and observability (`Review`).
 fn review_candidates(
-    engine: &WorkspaceEngine,
+    map: &MapHandle,
     request: &RetrievalRequest,
-) -> Vec<opencode_types::RetrievalCandidate> {
-    let mut candidates = delta_candidates(engine, request);
-    candidates.extend(duplicates_candidates(engine));
-    candidates.extend(observability_candidates(engine, request));
+) -> Result<Vec<opencode_types::RetrievalCandidate>, RetrievalError> {
+    let mut candidates = delta_candidates(map, request)?;
+    candidates.extend(duplicates_candidates(map)?);
+    candidates.extend(observability_candidates(map, request)?);
 
     // Keep the first occurrence of each (path, symbol, provenance) triple so a
     // node reached by more than one slice is not duplicated.
@@ -428,7 +402,7 @@ fn review_candidates(
             candidate.provenance.clone(),
         ))
     });
-    candidates
+    Ok(candidates)
 }
 
 /// Convert map query items into candidates.
@@ -451,7 +425,7 @@ fn map_query_candidates(items: Vec<MapItemView>) -> Vec<opencode_types::Retrieva
         };
         let confidence = confidence_from_score(item.confidence);
         if let Some(block) = item.block {
-            if let Some(candidate) = block_candidate(
+            if let Some(candidate) = candidate_from_block(
                 block,
                 provenance,
                 confidence,
@@ -463,71 +437,6 @@ fn map_query_candidates(items: Vec<MapItemView>) -> Vec<opencode_types::Retrieva
         }
     }
     candidates
-}
-
-/// Build a candidate from a canonical InfoBlock.
-///
-/// Kind is derived from the stable id scheme (`sym:`/`file:`) unless the caller
-/// knows the map slice implies a specific kind (`Observability`,
-/// `RefactorOpportunity`).
-fn block_candidate(
-    block: BlockView,
-    provenance: String,
-    confidence: opencode_types::RetrievalConfidence,
-    score: f32,
-    kind_override: Option<opencode_types::RetrievalCandidateKind>,
-) -> Option<opencode_types::RetrievalCandidate> {
-    use opencode_types::{
-        PlanLifecycle, RetrievalCandidate, RetrievalCandidateKind, RetrievalOrigin,
-    };
-
-    let kind = kind_override.unwrap_or_else(|| {
-        if block.id.starts_with("sym:") {
-            RetrievalCandidateKind::Symbol
-        } else if block.id.starts_with("file:") {
-            RetrievalCandidateKind::File
-        } else {
-            RetrievalCandidateKind::Snippet
-        }
-    });
-    let symbol = if !block.qualified_name.is_empty() {
-        Some(block.qualified_name.clone())
-    } else if !block.name.is_empty() {
-        Some(block.name.clone())
-    } else {
-        None
-    };
-
-    Some(RetrievalCandidate {
-        kind,
-        path: block.file_path,
-        symbol,
-        block_id: if block.id.is_empty() {
-            None
-        } else {
-            Some(block.id)
-        },
-        snippet: None,
-        provenance,
-        confidence,
-        score,
-        estimated_tokens: Some(block.estimated_tokens),
-        origin: Some(RetrievalOrigin::from_ffi(block.origin)),
-        lifecycle: Some(PlanLifecycle::from_ffi(block.lifecycle)),
-    })
-}
-
-fn confidence_from_score(value: f32) -> opencode_types::RetrievalConfidence {
-    use opencode_types::RetrievalConfidence;
-    if value >= 0.99 {
-        RetrievalConfidence::Exact
-    } else if value >= 0.85 {
-        RetrievalConfidence::High
-    } else if value >= 0.6 {
-        RetrievalConfidence::Medium
-    } else {
-        RetrievalConfidence::Low
-    }
 }
 
 /// Runtime stage label recorded on map requests (not interpreted by the core).
@@ -544,9 +453,9 @@ fn stage_label(stage: &opencode_types::TaskStage) -> &'static str {
     }
 }
 
-/// Materialize projected plan nodes into the map. Best-effort: a malformed
-/// draft is skipped rather than failing retrieval.
-fn materialize_plan_nodes(engine: &mut WorkspaceEngine, request: &RetrievalRequest) {
+/// Materialize projected plan nodes into the persistent map. Best-effort: a
+/// malformed draft is skipped rather than failing retrieval.
+fn materialize_plan_nodes(map: &MapHandle, request: &RetrievalRequest) {
     use opencode_types::stage_lifecycle;
 
     if request.plan_nodes.is_empty() {
@@ -573,17 +482,17 @@ fn materialize_plan_nodes(engine: &mut WorkspaceEngine, request: &RetrievalReque
             lifecycle,
             anchors: draft.anchors.clone(),
         };
-        engine.materialize_plan_node(&task_id, &input);
+        let _ = map.materialize_plan_node(task_id.clone(), input);
     }
 }
 
 /// Reconcile materialized plan nodes against parsed state and report evidence.
 /// The runtime decides whether to act; this never advances stage or completion.
-fn reconcile_plan_nodes(engine: &WorkspaceEngine) -> Vec<opencode_types::PlanReconciliationSignal> {
+fn reconcile_plan_nodes(map: &MapHandle) -> Vec<opencode_types::PlanReconciliationSignal> {
     use opencode_types::{PlanLifecycle, PlanReconciliationSignal};
 
-    engine
-        .reconcile_plan_nodes()
+    map.reconcile_plan_nodes()
+        .unwrap_or_default()
         .into_iter()
         .map(|entry| PlanReconciliationSignal {
             plan_node_id: entry.plan_node_id,
@@ -1020,7 +929,7 @@ mod tests {
 
     #[cfg(feature = "native")]
     #[tokio::test]
-    async fn native_search_is_scoped_to_seeded_files_without_a_persistent_registry() {
+    async fn native_search_uses_the_persistent_whole_workspace_registry() {
         use opencode_retrieval::RetrievalProvider;
 
         let _guard = native_test_lock();
@@ -1029,8 +938,8 @@ mod tests {
         std::fs::write(dir.path().join("a.c"), "int alpha(void) { return 1; }\n").unwrap();
         std::fs::write(dir.path().join("b.c"), "int beta(void) { return 2; }\n").unwrap();
 
-        // The provider only adds explicit seeds to the registry; `b.c` is on
-        // disk but not in the request, so it is invisible to the search.
+        // The provider now queries the persistent whole-workspace map, so a
+        // file on disk is visible even when it is not an explicit seed.
         let mut req = request(&dir.path().to_string_lossy(), vec!["a.c"]);
         req.objective = "beta".to_string();
         let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
@@ -1038,23 +947,18 @@ mod tests {
             response
                 .candidates
                 .iter()
-                .all(|candidate| !candidate.path.ends_with("b.c")),
-            "an unseeded file must not appear in the map registry: {:?}",
+                .any(|candidate| candidate.path.ends_with("b.c")),
+            "the persistent map must include unseeded workspace files: {:?}",
             response.candidates
         );
 
-        // Seeding the file makes its symbols visible, confirming the registry is
-        // per-request rather than a persistent whole-workspace index.
-        let mut req = request(&dir.path().to_string_lossy(), vec!["a.c", "b.c"]);
-        req.objective = "beta".to_string();
-        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+        // Repeated retrieval reuses the same map entry (no per-call context).
+        let root = dir.path().to_string_lossy().to_string();
+        let first = crate::shared_registry().acquire(&root).unwrap();
+        let second = crate::shared_registry().acquire(&root).unwrap();
         assert!(
-            response
-                .candidates
-                .iter()
-                .any(|candidate| candidate.path.ends_with("b.c")),
-            "a seeded file should be searchable: {:?}",
-            response.candidates
+            first.is_same_map(&second),
+            "provider retrieval must reuse one persistent map per workspace"
         );
     }
 

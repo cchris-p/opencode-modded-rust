@@ -21,13 +21,14 @@ use std::time::{Duration, Instant};
 
 use opencode_types::workspace::{
     is_code_path, is_excluded_dir, path_has_excluded_dir, MapFreshness, MapFreshnessReport,
-    ReAnchorResult,
+    ReAnchorResult, WorkspaceSearch, WorkspaceSearchRequest, WorkspaceSearchResponse,
 };
+use opencode_types::RetrievalFallbackReason;
 use opencode_watcher::{FileEvent, FileWatcher, WatcherConfig, WatcherEvent};
 
 use crate::engine::{
-    DeltaEntryView, EngineCounters, MapItemView, ReconcileView, SearchHitView, SearchRequest,
-    WorkspaceEngine,
+    search_hit_candidate, DeltaEntryView, EngineCounters, MapItemView, PlanNodeInput,
+    ReconcileView, SearchHitView, SearchRequest, WorkspaceEngine,
 };
 
 /// Default debounce window for coalescing watcher events.
@@ -103,6 +104,15 @@ impl MapEntry {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .re_anchor = Some(result);
+    }
+
+    /// Materialize one projected plan node into the persistent map.
+    pub fn materialize_plan_node(
+        &self,
+        task_id: String,
+        input: PlanNodeInput,
+    ) -> Result<(), SupervisorError> {
+        self.with_engine(move |engine| engine.materialize_plan_node(&task_id, &input))
     }
 
     /// Run a closure against the worker-owned engine.
@@ -251,6 +261,14 @@ impl MapHandle {
 
     pub fn record_re_anchor(&self, result: ReAnchorResult) {
         self.entry.record_re_anchor(result);
+    }
+
+    pub fn materialize_plan_node(
+        &self,
+        task_id: String,
+        input: PlanNodeInput,
+    ) -> Result<(), SupervisorError> {
+        self.entry.materialize_plan_node(task_id, input)
     }
 
     /// True when both handles point at the same worker-owned map.
@@ -443,6 +461,56 @@ impl WorkspaceMapRegistry {
 impl Drop for WorkspaceMapRegistry {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// `WorkspaceSearch` capability backed by the shared registry.
+///
+/// The tool receives this through `ToolContext`; it only sees the neutral trait
+/// and never FFI, model strings, or the registry itself.
+pub struct RegistryWorkspaceSearch {
+    registry: Arc<WorkspaceMapRegistry>,
+}
+
+impl RegistryWorkspaceSearch {
+    pub fn new(registry: Arc<WorkspaceMapRegistry>) -> Self {
+        Self { registry }
+    }
+}
+
+impl WorkspaceSearch for RegistryWorkspaceSearch {
+    fn search_code(&self, request: &WorkspaceSearchRequest) -> WorkspaceSearchResponse {
+        let Ok(map) = self.registry.acquire(&request.workspace_root) else {
+            return WorkspaceSearchResponse {
+                candidates: Vec::new(),
+                freshness: MapFreshness::Unknown,
+                fallback_reason: Some(RetrievalFallbackReason::ProviderUnavailable),
+            };
+        };
+        let freshness = map.freshness().state;
+        match map.search(SearchRequest {
+            query: request.query.clone(),
+            anchor_file: None,
+            max_hits: request.max_results,
+        }) {
+            Ok(hits) => {
+                let candidates: Vec<_> =
+                    hits.into_iter().filter_map(search_hit_candidate).collect();
+                let fallback_reason = candidates
+                    .is_empty()
+                    .then_some(RetrievalFallbackReason::NoMatches);
+                WorkspaceSearchResponse {
+                    candidates,
+                    freshness,
+                    fallback_reason,
+                }
+            }
+            Err(_) => WorkspaceSearchResponse {
+                candidates: Vec::new(),
+                freshness,
+                fallback_reason: Some(RetrievalFallbackReason::ProviderUnavailable),
+            },
+        }
     }
 }
 

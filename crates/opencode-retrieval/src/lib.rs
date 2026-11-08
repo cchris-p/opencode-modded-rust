@@ -220,6 +220,7 @@ impl RetrievalProvider for GenericRepositoryProvider {
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
             fallback_reason,
+            freshness: None,
         })
     }
 }

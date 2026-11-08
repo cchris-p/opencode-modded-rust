@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use opencode_retrieval::{ExactFactProvider, GenericRepositoryProvider, RetrievalProvider};
 use opencode_types::{
-    stage_retrieval, RetrievalConfidence, RetrievalFallbackReason, RetrievalRepresentation,
-    RetrievalRequest, RetrievalResponse, TaskStage,
+    stage_retrieval, MapFreshness, RetrievalConfidence, RetrievalFallbackReason,
+    RetrievalRepresentation, RetrievalRequest, RetrievalResponse, TaskStage,
 };
 
 use crate::prompt::ModelRef;
@@ -186,6 +186,13 @@ fn fallback_reason(request: &RetrievalRequest) -> RetrievalFallbackReason {
     }
 }
 
+/// True when a map-backed response must fall back because the map is stale.
+///
+/// Freshness is measured by the supervisor; the runtime owns this policy.
+fn map_response_is_stale(response: &RetrievalResponse) -> bool {
+    response.provider == "scopemux" && response.freshness == Some(MapFreshness::Stale)
+}
+
 /// Ask the provider selected for the active model for candidates.
 ///
 /// The scopemux provider is scoped to the local Qwen-via-Ollama model; every
@@ -209,7 +216,29 @@ pub async fn retrieve(
         exact_facts,
     );
     let response = match provider.retrieve(&request).await {
-        Ok(response) => Some(response),
+        Ok(response) => {
+            // SCOPE-019: a stale map must never be presented as fresh. The
+            // provider measures freshness; the runtime owns this fallback.
+            if map_response_is_stale(&response) {
+                tracing::debug!("scopemux map is stale; falling back to generic retrieval");
+                match GenericRepositoryProvider::new().retrieve(&request).await {
+                    Ok(mut generic) => {
+                        generic.fallback_reason =
+                            Some(RetrievalFallbackReason::ProviderUnavailable);
+                        generic
+                            .provider_notes
+                            .push("scopemux map stale; generic fallback".to_string());
+                        Some(generic)
+                    }
+                    Err(error) => {
+                        tracing::warn!("generic retrieval provider failed: {error}");
+                        None
+                    }
+                }
+            } else {
+                Some(response)
+            }
+        }
         Err(error) => {
             if provider.name() == "generic" {
                 tracing::warn!("generic retrieval provider failed: {error}");
@@ -309,6 +338,7 @@ mod tests {
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
             fallback_reason: None,
+            freshness: None,
         };
 
         let filtered = apply_inclusion_threshold(response);
@@ -330,6 +360,7 @@ mod tests {
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
             fallback_reason: None,
+            freshness: None,
         };
 
         let filtered = apply_inclusion_threshold(response);
@@ -423,6 +454,7 @@ mod tests {
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
             fallback_reason: None,
+            freshness: None,
         };
 
         let reminder =
@@ -447,9 +479,32 @@ mod tests {
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
             fallback_reason: None,
+            freshness: None,
         };
 
         assert!(retrieval_context_reminder(&response, 400).is_none());
+    }
+
+    #[test]
+    fn stale_scopemux_response_requests_generic_fallback() {
+        let stale = RetrievalResponse {
+            candidates: Vec::new(),
+            provider: "scopemux".to_string(),
+            representation: RetrievalRepresentation::Search,
+            plan_signals: Vec::new(),
+            provider_notes: Vec::new(),
+            fallback_reason: None,
+            freshness: Some(MapFreshness::Stale),
+        };
+        assert!(map_response_is_stale(&stale));
+
+        let mut fresh = stale.clone();
+        fresh.freshness = Some(MapFreshness::Fresh);
+        assert!(!map_response_is_stale(&fresh));
+
+        let mut generic = stale.clone();
+        generic.provider = "generic".to_string();
+        assert!(!map_response_is_stale(&generic));
     }
 
     #[test]

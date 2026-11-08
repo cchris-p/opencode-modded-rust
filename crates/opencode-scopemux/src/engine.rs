@@ -141,6 +141,92 @@ pub struct PlanNodeInput {
     pub anchors: Vec<String>,
 }
 
+/// Map a score to the shared confidence vocabulary.
+pub fn confidence_from_score(value: f32) -> opencode_types::RetrievalConfidence {
+    use opencode_types::RetrievalConfidence;
+    if value >= 0.99 {
+        RetrievalConfidence::Exact
+    } else if value >= 0.85 {
+        RetrievalConfidence::High
+    } else if value >= 0.6 {
+        RetrievalConfidence::Medium
+    } else {
+        RetrievalConfidence::Low
+    }
+}
+
+/// Build one shared evidence candidate from a canonical InfoBlock.
+///
+/// This is the only block-to-candidate mapping; the provider and the tool
+/// capability both use it so the evidence shape does not drift (`SCOPE-018`).
+pub fn candidate_from_block(
+    block: BlockView,
+    provenance: String,
+    confidence: opencode_types::RetrievalConfidence,
+    score: f32,
+    kind_override: Option<opencode_types::RetrievalCandidateKind>,
+) -> Option<opencode_types::RetrievalCandidate> {
+    use opencode_types::{
+        PlanLifecycle, RetrievalCandidate, RetrievalCandidateKind, RetrievalOrigin,
+    };
+
+    let kind = kind_override.unwrap_or_else(|| {
+        if block.id.starts_with("sym:") {
+            RetrievalCandidateKind::Symbol
+        } else if block.id.starts_with("file:") {
+            RetrievalCandidateKind::File
+        } else {
+            RetrievalCandidateKind::Snippet
+        }
+    });
+    let symbol = if !block.qualified_name.is_empty() {
+        Some(block.qualified_name.clone())
+    } else if !block.name.is_empty() {
+        Some(block.name.clone())
+    } else {
+        None
+    };
+
+    Some(RetrievalCandidate {
+        kind,
+        path: block.file_path,
+        symbol,
+        block_id: if block.id.is_empty() {
+            None
+        } else {
+            Some(block.id)
+        },
+        snippet: None,
+        provenance,
+        confidence,
+        score,
+        estimated_tokens: Some(block.estimated_tokens),
+        origin: Some(RetrievalOrigin::from_ffi(block.origin)),
+        lifecycle: Some(PlanLifecycle::from_ffi(block.lifecycle)),
+    })
+}
+
+/// Convert one search hit into a shared evidence candidate.
+pub fn search_hit_candidate(hit: SearchHitView) -> Option<opencode_types::RetrievalCandidate> {
+    use opencode_types::RetrievalConfidence;
+
+    let confidence = if hit.block.confidence >= 0.99 {
+        RetrievalConfidence::Exact
+    } else if hit.name_match || hit.text_match {
+        RetrievalConfidence::High
+    } else if hit.relationship_match {
+        RetrievalConfidence::Medium
+    } else {
+        RetrievalConfidence::Low
+    };
+    let provenance = if hit.block.provenance.is_empty() {
+        format!("scopemux search hit (id: {})", hit.block.id)
+    } else {
+        format!("scopemux: {}", hit.block.provenance)
+    };
+    candidate_from_block(hit.block, provenance, confidence, hit.score as f32, None)
+}
+
 /// Safe owner of one `ProjectContext`.
 pub struct WorkspaceEngine {
     root: std::path::PathBuf,

@@ -228,6 +228,9 @@ pub async fn create_default_registry() -> ToolRegistry {
     registry.register(crate::bash::BashTool::new()).await;
     registry.register(crate::glob_tool::GlobTool::new()).await;
     registry.register(crate::grep_tool::GrepTool::new()).await;
+    registry
+        .register(crate::code_search_tool::WorkspaceCodeSearchTool)
+        .await;
     registry.register(crate::ls::LsTool::new()).await;
     registry.register(crate::task::TaskTool::new()).await;
     registry

@@ -231,6 +231,11 @@ pub struct RetrievalResponse {
     /// provider failure. `None` after a successful map match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_reason: Option<RetrievalFallbackReason>,
+    /// Map freshness measured by the persistent supervisor (`SCOPE-017`).
+    ///
+    /// Measurement only; the runtime owns the use/warn/fallback policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<crate::workspace::MapFreshness>,
 }
 
 impl RetrievalResponse {
@@ -242,6 +247,7 @@ impl RetrievalResponse {
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
             fallback_reason: None,
+            freshness: None,
         }
     }
 
@@ -254,6 +260,7 @@ impl RetrievalResponse {
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
             fallback_reason: Some(RetrievalFallbackReason::NoMatches),
+            freshness: None,
         }
     }
 }

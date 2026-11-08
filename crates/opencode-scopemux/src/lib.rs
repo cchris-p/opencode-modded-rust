@@ -34,7 +34,8 @@ pub use engine::{
 pub use provider::ScopemuxProvider;
 #[cfg(feature = "native")]
 pub use supervisor::{
-    MapEntry, MapHandle, SupervisorError, WorkspaceMapRegistry, DEFAULT_DEBOUNCE, DEFAULT_TTL,
+    MapEntry, MapHandle, RegistryWorkspaceSearch, SupervisorError, WorkspaceMapRegistry,
+    DEFAULT_DEBOUNCE, DEFAULT_TTL,
 };
 
 /// Select the retrieval provider for the runtime.
@@ -170,10 +171,61 @@ mod policy_tests {
         )));
     }
 
+    #[cfg(feature = "native")]
+    #[test]
+    fn workspace_search_capability_follows_the_activation_scope() {
+        assert!(workspace_search_for(Some("ollama"), Some("qwen3:30b")).is_some());
+        assert!(workspace_search_for(Some("openai"), Some("gpt-5")).is_none());
+        assert!(workspace_search_for(Some("ollama"), Some("llama3:8b")).is_none());
+        assert!(workspace_search_for(None, None).is_none());
+    }
+
     #[test]
     fn activation_is_the_qwen_only_rule() {
         assert!(model_scope_enabled(Some("ollama"), Some("qwen3:30b")));
         assert!(!model_scope_enabled(Some("ollama"), Some("llama3:8b")));
         assert!(!model_scope_enabled(None, None));
     }
+}
+
+/// Process-wide persistent map registry.
+///
+/// It owns the workers and lifecycle; it does not decide fallback or task state.
+/// The provider and the tool capability resolve maps by workspace root from it.
+#[cfg(feature = "native")]
+pub fn shared_registry() -> std::sync::Arc<WorkspaceMapRegistry> {
+    static REGISTRY: std::sync::OnceLock<std::sync::Arc<WorkspaceMapRegistry>> =
+        std::sync::OnceLock::new();
+    REGISTRY
+        .get_or_init(|| std::sync::Arc::new(WorkspaceMapRegistry::default()))
+        .clone()
+}
+
+/// Build the map-backed search capability when the active model is in scope.
+///
+/// Activation is the same single `model_scope_enabled` predicate used by the
+/// provider. The tool only receives the neutral capability; it never parses model
+/// strings.
+#[cfg(feature = "native")]
+pub fn workspace_search_for(
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+) -> Option<std::sync::Arc<dyn opencode_types::WorkspaceSearch>> {
+    if model_scope_enabled(provider_id, model_id) {
+        Some(std::sync::Arc::new(RegistryWorkspaceSearch::new(
+            shared_registry(),
+        )))
+    } else {
+        None
+    }
+}
+
+/// Non-native build: the persistent map is unavailable, so no capability is
+/// injected and the tool keeps grep/generic behavior.
+#[cfg(not(feature = "native"))]
+pub fn workspace_search_for(
+    _provider_id: Option<&str>,
+    _model_id: Option<&str>,
+) -> Option<std::sync::Arc<dyn opencode_types::WorkspaceSearch>> {
+    None
 }

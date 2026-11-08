@@ -39,18 +39,27 @@ impl Default for GrepTool {
     }
 }
 
-struct GrepMatch {
-    path: String,
-    mtime: SystemTime,
-    line_num: usize,
-    line_text: String,
+pub(crate) struct GrepMatch {
+    pub path: String,
+    pub mtime: SystemTime,
+    pub line_num: usize,
+    pub line_text: String,
 }
 
-struct ScanOutcome {
-    matches: Vec<GrepMatch>,
-    has_errors: bool,
-    files_scanned: usize,
-    budget_exhausted: bool,
+pub(crate) struct ScanOutcome {
+    pub matches: Vec<GrepMatch>,
+    pub has_errors: bool,
+    pub files_scanned: usize,
+    pub budget_exhausted: bool,
+}
+
+/// Bounded literal search used as the code-search fallback.
+///
+/// Shares the same walk, exclusions, byte/duration/file limits, and result
+/// ordering as the grep tool. Callers must run it on a blocking thread.
+pub(crate) fn scan_literal(base_dir: PathBuf, query: &str, include_hidden: bool) -> ScanOutcome {
+    let regex = Regex::new(&regex::escape(query)).expect("escaped query is a valid regex");
+    scan_blocking(base_dir, regex, None, include_hidden)
 }
 
 fn truncate_line(line: &str) -> String {
