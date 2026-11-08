@@ -5,9 +5,9 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: "README.md"
-status: "todo"
+status: "qa"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
 ---
 
 # Automate A Complete Versioned Release On Every Main Merge
@@ -89,3 +89,26 @@ and published by CI, not by a person running `scripts/package-native-artifacts.s
 - `INFRA-010` protect main.
 - `INFRA-012` consumes the release manifest.
 - `INFRA-013` stable channel.
+
+## Implementation (2026-11-08)
+
+Added `.github/workflows/release.yml`, merged as PR #173 (`c601c1f`).
+
+- Trigger: push to `main` (+ manual `workflow_dispatch` for staging). Publishing is
+  gated on `github.ref == 'refs/heads/main'`, so a dispatch on a feature/development
+  ref only builds and uploads the manifest artifact.
+- Builds the native bundle and CLI on `ubuntu-22.04` and `macos-14` using
+  `scripts/package-native-artifacts.sh`; runs the INFRA-008 clean-host query smoke and a
+  clean-HOME `version` smoke.
+- Verifies every tarball against `.sha256`, requires both CLI assets and both native
+  bundles plus `.rev` sidecars, and writes `release-manifest.json` (tag, version, commit,
+  scopemux pin, query key, per-asset sha256/platform).
+- Publishes an immutable `v<version>` GitHub release with generated notes, marked latest.
+  Fails if the tag already exists; cut a new release by bumping `[workspace.package]
+  version` in the release PR.
+- Rolling `native-artifacts` tag remains preview-only and is untouched.
+
+Remaining QA gate before `done`: the first real `main` release run (the workflow cannot run
+until it is on `main`/the default branch), and a dry-run dispatch
+(`gh workflow run release.yml -f dry_run=true`) to confirm staging + manifest without
+publishing. Deployment is `INFRA-012`.
