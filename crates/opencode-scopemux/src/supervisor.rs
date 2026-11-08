@@ -945,6 +945,90 @@ mod tests {
         assert!(search(&first_handle, "only_in_second").is_empty());
     }
 
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn code_search_tool_answers_from_the_persistent_map() {
+        use opencode_tool::code_search_tool::WorkspaceCodeSearchTool;
+        use opencode_tool::{Tool as _, ToolContext};
+
+        let _guard = native_test_lock();
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "a.rs", "pub fn locate_me() -> u32 { 1 }\n");
+        write(dir.path(), "README.md", "prose_only_token lives here\n");
+        let root = dir.path().to_string_lossy().to_string();
+
+        let registry = Arc::new(WorkspaceMapRegistry::new(
+            Duration::from_millis(20),
+            Duration::from_secs(60),
+        ));
+        // Prime the map so the capability does not race the initial build.
+        drop(registry.acquire(&root).unwrap());
+        let handle = registry.acquire(&root).unwrap();
+
+        let capability: Arc<dyn opencode_types::workspace::WorkspaceSearch> =
+            Arc::new(RegistryWorkspaceSearch::new(registry.clone()));
+        let ctx = ToolContext::new("session".into(), "message".into(), root.clone())
+            .with_workspace_search(Some(capability));
+
+        let result = WorkspaceCodeSearchTool
+            .execute(serde_json::json!({"query": "locate_me"}), ctx.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            result.metadata["backend"],
+            serde_json::json!("scopemux"),
+            "{}",
+            result.output
+        );
+        assert!(result.output.contains("a.rs"), "{}", result.output);
+        assert!(
+            result.output.contains("sym:"),
+            "block id missing: {}",
+            result.output
+        );
+
+        // The watcher updates the map after an edit; the tool sees the new symbol
+        // without a per-call filesystem walk.
+        write(
+            dir.path(),
+            "a.rs",
+            "pub fn locate_me() -> u32 { 1 }\npub fn added_after_watch() -> u32 { 2 }\n",
+        );
+        wait_until(|| {
+            handle
+                .freshness()
+                .last_revision
+                .is_some_and(|revision| revision >= 2)
+        });
+        let result = WorkspaceCodeSearchTool
+            .execute(
+                serde_json::json!({"query": "added_after_watch"}),
+                ctx.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.metadata["backend"], serde_json::json!("scopemux"));
+        assert!(
+            result.output.contains("added_after_watch"),
+            "updated symbol missing: {}",
+            result.output
+        );
+
+        // Prose mode always uses grep, never the code map.
+        let result = WorkspaceCodeSearchTool
+            .execute(
+                serde_json::json!({"query": "prose_only_token", "mode": "prose"}),
+                ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.metadata["backend"], serde_json::json!("grep"));
+        assert_eq!(
+            result.metadata["fallbackReason"],
+            serde_json::json!("prose_mode")
+        );
+    }
+
     #[test]
     fn freshness_reports_and_reanchor_are_recorded() {
         let _guard = native_test_lock();
