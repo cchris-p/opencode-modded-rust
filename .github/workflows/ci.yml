@@ -1,0 +1,182 @@
+name: CI
+
+# INFRA-009: required test suite for every PR and push to development/main.
+# Gates compilation, formatting, lint, unit/integration tests, the native
+# ScopeMux provider, and the portable query bundle (INFRA-008).
+
+on:
+  pull_request:
+    branches:
+      - development
+      - main
+  push:
+    branches:
+      - development
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  check:
+    name: check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-check-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-check-${{ runner.os }}-
+      # `SCOPEMUX_SKIP_NATIVE_BUILD=1` compiles the Rust surface without the C
+      # provider; the native job covers the real build.
+      - run: SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check --workspace --all-targets
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-clippy-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-clippy-${{ runner.os }}-
+      # The repo has not adopted `-D warnings`; clippy still gates hard errors.
+      - run: SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy --workspace --all-targets
+
+  test:
+    name: test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-test-${{ runner.os }}-
+      # Native is off for this fast job; `opencode-cli` defaults to the native
+      # provider, so it is covered by the `native` job instead of excluded here
+      # silently.
+      - run: SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test --workspace --exclude opencode-cli
+
+  native:
+    name: native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            deps: |
+              sudo add-apt-repository -y ppa:deadsnakes/ppa
+              sudo apt-get update
+              sudo apt-get install -y cmake python3.11-dev
+          - os: macos-14
+            deps: |
+              brew install cmake python@3.11
+              echo "$(brew --prefix python@3.11)/bin" >> "$GITHUB_PATH"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-native-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-native-${{ matrix.os }}-
+
+      - name: Install native build dependencies
+        run: ${{ matrix.deps }}
+
+      # scopemux-core and its grammar/pybind11 submodules are public; CI clones
+      # over anonymous HTTPS. If scopemux-core becomes private, add token auth.
+      - name: Fetch pinned scopemux-core
+        env:
+          SCOPEMUX_CORE_REPO: https://github.com/cchris-p/scopemux-core.git
+        run: bash scripts/fetch-scopemux-core.sh
+
+      - name: Build and stage the native bundle
+        run: |
+          set -euo pipefail
+          bash scripts/package-native-artifacts.sh --no-fetch --out native-dist
+          stage="$(find native-dist -maxdepth 1 -type d -name 'opencode-native-*' | head -n 1)"
+          test -n "$stage"
+          echo "SCOPEMUX_PREBUILT_DIR=$PWD/$stage" >> "$GITHUB_ENV"
+
+      - name: Native provider tests
+        run: cargo test -p opencode-scopemux --features native
+
+      - name: CLI tests against the prebuilt bundle
+        run: cargo test -p opencode-cli
+
+      - name: Build CLI (release) against the prebuilt bundle
+        run: cargo build --release -p opencode-cli
+
+      # INFRA-008: the published binary must carry its own query set and not a
+      # build-machine path.
+      - name: Portable query smoke
+        run: |
+          set -euo pipefail
+          clean_home="$(mktemp -d)"
+          clean_cwd="$(mktemp -d)"
+          binary="$GITHUB_WORKSPACE/target/release/opencode-modded-rust"
+          resolved="$( cd "$clean_cwd" && \
+            HOME="$clean_home" XDG_CACHE_HOME="$clean_home/cache" \
+            "$binary" debug scopemux-queries )"
+          test -d "$resolved"
+          test -f "$resolved/rust/docstrings.scm"
+          if strings "$binary" \
+              | grep -E '(/target/(debug|release)/build/[^[:space:]]*/out/queries|\.cache/opencode-modded-rust/native/[^[:space:]]*/queries)'; then
+            echo "published binary embeds a build-machine query path" >&2
+            exit 1
+          fi
+
+      - name: CLI version smoke on a clean HOME
+        run: |
+          set -euo pipefail
+          clean_home="$(mktemp -d)"
+          HOME="$clean_home" XDG_CACHE_HOME="$clean_home/cache" \
+            "$GITHUB_WORKSPACE/target/release/opencode-modded-rust" version
