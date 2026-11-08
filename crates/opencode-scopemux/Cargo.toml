@@ -20,6 +20,7 @@ opencode-types = { path = "../opencode-types" }
 opencode-retrieval = { path = "../opencode-retrieval" }
 opencode-watcher = { path = "../opencode-watcher" }
 async-trait = { workspace = true }
+dirs = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tree-sitter = { workspace = true, optional = true }

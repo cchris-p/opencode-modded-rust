@@ -525,6 +525,8 @@ enum DebugCommands {
         #[command(subcommand)]
         action: DebugLspCommands,
     },
+    #[command(about = "Resolve and materialize the embedded ScopeMux query set")]
+    ScopemuxQueries,
     #[command(about = "Show agent configuration details")]
     Agent {
         #[arg(value_name = "NAME")]
@@ -5687,6 +5689,10 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 println!("{}", serde_json::to_string_pretty(&symbols)?);
             }
+        },
+        DebugCommands::ScopemuxQueries => match opencode_scopemux::ensure_queries_dir() {
+            Some(dir) => println!("{}", dir.display()),
+            None => anyhow::bail!("scopemux queries are unavailable"),
         },
         DebugCommands::Agent { name, tool, params } => {
             let cwd = std::env::current_dir()?;

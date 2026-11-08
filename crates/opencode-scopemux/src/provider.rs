@@ -60,6 +60,15 @@ impl RetrievalProvider for ScopemuxProvider {
             ));
         }
 
+        // INFRA-008: `scopemux-core` reads queries from disk. Embedded queries
+        // are materialized into a per-build cache directory; a missing set is
+        // an explicit unavailability, not a silent empty map.
+        if crate::ensure_queries_dir().is_none() {
+            return Err(RetrievalError::Unavailable(
+                "scopemux_queries_missing: no usable Tree-sitter query directory".to_string(),
+            ));
+        }
+
         // Mixed-language workspaces degrade per file: supported files are parsed
         // and unsupported ones are skipped with explicit provenance rather than
         // failing the whole request.

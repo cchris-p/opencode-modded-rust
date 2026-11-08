@@ -127,6 +127,14 @@ Task commands talk to an explicit server/session target. They do not discover, s
 
 Explicit task command options such as `--server` and `--session` override this selected target for `task new`, `task send`, `task view`, and `task status`.
 
+### `opencode-modded-rust debug scopemux-queries`
+
+Resolves the Tree-sitter query directory used by the native ScopeMux provider and prints
+its path. Native builds embed the query set and materialize it under the user cache on
+first use, so the printed path works without a checkout, build tree, or native artifact
+cache. An explicit `SCMU_QUERIES_DIR` that points at a directory takes precedence; the
+command exits non-zero when no usable query set is available.
+
 ## Source entrypoint
 
 - `crates/opencode-cli/src/main.rs`

@@ -16,6 +16,9 @@ use opencode_types::RetrievalRequest;
 #[cfg(feature = "native")]
 use tree_sitter as _;
 
+mod queries;
+pub use queries::ensure_queries_dir;
+
 #[cfg(feature = "native")]
 mod engine;
 #[cfg(feature = "native")]
