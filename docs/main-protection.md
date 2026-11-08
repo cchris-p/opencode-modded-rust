@@ -5,9 +5,10 @@ the reviewable, re-appliable record of the GitHub ruleset. Applying it requires 
 admin token (or the GitHub UI); the default fine-grained `GH_TOKEN` cannot read or apply
 branch protection (`403 Resource not accessible by personal token`).
 
-## Ruleset
+## Applied Ruleset
 
-Source of truth: `docs/main-ruleset.json`.
+Applied 2026-11-08 as ruleset id `26794977` (`main-release-only`, enforcement `active`,
+target `refs/heads/main`). Source of truth: `docs/main-ruleset.json`.
 
 - block deletes and force pushes on `main`;
 - require a pull request with at least one approving review; dismiss stale approvals on new
@@ -58,6 +59,13 @@ Use for every PR from `development` to `main`:
       confirmation).
 - [ ] After merge: confirm the `Release` workflow published the `v<version>` release and its
       manifest, then confirm the fleet deploy/verification result.
+
+## Review Requirement
+
+A release PR needs one approving review, and GitHub does not allow an author to approve their
+own PR. The other collaborator is `cchrispivy` (write); the release PR must be approved from
+that account, or the owner records an explicit reviewed exception. Do not silently reduce the
+approval count to work around this.
 
 ## Verification
 

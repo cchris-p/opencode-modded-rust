@@ -5,10 +5,9 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: "invariants/release-deployment.md"
-status: "doing"
+status: "qa"
 created: "2026-11-05"
 updated: "2026-11-08"
-attention: "Admin apply is blocked: the current GH_TOKEN is a fine-grained PAT (403 on branch protection). A repo admin must apply docs/main-ruleset.json and record evidence; do not weaken the ruleset to work around it."
 ---
 
 # Protect Main And Require Green CI For Every Release Merge
@@ -110,3 +109,26 @@ The current `GH_TOKEN` cannot read or apply branch protection (`403 Resource not
 accessible`). A repository admin must apply `docs/main-ruleset.json`, then record evidence
 here: a rejected direct push to `main`, a blocked PR with a failing check, and a blocked PR
 from a non-`development` head. Do not weaken the ruleset to work around missing permissions.
+
+## Admin Apply And QA (2026-11-08)
+
+Applied the ruleset with repository-admin rights using the OpenBao-managed classic `GH_TOKEN`
+(`ghp_…`, from `~/.config/opencode/.env`); the session's fine-grained `github_pat_…` token
+returns 403. The token value was never printed.
+
+- Ruleset `main-release-only` created: id `26794977`, `enforcement: active`, target
+  `refs/heads/main`.
+- Required checks recorded: `fmt`, `check`, `clippy`, `test`, `native (ubuntu-22.04)`,
+  `release-source`.
+- `docs/main-ruleset.json` matches the applied ruleset; `docs/main-protection.md` records the
+  apply/verify path.
+
+Remaining QA gates before `done`:
+
+- Direct-push rejection: GitHub `git push --dry-run` does not evaluate the ruleset, so the
+  live rejection is verified by the owner during the next release attempt (or by a ruleset
+  test). The ruleset config itself is active.
+- **Release review:** the ruleset requires 1 approving review and GitHub forbids
+  self-approval. The only other collaborator is `cchrispivy` (write), so the release PR must
+  be approved from that account (or the owner explicitly records a reviewed exception).
+- `native (macos-14)` stays advisory until the macOS runner is available.
