@@ -190,6 +190,21 @@ decide inclusion. Repair requests carry the recorded `reopen_reason` and project
 objective/criteria plan nodes, so the `Impact` slice re-anchors the repair to the affected
 files and target state.
 
+### Persistent map wiring (`SCOPE-019`)
+
+- The retrieval provider resolves one map per workspace root from the shared
+  registry; it no longer creates a context per call. Plan materialization and
+  reconciliation run against that persistent map.
+- `RetrievalResponse.freshness` carries the supervisor's measurement. A stale
+  scopemux response falls back to the generic provider with a recorded reason;
+  absent/unavailable maps already fall back through the provider error path.
+- The runtime injects the `WorkspaceSearch` capability into `ToolContext` only on
+  the Qwen-only scope. The `code_search` tool uses it for map-backed locate and
+  falls back to bounded grep for prose, unsupported/stale/absent maps, or no
+  matches.
+- Activation remains one predicate (`model_scope_enabled`); the tool never parses
+  model strings, and the map remains evidence-only.
+
 ### Fallback
 
 The generic repository-local provider stays the default and the fallback. When `scopemux` is absent, fails, or cannot parse the workspace language, context assembly still completes. Unsupported language is an explicit provenance signal, not a silent downgrade.

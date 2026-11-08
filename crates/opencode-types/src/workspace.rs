@@ -209,6 +209,8 @@ impl Default for MapFreshnessReport {
 /// type so the tool does not define a competing result shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceSearchRequest {
+    /// Canonical workspace root the search should run against.
+    pub workspace_root: String,
     pub query: String,
     pub max_results: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -216,8 +218,13 @@ pub struct WorkspaceSearchRequest {
 }
 
 impl WorkspaceSearchRequest {
-    pub fn new(query: impl Into<String>, max_results: usize) -> Self {
+    pub fn new(
+        workspace_root: impl Into<String>,
+        query: impl Into<String>,
+        max_results: usize,
+    ) -> Self {
         Self {
+            workspace_root: workspace_root.into(),
             query: query.into(),
             max_results,
             language: None,
