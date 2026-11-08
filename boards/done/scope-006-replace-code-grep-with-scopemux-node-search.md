@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "doing"
+status: "done"
 created: "2026-10-23"
 updated: "2026-11-08"
 predecessor: "SCOPE-019"
@@ -161,5 +161,26 @@ $ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux --all-targets
 Finished; exit 0 (pre-existing warnings only)
 ```
 
-Status: PR open; card stays in `doing` until explicit review and merge approval. `SCOPE-009`
-has not started.
+Status: PR merged into `development` as `baf72c0` (2026-11-08).
+
+## QA Verification — 2026-11-08 (post-merge, development @ baf72c0)
+
+```bash
+$ cargo clean -p opencode-scopemux
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 36 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tool -p opencode-scopemux
+opencode-scopemux: 3 passed; 0 failed
+opencode-tool:    75 passed; 0 failed
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+QA result: pass. The end-to-end map-backed `code_search` proof (block id, watcher-updated
+symbol, prose -> grep) passes on merged `development`.

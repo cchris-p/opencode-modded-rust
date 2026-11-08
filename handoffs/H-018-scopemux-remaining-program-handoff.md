@@ -532,4 +532,7 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
 - The map-backed `code_search` tool shipped in `SCOPE-019`; this step adds the end-to-end
   native proof (map locate with block id, watcher-updated symbol, prose -> grep). Native
   scopemux 36 passed; non-native scopemux 3, tool 75, grep 5; fmt/clippy clean.
-- **STOPPED for explicit review/merge approval.** `SCOPE-009` (step 8) has not started.
+- PR #168 merged into `development` as `baf72c0`; branch deleted. Post-merge QA: native
+  scopemux 36, non-native scopemux 3, tool 75, fmt/clippy clean. `SCOPE-006` promoted
+  to `done`.
+- Next: `SCOPE-009` (step 8).
