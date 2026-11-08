@@ -189,6 +189,20 @@ without cloning this repo or installing a Rust toolchain.
   `OPENCODE_RUST_USE_CHECKOUT=1` on a builder to prefer a local
   `target/debug`/`target/release` binary.
 
+### Release channels and fleet deployment
+
+- **stable** (default): the latest immutable `main` release (`v<version>`).
+  `ort-install` and `opencode-config` follow it by default.
+- **preview** (opt-in): the rolling `native-artifacts` tag refreshed on
+  `development` pushes. Select with `ort-install --channel preview` or
+  `OPENCODE_RUST_CHANNEL=preview`. Preview builds never auto-deploy to the
+  fleet.
+- Only `main` releases deploy, and a release is complete only after every
+  active registered machine is installed and verified; any failure rolls back
+  the affected machines. Inactive machines are reported and skipped.
+- Policy: `invariants/release-deployment.md`. Runbook:
+  `docs/release-deployment.md`.
+
 ## Development and validation
 
 ```bash
@@ -287,6 +301,7 @@ exiting, stalling, or aborting mid-turn keeps the latest chunk for resume.
 - Tools: `docs/opencode-tool.md`
 - Provider: `docs/opencode-provider.md`
 - Config: `docs/opencode-config.md`
+- Release and fleet deployment: `docs/release-deployment.md`
 
 ## Notes
 

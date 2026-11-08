@@ -5,9 +5,9 @@ priority: "P1"
 type: "docs"
 area: "INFRA"
 spec: "invariants/release-deployment.md"
-status: "todo"
+status: "doing"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
 ---
 
 # Capture The Main-Release Fleet Deployment Invariant And Runbook
@@ -86,3 +86,19 @@ automation in `INFRA-009`..`INFRA-014` has a durable standard to conform to.
 - `INFRA-012` automatic fleet deploy.
 - `INFRA-013` stable channel.
 - `INFRA-014` verification and rollback.
+
+## Implementation (2026-11-08)
+
+- Added `invariants/release-deployment.md` with the definitions (build, release,
+  preview, deploy, active registered machine, complete), the twelve binding rules,
+  and the human/admin gates.
+- Added `docs/release-deployment.md` runbook: channels, cut a release, read the
+  manifest, deploy (canary then fan-out), verify, pause, roll back, add/disable a
+  machine, and the `main` ruleset admin steps. Manual interim steps are marked
+  where `INFRA-009`..`INFRA-014` have not landed yet.
+- Updated `AGENTS.md`, `README.md`, and `invariants/README.md` with the rule and
+  pointers.
+- Cross-referenced `invariants/release-deployment.md` from `INFRA-009`..`INFRA-014`.
+
+Remain in `doing` until `INFRA-009`..`INFRA-014` land, then refine the invariant
+and runbook to match the shipped automation and move to QA/done.

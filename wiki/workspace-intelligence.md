@@ -446,8 +446,13 @@ Tracked by `SCOPE-008`.
 - Version the native provider and the map schema independently.
 - A missing or incompatible artifact degrades to generic retrieval.
 - The source build remains a contributor path.
+- The shipped binary must be self-contained: the C core and grammars link statically, and
+  the Tree-sitter query set is embedded and materialized to a version-keyed cache at
+  runtime. It must not reference a build machine's `OUT_DIR`, checkout, or native cache.
+  A missing query set is an explicit fallback reason, not a silent empty map.
+- `debug scopemux-queries` prints the resolved query directory for packaging smoke tests.
 
-Tracked by `FUTURE-PROOFING-016`.
+Tracked by `FUTURE-PROOFING-016` and `INFRA-008`.
 
 ## Decision-layer integration
 

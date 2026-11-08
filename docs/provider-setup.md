@@ -34,10 +34,14 @@ need to probe it or export state. Precedence, high to low:
 4. `OLLAMA_HOST`
 5. `http://127.0.0.1:11434`
 
-The `ollama` provider is registered as OpenAI-compatible at `<host>/v1`. If
-`--model` is absent and a model is configured, it becomes the default
-(`ollama/<model>`), and the tag is added to the provider catalog. Ollama is
-always reached over HTTP; the `ollama` binary is never required or invoked.
+The `ollama` provider is registered as OpenAI-compatible at `<host>/v1`, and
+the configured tag is added to the provider catalog. The host and model from
+`ollama.json` are provider details, not launch defaults: a bare `ort` keeps the
+product/workspace default (`deepseek/deepseek-flash` unless config or `--model`
+says otherwise). Select an Ollama model explicitly with `--model ollama/<tag>`
+or a workspace config naming it; the standards `ortq` wrapper passes `--model`
+for you. Ollama is always reached over HTTP; the `ollama` binary is never
+required or invoked.
 
 When an endpoint is explicitly configured, startup probes `/v1/models` (falling
 back to `/api/tags`) and prints the resolved URL, the config file consulted, and

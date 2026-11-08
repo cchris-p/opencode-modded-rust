@@ -5,12 +5,14 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: "wiki/workspace-intelligence.md"
-status: "todo"
+status: "qa"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
 ---
 
 # Add A Required CI Test Suite For Development And Main
+
+See invariant: `invariants/release-deployment.md`.
 
 ## Summary
 
@@ -84,3 +86,37 @@ the portable query bundle.
 - `INFRA-010` protect main and require these checks.
 - `INFRA-011` automated versioned release.
 - `INFRA-015` release/deployment invariant.
+
+## Implementation And QA (2026-11-08)
+
+Added `.github/workflows/ci.yml` and merged as PR #172 (`3772bf1`).
+
+Jobs and stable check names (consumed by `INFRA-010`):
+
+- `fmt` - `cargo fmt --all --check`
+- `check` - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check --workspace --all-targets`
+- `clippy` - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy --workspace --all-targets`
+  (repo has not adopted `-D warnings`)
+- `test` - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test --workspace --exclude opencode-cli`
+  (`opencode-cli` defaults to the native provider)
+- `native (ubuntu-22.04)` / `native (macos-14)` - fetch pinned scopemux-core, package the
+  prebuilt bundle, `cargo test -p opencode-scopemux --features native`,
+  `cargo test -p opencode-cli`, the INFRA-008 clean-host query smoke, and a clean-HOME
+  `version` smoke.
+
+Caching, per-job `timeout-minutes`, and `concurrency` (`cancel-in-progress`) are set. The
+workflow publishes nothing and needs no release secrets.
+
+Evidence (PR #172 run `42466217181`): `fmt`, `check`, `clippy`, `test`, and
+`native (ubuntu-22.04)` all pass. `native (macos-14)` fails at ~0s: the macOS runner is
+unavailable/cancelled in this repo (the same pre-existing failure as the
+`native-artifacts` workflow), not a code failure.
+
+Pre-existing suite blockers repaired in the same PR: `every_workspace_crate_is_categorized`
+(`opencode-oco` missing) and `policy_only_depends_on_stable_core`
+(`opencode-scopemux` -> `opencode-watcher` after SCOPE-017). `opencode-watcher` is now
+classified as core OS-notify infrastructure; `opencode-oco` is boundary.
+
+Remaining QA gate before `done`: the failure-injection checks from "Verification"
+(break fmt/test/query-smoke separately; docs-only PR passes) and resolving or explicitly
+tracking the macOS runner availability.

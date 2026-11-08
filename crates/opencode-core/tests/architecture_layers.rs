@@ -43,8 +43,13 @@ const CRATE_LAYERS: &[(&str, Layer)] = &[
     ("opencode-agent", Layer::Boundary),
     ("opencode-session", Layer::Boundary),
     ("opencode-server", Layer::Boundary),
-    ("opencode-watcher", Layer::Boundary),
+    // Generic OS file-watch infrastructure: no policy or engine knowledge, so it
+    // is core infrastructure the policy layer may compose (SCOPE-017 uses it for
+    // map freshness). Keeping it Boundary would forbid `opencode-scopemux` from
+    // depending on it without changing the policy invariant.
+    ("opencode-watcher", Layer::Core),
     ("opencode-scopemux", Layer::Policy),
+    ("opencode-oco", Layer::Boundary),
     ("opencode-cli", Layer::Interface),
     ("opencode-tui", Layer::Interface),
 ];

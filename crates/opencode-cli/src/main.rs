@@ -525,6 +525,8 @@ enum DebugCommands {
         #[command(subcommand)]
         action: DebugLspCommands,
     },
+    #[command(about = "Resolve and materialize the embedded ScopeMux query set")]
+    ScopemuxQueries,
     #[command(about = "Show agent configuration details")]
     Agent {
         #[arg(value_name = "NAME")]
@@ -730,11 +732,6 @@ async fn main() -> anyhow::Result<()> {
         _ => None,
     };
     let ollama = resolve_ollama_startup(cli_model.as_deref());
-    let ollama_default_model = if cli_model.is_none() {
-        ollama.model_ref.clone()
-    } else {
-        None
-    };
     let probes_ollama = matches!(
         &cli.command,
         Some(Commands::Tui { .. })
@@ -833,7 +830,7 @@ async fn main() -> anyhow::Result<()> {
                 session,
                 fork,
                 share,
-                model.or(ollama_default_model.clone()),
+                run_model_selection(model, &ollama),
                 agent,
                 file,
                 format,
@@ -1435,22 +1432,28 @@ async fn wait_for_server_ready(
 /// Resolve Ollama configuration at startup and export it for the rest of the
 /// process and any spawned server child. The product only talks HTTP, so the
 /// resolved host replaces (rather than augments) `OLLAMA_HOST` downstream.
+///
+/// Only the host is exported. The `model` key in `ollama.json` is a provider
+/// detail, never a default: a bare launch keeps the product/workspace default
+/// model, and the standards `ortq` wrapper passes `--model` explicitly.
 fn resolve_ollama_startup(cli_model: Option<&str>) -> opencode_provider::ollama::OllamaResolution {
     let resolution = opencode_provider::ollama::resolve(cli_model);
     if resolution.explicitly_configured() {
         std::env::set_var("OLLAMA_HOST", &resolution.host);
     }
-    if cli_model.is_none() {
-        if let Some(model_ref) = &resolution.model_ref {
-            let already_set = std::env::var("OPENCODE_TUI_MODEL")
-                .ok()
-                .is_some_and(|value| !value.trim().is_empty());
-            if !already_set {
-                std::env::set_var("OPENCODE_TUI_MODEL", model_ref);
-            }
-        }
-    }
     resolution
+}
+
+/// Select the model passed to the non-interactive run path.
+///
+/// Only an explicit `--model` selects a model. Ollama configuration is a
+/// provider detail and must never become the default, so a bare launch returns
+/// `None` and lets the config loader resolve the product/workspace default.
+fn run_model_selection(
+    cli_model: Option<String>,
+    _resolution: &opencode_provider::ollama::OllamaResolution,
+) -> Option<String> {
+    cli_model
 }
 
 fn parse_model_and_provider(model: Option<String>) -> (Option<String>, Option<String>) {
@@ -5688,6 +5691,10 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&symbols)?);
             }
         },
+        DebugCommands::ScopemuxQueries => match opencode_scopemux::ensure_queries_dir() {
+            Some(dir) => println!("{}", dir.display()),
+            None => anyhow::bail!("scopemux queries are unavailable"),
+        },
         DebugCommands::Agent { name, tool, params } => {
             let cwd = std::env::current_dir()?;
             let config = load_config(&cwd)?;
@@ -7632,6 +7639,35 @@ async fn handle_github_command(action: GithubCommands) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ollama_config_model_is_not_a_bare_run_default() {
+        use opencode_provider::ollama::{self, OllamaConfigFile, OllamaEnv};
+
+        let resolution = ollama::resolve_with(
+            None,
+            &OllamaEnv::default(),
+            Path::new("/home/test/.config/opencode/ollama.json"),
+            Some(&OllamaConfigFile {
+                host: Some("http://127.0.0.1:11434".to_string()),
+                model: Some("qwen3:30b".to_string()),
+            }),
+        );
+
+        // The resolver may still report the configured tag for provider
+        // registration, but it must never become the run default.
+        assert_eq!(resolution.model.as_deref(), Some("qwen3:30b"));
+        assert_eq!(run_model_selection(None, &resolution), None);
+        assert_eq!(
+            opencode_config::DEFAULT_MODEL,
+            "deepseek/deepseek-flash",
+            "a bare run must keep the product default model"
+        );
+        assert_eq!(
+            run_model_selection(Some("deepseek/deepseek-flash".to_string()), &resolution),
+            Some("deepseek/deepseek-flash".to_string())
+        );
+    }
 
     #[test]
     fn find_available_port_returns_base_when_free() {

@@ -5,12 +5,14 @@ priority: "P1"
 type: "chore"
 area: "INFRA"
 spec: "README.md"
-status: "todo"
+status: "qa"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
 ---
 
 # Make The Stable Main Release The Default ORT Channel
+
+See invariant: `invariants/release-deployment.md`.
 
 ## Summary
 
@@ -78,3 +80,22 @@ stable `main` release, and keep the rolling tag as an explicit preview channel.
 - `INFRA-011` versioned stable release.
 - `INFRA-012` deploy driver (uses exact revisions).
 - `INFRA-015` invariant and runbook.
+
+## Implementation (2026-11-08)
+
+Implemented in `~/standards` (commit `d34ed93` on `development`):
+
+- `utilities/ort-install`: default channel is **stable**; resolves the latest non-preview
+  GitHub release (`/releases/latest`, excluding `native-artifacts`). `--channel preview` /
+  `OPENCODE_RUST_CHANNEL=preview` selects the rolling tag. `--tag`/`--rev` remain exact pins.
+  Bootstrap fallback to preview with a warning until the first `v*` release exists.
+- `opencode/opencode-config`: exports `OPENCODE_RUST_CHANNEL=stable`; auto-install/auto-update
+  inherit it.
+- `AGENTS.md`: channel model documented.
+
+Verified locally (`ort-install --dry-run`): stable (bootstrap) and preview resolve
+`native-artifacts`; `--tag v0.1.0` resolves that tag; an unknown channel errors.
+
+Remaining QA gate: after the first stable release exists, re-run `ort-install --dry-run`
+with the default channel and confirm it resolves `v*` (not `native-artifacts`), and confirm a
+stable-configured machine does not move when the rolling tag changes.
