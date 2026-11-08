@@ -66,16 +66,35 @@ default-model source):
 - Tests: resolver precedence unit tests, a bare-run default regression test in
   `opencode-cli`, plus `tests/ollama_remote.rs` against a stub HTTP server.
 
+## Correction (2026-11-08)
+
+The initial implementation wrongly promoted the `model` key in `ollama.json`
+to the default for a bare `ort`/run. That is removed:
+
+- Bare `ort`/`run` keeps the normal default (`deepseek/deepseek-flash` unless a
+  workspace config or `--model` says otherwise); the presence of
+  `ollama.json` does not change it.
+- The Ollama host is still read from the config file to configure the `ollama`
+  provider, but only an explicit Ollama selection (`--model ollama/<tag>` or a
+  workspace config naming it) uses it; the standards `ortq` wrapper passes
+  `--model` explicitly.
+- Startup exports only `OLLAMA_HOST`; it never exports `OPENCODE_TUI_MODEL`.
+- `effective_provider_setup` no longer falls back to the config-file model.
+
 ## Evidence
 
-- Commit: `b1b173fc676fd0cf3af4e23243f6b7096142e4e1`
+- Commit: `c59ad7ed1add3fbe776dd959f11722aef179d64e`
+  (initial implementation: `b1b173fc676fd0cf3af4e23243f6b7096142e4e1`).
 - Artifact: `cchris-p/opencode-modded-rust@native-artifacts`
-  `opencode-modded-rust-linux-x86_64.tar.gz` (`.rev` = `b1b173f...`).
-- `cargo test -p opencode-provider` passes (149 lib tests, including resolver
-  precedence; `tests/ollama_remote.rs` 2/2, including stub `/api/tags`,
-  `/v1/models`, and chat completion with no `ollama` binary).
-- `cargo test -p opencode-server --lib` (75) and `cargo test -p opencode-cli`
-  (21) pass.
+  `opencode-modded-rust-linux-x86_64.tar.gz`
+  (`.rev` = `c59ad7ed1add3fbe776dd959f11722aef179d64e`).
+- Regression test `tests::ollama_config_model_is_not_a_bare_run_default`
+  passes with `{ "host": "http://127.0.0.1:11434", "model": "qwen3:30b" }`
+  present and no `--model`: the resolved run model stays unset, so the loader
+  keeps `deepseek/deepseek-flash`.
+- `cargo test -p opencode-cli` 22/22, `cargo test -p opencode-provider`
+  149 lib + 9 deepseek + 4 native-abort + 2 ollama-remote + 7 integration,
+  `cargo test -p opencode-server --lib` 75/75.
 - `debug ollama` reports the resolved URL and source; `--probe` prints the
   required failure diagnostic for an unreachable host.
 - Known unrelated workspace failures at this commit: `opencode-core`
@@ -84,8 +103,8 @@ default-model source):
 
 ## Closeout
 
-- Delivered directly on `development` as `b1b173f` (no PR branch was created;
-  direct-commit closeout path). Branch cleanup is not applicable.
+- Delivered directly on `development` at `c59ad7e` (no PR branch; direct-commit
+  closeout path). Branch cleanup is not applicable.
 - Owner explicitly directed completion on 2026-11-08 after reviewing the test
   and artifact evidence; promoted from `qa` to `done`.
 - Release promotion is handled separately in the `development` -> `main`
