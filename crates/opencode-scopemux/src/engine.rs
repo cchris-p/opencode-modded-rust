@@ -237,13 +237,10 @@ impl WorkspaceEngine {
     /// Open a project context for `root` and point the core at its Tree-sitter
     /// queries.
     pub fn open(root: &str) -> Result<Self, EngineError> {
-        // Point scopemux-core at the Tree-sitter queries shipped with the pinned
-        // source (recorded at build time) unless already configured.
-        if std::env::var_os("SCMU_QUERIES_DIR").is_none() {
-            if let Some(queries_dir) = option_env!("SCOPEMUX_QUERIES_DIR") {
-                std::env::set_var("SCMU_QUERIES_DIR", queries_dir);
-            }
-        }
+        // INFRA-008: materialize or locate the embedded query set before the
+        // core initializes its parsers. An explicit `SCMU_QUERIES_DIR` still
+        // wins; a missing set stays empty and the provider reports unavailability.
+        let _ = crate::ensure_queries_dir();
 
         let root_str = root.to_string();
         let root = CString::new(root_str.as_str())
