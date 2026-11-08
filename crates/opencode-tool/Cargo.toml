@@ -13,6 +13,7 @@ lsp = ["opencode-lsp", "lsp-types"]
 
 [dependencies]
 opencode-core = { path = "../opencode-core" }
+opencode-types = { path = "../opencode-types" }
 opencode-config = { path = "../opencode-config" }
 opencode-util = { path = "../opencode-util" }
 opencode-grep = { path = "../opencode-grep" }

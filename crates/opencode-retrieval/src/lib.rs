@@ -175,6 +175,7 @@ impl RetrievalProvider for GenericRepositoryProvider {
                 kind: RetrievalCandidateKind::File,
                 path: resolved.to_string_lossy().into_owned(),
                 symbol: None,
+                block_id: None,
                 snippet: None,
                 provenance: provenance.to_string(),
                 confidence: RetrievalConfidence::Exact,
@@ -194,6 +195,7 @@ impl RetrievalProvider for GenericRepositoryProvider {
                 kind: RetrievalCandidateKind::Symbol,
                 path: request.workspace_root.clone(),
                 symbol: Some(symbol.clone()),
+                block_id: None,
                 snippet: None,
                 provenance: "seed symbol".to_string(),
                 confidence: RetrievalConfidence::Medium,
@@ -208,12 +210,17 @@ impl RetrievalProvider for GenericRepositoryProvider {
         candidates
             .sort_by_key(|candidate| std::cmp::Reverse(confidence_rank(candidate.confidence)));
 
+        let fallback_reason = candidates
+            .is_empty()
+            .then_some(opencode_types::RetrievalFallbackReason::NoMatches);
         Ok(RetrievalResponse {
             candidates,
             provider: self.name().to_string(),
             representation: request.representation,
             plan_signals: Vec::new(),
             provider_notes: Vec::new(),
+            fallback_reason,
+            freshness: None,
         })
     }
 }
@@ -277,6 +284,27 @@ mod tests {
         assert_eq!(candidate.confidence, RetrievalConfidence::Exact);
         assert_eq!(candidate.provenance, "seed file");
         assert!(candidate.path.ends_with("lib.rs"));
+    }
+
+    #[tokio::test]
+    async fn no_match_is_distinguished_from_a_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "").unwrap();
+
+        let provider = GenericRepositoryProvider::new();
+        let mut req = request(dir.path());
+        req.seed_files.push("missing.rs".to_string());
+        let response = provider.retrieve(&req).await.unwrap();
+        assert!(response.candidates.is_empty());
+        assert_eq!(
+            response.fallback_reason,
+            Some(opencode_types::RetrievalFallbackReason::NoMatches)
+        );
+
+        req.seed_files = vec!["a.rs".to_string()];
+        let response = provider.retrieve(&req).await.unwrap();
+        assert!(!response.candidates.is_empty());
+        assert_eq!(response.fallback_reason, None);
     }
 
     #[tokio::test]

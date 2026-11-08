@@ -102,6 +102,74 @@ This near-term integration is tracked by `SCOPE-002` ("Integrate scopemux-core b
 
 Activation scope (2026-09-25): the native provider is compiled into the product binary but only activates for the local Qwen-via-Ollama model, so a small local model can be used to experiment with map-driven context compression. Every other model and any unsupported workspace keeps the generic provider as the default and fallback (`invariants/providers.md`).
 
+Language coverage is per file (C, C++, Python, JavaScript, TypeScript, and Rust; markdown/prose is generic search). The full coverage matrix, mixed-language behavior, and the `unsupported_language` / `no_matches` / `provider_unavailable` fallback provenance are defined in `wiki/workspace-intelligence.md`.
+
+### Known prerequisite: persistent node registration (2026-11-05, `SCOPE-006`)
+
+The Rust provider does **not** maintain a persistent whole-workspace node registry or a
+watcher today. `ScopemuxProvider::retrieve` creates a fresh `ProjectContext` per call, adds
+only the request's `seed_files`/`changed_files`, and drops the context when the call ends
+(`crates/opencode-scopemux/src/lib.rs`). `scopemux-core` has incremental IR/index
+primitives (`WI-018`, `project_update_file`, incremental rebuild counters), but the product
+provider does not use them across calls.
+
+Consequence: a map-backed tool that answers "where is X" for an arbitrary file without a
+filesystem walk is blocked until persistent registration/update lands. `SCOPE-006` therefore
+records this as a prerequisite and does not build on an unverified index. This is separate
+from the old `WI-030` note: the Rust grammar **is** present (`language_for_path("*.rs") ==
+Some(6)`), so the blocker is persistence, not language support.
+
+### Persistent map architecture decision (2026-11-06)
+
+Decision A is locked: build the persistent map rather than redefine or retire `SCOPE-006`.
+The program is tracked in `H-020` and `SCOPE-015`. The architecture is split so no single
+component owns lifecycle, policy, and presentation:
+
+- **Engine** (`opencode-scopemux`): safe wrapper over one `ProjectContext`; open/update/
+  remove, incremental rebuild, query. No watcher, no model/prompt policy.
+- **Supervisor/registry**: one map per canonical workspace root, lifecycle/eviction,
+  watcher subscription, dirty-set scheduling, freshness measurement. It is the only writer
+  of map state.
+- **Provider adapter**: translates retrieval requests into engine/supervisor queries and
+  returns evidence; it does not create contexts per call.
+- **Tool** (`opencode-tool`): user-facing search surface and formatting; receives a
+  `WorkspaceSearch` capability through `ToolContext`; never calls FFI or parses model
+  strings.
+- **Runtime** (`opencode-session`): owns activation, inclusion thresholds, prompt budget,
+  and the fresh/lagging/stale/unknown fallback policy.
+- **Watcher** (`opencode-watcher`): generic file events only; the supervisor subscribes.
+
+DRY applies to decisions and vocabulary, not to forcing grep and map search to share an
+algorithm: one ignore/exclusion policy, one code/prose predicate, one activation predicate,
+one evidence shape with `block_id`, one freshness/fallback vocabulary, one path
+normalization helper, and one token-budget/truncation utility. Task authority remains with
+the runtime; the map is evidence-only.
+
+Implementation note (`SCOPE-018`): those shared contracts live in
+`crates/opencode-types/src/workspace.rs`. The ignore policy, code/prose predicate,
+`RetrievalCandidate::block_id`, `MapFreshness`/`MapFreshnessReport`, path normalization,
+token budget, and the neutral `WorkspaceSearch` trait are defined once there. Grep and the
+watcher consume the ignore policy; `opencode-scopemux` maps `SourceLanguage` to the core
+language id; the runtime injects `WorkspaceSearch` into `ToolContext` on the map-backed
+path only.
+
+### Engine boundary (`SCOPE-016`)
+
+`crates/opencode-scopemux` is split into three modules:
+
+- `ffi`: `#[repr(C)]` mirrors and `extern "C"` declarations only.
+- `engine::WorkspaceEngine`: the only owner of a `ProjectContext`. It exposes open,
+  add/parse, `update_file`, `remove_file`, rebuild, counters, and owned query views
+  (`BlockView`, `SearchHitView`, ...). No raw pointer escapes this module.
+- `provider`: the `RetrievalProvider` adapter; it maps engine views to shared
+  `RetrievalCandidate` evidence and owns no pointer.
+
+Thread affinity: one engine is owned by one task/worker and is never held across an
+`await` or moved between workers. The provider opens, uses, and drops the engine before its
+exact-fact enrichment await, so persistent lifecycle (`SCOPE-017`) can move the owner
+without changing the provider contract. The engine contains no activation, prompt,
+task-state, or fallback policy.
+
 The larger idealized target is `SCOPE-001` ("Idealized scopemux map integration") and `wiki/scopemux-map-integration.md`, which extend this plan with current/target state, delta views, observability blocks, duplication detection, and incremental reconciliation. Those phases must not disturb the boundary or guardrails defined here.
 
 ## Required Abstraction Boundary

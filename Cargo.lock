@@ -2155,6 +2155,7 @@ dependencies = [
  "opencode-core",
  "opencode-grep",
  "opencode-lsp",
+ "opencode-oco",
  "opencode-permission",
  "opencode-plugin",
  "opencode-provider",
@@ -2287,6 +2288,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "opencode-oco"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "opencode-permission"
 version = "0.1.0"
 dependencies = [
@@ -2368,7 +2385,10 @@ dependencies = [
  "dirs",
  "opencode-lsp",
  "opencode-retrieval",
+ "opencode-tool",
  "opencode-types",
+ "opencode-watcher",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2488,6 +2508,7 @@ dependencies = [
  "opencode-lsp",
  "opencode-permission",
  "opencode-plugin",
+ "opencode-types",
  "opencode-util",
  "regex",
  "reqwest",
@@ -2585,6 +2606,7 @@ dependencies = [
  "dashmap",
  "glob",
  "notify",
+ "opencode-types",
  "parking_lot",
  "serde",
  "serde_json",

@@ -115,6 +115,22 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         thinking: bool,
     },
+    #[command(
+        about = "Generate a commit message and commit staged changes (OpenCommit-compatible)",
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        disable_help_flag = true,
+        disable_version_flag = true
+    )]
+    Oco {
+        #[arg(
+            value_name = "ARGS",
+            num_args = 0..,
+            allow_hyphen_values = true,
+            trailing_var_arg = true
+        )]
+        args: Vec<String>,
+    },
     #[command(about = "Manage CLI task workflows")]
     Task {
         #[command(subcommand)]
@@ -520,6 +536,11 @@ enum DebugCommands {
         #[arg(long)]
         params: Option<String>,
     },
+    #[command(about = "Show resolved Ollama endpoint configuration")]
+    Ollama {
+        #[arg(long, default_value_t = false)]
+        probe: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -686,7 +707,50 @@ enum GithubCommands {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let invoked_as_oco = raw_args
+        .first()
+        .and_then(|arg| Path::new(arg).file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| name == "oco" || name == "opencommit")
+        .unwrap_or(false);
+    if invoked_as_oco {
+        let args = raw_args
+            .iter()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        return opencode_oco::run(args).await;
+    }
+
     let cli = Cli::parse();
+
+    // Resolve the native Ollama endpoint once, before any server child is
+    // spawned, so provider bootstrap and the TUI server share one answer.
+    let cli_model = match &cli.command {
+        Some(Commands::Tui { model, .. }) | Some(Commands::Run { model, .. }) => model.clone(),
+        _ => None,
+    };
+    let ollama = resolve_ollama_startup(cli_model.as_deref());
+    let ollama_default_model = if cli_model.is_none() {
+        ollama.model_ref.clone()
+    } else {
+        None
+    };
+    let probes_ollama = matches!(
+        &cli.command,
+        Some(Commands::Tui { .. })
+            | Some(Commands::Run { .. })
+            | Some(Commands::Serve { .. })
+            | Some(Commands::Web { .. })
+            | Some(Commands::Acp { .. })
+    );
+    if probes_ollama && ollama.explicitly_configured() {
+        if let Err(reason) = opencode_provider::ollama::probe(&ollama, Duration::from_secs(3)).await
+        {
+            eprintln!("{}", ollama.connection_failure_message(&reason));
+        }
+    }
 
     match cli.command {
         Some(Commands::Tui {
@@ -771,7 +835,7 @@ async fn main() -> anyhow::Result<()> {
                 session,
                 fork,
                 share,
-                model,
+                model.or(ollama_default_model.clone()),
                 agent,
                 file,
                 format,
@@ -783,6 +847,9 @@ async fn main() -> anyhow::Result<()> {
                 thinking,
             )
             .await?;
+        }
+        Some(Commands::Oco { args }) => {
+            opencode_oco::run(args).await?;
         }
         Some(Commands::Task { action }) => {
             handle_task_command(action).await?;
@@ -1365,6 +1432,27 @@ async fn wait_for_server_ready(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// Resolve Ollama configuration at startup and export it for the rest of the
+/// process and any spawned server child. The product only talks HTTP, so the
+/// resolved host replaces (rather than augments) `OLLAMA_HOST` downstream.
+fn resolve_ollama_startup(cli_model: Option<&str>) -> opencode_provider::ollama::OllamaResolution {
+    let resolution = opencode_provider::ollama::resolve(cli_model);
+    if resolution.explicitly_configured() {
+        std::env::set_var("OLLAMA_HOST", &resolution.host);
+    }
+    if cli_model.is_none() {
+        if let Some(model_ref) = &resolution.model_ref {
+            let already_set = std::env::var("OPENCODE_TUI_MODEL")
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty());
+            if !already_set {
+                std::env::set_var("OPENCODE_TUI_MODEL", model_ref);
+            }
+        }
+    }
+    resolution
 }
 
 fn parse_model_and_provider(model: Option<String>) -> (Option<String>, Option<String>) {
@@ -5346,6 +5434,54 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             let config = load_config(&cwd)?;
             println!("{}", serde_json::to_string_pretty(&config)?);
+        }
+        DebugCommands::Ollama { probe } => {
+            let resolution = opencode_provider::ollama::resolve(None);
+            println!("resolved URL: {}", resolution.base_url);
+            println!(
+                "host:         {} ({})",
+                resolution.host,
+                resolution.host_label()
+            );
+            println!(
+                "model:        {}",
+                resolution
+                    .model_ref
+                    .as_deref()
+                    .unwrap_or("<unset (provider default)>")
+            );
+            if let Some(model_label) = resolution.model_label() {
+                println!("model source: {model_label}");
+            }
+            println!(
+                "config file:  {} ({})",
+                resolution.config_path.display(),
+                if resolution.config_found {
+                    "found"
+                } else {
+                    "not found"
+                }
+            );
+            if let Some(error) = &resolution.config_error {
+                println!("config error: {error}");
+            }
+            println!(
+                "active:       {}",
+                if resolution.explicitly_configured() {
+                    "yes"
+                } else {
+                    "no (runtime default)"
+                }
+            );
+            if probe {
+                match opencode_provider::ollama::probe(&resolution, Duration::from_secs(5)).await {
+                    Ok(()) => println!("probe:        ok"),
+                    Err(reason) => {
+                        eprintln!("{}", resolution.connection_failure_message(&reason));
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
         DebugCommands::Skill => {
             let skills = list_available_skills();

@@ -5,8 +5,10 @@ priority: "P2"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "todo"
+status: "done"
 created: "2026-10-23"
+updated: "2026-11-08"
+predecessor: "SCOPE-019"
 request_id: "191c814a-1e0b-45f6-8ad0-20db0d46f3eb"
 ---
 
@@ -41,7 +43,10 @@ Implement the grep replacement with ScopeMux after that verification. Expected e
 - The ScopeMux provider and its Qwen-only activation already exist (`SCOPE-002`, `SCOPE-005`); reuse `opencode-scopemux` and the `START-025` retrieval boundary rather than adding a second integration path.
 - The existing `grep` tool already carries blocking-walk fixes (`spawn_blocking`, build/vendor exclusions, bounded scans; `BUG-040`, commit `1fb80d0`). The fallback mode must inherit those bounds, not regress them.
 - The markdown/code split mirrors how the runtime treats code vs docs contexts; keep the split at the tool-argument/dispatch level so prompt-facing surface stays one tool name with a mode, unless implementation shows two distinct tool names are clearer for the agent.
-- Respect the Phase-1 dependency reality: on Rust workspaces the node search currently cannot work until `WI-030` (upstream, in-scope per `invariants/integration-scope.md`) lands; until then the code-search mode on a Rust workspace is the grep fallback with explicit provenance.
+- **Correction (2026-11-06):** the old `WI-030` note is stale. Rust **is** supported
+  (`language_for_path("*.rs") == Some(6)`) and a Rust candidate test exists. The real
+  blocker is that the provider does not persist a whole-workspace node registry or run a
+  watcher; see the verification section below.
 - Do not break the "replacing direct file reads for small, obvious tasks" non-goal from `SCOPE-001`; the tool complements reads, it does not forbid them.
 
 ## Related Items
@@ -58,3 +63,124 @@ Implement the grep replacement with ScopeMux after that verification. Expected e
 ## Notes
 
 Captured from the 2026-10-23 operator voice request (`request_id: 191c814a-1e0b-45f6-8ad0-20db0d46f3eb`). The operator's words, condensed: "ScopeMux needs to replace the grep functions... a tool call in ORT where the tool call transcends the tree and file directory trees in order for it to quickly find what it needs. All nodes must always be registered and periodically updated - I think this feature is already implemented; we just need to test it out on a code base and implement the grep replacement with ScopeMux... grep should be the fallback. ORT will need two separate greps, one for markdown and one for code bases."
+## Verification (2026-11-06, H-018 step 7) — blocked prerequisite
+
+Card instruction: verify node registration and periodic update before building the tool;
+if not implemented, surface it as a prerequisite instead of building on it.
+
+Findings:
+
+- `ScopemuxProvider::retrieve` creates a fresh `ProjectContext` per call, adds only
+  `request.seed_files`/`changed_files`, and drops it at the end
+  (`crates/opencode-scopemux/src/lib.rs`). There is no persistent registry or watcher in
+  the product provider.
+- `scopemux-core` has incremental IR/index primitives (`WI-018`,
+  `project_update_file`, rebuild counters), but the Rust provider does not use them across
+  calls.
+- New native test `native_search_is_scoped_to_seeded_files_without_a_persistent_registry`
+  proves an unseeded file on disk is invisible to search and becomes visible only when
+  added as a seed. This is empirical confirmation, not just static reading.
+- Rust grammar is present; the stale `WI-030` dependency is corrected above.
+
+Evidence PR: https://github.com/cchris-p/opencode-modded-rust/pull/162
+(branch `feature/SCOPE-006-scopemux-code-search`, commit `2becc61`). It adds the
+verification test and records the prerequisite in `wiki/scopemux-integration-plan.md`; it
+does **not** implement the tool.
+
+Verification:
+
+```bash
+$ cargo test -p opencode-scopemux --features native
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+$ cargo test -p opencode-scopemux --features native tests::native_search_is_scoped_to_seeded_files_without_a_persistent_registry -- --exact
+test tests::native_search_is_scoped_to_seeded_files_without_a_persistent_registry ... ok
+
+$ cargo fmt --all --check
+(exit 0)
+```
+
+Status: **blocked, not done.** The map-backed code-search tool, markdown/prose split, and
+grep fallback wiring stay deferred until persistent registration/update lands. Do not
+promote this card on the evidence PR alone.
+
+### Post-merge (2026-11-06)
+
+- Evidence PR #162 merged into `development` as `dac31ee`; branch deleted.
+- Re-ran on merged `development`:
+  - `cargo test -p opencode-scopemux --features native tests::native_search_is_scoped_to_seeded_files_without_a_persistent_registry -- --exact` -> 1 passed.
+  - `cargo fmt --all --check` -> exit 0.
+- Card remains **blocked** in `doing` with `attention:` set. The evidence PR does not
+  implement the tool and must not promote this card.
+
+### Program dependency (2026-11-06)
+
+- Prerequisite program: `SCOPE-015` (archived plan in `H-020`).
+- Order: `SCOPE-018` contracts/policy -> `SCOPE-016` engine -> `SCOPE-017`
+  supervisor/watcher -> `SCOPE-019` provider/tool integration.
+- This card resumes only after `SCOPE-019` lands. At that point the code-search tool can
+  meet the "without a filesystem walk" criterion; do not implement it before then.
+- `SCOPE-009` is the other consumer and is resumed after this card's tool path exists.
+
+## Implementation — 2026-11-08 (H-018 step 7, unblocked by SCOPE-019)
+
+Branch `feature/SCOPE-006-scopemux-code-search`; PR
+https://github.com/cchris-p/opencode-modded-rust/pull/168
+
+Re-verification (the 2026-11-06 blocker is resolved):
+
+- `SCOPE-019` wired the persistent whole-workspace map into `ScopemuxProvider` and the
+  `code_search` tool. The provider resolves one map per workspace; the tool receives the
+  neutral `WorkspaceSearch` capability and never walks the filesystem on the map path.
+- New native test `code_search_tool_answers_from_the_persistent_map` drives the real tool
+  through a live `WorkspaceMapRegistry`:
+  - finds `locate_me` in `a.rs` via the map (`backend=scopemux`) and returns a `sym:` block
+    id;
+  - edits `a.rs`, waits for the watcher-driven incremental revision, then finds the new
+    `added_after_watch` symbol without a per-call walk;
+  - `mode="prose"` falls back to grep (`backend=grep`, `fallbackReason=prose_mode`).
+
+Verification (exact):
+
+```bash
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 36 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tool -p opencode-scopemux
+opencode-scopemux: 3 passed; 0 failed
+opencode-tool:    75 passed; 0 failed
+
+$ cargo test -p opencode-tool grep
+test result: ok. 5 passed; 0 failed; 0 ignored
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+Status: PR merged into `development` as `baf72c0` (2026-11-08).
+
+## QA Verification — 2026-11-08 (post-merge, development @ baf72c0)
+
+```bash
+$ cargo clean -p opencode-scopemux
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 36 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tool -p opencode-scopemux
+opencode-scopemux: 3 passed; 0 failed
+opencode-tool:    75 passed; 0 failed
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+QA result: pass. The end-to-end map-backed `code_search` proof (block id, watcher-updated
+symbol, prose -> grep) passes on merged `development`.

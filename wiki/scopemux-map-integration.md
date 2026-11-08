@@ -139,6 +139,38 @@ Re-index refreshes the derived store and **reconciles** the durable store. It mu
 
 The correctness criterion is strict: an incrementally updated map must be equivalent to a full rebuild of the derived store, with the durable store reconciled rather than regenerated.
 
+### Persistent supervisor (`SCOPE-017`)
+
+`opencode-scopemux::WorkspaceMapRegistry` owns the persistent lifecycle:
+
+- One `MapEntry` (one `WorkspaceEngine`) per canonical workspace root. `acquire` reuses an
+  existing entry and increments a reference count; `MapHandle` decrements it on drop.
+- Each map has one dedicated worker thread that owns the engine and serializes all engine
+  access. Queries run through `with_engine`/typed slice helpers; no context is created per
+  call.
+- The worker subscribes to `opencode_watcher::FileWatcher`, coalesces add/change/unlink into
+  a debounced dirty set, applies `update_file`/`remove_file` (incremental), and then runs one
+  IR + InfoBlock rebuild per batch. The shared ignore policy (`SCOPE-018`) filters events
+  and initial discovery; unsupported/prose paths never enter the code map.
+- Idle eviction uses a TTL (`sweep`/`sweep_idle`) and `shutdown` joins every worker.
+- Creation failure (missing root, engine/watcher failure) is reported as `Unavailable`.
+  A failed incremental update keeps the previous map and marks freshness `stale`; it never
+  silently presents old nodes as fresh.
+- Freshness measurement (`MapFreshnessReport`) records revision, dirty-set size, watcher
+  lag, rebuild duration, and an explicitly recorded re-anchor result. The supervisor does
+  not decide fallback; `SCOPE-009`/the runtime own that policy.
+- The map remains evidence-only: no task stage, verification, review, or completion writes.
+
+### Freshness SLOs (`SCOPE-009`)
+
+The supervisor records `MapFreshnessReport` (revision, dirty set, watcher lag, rebuild
+duration, re-anchor). `fresh` requires lag <= 1 s and rebuild <= 500 ms; slower successful
+batches are `lagging` (used with a warning); a failed update is `stale` and the runtime
+falls back to generic with `fallback_reason=stale_map`. `unknown` also falls back.
+Reconciliation marks divergent plan nodes `stale`/`conflict` and records the re-anchor
+result; nodes are never silently dropped. Full SLO table:
+`wiki/workspace-intelligence.md`.
+
 ## Runtime Integration
 
 All map use crosses the `START-025` retrieval-provider boundary. The runtime asks; the map answers; prompt construction consumes the answer. No `scopemux`-specific logic leaks into orchestration, lifecycle, verification, or review.
@@ -158,6 +190,30 @@ Each runtime stage maps to a retrieval role and a representation slice:
 | `completed` | reconcile | mark plan nodes `implemented`/`verified`; refresh derived state |
 
 Every result carries file/symbol/block provenance, confidence, and a token estimate. The runtime keeps authority over budgets, inclusion thresholds, and role filtering; review context uses a stricter inclusion threshold than implementation context.
+
+Selected map slices are injected into prompt context as a synthetic evidence block,
+bounded by the runtime-owned `RetrievalRequest::token_budget` (default 400 tokens). The
+generic provider is never injected; only a `scopemux` response is rendered, and the
+runtime truncates the candidate list when the budget is exhausted. The map still does not
+decide inclusion. Repair requests carry the recorded `reopen_reason` and project it to a
+`refactor_opportunity` plan node anchored to the task's artifacts, alongside the prior
+objective/criteria plan nodes, so the `Impact` slice re-anchors the repair to the affected
+files and target state.
+
+### Persistent map wiring (`SCOPE-019`)
+
+- The retrieval provider resolves one map per workspace root from the shared
+  registry; it no longer creates a context per call. Plan materialization and
+  reconciliation run against that persistent map.
+- `RetrievalResponse.freshness` carries the supervisor's measurement. A stale
+  scopemux response falls back to the generic provider with a recorded reason;
+  absent/unavailable maps already fall back through the provider error path.
+- The runtime injects the `WorkspaceSearch` capability into `ToolContext` only on
+  the Qwen-only scope. The `code_search` tool uses it for map-backed locate and
+  falls back to bounded grep for prose, unsupported/stale/absent maps, or no
+  matches.
+- Activation remains one predicate (`model_scope_enabled`); the tool never parses
+  model strings, and the map remains evidence-only.
 
 ### Fallback
 

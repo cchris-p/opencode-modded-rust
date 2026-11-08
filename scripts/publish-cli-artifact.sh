@@ -112,7 +112,11 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/publish-cli.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 cp "$BINARY" "$STAGE/opencode-modded-rust"
 chmod +x "$STAGE/opencode-modded-rust"
-tar -C "$STAGE" -czf "$OUT_DIR/${PKG}.tar.gz" opencode-modded-rust
+# INFRA-016: expose the OpenCommit-compatible entry point from the same artifact.
+# The symlink keeps the tarball one-binary plus alias; asset names, the .sha256,
+# and the .rev sidecar format are unchanged.
+ln -s opencode-modded-rust "$STAGE/oco"
+tar -C "$STAGE" -czf "$OUT_DIR/${PKG}.tar.gz" opencode-modded-rust oco
 
 if command -v shasum >/dev/null 2>&1; then
     ( cd "$OUT_DIR" && shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256" )

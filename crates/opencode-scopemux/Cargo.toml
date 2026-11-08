@@ -18,6 +18,7 @@ native = ["dep:tree-sitter"]
 [dependencies]
 opencode-types = { path = "../opencode-types" }
 opencode-retrieval = { path = "../opencode-retrieval" }
+opencode-watcher = { path = "../opencode-watcher" }
 async-trait = { workspace = true }
 dirs = { workspace = true }
 thiserror = { workspace = true }
@@ -30,6 +31,9 @@ tempfile = "3"
 # Evaluation/test tooling only (SCOPE-014): the runtime dependency stays neutral,
 # and the example is what injects the LSP-backed exact-fact adapter.
 opencode-lsp = { path = "../opencode-lsp" }
+# SCOPE-006 end-to-end verification: drive the real code_search tool.
+opencode-tool = { path = "../opencode-tool" }
+serde_json = { workspace = true }
 
 [build-dependencies]
 

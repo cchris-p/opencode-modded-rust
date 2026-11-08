@@ -1,10 +1,10 @@
 ---
 id: "H-018"
 title: "SCOPE-003/004/006/009/010/012/013/014 ScopeMux Remaining Program — Program Handoff"
-status: "open"
+status: "complete"
 created: "2026-11-05"
-updated: "2026-11-05"
-owner: ""
+updated: "2026-11-08"
+owner: "agent-2"
 target: "opencode-modded-rust"
 blocked_reason: ""
 needs_human: ""
@@ -29,20 +29,49 @@ ScopeMux is integrated and usable in `opencode-modded-rust`:
 interim activation rule; no capability profiles, artifact packaging, flywheel contract,
 System-1 routing, or out-of-process transport in this program.
 
-Remaining ScopeMux work is four `qa` closeouts plus four implementation cards:
+Steps 1-6 are complete. Two steps remain and are blocked on the persistent map program:
 
-| Board ID | Title | Priority | Status | Type |
+| Board ID | Title | Priority | Status | Next step |
 |---|---|---|---|---|
-| `SCOPE-003` | Project authoritative task state into scopemux plan nodes | P2 | qa | closeout |
-| `SCOPE-012` | Consolidate ScopeMux/LSP responsibilities | P1 | qa | closeout |
-| `SCOPE-013` | Ingest LSP-derived exact type facts | P2 | qa | closeout |
-| `SCOPE-014` | Measure the context value of exact facts | P2 | qa | closeout |
-| `SCOPE-004` | Consume map delta/observability/refactor nodes | P3 | qa | follow-up PR |
-| `SCOPE-010` | Language coverage and fallback matrix | P2 | todo | new PR |
-| `SCOPE-006` | Replace code grep with ScopeMux node search | P2 | todo | new PR |
-| `SCOPE-009` | Map freshness and staleness SLOs | P2 | todo | new PR |
+| `SCOPE-003` | Project authoritative task state into scopemux plan nodes | P2 | done | complete |
+| `SCOPE-012` | Consolidate ScopeMux/LSP responsibilities | P1 | done | complete |
+| `SCOPE-013` | Ingest LSP-derived exact type facts | P2 | done | complete |
+| `SCOPE-014` | Measure the context value of exact facts | P2 | done | complete |
+| `SCOPE-004` | Consume map delta/observability/refactor nodes | P3 | done | complete |
+| `SCOPE-010` | Language coverage and fallback matrix | P2 | done | complete |
+| `SCOPE-006` | Replace code grep with ScopeMux node search | P2 | doing (blocked) | resume after `SCOPE-019` in `H-020` |
+| `SCOPE-009` | Map freshness and staleness SLOs | P2 | todo (deferred) | resume after `SCOPE-019` in `H-020` |
 
-`SCOPE-001`, `SCOPE-002`, and `SCOPE-005` are done. `boards/doing/` is empty.
+`SCOPE-001`, `SCOPE-002`, and `SCOPE-005` are done.
+
+## Prerequisite Program Progress (H-020)
+
+- 2026-11-07: `SCOPE-018` (shared contracts/policy) merged in H-020 (PR #163, `81c8f11`)
+  and is `done` with post-merge QA; `SCOPE-016` is next.
+- 2026-11-08: H-020 is complete. `SCOPE-018`, `SCOPE-016`, `SCOPE-017`, and `SCOPE-019`
+  are `done` with QA; the persistent map is wired into the provider and `code_search`.
+- This handoff is **resumed at `SCOPE-006`**, then `SCOPE-009`.
+- This handoff stays paused at `SCOPE-006`/`SCOPE-009`; do not resume until `SCOPE-019`
+  merges and the persistent map is wired into the provider/tool.
+
+## Program Split — Persistent Map Prerequisite
+
+`SCOPE-006` was verified blocked on 2026-11-06: the product provider has no persistent
+whole-workspace node registry or watcher, so the map-backed tool cannot meet its
+"without a filesystem walk" criterion. `SCOPE-009` cannot measure real freshness for the
+same reason.
+
+Decision A is locked: build the persistent map rather than redefine or retire the cards.
+The prerequisite is now its own program in `H-020`:
+
+- `SCOPE-018` shared contracts/policy
+- `SCOPE-016` safe engine layer and persistent context lifecycle
+- `SCOPE-017` map supervisor and watcher-driven incremental updates
+- `SCOPE-019` provider/tool integration
+
+**Resume this handoff only after `SCOPE-019` merges.** Then run `SCOPE-006` (map-backed
+code search with grep fallback) and `SCOPE-009` (freshness/staleness SLOs) as the final two
+steps. Do not re-litigate the architecture; it is recorded in `H-020`.
 
 ## The 8 Steps, In Order
 
@@ -415,3 +444,124 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
 > `SCOPE-008`, or `SCOPE-011`. Use a dedicated worktree for implementation PRs, commit
 > board/handoff updates directly on `development`, and stop after each PR for the human
 > liaison's explicit merge approval. Never push `main`.
+
+## Execution Log
+
+### Step 1 — SCOPE-003 (2026-11-05)
+
+- Reproduced the documented pre-existing segfault on base `development` `06448ca`:
+  `native_provider_reports_plan_reconciliation_evidence` dies with `SIGSEGV` in
+  `search_candidates` (`crates/opencode-scopemux/src/lib.rs:698`), reading
+  `provenance = 0x2000000001`.
+- Root cause: the pinned `scopemux-core` `ProjectInfoBlock`/`ProjectPlanNode` gained
+  `observability_kind` (`WI-034`); the Rust FFI mirrors were stale, shifting every field
+  after `kind`. It also explains the recorded `native_delta_slice_returns_projected_entries`
+  failure.
+- Fix PR #158 (`feature/SCOPE-003-plan-reconciliation-ffi-layout`, commit `d67f759`):
+  add the missing field to both structs.
+- Verification on the branch: native suite 18/18 (including both previously failing
+  tests), `opencode-types` 4/4, `opencode-retrieval` 6/6, `opencode-session` 172+2+11,
+  `cargo fmt --all --check` clean.
+- Card stays in `qa` with the QA section recorded. **STOPPED for human merge approval per
+  the one-PR-at-a-time gate; step 2 has not started.**
+
+### Steps 2-4 — SCOPE-012/013/014 closeouts (2026-11-05)
+
+- `SCOPE-012`: re-ran `cargo test -p opencode-core --test scope_lsp_boundary` (2/2) and
+  `cargo test -p opencode-tool ownership_tests` (1/1), fmt clean. Promoted `qa` -> `done`.
+- `SCOPE-013`: re-ran `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-retrieval
+  -p opencode-scopemux` (6/6, 5/5), full native suite 18/18, focused `native_` 8/8 and
+  `exact_fact` 3/3. The two previously "pre-existing" native failures now pass after the
+  SCOPE-003 FFI fix, and the card text was corrected. Promoted `qa` -> `done`.
+- `SCOPE-014`: re-ran the evaluation harness on the merged base. Fresh result: heuristic
+  1/3, precision 0.11, p95 488 ms; heuristic+exact 1/3, precision 0.11, p95 841 ms,
+  4 fact calls; generic 0/3. The **RETIRE from default** decision still stands; opt-in gate
+  confirmed at `crates/opencode-session/src/prompt.rs:306`. Promoted `qa` -> `done`.
+- Board commits pushed to `development` (`ce79448`).
+
+### Step 5 — SCOPE-004 follow-ups (2026-11-05)
+
+- PR #159 (`feature/SCOPE-004-followups`, commit `e8f459e`): prompt-budget injection of the
+  selected map slice (runtime-owned 400-token budget, scopemux-only, synthetic reminder) and
+  end-to-end repair re-anchor coverage (`Repairing` -> `Impact`, reopen reason -> anchored
+  plan node, prior plan nodes retained).
+- Verification: session 175 + 2 + 11, retrieval 6, native scopemux 19/19, fmt clean,
+  clippy exit 0 (pre-existing warnings only).
+- Card moved to `doing` before implementation and stays there until merge. **STOPPED for
+  human merge approval per the one-PR-at-a-time gate; step 6 has not started.**
+
+### Step 6 — SCOPE-010 (2026-11-05)
+
+- PR #161 (`feature/SCOPE-010-language-coverage-matrix`, commit `bb937d3`): coverage matrix,
+  per-file mixed-language behavior with `provider_notes`, typed
+  `RetrievalFallbackReason` (`unsupported_language`/`no_matches`/`provider_unavailable`),
+  and session fallback classification.
+- Verification: retrieval 7, session 176 + 2 + 11, native scopemux 21/21, fmt and clippy
+  clean.
+- Card moved `todo` -> `doing` and stays there until merge. **STOPPED for human merge
+  approval; step 7 has not started.**
+
+### Step 7 — SCOPE-006 (2026-11-06) — BLOCKED
+
+- Verified the card's prerequisite before building: the Rust provider creates a fresh
+  `ProjectContext` per retrieval, adds only seeds/changed files, and never persists a
+  whole-workspace registry or runs a watcher.
+- Evidence (PR #162, `feature/SCOPE-006-scopemux-code-search`, commit `2becc61`): new native
+  test `native_search_is_scoped_to_seeded_files_without_a_persistent_registry` plus the
+  prerequisite documented in `wiki/scopemux-integration-plan.md`.
+- No map-backed search tool was built. The stale `WI-030` note was corrected: Rust is
+  supported; persistence is the blocker.
+- Card remains in `doing` with `attention:` set and is not promoted. **H-018 is paused
+  before step 8; SCOPE-009 depends on the same persistence for real freshness measurement.**
+
+### Step 7 post-merge (2026-11-06)
+
+- PR #162 merged into `development` as `dac31ee`; branch deleted.
+- Post-merge verification on `development`: the scoped-search evidence test passes and
+  `cargo fmt --all --check` is clean.
+- `SCOPE-006` remains blocked in `doing` with `attention:` set; it is not promoted.
+- **H-018 is paused before step 8** until the persistent registration/watcher prerequisite
+  is resolved or the owner changes scope.
+
+### Step 7 — SCOPE-006 resumed (2026-11-08)
+
+- The persistent-map prerequisite is complete (H-020). Re-verified node registration and
+  watcher-driven updates against the persistent map.
+- Branch `feature/SCOPE-006-scopemux-code-search`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/168.
+- The map-backed `code_search` tool shipped in `SCOPE-019`; this step adds the end-to-end
+  native proof (map locate with block id, watcher-updated symbol, prose -> grep). Native
+  scopemux 36 passed; non-native scopemux 3, tool 75, grep 5; fmt/clippy clean.
+- PR #168 merged into `development` as `baf72c0`; branch deleted. Post-merge QA: native
+  scopemux 36, non-native scopemux 3, tool 75, fmt/clippy clean. `SCOPE-006` promoted
+  to `done`.
+- Next: `SCOPE-009` (step 8).
+
+### Step 8 — SCOPE-009 (2026-11-08)
+
+- Branch `feature/SCOPE-009-map-freshness-slo`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/169.
+- Defined freshness states/SLOs and runtime policy (fresh use, lagging warn,
+  stale/unknown -> generic with `stale_map`); supervisor classification uses
+  `SLO_WATCHER_LAG_MS=1000`/`SLO_REBUILD_MS=500`; reconciliation records
+  `ReAnchorResult`.
+- Verification: native scopemux 38 passed; non-native types 9, session 177 (+2, +11),
+  scopemux 3; fmt/clippy clean.
+- **STOPPED for explicit review/merge approval.** After merge, H-018 has no remaining
+  steps.
+
+## Completion — 2026-11-08
+
+All eight steps are merged into `development` with QA evidence:
+
+- `SCOPE-003`, `SCOPE-012`, `SCOPE-013`, `SCOPE-014`, `SCOPE-004`, `SCOPE-010`: done.
+- `SCOPE-018`/`SCOPE-016`/`SCOPE-017`/`SCOPE-019` (H-020 persistent map): done.
+- `SCOPE-006` (map-backed code search with grep fallback): PR #168, done.
+- `SCOPE-009` (freshness/staleness SLOs): PR #169, done.
+
+Final verification on merged `development`: native scopemux 38 passed; non-native
+types 9, session 177 (+2, +11), scopemux 3; grep 5; fmt clean; clippy exit 0
+(pre-existing warnings only). The persistent map provider QA ran against the LAN Ollama
+(`qwen3:30b`) and observed `provider=scopemux representation=Search candidates=5`.
+
+Future-proofing remains on hold; no `FUTURE-PROOFING-*`/`DECISION-*` work was touched.

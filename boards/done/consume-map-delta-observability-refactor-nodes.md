@@ -5,7 +5,7 @@ priority: "P3"
 type: "feature"
 area: "SCOPE"
 spec: "wiki/scopemux-map-integration.md"
-status: "qa"
+status: "done"
 created: "2026-09-23"
 predecessor: "SCOPE-003"
 ---
@@ -154,3 +154,64 @@ Integrated attach/detach harness; the agent ran QA, no human testing.
   but the repair-context depth and prompt-budget injection remain intentionally deferred
   and are tracked under "Still open / follow-ups" above. Promote to `done` only after
   those follow-ups land or the user explicitly completes it.
+## Follow-up Implementation (2026-11-05, H-018 step 5)
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/159
+- Branch: `feature/SCOPE-004-followups`
+- Commit: `e8f459e`
+- **Awaiting human merge approval (H-018 one-PR-at-a-time gate).** Card stays in `doing`
+  until merge; move to `qa` after merge and promote to `done` only with post-merge QA.
+
+### Prompt-budget injection
+
+- `crates/opencode-session/src/retrieval.rs`: `RETRIEVAL_TOKEN_BUDGET = 400`,
+  `retrieval_context_reminder()` renders the selected slice as a synthetic
+  `<system-reminder>` block, truncating candidates once the budget is exhausted. Only
+  `provider == "scopemux"` responses are injected; generic responses return `None`.
+- `crates/opencode-session/src/prompt.rs`: injects the reminder into the user message as a
+  synthetic part. The runtime owns budget/inclusion; the map gains no authority.
+- `crates/opencode-scopemux/src/lib.rs`: `SEARCH_MAX_HITS = 20` decouples search hit count
+  from `token_budget` (a prompt budget, not a hit cap), preserving prior behavior.
+
+### Repair re-anchor
+
+- `reopen_reason` projects to a `refactor_opportunity` plan node anchored to task
+  artifacts; the `Repairing` stage maps to the `Impact` slice.
+- New session test asserts the request carries `Impact`, the reopen reason, the
+  `reopen-*` node with `file:` anchors, and the prior objective/criteria nodes.
+- New native test asserts the repair slice re-anchors the changed file, returns planned
+  candidates, and still reconciles the realized objective.
+
+### Verification
+
+```bash
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session -p opencode-retrieval
+opencode_retrieval: test result: ok. 6 passed; 0 failed
+opencode_session:   test result: ok. 175 passed; 0 failed
+deepseek_fixture:   test result: ok. 2 passed; 0 failed
+session_integration:test result: ok. 11 passed; 0 failed
+
+$ cargo test -p opencode-scopemux --features native
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+$ cargo test -p opencode-session retrieval::tests
+test result: ok. 8 passed; 0 failed
+
+$ cargo fmt --all --check
+(exit 0)
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-session -p opencode-retrieval -p opencode-scopemux --all-targets
+(exit 0; pre-existing warnings only)
+```
+
+Docs updated in `wiki/scopemux-map-integration.md` (stage-consumption + injection +
+repair re-anchor).
+### Post-merge QA (2026-11-05)
+
+- PR #159 merged into `development` as `3aa27fb`; branch deleted.
+- Re-ran on merged `development`:
+  - `cargo test -p opencode-scopemux --features native` -> 19 passed, 0 failed.
+  - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-session -p opencode-retrieval`
+    -> retrieval 6; session 175 + 2 + 11 passed, 0 failed.
+  - `cargo fmt --all --check` -> exit 0.
+- Both deferred follow-ups are now delivered and covered by tests. Promoting `qa` -> `done`.

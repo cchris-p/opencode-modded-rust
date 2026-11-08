@@ -4,6 +4,7 @@ pub mod retrieval;
 pub mod session;
 pub mod task;
 pub mod todo;
+pub mod workspace;
 
 pub use message::*;
 pub use plan::*;
@@ -11,3 +12,4 @@ pub use retrieval::*;
 pub use session::*;
 pub use task::*;
 pub use todo::*;
+pub use workspace::*;

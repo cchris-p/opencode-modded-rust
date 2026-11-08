@@ -417,6 +417,14 @@ impl SessionPrompt {
                 candidates = response.candidates.len(),
                 "retrieval provider selected"
             );
+            // SCOPE-004: inject the selected map slice as bounded evidence. The
+            // runtime owns the budget; the generic provider path is unchanged.
+            if let Some(reminder) = crate::retrieval::retrieval_context_reminder(
+                &response,
+                crate::retrieval::RETRIEVAL_TOKEN_BUDGET,
+            ) {
+                push_synthetic_reminder(msg, reminder);
+            }
             msg.metadata.insert(
                 "retrieval_provider".to_string(),
                 serde_json::Value::String(response.provider),
@@ -1604,6 +1612,14 @@ impl SessionPrompt {
 
                 if let Some(lsp_registry) = lsp_registry.as_ref() {
                     tool_context = tool_context.with_lsp_registry(lsp_registry.clone());
+                }
+
+                // SCOPE-019: inject the map-backed search capability on the same
+                // model scope the provider uses; every other model gets grep only.
+                if let Some(workspace_search) =
+                    opencode_scopemux::workspace_search_for(Some(&provider_id), Some(&model_id))
+                {
+                    tool_context = tool_context.with_workspace_search(Some(workspace_search));
                 }
 
                 if let Some(ask_callback) = ask_callback.clone() {

@@ -17,23 +17,9 @@ const MAX_FILES_SCANNED: usize = 20_000;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_SCAN_DURATION: Duration = Duration::from_secs(15);
 
-/// Build and dependency directories that are never worth scanning. Without
-/// these exclusions a repo-root search walks build artifacts (for example a
-/// Rust `target/` directory with hundreds of thousands of files) and stalls the
-/// whole session.
-const EXCLUDED_DIRS: &[&str] = &[
-    "target",
-    "node_modules",
-    ".git",
-    ".opencode",
-    "dist",
-    "build",
-    ".next",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".cache",
-];
+// The ignore/exclusion policy is shared with the watcher and the map indexer
+// (`SCOPE-018`); grep must not keep a second list.
+use opencode_types::is_excluded_dir;
 
 pub struct GrepTool {
     directory: PathBuf,
@@ -53,24 +39,27 @@ impl Default for GrepTool {
     }
 }
 
-struct GrepMatch {
-    path: String,
-    mtime: SystemTime,
-    line_num: usize,
-    line_text: String,
+pub(crate) struct GrepMatch {
+    pub path: String,
+    pub mtime: SystemTime,
+    pub line_num: usize,
+    pub line_text: String,
 }
 
-struct ScanOutcome {
-    matches: Vec<GrepMatch>,
-    has_errors: bool,
-    files_scanned: usize,
-    budget_exhausted: bool,
+pub(crate) struct ScanOutcome {
+    pub matches: Vec<GrepMatch>,
+    pub has_errors: bool,
+    pub files_scanned: usize,
+    pub budget_exhausted: bool,
 }
 
-fn is_excluded_dir(name: &str) -> bool {
-    EXCLUDED_DIRS
-        .iter()
-        .any(|excluded| excluded.eq_ignore_ascii_case(name))
+/// Bounded literal search used as the code-search fallback.
+///
+/// Shares the same walk, exclusions, byte/duration/file limits, and result
+/// ordering as the grep tool. Callers must run it on a blocking thread.
+pub(crate) fn scan_literal(base_dir: PathBuf, query: &str, include_hidden: bool) -> ScanOutcome {
+    let regex = Regex::new(&regex::escape(query)).expect("escaped query is a valid regex");
+    scan_blocking(base_dir, regex, None, include_hidden)
 }
 
 fn truncate_line(line: &str) -> String {

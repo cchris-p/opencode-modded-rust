@@ -186,6 +186,94 @@ place through measured token savings and task outcomes, and it must remain remov
   to generic behavior; the task still completes.
 - WIP never advances a stage, verifies, reviews, or declares completion.
 
+## Language coverage and fallback matrix
+
+`scopemux-core` parses a fixed grammar set. Coverage is per file, not per workspace:
+mixed-language workspaces parse the supported files and skip the rest with explicit
+provenance instead of failing the whole request.
+
+| Language / file type | Parse | Symbols / references | Confidence | Known gaps | Fallback |
+|---|---|---|---|---|---|
+| C (`.c`, `.h`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Preprocessor/macro-heavy code, complex include graphs | Generic on no match/provider failure |
+| C++ (`.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Templates, heavy macros, ambiguous overloads | Generic on no match/provider failure |
+| Python (`.py`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Dynamic dispatch, decorators, runtime `__getattr__` | Generic on no match/provider failure |
+| JavaScript (`.js`, `.mjs`, `.cjs`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Dynamic property access, framework conventions | Generic on no match/provider failure |
+| TypeScript (`.ts`, `.tsx`) | Yes | Yes | Exact parsed facts; heuristic cross-file edges | Complex generics, conditional types, some module resolution | Generic on no match/provider failure |
+| Rust (`.rs`) | Yes, first-class | Yes, with known resolution gaps | Exact parsed facts; heuristic trait/macro edges | Trait-object dispatch, macro expansion, generic binding | Generic on no match/provider failure |
+| Markdown / prose (`.md`, `.txt`, docs) | No | No | Not code | Not a code grammar | Generic text search (grep/path), never code-grammar search |
+| Other / unsupported extensions | No | No | N/A | N/A | Generic search; explicit `unsupported_language` provenance |
+
+Rust is first-class for this product even though its resolution is not at C/C++ parity.
+Markdown and prose are intentionally not parsed as code; they use the generic search path.
+
+Fallback provenance on `RetrievalResponse.fallback_reason`:
+
+| Value | Meaning | Runtime behavior |
+|---|---|---|
+| `None` | The map returned at least one candidate | Use the map slice |
+| `no_matches` | Supported workspace parsed, no candidates matched | Generic retrieval can still answer; the empty map result is not treated as a real absence |
+| `unsupported_language` | No referenced file is in a supported language | Generic search/path retrieval; task still completes |
+| `provider_unavailable` | The map provider errored in a supported workspace | Generic fallback; task still completes |
+
+The provider is selected before parsing, so an all-prose request never enters the code
+grammar path. For mixed workspaces, skipped files are recorded in `provider_notes`
+(`skipped unsupported language: <path>`) so "unsupported" is distinguishable from
+"no matches".
+
+## Shared contracts (single source of truth)
+
+The persistent-map program (`SCOPE-015`/`SCOPE-018`) centralizes vocabulary and policy so
+the engine, supervisor, provider, tool, and watcher cannot drift:
+
+| Contract | Owner | Consumed by |
+|---|---|---|
+| Ignore/exclusion policy (`EXCLUDED_DIRS`, `is_excluded_dir`, `path_has_excluded_dir`, `default_ignore_globs`) | `opencode-types` | grep, watcher, map indexer/supervisor |
+| Code/prose predicate (`SourceLanguage`, `is_code_path`, `is_prose_path`) | `opencode-types` | provider, tool routing, `SCOPE-010` matrix |
+| Evidence shape (`RetrievalCandidate`, including `block_id`) | `opencode-types` | retrieval and the code-search tool; no tool-only result type |
+| Freshness vocabulary (`MapFreshness`, `MapFreshnessReport`, `ReAnchorResult`) | `opencode-types` | supervisor measurement, `SCOPE-009` policy |
+| Fallback vocabulary (`RetrievalFallbackReason`) | `opencode-types` | provider, runtime |
+| Activation + capability (`WorkspaceSearch` injected through `ToolContext`) | runtime decides; trait in `opencode-types` | tool surface; never model-string parsing |
+| Path normalization and token budget (`normalize_path`, `resolve_workspace_path`, `estimate_tokens`, `truncate_to_token_budget`) | `opencode-types` | provider, tool output, prompt assembly |
+
+DRY applies to decisions and vocabulary, not to forcing grep and map search to share an
+algorithm. The map remains evidence-only; the runtime owns activation, inclusion, budgets,
+and the fresh/lagging/stale/unknown response.
+
+## Map freshness and staleness SLOs (`SCOPE-009`)
+
+Freshness is part of the capability contract. A correct stale map is worse than no map
+because it can anchor a task to code that no longer exists.
+
+States (`MapFreshness`):
+
+| State | Meaning | Runtime behavior |
+|---|---|---|
+| `fresh` | Last update succeeded within the SLO; dirty set empty | Use the map slice |
+| `lagging` | Update succeeded but exceeded the SLO, or a batch is pending | Use with a warning note; no fallback |
+| `stale` | An update failed and the previous map is retained | Fall back to generic with `fallback_reason=stale_map` |
+| `unknown` | No measurement yet / map unavailable | Fall back to generic |
+
+Measurement (`MapFreshnessReport`): last revision, dirty-set size, watcher-to-apply lag,
+last incremental rebuild duration, and the re-anchor result. Thresholds are implementation
+constants reviewed with this SLO: `SLO_WATCHER_LAG_MS = 1000` and
+`SLO_REBUILD_MS = 500`.
+
+Per-operation SLOs:
+
+| Operation | Target |
+|---|---|
+| Locate/search after an edit | `fresh` when watcher lag <= 1 s and incremental rebuild <= 500 ms; otherwise `lagging` until the next successful batch |
+| Delta after a change | Same as locate/search; the delta slice never invents nodes for a stale map |
+| Plan-node reconciliation | Stale/conflict nodes are surfaced within one update cycle and are never silently dropped; the re-anchor result is recorded |
+| Review slice | Only `fresh` results are presented as current; `lagging` is warned; `stale`/`unknown` fall back |
+
+Plan nodes whose anchors change are marked `stale` or `conflict` through
+`PlanReconciliationSignal`; the runtime decides whether to re-plan. The map never advances
+stage, verification, review, or completion.
+
+Measurement is exercised on a real workspace by the supervisor edit/unlink tests and the
+LAN-Ollama provider QA run (`provider=scopemux`, candidates from the persistent map).
+
 ## Capability ladder
 
 Each rung is independently enableable and measurable. Higher rungs are not prerequisites

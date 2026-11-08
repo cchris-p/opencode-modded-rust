@@ -511,6 +511,12 @@ pub struct ToolContext {
     pub project_root: String,
     pub loaded_instructions: LoadedInstructions,
     pub registry: Option<Arc<ToolRegistry>>,
+    /// Map-backed code-search capability injected by the runtime (`SCOPE-018`).
+    ///
+    /// The runtime decides activation once and installs this only on the
+    /// map-backed path. `None` means the tool must use grep/generic search; the
+    /// tool never parses model strings or calls FFI directly.
+    pub workspace_search: Option<Arc<dyn opencode_types::WorkspaceSearch>>,
     #[cfg(feature = "lsp")]
     pub lsp_registry: Option<Arc<LspClientRegistry>>,
 }
@@ -549,6 +555,7 @@ impl ToolContext {
             project_root: directory,
             loaded_instructions: LoadedInstructions::new(),
             registry: None,
+            workspace_search: None,
             #[cfg(feature = "lsp")]
             lsp_registry: None,
         }
@@ -573,6 +580,17 @@ impl ToolContext {
 
     pub fn with_registry(mut self, registry: Arc<ToolRegistry>) -> Self {
         self.registry = Some(registry);
+        self
+    }
+
+    /// Install the neutral map-backed search capability.
+    ///
+    /// Activation is decided by the runtime; the tool only sees the capability.
+    pub fn with_workspace_search(
+        mut self,
+        workspace_search: Option<Arc<dyn opencode_types::WorkspaceSearch>>,
+    ) -> Self {
+        self.workspace_search = workspace_search;
         self
     }
 
@@ -1052,5 +1070,45 @@ impl ToolError {
                 suggestions.join("\n")
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod workspace_capability_tests {
+    use super::*;
+    use opencode_types::{
+        MapFreshness, WorkspaceSearch, WorkspaceSearchRequest, WorkspaceSearchResponse,
+    };
+
+    struct StubSearch;
+
+    impl WorkspaceSearch for StubSearch {
+        fn search_code(&self, _request: &WorkspaceSearchRequest) -> WorkspaceSearchResponse {
+            WorkspaceSearchResponse {
+                candidates: Vec::new(),
+                freshness: MapFreshness::Fresh,
+                fallback_reason: None,
+            }
+        }
+    }
+
+    #[test]
+    fn tool_context_receives_the_workspace_search_capability() {
+        let capability: Arc<dyn WorkspaceSearch> = Arc::new(StubSearch);
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into())
+            .with_workspace_search(Some(capability));
+
+        let response = ctx
+            .workspace_search
+            .as_ref()
+            .expect("capability should be installed")
+            .search_code(&WorkspaceSearchRequest::new("/workspace", "where is X", 5));
+        assert_eq!(response.freshness, MapFreshness::Fresh);
+    }
+
+    #[test]
+    fn absent_capability_means_grep_fallback() {
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into());
+        assert!(ctx.workspace_search.is_none());
     }
 }

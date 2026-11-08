@@ -33,6 +33,7 @@ opencode-tool = { path = "../opencode-tool" }
 opencode-tui = { path = "../opencode-tui" }
 opencode-types = { path = "../opencode-types" }
 opencode-command = { path = "../opencode-command" }
+opencode-oco = { path = "../opencode-oco" }
 opencode-lsp = { path = "../opencode-lsp" }
 clap = { workspace = true }
 tokio = { workspace = true }
