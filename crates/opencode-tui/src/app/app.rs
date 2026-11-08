@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -11,18 +11,22 @@ use std::time::{Duration, Instant};
 use chrono::{TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::api::{ApiClient, McpStatusInfo, MessageInfo, SessionInfo, SessionRevertInfo};
+use crate::api::{
+    ApiClient, McpStatusInfo, MessageInfo, PermissionRequestInfo as ApiPermissionRequestInfo,
+    ProviderAuthMethodInfo, QuestionInfo as ApiQuestionInfo,
+    QuestionPromptInfo as ApiQuestionPromptInfo, SessionInfo, SessionRevertInfo, SkillSummary,
+};
 use crate::app::state::AppState;
 use crate::app::terminal;
 use crate::command::CommandAction;
 use crate::components::{
     Agent, AgentSelectDialog, AlertDialog, CommandPalette, ForkDialog, ForkEntry, HelpDialog,
     HomeView, McpDialog, McpItem, Model, ModelSelectDialog, PermissionAction, PermissionPrompt,
-    Prompt, PromptStashDialog, ProviderDialog, QuestionPrompt,
-    SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog, SessionRenameDialog,
-    SessionView, SkillListDialog, SlashCommandPopup, StashItem, StatusDialog, StatusLine,
-    SubagentDialog, TagDialog, TaskKind, ThemeListDialog, ThemeOption, TimelineDialog,
-    TimelineEntry, Toast, ToastVariant,
+    Prompt, PromptStashDialog, ProviderDialog, QuestionOption, QuestionPrompt, QuestionRequest,
+    QuestionType, SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog,
+    SessionRenameDialog, SessionView, SettingsInputMode, SettingsView, SkillListDialog,
+    SlashCommandPopup, StashItem, StatusDialog, StatusLine, TagDialog, TaskKind, ThemeListDialog,
+    ThemeOption, TimelineDialog, TimelineEntry, Toast, ToastVariant,
 };
 use crate::context::keybind::LeaderKeyState;
 use crate::context::{
@@ -31,11 +35,47 @@ use crate::context::{
 };
 use crate::event::{CustomEvent, Event, StateChange};
 use crate::router::Route;
+use crate::trace;
 use crate::ui::{Clipboard, Selection};
+use crate::TuiExit;
 
 // TS parity: renderer targetFps is 60, ~16ms frame budget.
 const TICK_RATE_MS: u64 = 16;
 const MAX_EVENTS_PER_FRAME: usize = 256;
+
+/// Minimum spacing between full-session refetches driven by streaming
+/// `session.updated` events. While reasoning streams, the server emits those at
+/// up to ~20/s; refetching the whole (growing) session on each event blocks the
+/// TUI event loop and freezes it for the entire thinking phase (BUG-027).
+/// Coalescing streaming refetches to this cadence keeps live output flowing
+/// while leaving the loop time to read input and redraw.
+const STREAM_SYNC_MIN_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Whether a streaming refetch may start now. When this returns false the
+/// caller defers to `pending_session_sync` so a burst of `session.updated`
+/// events collapses into a single refetch on a later tick (trailing-edge
+/// coalescing).
+fn can_start_stream_sync(last_sync: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_sync) >= STREAM_SYNC_MIN_INTERVAL
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TranscriptOptions {
+    include_thinking: bool,
+    include_tool_details: bool,
+    include_assistant_metadata: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PendingQuestionFlow {
+    id: String,
+    session_id: String,
+    steps: Vec<ApiQuestionPromptInfo>,
+    answers: Vec<Vec<String>>,
+    current_index: usize,
+    reviewing: bool,
+    submitting: bool,
+}
 
 pub struct App {
     context: Arc<AppContext>,
@@ -43,6 +83,7 @@ pub struct App {
     terminal: terminal::Tui,
     event_rx: Receiver<Event>,
     prompt: Prompt,
+    settings_view: SettingsView,
     selection: Selection,
     session_view: Option<SessionView>,
     active_session_id: Option<String>,
@@ -64,7 +105,6 @@ pub struct App {
     timeline_dialog: TimelineDialog,
     fork_dialog: ForkDialog,
     provider_dialog: ProviderDialog,
-    subagent_dialog: SubagentDialog,
     tag_dialog: TagDialog,
     permission_prompt: PermissionPrompt,
     question_prompt: QuestionPrompt,
@@ -74,6 +114,7 @@ pub struct App {
     available_models: HashSet<String>,
     model_variants: HashMap<String, Vec<String>>,
     model_variant_selection: HashMap<String, Option<String>>,
+    pending_question_flow: Option<PendingQuestionFlow>,
     pending_initial_submit: bool,
     pending_session_sync: Option<String>,
     last_session_sync: Instant,
@@ -85,19 +126,28 @@ impl App {
     pub fn new() -> anyhow::Result<Self> {
         let (event_tx, event_rx) = mpsc::channel();
         let event_tx_input = event_tx.clone();
-        let context = Arc::new(AppContext::new());
+        let workspace_dir = std::env::current_dir()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
+        // FEAT-053: load workspace config once and seed display toggles from it.
+        // FEAT-048: the same config exposes the experimental background-subagent
+        // capability, resolved the same way the server does (env or project config).
+        let config =
+            opencode_config::load_config(std::path::Path::new(&workspace_dir)).unwrap_or_default();
+        let context = Arc::new(AppContext::new_with_config(&config));
+        *context.directory.write() = workspace_dir.clone();
+        *context.git_branch.write() = detect_git_branch(&workspace_dir);
+        context.set_experimental_background_subagents(config.experimental_background_subagents());
         let terminal = terminal::init()?;
         let mut prompt = Prompt::new(context.clone())
             .with_placeholder("Ask anything... \"Fix a TODO in the codebase\"");
         let mut pending_initial_submit = false;
         let mut initial_session_id: Option<String> = None;
 
-        if let Ok(dir) = std::env::current_dir() {
-            *context.directory.write() = dir.display().to_string();
-        }
+        let workspace_identity = context.directory.read().clone();
 
         let base_url = resolve_tui_base_url();
-        let api_client = Arc::new(ApiClient::new(base_url.clone()));
+        let api_client = Arc::new(ApiClient::new(base_url.clone(), workspace_identity));
         context.set_api_client(api_client);
         spawn_server_event_listener(event_tx.clone(), base_url);
 
@@ -182,6 +232,7 @@ impl App {
             terminal,
             event_rx,
             prompt,
+            settings_view: SettingsView::new(),
             selection: Selection::new(),
             session_view: None,
             active_session_id: None,
@@ -203,7 +254,6 @@ impl App {
             timeline_dialog: TimelineDialog::new(),
             fork_dialog: ForkDialog::new(),
             provider_dialog: ProviderDialog::new(),
-            subagent_dialog: SubagentDialog::new(),
             tag_dialog: TagDialog::new(),
             permission_prompt: PermissionPrompt::new(),
             question_prompt: QuestionPrompt::new(),
@@ -212,6 +262,7 @@ impl App {
             available_models: HashSet::new(),
             model_variants: HashMap::new(),
             model_variant_selection: HashMap::new(),
+            pending_question_flow: None,
             pending_initial_submit,
             pending_session_sync: None,
             last_session_sync: Instant::now(),
@@ -228,8 +279,13 @@ impl App {
         let _ = app.refresh_mcp_dialog();
 
         if let Some(session_id) = initial_session_id {
-            let _ = app.sync_session_from_server(&session_id);
-            app.ensure_session_view(&session_id);
+            let sync_result = app.sync_session_from_server(&session_id);
+            if let Err(err) = open_initial_session(sync_result, || {
+                app.ensure_session_view(&session_id);
+            }) {
+                let _ = terminal::restore();
+                return Err(err);
+            }
         }
         app.sync_prompt_spinner_style();
         app.sync_prompt_spinner_state();
@@ -237,10 +293,19 @@ impl App {
         Ok(app)
     }
 
-    pub fn run(&mut self) -> anyhow::Result<()> {
+    pub fn run(&mut self) -> anyhow::Result<TuiExit> {
         self.draw()?;
+        let mut last_iteration = Instant::now();
 
-        while self.state != AppState::Exiting {
+        while !matches!(self.state, AppState::Exiting | AppState::Detaching) {
+            trace::record_iteration();
+            trace::sync_session(self.active_session_id.as_deref());
+            let loop_gap = last_iteration.elapsed();
+            last_iteration = Instant::now();
+            if loop_gap >= Duration::from_millis(50) {
+                trace::record_starvation(loop_gap);
+            }
+
             let mut should_draw = false;
 
             let first_event = match self
@@ -296,16 +361,30 @@ impl App {
             }
 
             if should_draw {
+                let draw_started = Instant::now();
                 self.draw()?;
+                trace::record_draw(draw_started.elapsed());
             }
         }
 
+        let session_id = match self.context.current_route() {
+            Route::Session { session_id } => Some(session_id),
+            _ => None,
+        };
+        let exit = if self.state == AppState::Detaching {
+            TuiExit::Detach { session_id }
+        } else {
+            TuiExit::Exit { session_id }
+        };
         terminal::restore()?;
-        Ok(())
+        Ok(exit)
     }
 
     fn handle_event(&mut self, event: &Event) -> anyhow::Result<()> {
         self.event_caused_change = true;
+        if matches!(event, Event::Key(_)) {
+            trace::record_key();
+        }
 
         match event {
             Event::Key(key) => {
@@ -313,19 +392,34 @@ impl App {
                 if self.permission_prompt.is_open {
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Enter => {
-                            if let Some(_request) = self.permission_prompt.approve() {
-                                // TODO: Call API when available
-                                // self.api_client.reply_permission(&request.id, "once");
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "once", None);
                             }
                         }
                         KeyCode::Char('n') => {
-                            let _ = self.permission_prompt.deny();
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "reject", None);
+                            }
                         }
                         KeyCode::Char('a') => {
-                            let _ = self.permission_prompt.approve_always();
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "always", None);
+                            }
+                        }
+                        KeyCode::Char('p') => {
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "permanent", None);
+                            }
                         }
                         KeyCode::Esc => {
-                            self.permission_prompt.deny();
+                            if let Some(request) = self.permission_prompt.current_request().cloned()
+                            {
+                                self.respond_to_permission(&request.id, "reject", None);
+                            }
                         }
                         _ => {}
                     }
@@ -334,19 +428,48 @@ impl App {
 
                 // Handle inline question prompt before dialogs
                 if self.question_prompt.is_open {
+                    if self.matches_keybind("input_paste", *key) {
+                        self.paste_clipboard_to_prompt();
+                        return Ok(());
+                    }
                     match key.code {
                         KeyCode::Up => self.question_prompt.move_up(),
                         KeyCode::Down => self.question_prompt.move_down(),
-                        KeyCode::Char(' ') => self.question_prompt.toggle_selected(),
+                        KeyCode::Left => {
+                            if key.modifiers.contains(KeyModifiers::ALT) {
+                                self.question_prompt.move_word_left();
+                            } else {
+                                self.question_prompt.move_left();
+                            }
+                        }
+                        KeyCode::Right => {
+                            if key.modifiers.contains(KeyModifiers::ALT) {
+                                self.question_prompt.move_word_right();
+                            } else {
+                                self.question_prompt.move_right();
+                            }
+                        }
+                        KeyCode::Home => self.question_prompt.move_home(),
+                        KeyCode::End => self.question_prompt.move_end(),
+                        KeyCode::Delete => self.question_prompt.delete(),
+                        KeyCode::Char(' ') => self.question_prompt.space(),
                         KeyCode::Enter => {
-                            if let Some((_question, _answer)) = self.question_prompt.confirm() {
-                                // TODO: Call API when available
+                            if let Some((_question, answer)) = self.question_prompt.confirm() {
+                                self.advance_question_flow(answer);
                             }
                         }
                         KeyCode::Esc => {
-                            self.question_prompt.close();
+                            if !self.question_prompt.cancel_text_input() {
+                                self.reject_question_flow();
+                            }
                         }
-                        KeyCode::Char(c) => self.question_prompt.type_char(c),
+                        KeyCode::Char(c) => {
+                            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT)
+                            {
+                                self.question_prompt.type_char(c);
+                            }
+                        }
                         KeyCode::Backspace => self.question_prompt.backspace(),
                         _ => {}
                     }
@@ -373,6 +496,10 @@ impl App {
                             KeyCode::Char('q') => Some(CommandAction::Exit),
                             KeyCode::Char('u') => Some(CommandAction::Undo),
                             KeyCode::Char('r') => Some(CommandAction::Redo),
+                            KeyCode::Down => Some(CommandAction::SessionChildFirst),
+                            KeyCode::Up => Some(CommandAction::SessionParent),
+                            KeyCode::Left => Some(CommandAction::SessionChildCycleReverse),
+                            KeyCode::Right => Some(CommandAction::SessionChildCycle),
                             _ => None,
                         };
                         self.leader_state.reset();
@@ -398,13 +525,21 @@ impl App {
                     return Ok(());
                 }
 
+                // Ctrl+D quits the TUI (natural exit key); Ctrl+C clears the prompt instead.
+                if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::CONTROL {
+                    self.state = AppState::Exiting;
+                    return Ok(());
+                }
+
                 if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
-                    // If there's an active selection, copy it instead of exiting (TS parity)
+                    // If there's an active selection, copy it (TS parity). Otherwise Ctrl+C
+                    // clears the prompt input field instead of quitting the session.
                     if self.selection.is_active() {
                         self.copy_selection();
                         return Ok(());
                     }
-                    self.state = AppState::Exiting;
+                    self.slash_popup.close();
+                    self.prompt.clear();
                     return Ok(());
                 }
 
@@ -415,8 +550,22 @@ impl App {
                     }
                 }
 
-                if key.code == KeyCode::Char('q') && key.modifiers.is_empty() {
-                    self.state = AppState::Exiting;
+                // FEAT-048: promote a running foreground subagent to the
+                // background (reference ctrl+b), only when the capability is on.
+                if self.matches_keybind("session_background", *key) {
+                    if self.context.experimental_background_subagents() {
+                        if let Route::Session { session_id } = self.context.current_route() {
+                            if let Some(client) = self.context.get_api_client() {
+                                if let Err(error) = client.background_session(&session_id) {
+                                    self.toast.show(
+                                        ToastVariant::Error,
+                                        &format!("Failed to background task: {}", error),
+                                        3000,
+                                    );
+                                }
+                            }
+                        }
+                    }
                     return Ok(());
                 }
 
@@ -427,22 +576,63 @@ impl App {
                         return Ok(());
                     }
                     if let Route::Session { session_id } = self.context.current_route() {
-                        let status = {
+                        let local_status = {
                             let session_ctx = self.context.session.read();
                             session_ctx.status(&session_id).clone()
                         };
-                        if !matches!(status, SessionStatus::Idle) {
-                            if !self.prompt.register_interrupt_keypress() {
-                                return Ok(());
-                            }
-                            if let Some(client) = self.context.get_api_client() {
-                                let _ = client.abort_session(&session_id);
-                            }
+                        // BUG-057: never gate the interrupt on the cached local run
+                        // status. That cache can lag or desync from the server, and
+                        // gating on it lets a confirmed Esc silently do nothing while
+                        // the server is still running a turn. Issue the abort and let
+                        // the server report `aborted:false` when nothing was running.
+                        if !interrupt_ignores_cached_status(&local_status) {
                             self.prompt.clear_interrupt_confirmation();
-                            self.set_session_status(&session_id, SessionStatus::Idle);
-                            self.sync_prompt_spinner_state();
                             return Ok(());
                         }
+                        if !self.prompt.register_interrupt_keypress() {
+                            return Ok(());
+                        }
+                        let Some(client) = self.context.get_api_client() else {
+                            self.prompt.clear_interrupt_confirmation();
+                            self.toast.show(
+                                ToastVariant::Error,
+                                "Cannot interrupt: no server connection",
+                                3000,
+                            );
+                            return Ok(());
+                        };
+                        trace::line(format_args!(
+                            "interrupt: issuing abort for session {session_id} \
+                             (cached status {:?})",
+                            local_status
+                        ));
+                        match client.abort_session(&session_id) {
+                            Ok(value) => {
+                                if interpret_abort_response(&value)
+                                    == InterruptOutcome::NothingToInterrupt
+                                {
+                                    self.prompt.clear_interrupt_confirmation();
+                                    self.toast.show(
+                                        ToastVariant::Info,
+                                        "Nothing to interrupt",
+                                        2000,
+                                    );
+                                }
+                                // Otherwise keep the confirmation latched until
+                                // the session status changes so the hint does not
+                                // flip back to "esc interrupt" while the abort is
+                                // still in flight.
+                            }
+                            Err(err) => {
+                                self.prompt.clear_interrupt_confirmation();
+                                self.toast.show(
+                                    ToastVariant::Error,
+                                    &format!("Failed to interrupt: {}", err),
+                                    3000,
+                                );
+                            }
+                        }
+                        return Ok(());
                     }
                     self.prompt.clear_interrupt_confirmation();
                     return Ok(());
@@ -485,6 +675,13 @@ impl App {
                     }
                 }
 
+                if self.matches_keybind("session_rename", *key) {
+                    if matches!(self.context.current_route(), Route::Session { .. }) {
+                        self.open_session_rename_dialog();
+                        return Ok(());
+                    }
+                }
+
                 if self.matches_keybind("command_palette", *key) {
                     self.sync_command_palette_labels();
                     self.command_palette.open();
@@ -511,8 +708,16 @@ impl App {
                     self.context.toggle_sidebar();
                     return Ok(());
                 }
+                if self.matches_keybind("prompt_toggle", *key) {
+                    self.context.toggle_prompt_hidden();
+                    return Ok(());
+                }
                 if self.matches_keybind("display_thinking", *key) {
                     self.context.toggle_thinking();
+                    return Ok(());
+                }
+                if self.matches_keybind("tool_calls", *key) {
+                    self.context.toggle_tool_calls();
                     return Ok(());
                 }
                 if self.matches_keybind("tool_details", *key) {
@@ -523,7 +728,9 @@ impl App {
                     self.prompt.clear();
                     return Ok(());
                 }
-                if self.matches_keybind("input_newline", *key) {
+                if self.matches_keybind("input_newline", *key)
+                    || self.matches_keybind("input_newline_alt", *key)
+                {
                     let route = self.context.current_route();
                     if matches!(route, Route::Home | Route::Session { .. }) {
                         self.prompt.insert_text("\n");
@@ -532,6 +739,12 @@ impl App {
                 }
                 if self.matches_keybind("help_toggle", *key) {
                     self.help_dialog.open();
+                    return Ok(());
+                }
+
+                if matches!(self.context.current_route(), Route::Settings)
+                    && self.handle_settings_key(*key)
+                {
                     return Ok(());
                 }
 
@@ -550,16 +763,12 @@ impl App {
                     Route::Home | Route::Session { .. } => {
                         if key.code == KeyCode::Enter && key.modifiers.is_empty() {
                             self.submit_prompt()?;
-                        } else if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT)
-                        {
+                        } else if prompt_should_handle_key(*key) {
                             self.prompt.handle_key(*key);
                         }
                     }
                     _ => {
-                        if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT)
-                        {
+                        if prompt_should_handle_key(*key) {
                             self.prompt.handle_key(*key);
                         }
                     }
@@ -586,15 +795,26 @@ impl App {
                         if self.permission_prompt.is_open {
                             self.permission_prompt.handle_click(col, row);
                             if let Some(action) = self.permission_prompt.take_pending_action() {
-                                match action {
-                                    PermissionAction::Approve => {
-                                        let _ = self.permission_prompt.approve();
-                                    }
-                                    PermissionAction::Deny => {
-                                        let _ = self.permission_prompt.deny();
-                                    }
-                                    PermissionAction::ApproveAlways => {
-                                        let _ = self.permission_prompt.approve_always();
+                                if let Some(request) =
+                                    self.permission_prompt.current_request().cloned()
+                                {
+                                    match action {
+                                        PermissionAction::Approve => {
+                                            self.respond_to_permission(&request.id, "once", None);
+                                        }
+                                        PermissionAction::Deny => {
+                                            self.respond_to_permission(&request.id, "reject", None);
+                                        }
+                                        PermissionAction::ApproveAlways => {
+                                            self.respond_to_permission(&request.id, "always", None);
+                                        }
+                                        PermissionAction::ApprovePermanent => {
+                                            self.respond_to_permission(
+                                                &request.id,
+                                                "permanent",
+                                                None,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -667,15 +887,14 @@ impl App {
                 }
             }
             Event::Paste(text) => {
-                if !text.is_empty() {
-                    self.prompt.insert_text(text);
-                }
+                self.insert_text_into_active_input(&text);
             }
             Event::Custom(event) => match event {
                 CustomEvent::StateChanged(StateChange::SessionUpdated(session_id)) => {
+                    trace::record_session_updated();
                     if let Route::Session { session_id: active } = self.context.current_route() {
                         if active == *session_id {
-                            if self.last_session_sync.elapsed() >= Duration::from_millis(50) {
+                            if can_start_stream_sync(self.last_session_sync, Instant::now()) {
                                 let _ = self.sync_session_from_server(session_id);
                                 self.pending_session_sync = None;
                             } else {
@@ -686,11 +905,24 @@ impl App {
                     self.sync_prompt_spinner_state();
                 }
                 CustomEvent::StateChanged(StateChange::SessionStatusBusy(session_id)) => {
+                    // A newly busy session means any prior confirmed interrupt has
+                    // been resolved (cancelled turn drained or a queued turn
+                    // started), so the pending latch can be released.
+                    self.prompt.clear_interrupt_confirmation();
                     self.set_session_status(session_id, SessionStatus::Running);
                     self.sync_prompt_spinner_state();
                 }
                 CustomEvent::StateChanged(StateChange::SessionStatusIdle(session_id)) => {
                     self.set_session_status(session_id, SessionStatus::Idle);
+                    // The turn ended; pull the final transcript immediately so the
+                    // completed content appears without waiting for the periodic
+                    // sync. This is a single refetch, not the streaming storm.
+                    if let Route::Session { session_id: active } = self.context.current_route() {
+                        if active == *session_id {
+                            let _ = self.sync_session_from_server(session_id);
+                            self.pending_session_sync = None;
+                        }
+                    }
                     self.sync_prompt_spinner_state();
                 }
                 CustomEvent::StateChanged(StateChange::SessionStatusRetrying {
@@ -726,7 +958,7 @@ impl App {
                 let route = self.context.current_route();
                 if let Route::Session { session_id } = route {
                     if self.pending_session_sync.as_deref() == Some(session_id.as_str())
-                        && self.last_session_sync.elapsed() >= Duration::from_millis(50)
+                        && can_start_stream_sync(self.last_session_sync, Instant::now())
                     {
                         if self.sync_session_from_server(&session_id).is_ok() {
                             tick_changed = true;
@@ -738,12 +970,20 @@ impl App {
                             tick_changed = true;
                         }
                     }
+                } else {
+                    self.pending_session_sync = None;
+                    self.permission_prompt.close();
+                    self.question_prompt.close();
+                    self.pending_question_flow = None;
+                    self.context.set_pending_permissions(0);
                 }
                 if self.last_aux_sync.elapsed() >= Duration::from_secs(5) {
                     self.refresh_session_list_dialog();
                     let _ = self.refresh_skill_list_dialog();
                     let _ = self.refresh_lsp_status();
                     let _ = self.refresh_mcp_dialog();
+                    let workspace_dir = self.context.directory.read().clone();
+                    *self.context.git_branch.write() = detect_git_branch(&workspace_dir);
                     self.last_aux_sync = Instant::now();
                     tick_changed = true;
                 }
@@ -755,7 +995,11 @@ impl App {
         Ok(())
     }
 
-    fn has_open_dialog_layer(&self) -> bool {
+    /// Dialog layers that should render a full-screen modal backdrop. The inline slash
+    /// command menu is intentionally excluded: it is a lightweight completion popup, not
+    /// a modal, and dimming the whole screen while it is open makes the prompt look
+    /// disabled and the app look frozen.
+    fn has_modal_dialog_layer(&self) -> bool {
         self.alert_dialog.is_open()
             || self.help_dialog.is_open()
             || self.status_dialog.is_open()
@@ -763,7 +1007,6 @@ impl App {
             || self.session_export_dialog.is_open()
             || self.prompt_stash_dialog.is_open()
             || self.skill_list_dialog.is_open()
-            || self.slash_popup.is_open()
             || self.command_palette.is_open()
             || self.model_select.is_open()
             || self.agent_select.is_open()
@@ -773,8 +1016,11 @@ impl App {
             || self.timeline_dialog.is_open()
             || self.fork_dialog.is_open()
             || self.provider_dialog.is_open()
-            || self.subagent_dialog.is_open()
             || self.tag_dialog.is_open()
+    }
+
+    fn has_open_dialog_layer(&self) -> bool {
+        self.has_modal_dialog_layer() || self.slash_popup.is_open()
     }
 
     fn close_top_dialog(&mut self) -> bool {
@@ -846,10 +1092,6 @@ impl App {
         }
         if self.provider_dialog.is_open() {
             self.provider_dialog.close();
-            return true;
-        }
-        if self.subagent_dialog.is_open() {
-            self.subagent_dialog.close();
             return true;
         }
         if self.tag_dialog.is_open() {
@@ -962,14 +1204,6 @@ impl App {
             }
             return;
         }
-        if self.subagent_dialog.is_open() {
-            if up {
-                self.subagent_dialog.scroll_up();
-            } else {
-                self.subagent_dialog.scroll_down(50);
-            }
-            return;
-        }
         if self.tag_dialog.is_open() {
             if up {
                 self.tag_dialog.move_up();
@@ -1050,27 +1284,52 @@ impl App {
             match key.code {
                 KeyCode::Esc => self.session_rename_dialog.close(),
                 KeyCode::Backspace => self.session_rename_dialog.handle_backspace(),
+                KeyCode::Delete => self.session_rename_dialog.handle_delete(),
+                KeyCode::Left => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        self.session_rename_dialog.move_word_left();
+                    } else {
+                        self.session_rename_dialog.move_left();
+                    }
+                }
+                KeyCode::Right => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        self.session_rename_dialog.move_word_right();
+                    } else {
+                        self.session_rename_dialog.move_right();
+                    }
+                }
+                KeyCode::Home => self.session_rename_dialog.move_home(),
+                KeyCode::End => self.session_rename_dialog.move_end(),
                 KeyCode::Enter => {
                     if let Some((session_id, title)) = self.session_rename_dialog.confirm() {
                         if let Some(client) = self.context.get_api_client() {
-                            if let Err(err) = client.update_session_title(&session_id, &title) {
-                                self.alert_dialog.set_message(&format!(
-                                    "Failed to rename session `{}`:\n{}",
-                                    session_id, err
-                                ));
-                                self.alert_dialog.open();
-                            } else {
-                                self.refresh_session_list_dialog();
-                                let _ = self.sync_session_from_server(&session_id);
+                            match client.update_session_title(&session_id, &title) {
+                                Ok(session) => {
+                                    self.apply_updated_session(&session);
+                                    let _ = self.sync_session_from_server(&session_id);
+                                }
+                                Err(err) => {
+                                    self.alert_dialog.set_message(&format!(
+                                        "Failed to rename session `{}`:\n{}",
+                                        session_id, err
+                                    ));
+                                    self.alert_dialog.open();
+                                }
                             }
                         }
                     }
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.session_rename_dialog.handle_input(c);
+                KeyCode::Char(c) => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        match c {
+                            'b' | 'B' => self.session_rename_dialog.move_word_left(),
+                            'f' | 'F' => self.session_rename_dialog.move_word_right(),
+                            _ => {}
+                        }
+                    } else if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                        self.session_rename_dialog.handle_input(c);
+                    }
                 }
                 _ => {}
             }
@@ -1080,6 +1339,21 @@ impl App {
             match key.code {
                 KeyCode::Esc => self.session_export_dialog.close(),
                 KeyCode::Backspace => self.session_export_dialog.handle_backspace(),
+                KeyCode::Delete => self.session_export_dialog.handle_delete(),
+                KeyCode::Left => {
+                    self.session_export_dialog
+                        .move_left(key.modifiers.contains(KeyModifiers::ALT));
+                }
+                KeyCode::Right => {
+                    self.session_export_dialog
+                        .move_right(key.modifiers.contains(KeyModifiers::ALT));
+                }
+                KeyCode::Home => self.session_export_dialog.move_home(),
+                KeyCode::End => self.session_export_dialog.move_end(),
+                KeyCode::Tab => self.session_export_dialog.focus_next(),
+                KeyCode::BackTab => self.session_export_dialog.focus_prev(),
+                KeyCode::Up => self.session_export_dialog.focus_prev(),
+                KeyCode::Down => self.session_export_dialog.focus_next(),
                 KeyCode::Enter => {
                     if let Some(session_id) = self.session_export_dialog.session_id() {
                         let filename = self.session_export_dialog.filename().trim();
@@ -1088,11 +1362,13 @@ impl App {
                                 .set_message("Filename cannot be empty for export.");
                             self.alert_dialog.open();
                         } else {
-                            match self.export_session_to_file(session_id, filename) {
+                            let options = self.transcript_options_from_export_dialog();
+                            match self.export_session_to_file(session_id, filename, options) {
                                 Ok(path) => {
+                                    let display_path = export_path_display(&path);
                                     self.alert_dialog.set_message(&format!(
-                                        "Session exported to `{}`.",
-                                        path.display()
+                                        "Session exported to:\n{}",
+                                        display_path
                                     ));
                                     self.alert_dialog.open();
                                     self.session_export_dialog.close();
@@ -1110,7 +1386,8 @@ impl App {
                 }
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if let Some(session_id) = self.session_export_dialog.session_id() {
-                        match self.build_session_transcript(session_id) {
+                        let options = self.transcript_options_from_export_dialog();
+                        match self.build_session_transcript(session_id, options) {
                             Some(text) => {
                                 if let Err(err) = Clipboard::write_text(&text) {
                                     self.alert_dialog.set_message(&format!(
@@ -1132,11 +1409,16 @@ impl App {
                         }
                     }
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.session_export_dialog.handle_input(c);
+                KeyCode::Char(c) => {
+                    if key.modifiers.contains(KeyModifiers::ALT) {
+                        match c {
+                            'b' | 'B' => self.session_export_dialog.move_left(true),
+                            'f' | 'F' => self.session_export_dialog.move_right(true),
+                            _ => {}
+                        }
+                    } else if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                        self.session_export_dialog.handle_input(c);
+                    }
                 }
                 _ => {}
             }
@@ -1206,6 +1488,12 @@ impl App {
         }
 
         if self.slash_popup.is_open() {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                // Let global control shortcuts (Ctrl-C clear, Ctrl-D quit, ...) keep
+                // working while the inline menu is open; swallowing them made the TUI
+                // look hard-locked with no way out.
+                return Ok(false);
+            }
             match key.code {
                 KeyCode::Esc => self.slash_popup.close(),
                 KeyCode::Up => self.slash_popup.move_up(),
@@ -1265,7 +1553,7 @@ impl App {
                 KeyCode::Enter => {
                     if let Some(model) = self.model_select.selected_model() {
                         let model_ref = format!("{}/{}", model.provider, model.id);
-                        self.set_active_model_selection(model_ref, Some(model.provider.clone()));
+                        self.persist_model_selection(model_ref, Some(model.provider.clone()));
                     }
                     self.model_select.close();
                 }
@@ -1301,32 +1589,57 @@ impl App {
                 match key.code {
                     KeyCode::Esc => self.session_list_dialog.cancel_rename(),
                     KeyCode::Backspace => self.session_list_dialog.handle_rename_backspace(),
+                    KeyCode::Delete => self.session_list_dialog.handle_rename_delete(),
+                    KeyCode::Left => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            self.session_list_dialog.rename_move_word_left();
+                        } else {
+                            self.session_list_dialog.rename_move_left();
+                        }
+                    }
+                    KeyCode::Right => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            self.session_list_dialog.rename_move_word_right();
+                        } else {
+                            self.session_list_dialog.rename_move_right();
+                        }
+                    }
+                    KeyCode::Home => self.session_list_dialog.rename_move_home(),
+                    KeyCode::End => self.session_list_dialog.rename_move_end(),
                     KeyCode::Enter => {
                         if let Some((session_id, title)) = self.session_list_dialog.confirm_rename()
                         {
                             if let Some(client) = self.context.get_api_client() {
-                                if let Err(err) = client.update_session_title(&session_id, &title) {
-                                    self.alert_dialog.set_message(&format!(
-                                        "Failed to rename session `{}`:\n{}",
-                                        session_id, err
-                                    ));
-                                    self.alert_dialog.open();
-                                } else {
-                                    self.refresh_session_list_dialog();
-                                    if self.active_session_id.as_deref()
-                                        == Some(session_id.as_str())
-                                    {
-                                        let _ = self.sync_session_from_server(&session_id);
+                                match client.update_session_title(&session_id, &title) {
+                                    Ok(session) => {
+                                        self.apply_updated_session(&session);
+                                        if self.active_session_id.as_deref()
+                                            == Some(session_id.as_str())
+                                        {
+                                            let _ = self.sync_session_from_server(&session_id);
+                                        }
+                                    }
+                                    Err(err) => {
+                                        self.alert_dialog.set_message(&format!(
+                                            "Failed to rename session `{}`:\n{}",
+                                            session_id, err
+                                        ));
+                                        self.alert_dialog.open();
                                     }
                                 }
                             }
                         }
                     }
-                    KeyCode::Char(c)
-                        if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT) =>
-                    {
-                        self.session_list_dialog.handle_rename_input(c);
+                    KeyCode::Char(c) => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            match c {
+                                'b' | 'B' => self.session_list_dialog.rename_move_word_left(),
+                                'f' | 'F' => self.session_list_dialog.rename_move_word_right(),
+                                _ => {}
+                            }
+                        } else if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                            self.session_list_dialog.handle_rename_input(c);
+                        }
                     }
                     _ => {}
                 }
@@ -1514,6 +1827,10 @@ impl App {
                 KeyCode::Esc => self.timeline_dialog.close(),
                 KeyCode::Up => self.timeline_dialog.move_up(),
                 KeyCode::Down => self.timeline_dialog.move_down(),
+                KeyCode::Home => self.timeline_dialog.select_first(),
+                KeyCode::End => self.timeline_dialog.select_last(),
+                KeyCode::PageUp => self.timeline_dialog.page_up(),
+                KeyCode::PageDown => self.timeline_dialog.page_down(),
                 KeyCode::Enter => {
                     if let Some(msg_id) = self.timeline_dialog.selected_message_id() {
                         let msg_id = msg_id.to_string();
@@ -1586,16 +1903,6 @@ impl App {
             return Ok(true);
         }
 
-        if self.subagent_dialog.is_open() {
-            match key.code {
-                KeyCode::Esc => self.subagent_dialog.close(),
-                KeyCode::Up => self.subagent_dialog.scroll_up(),
-                KeyCode::Down => self.subagent_dialog.scroll_down(50),
-                _ => {}
-            }
-            return Ok(true);
-        }
-
         if self.tag_dialog.is_open() {
             match key.code {
                 KeyCode::Esc => self.tag_dialog.close(),
@@ -1634,6 +1941,18 @@ impl App {
             CommandAction::ExportSession => {
                 self.open_session_export_dialog();
             }
+            CommandAction::SessionChildFirst => {
+                self.navigate_session_child_first();
+            }
+            CommandAction::SessionParent => {
+                self.navigate_session_parent();
+            }
+            CommandAction::SessionChildCycle => {
+                self.navigate_session_child_cycle(1);
+            }
+            CommandAction::SessionChildCycleReverse => {
+                self.navigate_session_child_cycle(-1);
+            }
             CommandAction::PromptStashPush => {
                 if self.prompt.stash_current() {
                     self.alert_dialog.set_message("Prompt stashed.");
@@ -1649,6 +1968,9 @@ impl App {
             }
             CommandAction::PromptSkillList => {
                 self.open_skill_list_dialog();
+            }
+            CommandAction::InsertSkill(name) => {
+                self.prompt.set_input(format!("/{} ", name));
             }
             CommandAction::SwitchTheme => {
                 self.refresh_theme_list_dialog();
@@ -1671,6 +1993,9 @@ impl App {
             }
             CommandAction::ToggleTips => {
                 self.context.toggle_tips_hidden();
+            }
+            CommandAction::TogglePrompt => {
+                self.context.toggle_prompt_hidden();
             }
             CommandAction::SwitchModel => {
                 self.refresh_model_dialog();
@@ -1698,6 +2023,9 @@ impl App {
             CommandAction::ToggleThinking => {
                 self.context.toggle_thinking();
             }
+            CommandAction::ToggleToolCalls => {
+                self.context.toggle_tool_calls();
+            }
             CommandAction::ToggleToolDetails => {
                 self.context.toggle_tool_details();
             }
@@ -1708,9 +2036,6 @@ impl App {
                 self.context.toggle_semantic_highlight();
             }
             CommandAction::ExternalEditor => {}
-            CommandAction::ConnectProvider => {
-                self.provider_dialog.open();
-            }
             CommandAction::ShareSession => {
                 self.handle_share_session();
             }
@@ -1755,6 +2080,7 @@ impl App {
                 self.refresh_status_dialog();
                 self.status_dialog.open();
             }
+            CommandAction::OpenSettings => self.open_provider_settings(),
             CommandAction::ManageMcp | CommandAction::OpenMcpList => {
                 let _ = self.refresh_mcp_dialog();
                 self.mcp_dialog.open();
@@ -1768,18 +2094,28 @@ impl App {
                 self.agent_select.open();
             }
             CommandAction::Exit => self.state = AppState::Exiting,
+            CommandAction::Detach => self.state = AppState::Detaching,
         }
 
         Ok(())
     }
 
+    /// Route text to the question answer field when a question is open,
+    /// otherwise to the session prompt.
+    fn insert_text_into_active_input(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.question_prompt.is_open {
+            self.question_prompt.insert_text(text);
+        } else {
+            self.prompt.insert_text(text);
+        }
+    }
+
     fn paste_clipboard_to_prompt(&mut self) {
         match Clipboard::read_text() {
-            Ok(text) => {
-                if !text.is_empty() {
-                    self.prompt.insert_text(&text);
-                }
-            }
+            Ok(text) => self.insert_text_into_active_input(&text),
             Err(err) => {
                 self.alert_dialog
                     .set_message(&format!("Failed to read clipboard:\n{}", err));
@@ -1820,9 +2156,11 @@ impl App {
             return;
         }
         let lines = self.screen_lines.clone();
-        let text = self
-            .selection
-            .get_selected_text(|row| lines.get(row as usize).cloned());
+        let text = clean_selection_text(
+            self.selection
+                .get_selected_text(|row| lines.get(row as usize).cloned())
+                .as_str(),
+        );
         if !text.is_empty() {
             match Clipboard::write_text(&text) {
                 Ok(()) => {
@@ -1842,6 +2180,125 @@ impl App {
         match self.context.current_route() {
             Route::Session { session_id } => Some(session_id),
             _ => self.active_session_id.clone(),
+        }
+    }
+
+    /// Navigate to a session route and load it, matching the session-list
+    /// Enter path. Used by subagent child navigation.
+    fn navigate_to_session(&mut self, session_id: &str) {
+        self.context.navigate(Route::Session {
+            session_id: session_id.to_string(),
+        });
+        self.ensure_session_view(session_id);
+        let _ = self.sync_session_from_server(session_id);
+        self.refresh_session_family(session_id);
+    }
+
+    fn session_parent_id(&self, session_id: &str) -> Option<String> {
+        self.context
+            .session
+            .read()
+            .sessions
+            .get(session_id)
+            .and_then(|session| session.parent_id.clone())
+    }
+
+    /// Enter the first child of the current session. Mirrors the reference
+    /// `moveFirstChild`: from a childless session it is a no-op, and from a
+    /// child session it falls back to the first sibling.
+    fn navigate_session_child_first(&mut self) {
+        let Some(current) = self.current_session_id() else {
+            return;
+        };
+        let Some(client) = self.context.get_api_client() else {
+            return;
+        };
+
+        let children = client.get_session_children(&current).unwrap_or_default();
+        let direct: Vec<String> = children.into_iter().map(|session| session.id).collect();
+        let target = if !direct.is_empty() {
+            select_first_child(&direct)
+        } else {
+            self.session_parent_id(&current).and_then(|parent| {
+                client
+                    .get_session_children(&parent)
+                    .ok()
+                    .map(|siblings| {
+                        let ids: Vec<String> =
+                            siblings.into_iter().map(|session| session.id).collect();
+                        select_first_sibling(&ids, &current)
+                    })
+                    .flatten()
+            })
+        };
+
+        if let Some(target) = target {
+            if target != current {
+                self.navigate_to_session(&target);
+            }
+        }
+    }
+
+    fn navigate_session_parent(&mut self) {
+        let Some(current) = self.current_session_id() else {
+            return;
+        };
+        if let Some(parent) = self.session_parent_id(&current) {
+            self.navigate_to_session(&parent);
+        }
+    }
+
+    /// Cycle sibling child sessions. `direction` is +1 for the reference's
+    /// "next child" (right) and -1 for "previous child" (left); it matches the
+    /// reference's `findIndex(current) - direction` order.
+    fn navigate_session_child_cycle(&mut self, direction: i32) {
+        let Some(current) = self.current_session_id() else {
+            return;
+        };
+        let Some(parent) = self.session_parent_id(&current) else {
+            return;
+        };
+        let Some(client) = self.context.get_api_client() else {
+            return;
+        };
+        let siblings: Vec<String> = client
+            .get_session_children(&parent)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|session| session.id)
+            .collect();
+        if let Some(target) = cycle_sibling(&siblings, &current, direction) {
+            if target != current {
+                self.navigate_to_session(&target);
+            }
+        }
+    }
+
+    /// Cache the parent's children and the session's own children so the
+    /// subagent footer can show label and position without per-frame requests.
+    fn refresh_session_family(&mut self, session_id: &str) {
+        let Some(client) = self.context.get_api_client() else {
+            return;
+        };
+        let parent_id = self.session_parent_id(session_id);
+        let mut session_ctx = self.context.session.write();
+        if let Some(parent_id) = parent_id {
+            if let Ok(siblings) = client.get_session_children(&parent_id) {
+                for sibling in siblings {
+                    session_ctx
+                        .sessions
+                        .entry(sibling.id.clone())
+                        .or_insert_with(|| map_api_session(&sibling));
+                }
+            }
+        }
+        if let Ok(children) = client.get_session_children(session_id) {
+            for child in children {
+                session_ctx
+                    .sessions
+                    .entry(child.id.clone())
+                    .or_insert_with(|| map_api_session(&child));
+            }
         }
     }
 
@@ -2049,7 +2506,7 @@ impl App {
             self.alert_dialog.open();
             return;
         };
-        match self.build_session_transcript(&session_id) {
+        match self.build_session_transcript(&session_id, TranscriptOptions::default()) {
             Some(text) => {
                 if let Err(err) = Clipboard::write_text(&text) {
                     self.alert_dialog
@@ -2080,29 +2537,7 @@ impl App {
         let entries = session_ctx
             .messages
             .get(&session_id)
-            .map(|msgs| {
-                msgs.iter()
-                    .map(|m| {
-                        let role = match m.role {
-                            MessageRole::User => "user",
-                            MessageRole::Assistant => "assistant",
-                            MessageRole::System => "system",
-                        };
-                        let preview = m
-                            .content
-                            .chars()
-                            .take(60)
-                            .collect::<String>()
-                            .replace('\n', " ");
-                        TimelineEntry {
-                            message_id: m.id.clone(),
-                            role: role.to_string(),
-                            preview,
-                            timestamp: m.created_at.format("%H:%M:%S").to_string(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .map(|msgs| timeline_entries_from_messages(msgs))
             .unwrap_or_default();
         drop(session_ctx);
         self.timeline_dialog.open(entries);
@@ -2146,44 +2581,71 @@ impl App {
         self.fork_dialog.open(session_id, entries);
     }
 
-    fn build_session_transcript(&self, session_id: &str) -> Option<String> {
+    fn transcript_options_from_export_dialog(&self) -> TranscriptOptions {
+        TranscriptOptions {
+            include_thinking: self.session_export_dialog.include_thinking,
+            include_tool_details: self.session_export_dialog.include_tool_details,
+            include_assistant_metadata: self.session_export_dialog.include_metadata,
+        }
+    }
+
+    fn build_session_transcript(
+        &self,
+        session_id: &str,
+        options: TranscriptOptions,
+    ) -> Option<String> {
         let session_ctx = self.context.session.read();
         let session = session_ctx.sessions.get(session_id)?;
         let messages = session_ctx.messages.get(session_id)?;
 
         let mut output = String::new();
         output.push_str(&format!("# {}\n\n", session.title));
-        output.push_str(&format!("Session ID: `{}`\n", session.id));
-        output.push_str(&format!("Created: {}\n", session.created_at.to_rfc3339()));
-        output.push_str(&format!("Updated: {}\n\n", session.updated_at.to_rfc3339()));
+        output.push_str(&format!("**Session ID:** {}\n", session.id));
+        output.push_str(&format!(
+            "**Created:** {}\n",
+            session.created_at.to_rfc3339()
+        ));
+        output.push_str(&format!(
+            "**Updated:** {}\n\n",
+            session.updated_at.to_rfc3339()
+        ));
+        output.push_str("---\n\n");
 
         if messages.is_empty() {
             output.push_str("_No messages_\n");
             return Some(output);
         }
 
+        if let Some(warning) =
+            transcript_incompleteness_warning(messages, session_ctx.status(session_id))
+        {
+            output.push_str(&warning);
+            output.push_str("---\n\n");
+        }
+
         for message in messages {
-            let role = match message.role {
-                MessageRole::User => "User",
-                MessageRole::Assistant => "Assistant",
-                MessageRole::System => "System",
-            };
-            output.push_str(&format!("## {}\n\n", role));
-            if message.content.trim().is_empty() {
-                output.push_str("_Empty message_\n\n");
-            } else {
-                output.push_str(&message.content);
-                output.push_str("\n\n");
+            let rendered = format_transcript_message(message, options);
+            if rendered.trim().is_empty() {
+                continue;
             }
+            output.push_str(&rendered);
+            output.push_str("---\n\n");
         }
 
         Some(output)
     }
 
-    fn export_session_to_file(&self, session_id: &str, filename: &str) -> anyhow::Result<PathBuf> {
-        let transcript = self.build_session_transcript(session_id).ok_or_else(|| {
-            anyhow::anyhow!("No transcript available for session `{}`", session_id)
-        })?;
+    fn export_session_to_file(
+        &self,
+        session_id: &str,
+        filename: &str,
+        options: TranscriptOptions,
+    ) -> anyhow::Result<PathBuf> {
+        let transcript = self
+            .build_session_transcript(session_id, options)
+            .ok_or_else(|| {
+                anyhow::anyhow!("No transcript available for session `{}`", session_id)
+            })?;
 
         let mut path = PathBuf::from(filename.trim());
         if path.as_os_str().is_empty() {
@@ -2224,7 +2686,7 @@ impl App {
         match self.context.current_route() {
             Route::Home => {
                 let optimistic_session_id = self.create_optimistic_session();
-                let opt_id = self.append_optimistic_user_message(
+                let _opt_id = self.append_optimistic_user_message(
                     &optimistic_session_id,
                     &input,
                     agent.clone(),
@@ -2267,8 +2729,11 @@ impl App {
                     model.clone(),
                     variant.clone(),
                 ) {
-                    self.remove_optimistic_message(&session.id, &opt_id);
-                    self.set_session_status(&session.id, SessionStatus::Idle);
+                    let _ = client.delete_session(&session.id);
+                    self.remove_optimistic_session(&session.id);
+                    self.context.navigate(Route::Home);
+                    self.active_session_id = None;
+                    self.session_view = None;
                     self.sync_prompt_spinner_state();
                     self.alert_dialog
                         .set_message(&format!("Failed to send prompt:\n{}", err));
@@ -2414,6 +2879,9 @@ impl App {
             self.context.set_has_connected_provider(false);
             return;
         };
+        let setup = providers.setup.clone();
+        let default_model = providers.default_model.clone();
+        self.settings_view.set_provider_setup(setup.clone());
         let has_connected_provider = providers.providers.iter().any(|p| !p.models.is_empty());
         self.context
             .set_has_connected_provider(has_connected_provider);
@@ -2484,13 +2952,287 @@ impl App {
 
         let model_missing = self.context.current_model.read().is_none();
         if model_missing {
-            if let Some((provider, model_id)) = providers.default_model.iter().next() {
+            if let Some(model_ref) = setup.effective_model.as_ref() {
+                self.set_active_model_selection(model_ref.clone(), provider_from_model(model_ref));
+            } else if let Some(model_id) = default_model.get("ollama") {
+                self.set_active_model_selection(
+                    format!("ollama/{}", model_id),
+                    Some("ollama".to_string()),
+                );
+            } else if let Some((provider, model_id)) = default_model.iter().next() {
                 self.set_active_model_selection(
                     format!("{}/{}", provider, model_id),
                     Some(provider.clone()),
                 );
             }
         }
+
+        self.settings_view.sync_from_context(&self.context);
+    }
+
+    fn open_provider_settings(&mut self) {
+        self.refresh_model_dialog();
+        let _ = self.refresh_settings_auth_state();
+        self.settings_view.sync_from_context(&self.context);
+        self.context.navigate(Route::Settings);
+    }
+
+    fn handle_settings_key(&mut self, key: KeyEvent) -> bool {
+        if let Some(mode) = self.settings_view.input_mode() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.settings_view.cancel_input();
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    self.settings_view.handle_backspace();
+                    return true;
+                }
+                KeyCode::Enter if key.modifiers.is_empty() => {
+                    let Some(client) = self.context.get_api_client() else {
+                        self.toast
+                            .show(ToastVariant::Error, "No API client available", 2200);
+                        return true;
+                    };
+                    let input = self.settings_view.input_value();
+                    let requires_input = match mode {
+                        SettingsInputMode::OAuthCode => self.settings_view.oauth_requires_code(),
+                        _ => true,
+                    };
+                    if requires_input && input.is_empty() {
+                        self.toast
+                            .show(ToastVariant::Warning, "Input cannot be empty", 2200);
+                        return true;
+                    }
+
+                    let result = match mode {
+                        SettingsInputMode::ApiKey => {
+                            let provider_id = self
+                                .settings_view
+                                .selected_provider_ref(&self.context)
+                                .unwrap_or_else(|| "openai".to_string());
+                            client
+                                .set_provider_api_key(&provider_id, input)
+                                .map(|_| format!("{} API key saved", provider_id))
+                        }
+                        SettingsInputMode::OAuthCode => {
+                            let code = if input.is_empty() { None } else { Some(input) };
+                            client
+                                .complete_provider_oauth(
+                                    "openai",
+                                    self.settings_view.oauth_method().unwrap_or(0),
+                                    code,
+                                )
+                                .map(|_| "OpenAI login saved".to_string())
+                        }
+                        SettingsInputMode::OllamaBaseUrl => client
+                            .patch_config(&crate::components::ollama_base_url_patch(input))
+                            .map(|_| "Ollama host saved".to_string()),
+                    };
+
+                    match result {
+                        Ok(message) => {
+                            self.settings_view.cancel_input();
+                            self.refresh_model_dialog();
+                            let _ = self.refresh_settings_auth_state();
+                            self.toast.show(ToastVariant::Success, &message, 2200);
+                        }
+                        Err(err) => {
+                            self.toast.show(
+                                ToastVariant::Error,
+                                &format!("OpenAI auth failed: {}", err),
+                                3200,
+                            );
+                        }
+                    }
+                    return true;
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.settings_view.handle_input(c);
+                    return true;
+                }
+                _ => return true,
+            }
+        }
+
+        if self.settings_view.auth_method_selection().is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.settings_view.cancel_auth_method_select();
+                }
+                KeyCode::Up => {
+                    self.settings_view.move_auth_method_up();
+                }
+                KeyCode::Down => {
+                    self.settings_view.move_auth_method_down();
+                }
+                KeyCode::Enter if key.modifiers.is_empty() => {
+                    if let Some(method) = self.settings_view.selected_auth_method() {
+                        self.begin_openai_auth_method(&method);
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                self.context.router.write().go_back();
+                true
+            }
+            KeyCode::Up => {
+                self.settings_view.move_up(&self.context);
+                true
+            }
+            KeyCode::Down => {
+                self.settings_view.move_down(&self.context);
+                true
+            }
+            KeyCode::Left => {
+                self.settings_view.move_left(&self.context);
+                true
+            }
+            KeyCode::Right => {
+                self.settings_view.move_right(&self.context);
+                true
+            }
+            KeyCode::Char('r') if key.modifiers.is_empty() => {
+                self.refresh_model_dialog();
+                let _ = self.refresh_settings_auth_state();
+                true
+            }
+            KeyCode::Char('d') if key.modifiers.is_empty() => {
+                if let Some(client) = self.context.get_api_client() {
+                    match client.reset_model_selection() {
+                        Ok(reset) => {
+                            self.refresh_model_dialog();
+                            let _ = self.refresh_settings_auth_state();
+                            let message = if reset {
+                                "Model selection reset to default"
+                            } else {
+                                "No saved model selection to reset"
+                            };
+                            self.toast.show(ToastVariant::Success, message, 2400);
+                        }
+                        Err(err) => self.toast.show(
+                            ToastVariant::Error,
+                            &format!("Failed to reset model selection: {}", err),
+                            3200,
+                        ),
+                    }
+                }
+                true
+            }
+            KeyCode::Char('a') if key.modifiers.is_empty() => {
+                let provider_id = self.settings_view.selected_provider_ref(&self.context);
+                if provider_id.as_deref().is_some_and(|id| id != "ollama") {
+                    self.settings_view.begin_api_key_input();
+                }
+                true
+            }
+            KeyCode::Char('u') if key.modifiers.is_empty() => {
+                if self
+                    .settings_view
+                    .selected_provider_ref(&self.context)
+                    .as_deref()
+                    == Some("ollama")
+                {
+                    self.settings_view.begin_ollama_base_url_input();
+                }
+                true
+            }
+            KeyCode::Char('l') if key.modifiers.is_empty() => {
+                if self
+                    .settings_view
+                    .selected_provider_ref(&self.context)
+                    .as_deref()
+                    == Some("openai")
+                {
+                    let methods = self.settings_view.openai_auth_methods().to_vec();
+                    if methods.len() > 1 {
+                        self.settings_view.begin_auth_method_select();
+                    } else if methods.len() == 1 {
+                        self.begin_openai_auth_method(&methods[0]);
+                    } else {
+                        self.start_openai_oauth(0);
+                    }
+                }
+                true
+            }
+            KeyCode::Char('x') if key.modifiers.is_empty() => {
+                let provider_id = self.settings_view.selected_provider_ref(&self.context);
+                if let Some(provider_id) = provider_id.filter(|id| id != "ollama") {
+                    if let Some(client) = self.context.get_api_client() {
+                        match client.delete_provider_auth(&provider_id) {
+                            Ok(_) => {
+                                self.settings_view.cancel_input();
+                                self.refresh_model_dialog();
+                                let _ = self.refresh_settings_auth_state();
+                                self.toast.show(
+                                    ToastVariant::Success,
+                                    &format!("{} auth cleared", provider_id),
+                                    2200,
+                                );
+                            }
+                            Err(err) => self.toast.show(
+                                ToastVariant::Error,
+                                &format!("Failed to clear {} auth: {}", provider_id, err),
+                                3200,
+                            ),
+                        }
+                    }
+                }
+                true
+            }
+            KeyCode::Enter if key.modifiers.is_empty() => {
+                if let Some((model_ref, provider_id)) =
+                    self.settings_view.selected_model_ref(&self.context)
+                {
+                    self.persist_model_selection(model_ref, Some(provider_id));
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn begin_openai_auth_method(&mut self, method: &ProviderAuthMethodInfo) {
+        if method.is_api() {
+            self.settings_view.begin_api_key_input();
+            return;
+        }
+        self.start_openai_oauth(method.index);
+    }
+
+    fn start_openai_oauth(&mut self, method_index: usize) {
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+        match client.start_provider_oauth("openai", method_index) {
+            Ok(prompt) => self.settings_view.begin_oauth_input(method_index, prompt),
+            Err(err) => self.toast.show(
+                ToastVariant::Error,
+                &format!("Failed to start OpenAI login: {}", err),
+                3200,
+            ),
+        }
+    }
+
+    fn refresh_settings_auth_state(&mut self) -> anyhow::Result<()> {
+        let Some(client) = self.context.get_api_client() else {
+            return Ok(());
+        };
+
+        let methods = client.get_provider_auth_methods()?;
+        self.settings_view
+            .set_openai_auth_methods(methods.get("openai").cloned().unwrap_or_default());
+        Ok(())
     }
 
     fn refresh_agent_dialog(&mut self) {
@@ -2506,19 +3248,17 @@ impl App {
             return;
         }
 
-        let theme = self.context.theme.read().clone();
         let mut agent_names = Vec::new();
         let mapped = agents
             .into_iter()
-            .enumerate()
-            .map(|(idx, agent)| {
+            .map(|agent| {
                 agent_names.push(agent.id.clone());
                 Agent {
                     name: agent.id,
                     description: agent
                         .description
                         .unwrap_or_else(|| "No description".to_string()),
-                    color: theme.agent_color(idx),
+                    color: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -2568,9 +3308,9 @@ impl App {
 
         let query = self.session_list_dialog.query().trim().to_string();
         let sessions_result = if query.is_empty() {
-            client.list_sessions()
+            client.list_workspace_sessions_filtered(None, None)
         } else {
-            client.list_sessions_filtered(Some(&query), Some(30))
+            client.list_workspace_sessions_filtered(Some(&query), Some(30))
         };
         let Ok(sessions) = sessions_result else {
             return;
@@ -2618,8 +3358,324 @@ impl App {
         };
         let skills = client.list_skills()?;
         self.skill_list_dialog.set_skills(skills.clone());
-        self.prompt.set_skill_suggestions(skills);
+        self.slash_popup.set_skills(skills.clone());
+        self.prompt.set_skill_suggestions(skill_names(&skills));
         Ok(())
+    }
+
+    fn sync_pending_interactions(&mut self, session_id: &str) -> anyhow::Result<()> {
+        let Some(client) = self.context.get_api_client() else {
+            self.permission_prompt.close();
+            self.question_prompt.close();
+            self.pending_question_flow = None;
+            self.context.set_pending_permissions(0);
+            return Ok(());
+        };
+
+        let permissions = client
+            .list_permissions()?
+            .into_iter()
+            .filter(|request| request.session_id == session_id)
+            .map(|request| map_api_permission_request(&request))
+            .collect::<Vec<_>>();
+        self.context.set_pending_permissions(permissions.len());
+        self.permission_prompt.set_requests(permissions);
+
+        let question = client.list_questions(session_id)?.into_iter().next();
+        self.sync_question_prompt(question);
+        Ok(())
+    }
+
+    fn sync_question_prompt(&mut self, question: Option<ApiQuestionInfo>) {
+        let Some(question) = question else {
+            self.question_prompt.close();
+            self.pending_question_flow = None;
+            return;
+        };
+
+        if self
+            .pending_question_flow
+            .as_ref()
+            .map(|flow| flow.id.as_str())
+            == Some(question.id.as_str())
+        {
+            return;
+        }
+
+        if question.questions.is_empty() {
+            self.question_prompt.close();
+            self.pending_question_flow = None;
+            return;
+        }
+
+        let flow = PendingQuestionFlow {
+            id: question.id,
+            session_id: question.session_id,
+            answers: Vec::new(),
+            current_index: 0,
+            steps: question.questions,
+            reviewing: false,
+            submitting: false,
+        };
+        self.pending_question_flow = Some(flow);
+        self.open_current_question_step();
+    }
+
+    /// Render the flow's current question, the multi-question review screen, or
+    /// submit the collected answers when every question has been answered.
+    fn open_current_question_step(&mut self) {
+        let (index, step_count) = match self.pending_question_flow.as_ref() {
+            Some(flow) => (flow.current_index, flow.steps.len()),
+            None => {
+                self.question_prompt.close();
+                return;
+            }
+        };
+
+        if index < step_count {
+            let prompt = self
+                .pending_question_flow
+                .as_ref()
+                .map(|flow| Self::question_prompt_for_step(flow, index))
+                .expect("flow checked above");
+            self.question_prompt.ask(prompt);
+            return;
+        }
+
+        if step_count > 1 {
+            self.open_question_review();
+        } else {
+            self.submit_question_flow();
+        }
+    }
+
+    fn question_prompt_for_step(flow: &PendingQuestionFlow, index: usize) -> QuestionRequest {
+        let step = &flow.steps[index];
+        let prompt_type = if step.options.is_empty() {
+            QuestionType::Text
+        } else if step.multiple {
+            QuestionType::MultipleChoice
+        } else {
+            QuestionType::SingleChoice
+        };
+        QuestionRequest {
+            id: flow.id.clone(),
+            question: step
+                .header
+                .as_ref()
+                .map(|header| format!("{}\n\n{}", header, step.question))
+                .unwrap_or_else(|| step.question.clone()),
+            question_type: prompt_type,
+            options: step
+                .options
+                .iter()
+                .map(|option| QuestionOption {
+                    id: option.label.clone(),
+                    label: option.label.clone(),
+                    description: option.description.clone().unwrap_or_default(),
+                })
+                .collect(),
+            custom: step.custom,
+        }
+    }
+
+    fn open_question_review(&mut self) {
+        let Some((request_id, summary)) = self.pending_question_flow.as_ref().map(|flow| {
+            let summary = flow
+                .steps
+                .iter()
+                .enumerate()
+                .map(|(index, step)| {
+                    let answer = flow
+                        .answers
+                        .get(index)
+                        .filter(|answers| !answers.is_empty())
+                        .map(|answers| answers.join(", "))
+                        .unwrap_or_else(|| "Unanswered".to_string());
+                    format!("{}\n  -> {}", step.question, answer)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            (flow.id.clone(), summary)
+        }) else {
+            self.question_prompt.close();
+            return;
+        };
+
+        let prompt = QuestionRequest {
+            id: request_id,
+            question: format!("Review your answers:\n\n{}", summary),
+            question_type: QuestionType::Review,
+            options: vec![
+                QuestionOption {
+                    id: "Submit answers".to_string(),
+                    label: "Submit answers".to_string(),
+                    description: String::new(),
+                },
+                QuestionOption {
+                    id: "Go back".to_string(),
+                    label: "Go back".to_string(),
+                    description: String::new(),
+                },
+            ],
+            custom: false,
+        };
+        self.question_prompt.ask(prompt);
+        // Pre-select "Submit answers" so the common path is a single keypress.
+        self.question_prompt.toggle_selected();
+        if let Some(flow) = self.pending_question_flow.as_mut() {
+            flow.reviewing = true;
+        }
+    }
+
+    fn advance_question_flow(&mut self, answer: Vec<String>) {
+        let Some(mut flow) = self.pending_question_flow.take() else {
+            self.question_prompt.close();
+            return;
+        };
+
+        if flow.reviewing {
+            flow.reviewing = false;
+            let action = answer.first().map(String::as_str);
+            if action == Some("Go back") {
+                flow.current_index = flow.steps.len().saturating_sub(1);
+                flow.answers.pop();
+                self.pending_question_flow = Some(flow);
+                self.open_current_question_step();
+            } else {
+                self.pending_question_flow = Some(flow);
+                self.submit_question_flow();
+            }
+            return;
+        }
+
+        flow.answers.push(answer);
+        flow.current_index += 1;
+        self.pending_question_flow = Some(flow);
+        self.open_current_question_step();
+    }
+
+    fn submit_question_flow(&mut self) {
+        if self
+            .pending_question_flow
+            .as_ref()
+            .is_some_and(|flow| flow.submitting)
+        {
+            return;
+        }
+
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+
+        let Some((session_id, request_id, answers)) =
+            self.pending_question_flow.as_mut().map(|flow| {
+                flow.submitting = true;
+                (
+                    flow.session_id.clone(),
+                    flow.id.clone(),
+                    flow.answers.clone(),
+                )
+            })
+        else {
+            self.question_prompt.close();
+            return;
+        };
+
+        match client.reply_question(&session_id, &request_id, answers) {
+            Ok(_) => {
+                self.pending_question_flow = None;
+                self.question_prompt.close();
+                self.toast
+                    .show(ToastVariant::Success, "Question answered", 1800);
+            }
+            Err(err) => {
+                self.toast.show(
+                    ToastVariant::Error,
+                    &format!("Failed to answer question: {}", err),
+                    3200,
+                );
+                // Error recovery: drop the last answer and re-ask that question
+                // instead of leaving the prompt stuck in a submitting state.
+                if let Some(flow) = self.pending_question_flow.as_mut() {
+                    flow.submitting = false;
+                    if flow.current_index > 0 {
+                        flow.current_index -= 1;
+                        flow.answers.pop();
+                    }
+                }
+                self.open_current_question_step();
+            }
+        }
+    }
+
+    fn reject_question_flow(&mut self) {
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+        let Some(flow) = self.pending_question_flow.take() else {
+            self.question_prompt.close();
+            return;
+        };
+
+        match client.reject_question(&flow.session_id, &flow.id) {
+            Ok(_) => {
+                self.question_prompt.close();
+                self.toast
+                    .show(ToastVariant::Info, "Question rejected", 1800);
+            }
+            Err(err) => {
+                self.toast.show(
+                    ToastVariant::Error,
+                    &format!("Failed to reject question: {}", err),
+                    3200,
+                );
+                self.pending_question_flow = Some(flow);
+            }
+        }
+    }
+
+    fn respond_to_permission(&mut self, request_id: &str, reply: &str, message: Option<String>) {
+        let Some(client) = self.context.get_api_client() else {
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+
+        match client.reply_permission(request_id, reply, message) {
+            Ok(result) => match reply {
+                "reject" => self
+                    .toast
+                    .show(ToastVariant::Info, "Permission rejected", 1800),
+                "permanent" => {
+                    if let Some(error) = result.error.as_deref() {
+                        self.toast.show(
+                            ToastVariant::Error,
+                            &format!("Permission approved, but saving it failed: {error}"),
+                            3200,
+                        );
+                    } else {
+                        let feedback = match result.path.as_deref() {
+                            Some(path) => format!("Permanently allowed - wrote {path}"),
+                            None => "Permission approved permanently".to_string(),
+                        };
+                        self.toast.show(ToastVariant::Info, &feedback, 3200);
+                    }
+                }
+                _ => self
+                    .toast
+                    .show(ToastVariant::Info, "Permission approved", 1800),
+            },
+            Err(err) => self.toast.show(
+                ToastVariant::Error,
+                &format!("Failed to reply to permission request: {}", err),
+                3200,
+            ),
+        }
     }
 
     fn refresh_lsp_status(&mut self) -> anyhow::Result<()> {
@@ -2629,14 +3685,51 @@ impl App {
         let servers = client.get_lsp_servers()?;
         let statuses = servers
             .into_iter()
-            .map(|id| crate::context::LspStatus {
-                id,
-                root: "-".to_string(),
-                status: crate::context::LspConnectionStatus::Connected,
+            .map(|server| crate::context::LspStatus {
+                id: server.id,
+                root: server.root,
+                status: if server.status.eq_ignore_ascii_case("error") {
+                    crate::context::LspConnectionStatus::Error
+                } else {
+                    crate::context::LspConnectionStatus::Connected
+                },
             })
             .collect::<Vec<_>>();
         *self.context.lsp_status.write() = statuses;
         Ok(())
+    }
+
+    fn message_role_label(role: &MessageRole) -> &'static str {
+        match role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "system",
+        }
+    }
+
+    /// Short stall heuristic for the status dialog, mirroring `opencode session
+    /// inspect` using the TUI's in-memory session data.
+    fn session_diagnostic_verdict(running: bool, last: &Message) -> StatusLine {
+        if !running {
+            return StatusLine::muted("Verdict: session is not running");
+        }
+        match last.role {
+        MessageRole::User => StatusLine::warning(
+            "Verdict: last persisted message is a user prompt with no reply - turn may be stalled",
+        ),
+        MessageRole::Assistant => {
+            if let Some(error) = &last.error {
+                StatusLine::error(format!("Verdict: last assistant turn errored: {}", error))
+            } else if last.finish.is_some() || last.completed_at.is_some() {
+                StatusLine::success("Verdict: last assistant turn completed")
+            } else {
+                StatusLine::warning(
+                    "Verdict: last assistant turn has no completion record - possible stall",
+                )
+            }
+        }
+        MessageRole::System => StatusLine::muted("Verdict: last message is a system message"),
+    }
     }
 
     fn refresh_status_dialog(&mut self) {
@@ -2676,12 +3769,75 @@ impl App {
             )),
             StatusLine::normal(format!("Loaded sessions: {}", session_ctx.sessions.len())),
             StatusLine::muted(""),
-            StatusLine::title(format!(
-                "MCP Servers ({}, connected: {})",
-                mcp_servers.len(),
-                connected_mcp
-            )),
         ];
+
+        lines.push(StatusLine::title("Session Diagnostics"));
+        let diagnostics_session_id = session_ctx
+            .current_session_id
+            .clone()
+            .or_else(|| self.active_session_id.clone());
+        match diagnostics_session_id {
+            None => lines.push(StatusLine::muted("- No active session")),
+            Some(session_id) => {
+                if let Some(session) = session_ctx.sessions.get(&session_id) {
+                    lines.push(StatusLine::normal(format!("Session: {}", session.id)));
+                    lines.push(StatusLine::normal(format!("Title: {}", session.title)));
+                }
+                let status = session_ctx.status(&session_id);
+                let status_text = match status {
+                    SessionStatus::Idle => "idle".to_string(),
+                    SessionStatus::Running => "running".to_string(),
+                    SessionStatus::Retrying { attempt, .. } => {
+                        format!("retrying (attempt {})", attempt)
+                    }
+                };
+                lines.push(StatusLine::normal(format!("Status: {}", status_text)));
+
+                if let Some(messages) = session_ctx.messages.get(&session_id) {
+                    let user = messages
+                        .iter()
+                        .filter(|m| m.role == MessageRole::User)
+                        .count();
+                    let assistant = messages
+                        .iter()
+                        .filter(|m| m.role == MessageRole::Assistant)
+                        .count();
+                    let parts: usize = messages.iter().map(|m| m.parts.len()).sum();
+                    let output_tokens: u64 = messages.iter().map(|m| m.tokens.output).sum();
+                    lines.push(StatusLine::normal(format!(
+                        "Messages: {} (user={}, assistant={}), parts={}, output_tokens={}",
+                        messages.len(),
+                        user,
+                        assistant,
+                        parts,
+                        output_tokens,
+                    )));
+                    match messages.last() {
+                        None => lines.push(StatusLine::muted("Last message: none")),
+                        Some(last) => {
+                            lines.push(StatusLine::normal(format!(
+                                "Last message: {} at {}",
+                                Self::message_role_label(&last.role),
+                                last.created_at.format("%Y-%m-%d %H:%M:%S"),
+                            )));
+                            lines.push(Self::session_diagnostic_verdict(
+                                matches!(status, SessionStatus::Running),
+                                last,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(trace_path) = trace::trace_path() {
+            lines.push(StatusLine::muted(format!("Trace: {}", trace_path)));
+        }
+        lines.push(StatusLine::muted(""));
+        lines.push(StatusLine::title(format!(
+            "MCP Servers ({}, connected: {})",
+            mcp_servers.len(),
+            connected_mcp
+        )));
         if mcp_servers.is_empty() {
             lines.push(StatusLine::muted("- No MCP servers"));
         } else {
@@ -2773,6 +3929,41 @@ impl App {
             .collect::<Vec<_>>();
         *self.context.mcp_servers.write() = statuses;
         Ok(())
+    }
+
+    /// Persist a manually selected provider/model to the project-local runtime
+    /// config so it becomes the default for new sessions and future runs, then
+    /// make it the active in-memory selection.
+    fn persist_model_selection(&mut self, model_ref: String, provider: Option<String>) {
+        let Some(client) = self.context.get_api_client() else {
+            self.set_active_model_selection(model_ref, provider);
+            self.toast
+                .show(ToastVariant::Error, "No API client available", 2200);
+            return;
+        };
+
+        match client.patch_config(&crate::components::provider_selection_patch(
+            model_ref.clone(),
+        )) {
+            Ok(_) => {
+                self.set_active_model_selection(model_ref.clone(), provider);
+                self.refresh_model_dialog();
+                let _ = self.refresh_settings_auth_state();
+                self.toast.show(
+                    ToastVariant::Success,
+                    &format!("Model selection saved for new sessions: {}", model_ref),
+                    2400,
+                );
+            }
+            Err(err) => {
+                self.set_active_model_selection(model_ref, provider);
+                self.toast.show(
+                    ToastVariant::Error,
+                    &format!("Failed to persist provider selection: {}", err),
+                    3200,
+                );
+            }
+        }
     }
 
     fn set_active_model_selection(&mut self, model_ref: String, provider: Option<String>) {
@@ -2913,6 +4104,37 @@ impl App {
         session_ctx.upsert_session(map_api_session(session));
     }
 
+    fn apply_updated_session(&mut self, session: &SessionInfo) {
+        let mapped = map_api_session(session);
+        let active = self.active_session_id.as_deref() == Some(session.id.as_str())
+            || self.current_session_id().as_deref() == Some(session.id.as_str());
+
+        {
+            let mut session_ctx = self.context.session.write();
+            session_ctx.sessions.insert(session.id.clone(), mapped);
+            session_ctx.messages.entry(session.id.clone()).or_default();
+            session_ctx
+                .session_status
+                .entry(session.id.clone())
+                .or_insert(SessionStatus::Idle);
+            if active {
+                session_ctx.current_session_id = Some(session.id.clone());
+            }
+        }
+
+        if active {
+            let _ = crate::set_session_title(&session.title);
+        }
+
+        if self.session_list_dialog.is_open() {
+            self.session_list_dialog.update_session_title(
+                &session.id,
+                session.title.clone(),
+                session.time.updated,
+            );
+        }
+    }
+
     fn create_optimistic_session(&mut self) -> String {
         let now = Utc::now();
         let session_id = format!("local_session_{}", now.timestamp_millis());
@@ -3034,8 +4256,13 @@ impl App {
             return Ok(());
         };
 
+        let get_session_started = Instant::now();
         let session = client.get_session(session_id)?;
+        let get_session_elapsed = get_session_started.elapsed();
+        let get_messages_started = Instant::now();
         let messages = client.get_messages(session_id)?;
+        let get_messages_elapsed = get_messages_started.elapsed();
+        trace::record_sync(get_session_elapsed, get_messages_elapsed, messages.len());
         let revert = session.revert.as_ref().map(map_api_revert);
 
         let mut session_ctx = self.context.session.write();
@@ -3055,6 +4282,8 @@ impl App {
             session_ctx.revert.remove(session_id);
         }
         drop(session_ctx);
+
+        self.sync_pending_interactions(session_id)?;
 
         self.last_session_sync = Instant::now();
         Ok(())
@@ -3133,20 +4362,24 @@ impl App {
 
     fn sync_command_palette_labels(&mut self) {
         let show_thinking = *self.context.show_thinking.read();
+        let show_tool_calls = *self.context.show_tool_calls.read();
         let show_tool_details = *self.context.show_tool_details.read();
         let density = *self.context.message_density.read();
         let semantic_hl = *self.context.semantic_highlight.read();
         let show_header = *self.context.show_header.read();
         let show_scrollbar = *self.context.show_scrollbar.read();
         let tips_hidden = *self.context.tips_hidden.read();
+        let prompt_hidden = *self.context.prompt_hidden.read();
         self.command_palette.sync_visibility_labels(
             show_thinking,
+            show_tool_calls,
             show_tool_details,
             density,
             semantic_hl,
             show_header,
             show_scrollbar,
             tips_hidden,
+            prompt_hidden,
         );
     }
 
@@ -3165,7 +4398,7 @@ impl App {
         let context = self.context.clone();
         let prompt = &self.prompt;
         let route_for_draw = route.clone();
-        let show_modal_overlay = self.has_open_dialog_layer()
+        let show_modal_overlay = self.has_modal_dialog_layer()
             || self.permission_prompt.is_open
             || self.question_prompt.is_open;
         let session_view = self.session_view.as_mut();
@@ -3186,11 +4419,11 @@ impl App {
         let timeline_dialog = &self.timeline_dialog;
         let fork_dialog = &self.fork_dialog;
         let provider_dialog = &self.provider_dialog;
-        let subagent_dialog = &self.subagent_dialog;
         let tag_dialog = &self.tag_dialog;
         let permission_prompt = &self.permission_prompt;
         let question_prompt = &self.question_prompt;
         let slash_popup = &self.slash_popup;
+        let settings_view = &self.settings_view;
         let toast = &self.toast;
         let selection = &self.selection;
 
@@ -3202,22 +4435,26 @@ impl App {
                 return;
             }
 
+            let mut prompt_anchor: Option<ratatui::layout::Rect> = None;
             match route_for_draw {
                 Route::Home => {
                     let home = HomeView::new(context.clone());
-                    home.render_with_prompt(frame, area, prompt);
+                    prompt_anchor = home.render_with_prompt(frame, area, prompt);
                 }
                 Route::Session { .. } => {
                     if let Some(view) = session_view {
-                        view.render(frame, area, prompt);
+                        prompt_anchor = view.render(frame, area, prompt);
                     } else {
                         let home = HomeView::new(context.clone());
-                        home.render_with_prompt(frame, area, prompt);
+                        prompt_anchor = home.render_with_prompt(frame, area, prompt);
                     }
+                }
+                Route::Settings => {
+                    settings_view.render(frame, area, prompt, &context);
                 }
                 _ => {
                     let home = HomeView::new(context.clone());
-                    home.render_with_prompt(frame, area, prompt);
+                    prompt_anchor = home.render_with_prompt(frame, area, prompt);
                 }
             }
 
@@ -3227,7 +4464,13 @@ impl App {
                 frame.render_widget(modal_backdrop, area);
             }
 
-            slash_popup.render(frame, area, &theme);
+            // Anchor the inline slash menu to the prompt it was opened from. When the
+            // prompt is not rendered (e.g. hidden while scrolled up), fall back to the
+            // bottom edge so the menu stays near the input.
+            let slash_anchor = prompt_anchor.unwrap_or_else(|| {
+                ratatui::layout::Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1)
+            });
+            slash_popup.render(frame, slash_anchor, &theme);
             command_palette.render(frame, area, &theme);
             model_select.render(frame, area, &theme);
             agent_select.render(frame, area, &theme);
@@ -3244,7 +4487,6 @@ impl App {
             timeline_dialog.render(frame, area, &theme);
             fork_dialog.render(frame, area, &theme);
             provider_dialog.render(frame, area, &theme);
-            subagent_dialog.render(frame, area, &theme);
             tag_dialog.render(frame, area, &theme);
             permission_prompt.render(frame, area, &theme);
             question_prompt.render(frame, area, &theme);
@@ -3319,10 +4561,291 @@ impl App {
     }
 }
 
+fn clean_selection_text(text: &str) -> String {
+    text.lines()
+        .map(clean_selection_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn clean_selection_line(line: &str) -> &str {
+    let trimmed = line.trim_start_matches(' ');
+    let Some(first) = trimmed.chars().next() else {
+        return "";
+    };
+
+    if matches!(first, '│' | '┃' | '▸') {
+        return trimmed
+            .trim_start_matches(['│', '┃', '▸', ' '])
+            .trim_start_matches(' ');
+    }
+
+    if line.len().saturating_sub(trimmed.len()) == 2 {
+        return trimmed;
+    }
+
+    line
+}
+
+fn prompt_should_handle_key(key: KeyEvent) -> bool {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return false;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        return matches!(
+            key.code,
+            KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Char('b')
+                | KeyCode::Char('B')
+                | KeyCode::Char('f')
+                | KeyCode::Char('F')
+        );
+    }
+    true
+}
+
+fn skill_names(skills: &[SkillSummary]) -> Vec<String> {
+    skills.iter().map(|skill| skill.name.clone()).collect()
+}
+
 impl Drop for App {
     fn drop(&mut self) {
         let _ = terminal::restore();
     }
+}
+
+fn unresolved_tool_calls(messages: &[Message]) -> Vec<(String, String)> {
+    let mut calls: Vec<(String, String)> = Vec::new();
+    let mut resolved: HashSet<String> = HashSet::new();
+    for message in messages {
+        for part in &message.parts {
+            match part {
+                ContextMessagePart::ToolCall { id, name, .. } => {
+                    calls.push((id.clone(), name.clone()));
+                }
+                ContextMessagePart::ToolResult { id, .. } => {
+                    resolved.insert(id.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    calls
+        .into_iter()
+        .filter(|(id, _)| !resolved.contains(id))
+        .collect()
+}
+
+fn transcript_incompleteness_warning(
+    messages: &[Message],
+    status: &SessionStatus,
+) -> Option<String> {
+    let unresolved = unresolved_tool_calls(messages);
+    let running = !matches!(status, SessionStatus::Idle);
+    if !running && unresolved.is_empty() {
+        return None;
+    }
+
+    let mut output = String::new();
+    output.push_str(
+        "> **Warning:** This transcript was exported while the session was still in progress. ",
+    );
+    if !unresolved.is_empty() {
+        let names = unresolved
+            .iter()
+            .map(|(_, name)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!(
+            "{} tool call(s) have no recorded result ({}), so this export may be incomplete. ",
+            unresolved.len(),
+            names
+        ));
+    }
+    output.push_str("Re-export after the run finishes for a complete transcript.\n\n");
+    Some(output)
+}
+
+fn format_transcript_message(message: &Message, options: TranscriptOptions) -> String {
+    let mut output = String::new();
+    match message.role {
+        MessageRole::User => output.push_str("## User\n\n"),
+        MessageRole::Assistant => output.push_str(&assistant_header(message, options)),
+        MessageRole::System => output.push_str("## System\n\n"),
+    }
+
+    let mut tool_names = HashMap::new();
+    let mut wrote_body = false;
+    for part in &message.parts {
+        let rendered = format_transcript_part(part, options, &mut tool_names);
+        if rendered.is_empty() {
+            continue;
+        }
+        wrote_body = true;
+        output.push_str(&rendered);
+    }
+
+    if !wrote_body {
+        if message.content.trim().is_empty() {
+            output.push_str("_Empty message_\n\n");
+        } else {
+            output.push_str(&message.content);
+            output.push_str("\n\n");
+        }
+    }
+
+    output
+}
+
+fn assistant_header(message: &Message, options: TranscriptOptions) -> String {
+    if !options.include_assistant_metadata {
+        return "## Assistant\n\n".to_string();
+    }
+
+    let mut parts = Vec::new();
+    if let Some(agent) = message
+        .agent
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        parts.push(title_case(agent));
+    }
+    if let Some(model) = message
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        parts.push(model.to_string());
+    }
+    if let Some(completed_at) = message.completed_at {
+        let duration_ms = completed_at
+            .signed_duration_since(message.created_at)
+            .num_milliseconds();
+        if duration_ms > 0 {
+            parts.push(format_duration(duration_ms));
+        }
+    }
+
+    if parts.is_empty() {
+        "## Assistant\n\n".to_string()
+    } else {
+        format!("## Assistant ({})\n\n", parts.join(" · "))
+    }
+}
+
+fn format_transcript_part(
+    part: &ContextMessagePart,
+    options: TranscriptOptions,
+    tool_names: &mut HashMap<String, String>,
+) -> String {
+    match part {
+        ContextMessagePart::Text { text } => {
+            if text.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{}\n\n", text)
+            }
+        }
+        ContextMessagePart::Reasoning { text } => {
+            if options.include_thinking && !text.trim().is_empty() {
+                format!("_Thinking:_\n\n{}\n\n", text)
+            } else {
+                String::new()
+            }
+        }
+        ContextMessagePart::File { path, .. } => format!("**File:** `{}`\n\n", path),
+        ContextMessagePart::Image { url } => format!("**Image:** {}\n\n", url),
+        ContextMessagePart::ToolCall {
+            id,
+            name,
+            arguments,
+        } => {
+            tool_names.insert(id.clone(), name.clone());
+            let mut output = format!("**Tool: {}**\n", name);
+            if options.include_tool_details && !arguments.trim().is_empty() {
+                output.push_str("\n**Input:**\n```json\n");
+                output.push_str(arguments);
+                output.push_str("\n```\n");
+            }
+            output.push('\n');
+            output
+        }
+        ContextMessagePart::ToolResult {
+            id,
+            result,
+            is_error,
+        } => {
+            if !options.include_tool_details || result.trim().is_empty() {
+                return String::new();
+            }
+            let label = if *is_error { "Error" } else { "Output" };
+            let mut output = String::new();
+            if !tool_names.contains_key(id) {
+                output.push_str("**Tool**\n\n");
+            }
+            output.push_str(&format!("**{}:**\n```\n{}\n```\n\n", label, result));
+            output
+        }
+    }
+}
+
+fn format_duration(duration_ms: i64) -> String {
+    format!("{:.1}s", duration_ms as f64 / 1000.0)
+}
+
+fn title_case(input: &str) -> String {
+    input
+        .split(|c: char| c == '-' || c == '_' || c.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            let Some(first) = chars.next() else {
+                return String::new();
+            };
+            let mut word = String::new();
+            word.extend(first.to_uppercase());
+            word.push_str(&chars.as_str().to_ascii_lowercase());
+            word
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// First direct child by ascending id, matching the reference `children()`
+/// sort. Returns `None` for an empty child list.
+fn select_first_child(children: &[String]) -> Option<String> {
+    let mut sorted: Vec<&String> = children.iter().collect();
+    sorted.sort();
+    sorted.first().map(|id| id.to_string())
+}
+
+/// First sibling by ascending id that is not the current session. Used when
+/// `session_child_first` is invoked from within a child session, mirroring the
+/// reference's `children().find((x) => !!x.parentID)` common case.
+fn select_first_sibling(siblings: &[String], current: &str) -> Option<String> {
+    let mut sorted: Vec<&String> = siblings.iter().collect();
+    sorted.sort();
+    sorted
+        .into_iter()
+        .find(|id| id.as_str() != current)
+        .map(|id| id.to_string())
+}
+
+/// Cycle siblings by ascending id. `direction` is +1 for the reference's
+/// "next child" and -1 for "previous child". The reference computes
+/// `index - direction`, so "next" moves toward the lower index; this matches
+/// that ordering exactly.
+fn cycle_sibling(siblings: &[String], current: &str, direction: i32) -> Option<String> {
+    if siblings.len() <= 1 {
+        return None;
+    }
+    let mut sorted: Vec<&String> = siblings.iter().collect();
+    sorted.sort();
+    let index = sorted.iter().position(|id| id.as_str() == current)?;
+    let len = sorted.len() as i32;
+    let next = ((index as i32 - direction) % len + len) % len;
+    sorted.get(next as usize).map(|id| id.to_string())
 }
 
 fn map_api_session(session: &SessionInfo) -> Session {
@@ -3526,6 +5049,37 @@ fn map_mcp_status(server: &McpStatusInfo) -> McpConnectionStatus {
         "needs_client_registration" => McpConnectionStatus::NeedsClientRegistration,
         "disabled" => McpConnectionStatus::Disabled,
         _ => McpConnectionStatus::Disconnected,
+    }
+}
+
+/// BUG-057: whether a confirmed `Esc` interrupt may proceed given the TUI's
+/// cached local run status.
+///
+/// Always `true`. This is a named policy seam so a future change cannot silently
+/// re-introduce a local-status gate, which can drop a legitimate interrupt when
+/// the cache lags or desyncs from the server. The server is authoritative and
+/// answers `aborted:false` when nothing was running.
+fn interrupt_ignores_cached_status(_status: &SessionStatus) -> bool {
+    true
+}
+
+/// How the TUI should react to a server abort response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InterruptOutcome {
+    /// The server cancelled a run (or did not say otherwise); keep the
+    /// confirmation latched until the session status changes.
+    Latch,
+    /// The server explicitly reported nothing to abort.
+    NothingToInterrupt,
+}
+
+/// Interpret the `POST /session/{id}/abort` response. A missing `aborted` field
+/// defaults to latching, matching the prior behavior; only an explicit `false`
+/// means nothing was running.
+fn interpret_abort_response(value: &serde_json::Value) -> InterruptOutcome {
+    match value.get("aborted").and_then(|item| item.as_bool()) {
+        Some(false) => InterruptOutcome::NothingToInterrupt,
+        _ => InterruptOutcome::Latch,
     }
 }
 
@@ -3844,4 +5398,545 @@ fn default_export_filename(title: &str, session_id: &str) -> String {
         slug = format!("session-{}", short_id);
     }
     format!("{slug}.md")
+}
+
+/// Resolve the workspace's checked-out git branch for the footer label
+/// (FEAT-068). Returns `None` outside a repository or when HEAD is detached,
+/// so the caller can omit the `:<branch>` suffix.
+fn detect_git_branch(directory: &str) -> Option<String> {
+    if directory.trim().is_empty() {
+        return None;
+    }
+    opencode_util::git::get_current_branch(Path::new(directory))
+        .map(|branch| branch.trim().to_string())
+        .filter(|branch| !branch.is_empty())
+}
+
+fn export_path_display(path: &Path) -> String {
+    match std::env::current_dir() {
+        Ok(current_dir) => export_path_display_from(path, &current_dir),
+        Err(_) => path.display().to_string(),
+    }
+}
+
+fn export_path_display_from(path: &Path, base: &Path) -> String {
+    if let Ok(relative) = path.strip_prefix(base) {
+        if !relative.as_os_str().is_empty() {
+            return relative.display().to_string();
+        }
+    }
+    path.display().to_string()
+}
+
+fn map_api_permission_request(
+    request: &ApiPermissionRequestInfo,
+) -> crate::components::PermissionRequest {
+    let resource = request
+        .patterns
+        .first()
+        .cloned()
+        .or_else(|| {
+            request
+                .input
+                .get("path")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| request.message.clone());
+
+    crate::components::PermissionRequest {
+        id: request.id.clone(),
+        permission_type: map_permission_type(&request.permission),
+        resource,
+        tool_name: request.tool.clone(),
+    }
+}
+
+fn map_permission_type(permission: &str) -> crate::components::PermissionType {
+    match permission {
+        "read" | "todoread" => crate::components::PermissionType::ReadFile,
+        "write" | "todowrite" => crate::components::PermissionType::WriteFile,
+        "edit" => crate::components::PermissionType::Edit,
+        "bash" => crate::components::PermissionType::Bash,
+        "glob" => crate::components::PermissionType::Glob,
+        "grep" => crate::components::PermissionType::Grep,
+        "list" => crate::components::PermissionType::List,
+        "task" => crate::components::PermissionType::Task,
+        "webfetch" => crate::components::PermissionType::WebFetch,
+        "websearch" => crate::components::PermissionType::WebSearch,
+        "codesearch" => crate::components::PermissionType::CodeSearch,
+        "external_directory" => crate::components::PermissionType::ExternalDirectory,
+        _ => crate::components::PermissionType::ExecuteCommand,
+    }
+}
+
+fn timeline_entries_from_messages(msgs: &[Message]) -> Vec<TimelineEntry> {
+    msgs.iter()
+        .filter(|m| m.role == MessageRole::User)
+        .map(|m| {
+            let preview = m
+                .content
+                .chars()
+                .take(60)
+                .collect::<String>()
+                .replace('\n', " ");
+            TimelineEntry {
+                message_id: m.id.clone(),
+                role: "user".to_string(),
+                preview,
+                timestamp: m.created_at.format("%H:%M:%S").to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Create the initial `--session` view only when the server sync succeeds.
+///
+/// A session id that no longer exists must surface the fetch error instead of
+/// silently opening an empty session, so the view is opened only after a
+/// successful sync.
+fn open_initial_session(
+    sync_result: anyhow::Result<()>,
+    open_view: impl FnOnce(),
+) -> anyhow::Result<()> {
+    sync_result?;
+    open_view();
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_child_is_the_lowest_id() {
+        let children = vec!["c".to_string(), "a".to_string(), "b".to_string()];
+        assert_eq!(select_first_child(&children).as_deref(), Some("a"));
+        assert_eq!(select_first_child(&[]), None);
+    }
+
+    #[test]
+    fn first_sibling_skips_the_current_session() {
+        let siblings = vec!["b".to_string(), "a".to_string(), "c".to_string()];
+        assert_eq!(select_first_sibling(&siblings, "a").as_deref(), Some("b"));
+        assert_eq!(select_first_sibling(&siblings, "b").as_deref(), Some("a"));
+        assert_eq!(select_first_sibling(&["a".to_string()], "a"), None);
+    }
+
+    #[test]
+    fn cycle_sibling_matches_reference_direction_order() {
+        let siblings = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        // "next" (direction = 1) moves toward the lower index, wrapping.
+        assert_eq!(cycle_sibling(&siblings, "b", 1).as_deref(), Some("a"));
+        assert_eq!(cycle_sibling(&siblings, "a", 1).as_deref(), Some("c"));
+        // "previous" (direction = -1) moves toward the higher index.
+        assert_eq!(cycle_sibling(&siblings, "b", -1).as_deref(), Some("c"));
+        assert_eq!(cycle_sibling(&siblings, "c", -1).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn cycle_sibling_is_a_noop_without_siblings() {
+        let only = vec!["a".to_string()];
+        assert_eq!(cycle_sibling(&only, "a", 1), None);
+        assert_eq!(cycle_sibling(&[], "a", 1), None);
+    }
+
+    #[test]
+    fn initial_session_sync_failure_does_not_open_view() {
+        let mut opened = false;
+        let result =
+            open_initial_session(Err(anyhow::anyhow!("Failed to get session: 404")), || {
+                opened = true;
+            });
+        assert!(result.is_err());
+        assert!(!opened);
+    }
+
+    #[test]
+    fn initial_session_sync_success_opens_view() {
+        let mut opened = false;
+        open_initial_session(Ok(()), || opened = true).expect("sync success should open the view");
+        assert!(opened);
+    }
+
+    #[test]
+    fn stream_sync_is_deferred_inside_the_coalescing_window() {
+        let now = Instant::now();
+        assert!(
+            !can_start_stream_sync(now, now),
+            "two updates in the same instant must coalesce into one refetch"
+        );
+        assert!(
+            !can_start_stream_sync(
+                now,
+                now + STREAM_SYNC_MIN_INTERVAL - Duration::from_millis(1)
+            ),
+            "an update just inside the window must be deferred"
+        );
+    }
+
+    #[test]
+    fn stream_sync_runs_once_the_coalescing_window_elapses() {
+        let now = Instant::now();
+        assert!(
+            can_start_stream_sync(now, now + STREAM_SYNC_MIN_INTERVAL),
+            "a refetch may run as soon as the window elapses"
+        );
+        assert!(
+            can_start_stream_sync(now, now + STREAM_SYNC_MIN_INTERVAL + Duration::from_secs(5)),
+            "a quiet stream must still refresh on the next tick"
+        );
+    }
+
+    #[test]
+    fn interrupt_is_not_gated_by_cached_local_status() {
+        // BUG-057: a confirmed Esc must always reach the server even when the
+        // cached local status says idle, so a stale/desynced cache cannot drop
+        // the interrupt while the server is still running the turn.
+        assert!(interrupt_ignores_cached_status(&SessionStatus::Idle));
+        assert!(interrupt_ignores_cached_status(&SessionStatus::Running));
+    }
+
+    #[test]
+    fn abort_response_missing_field_latches_confirmation() {
+        assert_eq!(
+            interpret_abort_response(&serde_json::json!({ "aborted": true })),
+            InterruptOutcome::Latch
+        );
+        assert_eq!(
+            interpret_abort_response(&serde_json::json!({})),
+            InterruptOutcome::Latch
+        );
+    }
+
+    #[test]
+    fn abort_response_explicit_false_reports_nothing_to_interrupt() {
+        assert_eq!(
+            interpret_abort_response(&serde_json::json!({ "aborted": false })),
+            InterruptOutcome::NothingToInterrupt
+        );
+    }
+
+    #[test]
+    fn clean_selection_text_removes_reported_leading_chrome() {
+        assert_eq!(
+            clean_selection_text("  │▸ I have enough to write the spec."),
+            "I have enough to write the spec."
+        );
+    }
+
+    #[test]
+    fn clean_selection_text_removes_padding_only_message_prefix() {
+        assert_eq!(clean_selection_text("  I have enough"), "I have enough");
+    }
+
+    #[test]
+    fn clean_selection_text_preserves_non_layout_indentation() {
+        assert_eq!(clean_selection_text("    let x = 1;"), "    let x = 1;");
+    }
+
+    fn assistant_message(parts: Vec<ContextMessagePart>) -> Message {
+        Message {
+            id: "msg_1".to_string(),
+            role: MessageRole::Assistant,
+            content: String::new(),
+            created_at: Utc
+                .timestamp_millis_opt(1_700_000_000_000)
+                .single()
+                .unwrap(),
+            agent: Some("build".to_string()),
+            model: Some("openai/gpt-5".to_string()),
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: Utc.timestamp_millis_opt(1_700_000_001_500).single(),
+            cost: 0.0,
+            tokens: TokenUsage::default(),
+            parts,
+        }
+    }
+
+    fn message_with_role(id: &str, role: MessageRole, content: &str) -> Message {
+        Message {
+            id: id.to_string(),
+            role,
+            content: content.to_string(),
+            created_at: Utc
+                .timestamp_millis_opt(1_700_000_000_000)
+                .single()
+                .unwrap(),
+            agent: None,
+            model: None,
+            mode: None,
+            finish: None,
+            error: None,
+            completed_at: None,
+            cost: 0.0,
+            tokens: TokenUsage::default(),
+            parts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn timeline_entries_include_only_user_prompts() {
+        let user = message_with_role("msg_user", MessageRole::User, "hello there");
+        let assistant = message_with_role("msg_assistant", MessageRole::Assistant, "hi");
+        let system = message_with_role("msg_system", MessageRole::System, "system note");
+
+        let entries = timeline_entries_from_messages(&[user, assistant, system]);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message_id, "msg_user");
+        assert_eq!(entries[0].role, "user");
+        assert_eq!(entries[0].preview, "hello there");
+        assert!(!entries[0].timestamp.is_empty());
+    }
+
+    #[test]
+    fn timeline_entries_empty_when_no_user_prompts() {
+        let assistant = message_with_role("msg_a", MessageRole::Assistant, "hi");
+        let system = message_with_role("msg_s", MessageRole::System, "note");
+
+        assert!(timeline_entries_from_messages(&[]).is_empty());
+        assert!(timeline_entries_from_messages(&[assistant, system]).is_empty());
+    }
+
+    /// Guards against adopting vanilla opencode's 100-message window: every user
+    /// prompt in a history larger than 100 messages must still produce an entry.
+    #[test]
+    fn timeline_entries_include_every_user_prompt_in_large_history() {
+        let mut messages = Vec::new();
+        for i in 0..40 {
+            messages.push(message_with_role(
+                &format!("msg_user_{i}"),
+                MessageRole::User,
+                &format!("prompt-{i}"),
+            ));
+            for j in 0..3 {
+                messages.push(message_with_role(
+                    &format!("msg_assistant_{i}_{j}"),
+                    MessageRole::Assistant,
+                    "reply",
+                ));
+            }
+        }
+        assert!(messages.len() > 100);
+
+        let entries = timeline_entries_from_messages(&messages);
+
+        assert_eq!(entries.len(), 40);
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(entry.message_id, format!("msg_user_{i}"));
+            assert_eq!(entry.preview, format!("prompt-{i}"));
+        }
+    }
+
+    /// A user turn is a timeline entry even when it has no text content; the
+    /// timeline must not inherit vanilla's "skip messages without a loaded text
+    /// part" behavior.
+    #[test]
+    fn timeline_entries_do_not_require_text_content() {
+        let empty = message_with_role("msg_empty", MessageRole::User, "");
+        let entries = timeline_entries_from_messages(&[empty]);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message_id, "msg_empty");
+        assert!(entries[0].preview.is_empty());
+    }
+
+    #[test]
+    fn transcript_hides_reasoning_and_tool_details_by_default() {
+        let message = assistant_message(vec![
+            ContextMessagePart::Text {
+                text: "answer".to_string(),
+            },
+            ContextMessagePart::Reasoning {
+                text: "private reasoning".to_string(),
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "read".to_string(),
+                arguments: "{\"file\":\"src/main.rs\"}".to_string(),
+            },
+            ContextMessagePart::ToolResult {
+                id: "tool_1".to_string(),
+                result: "file contents".to_string(),
+                is_error: false,
+            },
+        ]);
+
+        let transcript = format_transcript_message(&message, TranscriptOptions::default());
+        assert!(transcript.contains("## Assistant"));
+        assert!(transcript.contains("answer"));
+        assert!(transcript.contains("**Tool: read**"));
+        assert!(!transcript.contains("private reasoning"));
+        assert!(!transcript.contains("**Input:**"));
+        assert!(!transcript.contains("**Output:**"));
+    }
+
+    #[test]
+    fn transcript_includes_optional_sections_when_enabled() {
+        let message = assistant_message(vec![
+            ContextMessagePart::Reasoning {
+                text: "private reasoning".to_string(),
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "read".to_string(),
+                arguments: "{\"file\":\"src/main.rs\"}".to_string(),
+            },
+            ContextMessagePart::ToolResult {
+                id: "tool_1".to_string(),
+                result: "file contents".to_string(),
+                is_error: false,
+            },
+        ]);
+
+        let transcript = format_transcript_message(
+            &message,
+            TranscriptOptions {
+                include_thinking: true,
+                include_tool_details: true,
+                include_assistant_metadata: true,
+            },
+        );
+
+        assert!(transcript.contains("## Assistant (Build · openai/gpt-5 · 1.5s)"));
+        assert!(transcript.contains("_Thinking:_"));
+        assert!(transcript.contains("private reasoning"));
+        assert!(transcript.contains("**Input:**"));
+        assert!(transcript.contains("**Output:**"));
+    }
+
+    #[test]
+    fn transcript_warns_when_tool_calls_have_no_results() {
+        let message = assistant_message(vec![
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "ls".to_string(),
+                arguments: "{}".to_string(),
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_2".to_string(),
+                name: "grep".to_string(),
+                arguments: "{}".to_string(),
+            },
+        ]);
+
+        let warning =
+            transcript_incompleteness_warning(&[message], &SessionStatus::Idle).expect("warning");
+        assert!(warning.contains("2 tool call(s) have no recorded result"));
+        assert!(warning.contains("ls"));
+        assert!(warning.contains("grep"));
+    }
+
+    #[test]
+    fn transcript_warning_absent_when_tool_calls_are_resolved_across_messages() {
+        let call = assistant_message(vec![ContextMessagePart::ToolCall {
+            id: "tool_1".to_string(),
+            name: "ls".to_string(),
+            arguments: "{}".to_string(),
+        }]);
+        let result = assistant_message(vec![ContextMessagePart::ToolResult {
+            id: "tool_1".to_string(),
+            result: "ok".to_string(),
+            is_error: false,
+        }]);
+
+        assert!(transcript_incompleteness_warning(&[call, result], &SessionStatus::Idle).is_none());
+    }
+
+    #[test]
+    fn transcript_warns_while_session_is_running() {
+        let message = assistant_message(vec![ContextMessagePart::Text {
+            text: "answer".to_string(),
+        }]);
+
+        let warning = transcript_incompleteness_warning(&[message], &SessionStatus::Running)
+            .expect("warning");
+        assert!(warning.contains("still in progress"));
+        assert!(!warning.contains("no recorded result"));
+    }
+
+    #[test]
+    fn transcript_flags_only_unresolved_tool_calls() {
+        let message = assistant_message(vec![
+            ContextMessagePart::ToolCall {
+                id: "tool_1".to_string(),
+                name: "ls".to_string(),
+                arguments: "{}".to_string(),
+            },
+            ContextMessagePart::ToolResult {
+                id: "tool_1".to_string(),
+                result: "ok".to_string(),
+                is_error: false,
+            },
+            ContextMessagePart::ToolCall {
+                id: "tool_2".to_string(),
+                name: "grep".to_string(),
+                arguments: "{}".to_string(),
+            },
+        ]);
+
+        let warning =
+            transcript_incompleteness_warning(&[message], &SessionStatus::Idle).expect("warning");
+        assert!(warning.contains("1 tool call(s) have no recorded result (grep)"));
+        assert!(!warning.contains("(ls"));
+    }
+
+    #[test]
+    fn permission_requests_prefer_explicit_pattern_for_resource() {
+        let request = ApiPermissionRequestInfo {
+            id: "perm_1".to_string(),
+            session_id: "ses_1".to_string(),
+            permission: "read".to_string(),
+            patterns: vec!["src/main.rs".to_string()],
+            tool: "read".to_string(),
+            input: serde_json::json!({"path": "ignored.rs"}),
+            message: "Read src/main.rs".to_string(),
+        };
+
+        let mapped = map_api_permission_request(&request);
+        assert_eq!(mapped.resource, "src/main.rs");
+        assert_eq!(
+            mapped.permission_type,
+            crate::components::PermissionType::ReadFile
+        );
+    }
+
+    #[test]
+    fn export_path_display_prefers_relative_path_inside_base() {
+        let base = Path::new("/workspace/project");
+        let path = Path::new("/workspace/project/exports/session.md");
+
+        assert_eq!(export_path_display_from(path, base), "exports/session.md");
+    }
+
+    #[test]
+    fn export_path_display_keeps_absolute_path_outside_base() {
+        let base = Path::new("/workspace/project");
+        let path = Path::new("/tmp/session.md");
+
+        assert_eq!(export_path_display_from(path, base), "/tmp/session.md");
+    }
+
+    #[test]
+    fn permission_requests_fall_back_to_metadata_path() {
+        let request = ApiPermissionRequestInfo {
+            id: "perm_2".to_string(),
+            session_id: "ses_1".to_string(),
+            permission: "glob".to_string(),
+            patterns: Vec::new(),
+            tool: "glob".to_string(),
+            input: serde_json::json!({"path": "/tmp/workspace"}),
+            message: "Glob search".to_string(),
+        };
+
+        let mapped = map_api_permission_request(&request);
+        assert_eq!(mapped.resource, "/tmp/workspace");
+        assert_eq!(
+            mapped.permission_type,
+            crate::components::PermissionType::Glob
+        );
+    }
 }

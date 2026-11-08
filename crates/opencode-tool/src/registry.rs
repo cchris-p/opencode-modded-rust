@@ -6,7 +6,7 @@ use crate::{Tool, ToolContext, ToolError, ToolResult};
 use opencode_plugin::{HookContext, HookEvent};
 
 /// Tools that should not appear in suggestion lists when a tool is not found.
-const FILTERED_FROM_SUGGESTIONS: &[&str] = &["invalid", "patch", "batch"];
+const FILTERED_FROM_SUGGESTIONS: &[&str] = &["invalid", "patch"];
 
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
@@ -153,7 +153,9 @@ impl ToolRegistry {
     }
 }
 
-fn hook_payload_object(payload: &serde_json::Value) -> Option<&serde_json::Map<String, serde_json::Value>> {
+fn hook_payload_object(
+    payload: &serde_json::Value,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
     payload
         .get("output")
         .and_then(|value| value.as_object())
@@ -226,6 +228,9 @@ pub async fn create_default_registry() -> ToolRegistry {
     registry.register(crate::bash::BashTool::new()).await;
     registry.register(crate::glob_tool::GlobTool::new()).await;
     registry.register(crate::grep_tool::GrepTool::new()).await;
+    registry
+        .register(crate::code_search_tool::WorkspaceCodeSearchTool)
+        .await;
     registry.register(crate::ls::LsTool::new()).await;
     registry.register(crate::task::TaskTool::new()).await;
     registry
@@ -242,12 +247,57 @@ pub async fn create_default_registry() -> ToolRegistry {
     registry.register(crate::multiedit::MultiEditTool).await;
     registry.register(crate::apply_patch::ApplyPatchTool).await;
     registry.register(crate::skill::SkillTool).await;
+    registry.register(crate::session::SessionTool).await;
     registry.register(crate::lsp_tool::LspTool).await;
-    registry.register(crate::batch::BatchTool).await;
     registry.register(crate::codesearch::CodeSearchTool).await;
-    registry.register(crate::plan::PlanEnterTool).await;
     registry.register(crate::plan::PlanExitTool).await;
     registry.register(crate::invalid::InvalidTool).await;
 
     registry
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    /// LSP point queries and diagnostics belong only to the `lsp` tool. A map-backed or
+    /// search tool that starts advertising them is the duplicate surface
+    /// `wiki/scopemux-lsp-boundary.md` forbids.
+    #[tokio::test]
+    async fn only_the_lsp_tool_exposes_lsp_point_queries() {
+        const LSP_OWNED: &[&str] = &[
+            "goToDefinition",
+            "findReferences",
+            "documentSymbol",
+            "typeDefinition",
+            "goToImplementation",
+            "prepareCallHierarchy",
+            "incomingCalls",
+            "outgoingCalls",
+            "publishDiagnostics",
+        ];
+
+        let registry = create_default_registry().await;
+        assert!(
+            registry.get("lsp").await.is_some(),
+            "the lsp tool must remain registered"
+        );
+
+        for tool in registry.list().await {
+            if tool.id() == "lsp" {
+                continue;
+            }
+            let mut surface = tool.description().to_string();
+            surface.push_str(&tool.parameters().to_string());
+            for operation in LSP_OWNED {
+                assert!(
+                    !surface.contains(operation),
+                    "tool `{}` advertises LSP-owned operation `{}`; point queries and \
+                     diagnostics belong to the lsp tool (wiki/scopemux-lsp-boundary.md)",
+                    tool.id(),
+                    operation
+                );
+            }
+        }
+    }
 }

@@ -1,5 +1,5 @@
 use crate::{PermissionRequest, ToolContext, ToolError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct ExternalDirectoryOptions {
@@ -40,22 +40,8 @@ pub async fn assert_external_directory(
         return Ok(());
     }
 
-    let parent_dir = match options.kind {
-        ExternalDirectoryKind::Directory => target.to_string(),
-        ExternalDirectoryKind::File => Path::new(target)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| target.to_string()),
-    };
-
-    let glob_pattern = format!("{}/*", parent_dir);
-
-    let request = PermissionRequest::new("external_directory")
-        .with_pattern(&glob_pattern)
-        .with_metadata("filepath", serde_json::json!(target))
-        .with_metadata("parentDir", serde_json::json!(&parent_dir));
-
-    ctx.ask_permission(request).await
+    ctx.ask_permission(permission_request(target, options.kind))
+        .await
 }
 
 fn is_within_project(target: &str, project_root: &str) -> bool {
@@ -77,22 +63,84 @@ fn is_within_project(target: &str, project_root: &str) -> bool {
 }
 
 pub fn get_parent_directory(target: &str, kind: ExternalDirectoryKind) -> String {
+    get_directory_boundary(target, kind)
+}
+
+pub fn get_directory_boundary(target: &str, kind: ExternalDirectoryKind) -> String {
     match kind {
-        ExternalDirectoryKind::Directory => target.to_string(),
-        ExternalDirectoryKind::File => Path::new(target)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| target.to_string()),
+        ExternalDirectoryKind::Directory => canonical_directory_boundary(Path::new(target)),
+        ExternalDirectoryKind::File => {
+            let path = Path::new(target);
+            if let Ok(canonical) = std::fs::canonicalize(path) {
+                if let Some(parent) = canonical.parent() {
+                    return normalize_directory_path(parent);
+                }
+            }
+
+            let parent = path.parent().unwrap_or(path);
+            canonical_directory_boundary(parent)
+        }
     }
 }
 
 pub fn make_glob_pattern(parent_dir: &str) -> String {
-    format!("{}/*", parent_dir)
+    let parent_dir = normalize_directory_path(Path::new(parent_dir));
+    if parent_dir == "/" || parent_dir.ends_with(':') {
+        format!("{parent_dir}*")
+    } else {
+        format!("{parent_dir}/*")
+    }
+}
+
+pub fn permission_request(target: &str, kind: ExternalDirectoryKind) -> PermissionRequest {
+    let parent_dir = get_directory_boundary(target, kind);
+    PermissionRequest::new("external_directory")
+        .with_pattern(make_glob_pattern(&parent_dir))
+        .with_metadata("filepath", serde_json::json!(target))
+        .with_metadata("parentDir", serde_json::json!(parent_dir))
+}
+
+fn canonical_directory_boundary(path: &Path) -> String {
+    let mut current = PathBuf::from(path);
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(&current) {
+            let directory = if canonical.is_dir() {
+                canonical
+            } else {
+                canonical
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or(canonical)
+            };
+            return normalize_directory_path(&directory);
+        }
+
+        let Some(parent) = current.parent() else {
+            return normalize_directory_path(path);
+        };
+
+        if parent == current {
+            return normalize_directory_path(path);
+        }
+
+        current = parent.to_path_buf();
+    }
+}
+
+fn normalize_directory_path(path: &Path) -> String {
+    let rendered = path.to_string_lossy();
+    let trimmed = rendered.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        rendered.into_owned()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_is_within_project_relative() {
@@ -115,20 +163,49 @@ mod tests {
 
     #[test]
     fn test_get_parent_directory_file() {
-        let parent =
-            get_parent_directory("/home/user/project/file.txt", ExternalDirectoryKind::File);
-        assert_eq!(parent, "/home/user/project");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file.txt");
+        fs::write(&file, "demo").unwrap();
+        let canonical_dir = fs::canonicalize(dir.path()).unwrap();
+
+        let parent = get_parent_directory(&file.to_string_lossy(), ExternalDirectoryKind::File);
+        assert_eq!(parent, canonical_dir.to_string_lossy());
     }
 
     #[test]
     fn test_get_parent_directory_dir() {
-        let parent = get_parent_directory("/home/user/project", ExternalDirectoryKind::Directory);
-        assert_eq!(parent, "/home/user/project");
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_dir = fs::canonicalize(dir.path()).unwrap();
+
+        let parent = get_parent_directory(
+            &dir.path().to_string_lossy(),
+            ExternalDirectoryKind::Directory,
+        );
+        assert_eq!(parent, canonical_dir.to_string_lossy());
     }
 
     #[test]
     fn test_make_glob_pattern() {
         let pattern = make_glob_pattern("/home/user/external");
         assert_eq!(pattern, "/home/user/external/*");
+    }
+
+    #[test]
+    fn test_make_glob_pattern_trims_trailing_separator() {
+        let pattern = make_glob_pattern("/home/user/external/");
+        assert_eq!(pattern, "/home/user/external/*");
+    }
+
+    #[test]
+    fn test_permission_request_uses_directory_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file.txt");
+        let canonical_dir = fs::canonicalize(dir.path()).unwrap();
+
+        let request = permission_request(&file.to_string_lossy(), ExternalDirectoryKind::File);
+        assert_eq!(
+            request.patterns,
+            vec![format!("{}/*", canonical_dir.to_string_lossy())]
+        );
     }
 }

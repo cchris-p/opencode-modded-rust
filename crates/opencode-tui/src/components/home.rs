@@ -8,9 +8,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::components::{Logo, Prompt};
+use crate::branding::{APP_SHORT_NAME, APP_VERSION_DATE};
+use crate::components::Prompt;
 use crate::context::{AppContext, McpConnectionStatus};
-use crate::branding::{APP_SHORT_NAME, APP_TAGLINE, APP_VERSION_DATE};
+use crate::ui::workspace_location_label;
 
 const HOME_TIPS: &[&str] = &[
     "Press {highlight}Tab{/highlight} to cycle agents",
@@ -46,6 +47,7 @@ const HOME_TIPS: &[&str] = &[
     "Use {highlight}Ctrl+Shift+C{/highlight} to copy selected text",
     "Use {highlight}@path{/highlight} to reference files in prompt",
     "Use {highlight}/connect{/highlight} to add a new provider",
+    "Use {highlight}/settings{/highlight} to reconfigure the active provider",
     "Use {highlight}/models{/highlight} to switch active model",
     "Use {highlight}/agents{/highlight} to switch active agent",
     "Use {highlight}/skills{/highlight} to inspect installed skills",
@@ -64,13 +66,18 @@ impl HomeView {
         Self { context }
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect) -> Option<Rect> {
         let prompt = Prompt::new(self.context.clone())
             .with_placeholder("Ask anything... \"Fix a TODO in the codebase\"");
-        self.render_with_prompt(frame, area, &prompt);
+        self.render_with_prompt(frame, area, &prompt)
     }
 
-    pub fn render_with_prompt(&self, frame: &mut Frame, area: Rect, prompt: &Prompt) {
+    pub fn render_with_prompt(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        prompt: &Prompt,
+    ) -> Option<Rect> {
         let area = Rect {
             x: area.x.saturating_add(HOME_OUTER_H_PADDING),
             y: area.y.saturating_add(HOME_OUTER_V_PADDING),
@@ -82,55 +89,44 @@ impl HomeView {
                 .saturating_sub(HOME_OUTER_V_PADDING.saturating_mul(2)),
         };
         if area.width == 0 || area.height == 0 {
-            return;
+            return None;
         }
-        let theme = self.context.theme.read();
-
+        let prompt_hidden = *self.context.prompt_hidden.read();
+        let prompt_height = if prompt_hidden { 0 } else { 8 };
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(1),
-                Constraint::Length(6),
-                Constraint::Length(1),
-                Constraint::Length(8),
+                Constraint::Length(prompt_height),
                 Constraint::Length(4),
                 Constraint::Length(3),
             ])
             .split(area);
 
-        let logo = Logo::new(theme.text, theme.text_muted, theme.background);
-        logo.render(frame, layout[1]);
-        self.render_tagline(frame, layout[2]);
-
-        let prompt_width = layout[3].width.min(HOME_MAX_CONTENT_WIDTH);
-        let left_pad = (layout[3].width.saturating_sub(prompt_width)) / 2;
+        let prompt_width = layout[1].width.min(HOME_MAX_CONTENT_WIDTH);
+        let left_pad = (layout[1].width.saturating_sub(prompt_width)) / 2;
         let prompt_area = Rect {
-            x: layout[3].x + left_pad,
-            y: layout[3].y,
+            x: layout[1].x + left_pad,
+            y: layout[1].y,
             width: prompt_width,
-            height: layout[3].height,
+            height: layout[1].height,
         };
 
-        prompt.render(frame, prompt_area);
+        if !prompt_hidden && prompt_area.height > 0 && prompt_area.width > 0 {
+            prompt.render(frame, prompt_area);
+        }
 
         if self.should_show_tips() {
-            self.render_tips(frame, layout[4]);
+            self.render_tips(frame, layout[2]);
         }
 
-        self.render_footer(frame, layout[5]);
-    }
+        self.render_footer(frame, layout[3]);
 
-    fn render_tagline(&self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
-            return;
+        if prompt_hidden {
+            None
+        } else {
+            Some(prompt_area)
         }
-        let theme = self.context.theme.read();
-        let line = Paragraph::new(Line::from(Span::styled(
-            APP_TAGLINE,
-            Style::default().fg(theme.text_muted),
-        )))
-        .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(line, area);
     }
 
     fn render_tips(&self, frame: &mut Frame, area: Rect) {
@@ -179,6 +175,7 @@ impl HomeView {
         }
         let theme = self.context.theme.read();
         let directory = self.context.directory.read();
+        let git_branch = self.context.git_branch.read();
         let mcp_servers = self.context.mcp_servers.read();
 
         let horizontal_padding = 2u16.min(area.width / 2);
@@ -204,8 +201,8 @@ impl HomeView {
 
         let mut spans: Vec<Span> = Vec::new();
 
-        // Left: directory
-        let dir_text = directory.to_string();
+        // Left: workspace path and checked-out branch
+        let dir_text = workspace_location_label(&directory, git_branch.as_deref());
         spans.push(Span::styled(
             dir_text.clone(),
             Style::default().fg(theme.text_muted),
@@ -276,10 +273,12 @@ impl HomeView {
     }
 
     fn should_show_tips(&self) -> bool {
-        let is_first_time_user = self.context.session.read().sessions.is_empty();
-        let tips_hidden = *self.context.tips_hidden.read();
-        !is_first_time_user && !tips_hidden
+        tips_visible(*self.context.tips_hidden.read())
     }
+}
+
+fn tips_visible(tips_hidden: bool) -> bool {
+    !tips_hidden
 }
 
 fn parse_tip_highlights(tip: &str, theme: &crate::theme::Theme) -> Vec<Span<'static>> {
@@ -333,4 +332,60 @@ fn parse_tip_highlights(tip: &str, theme: &crate::theme::Theme) -> Vec<Span<'sta
     }
 
     spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tips_visible, HomeView};
+    use crate::components::Prompt;
+    use crate::context::AppContext;
+    use ratatui::layout::Rect;
+    use std::sync::Arc;
+
+    #[test]
+    fn tips_are_only_visible_when_not_hidden() {
+        assert!(!tips_visible(true));
+        assert!(tips_visible(false));
+    }
+
+    fn draw_home(prompt_hidden: bool) -> (Option<Rect>, String) {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        *context.prompt_hidden.write() = prompt_hidden;
+        let mut prompt = Prompt::new(context.clone());
+        prompt.set_input("pending draft".to_string());
+        let home = HomeView::new(context.clone());
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+        let mut prompt_area = None;
+        terminal
+            .draw(|frame| {
+                prompt_area = home.render_with_prompt(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+        let draft = prompt.get_input().to_string();
+        (prompt_area, draft)
+    }
+
+    #[test]
+    fn hidden_prompt_reserves_zero_rows_on_home() {
+        let (prompt_area, draft) = draw_home(true);
+        assert!(
+            prompt_area.is_none(),
+            "hidden home prompt must not reserve a render area"
+        );
+        assert_eq!(draft, "pending draft");
+    }
+
+    #[test]
+    fn visible_prompt_reserves_rows_on_home() {
+        let (prompt_area, draft) = draw_home(false);
+        assert!(
+            prompt_area.is_some(),
+            "visible home prompt must reserve a render area"
+        );
+        assert_eq!(draft, "pending draft");
+    }
 }

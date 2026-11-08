@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
+use opencode_types::{SessionTask, TaskReviewStatus, TaskStage, TaskVerificationStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -286,6 +288,8 @@ pub struct Session {
     pub slug: String,
     pub project_id: String,
     pub directory: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_identity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
     pub title: String,
@@ -304,6 +308,8 @@ pub struct Session {
     pub usage: Option<SessionUsage>,
     #[serde(default)]
     pub status: SessionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<SessionTask>,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
     #[serde(default, skip_serializing)]
@@ -315,16 +321,63 @@ pub struct Session {
 impl Session {
     const VERSION: &'static str = "1.0.0";
 
+    /// Session metadata key marking a generated title as still pending LLM
+    /// upgrade. Absent means the title is user-authored or already finalized.
+    const TITLE_AUTO_METADATA_KEY: &'static str = "title_auto";
+
+    fn require_stage(
+        current: &TaskStage,
+        expected: TaskStage,
+        target: &TaskStage,
+    ) -> Result<(), TaskStageError> {
+        if *current == expected {
+            return Ok(());
+        }
+        Err(TaskStageError::InvalidTransition {
+            from: current.clone(),
+            to: target.clone(),
+        })
+    }
+
+    fn notes_or_default(notes: Option<&str>, default: &str) -> String {
+        notes
+            .map(str::trim)
+            .filter(|notes| !notes.is_empty())
+            .unwrap_or(default)
+            .to_string()
+    }
+
+    pub fn canonical_workspace_identity(directory: &str) -> Option<String> {
+        let trimmed = directory.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let path = Path::new(trimmed);
+        let candidate = if path.is_absolute() {
+            PathBuf::from(path)
+        } else {
+            std::env::current_dir().ok()?.join(path)
+        };
+
+        let resolved = candidate.canonicalize().unwrap_or(candidate);
+        Some(resolved.to_string_lossy().to_string())
+    }
+
     /// Create a new session
     pub fn new(project_id: impl Into<String>, directory: impl Into<String>) -> Self {
         let now = Utc::now();
         let slug = Self::generate_slug();
 
+        let directory = directory.into();
+        let workspace_identity = Self::canonical_workspace_identity(&directory);
+
         Self {
             id: format!("ses_{}", Uuid::new_v4().simple()),
             slug,
             project_id: project_id.into(),
-            directory: directory.into(),
+            directory,
+            workspace_identity,
             parent_id: None,
             title: format!("New session - {}", now.to_rfc3339()),
             version: Self::VERSION.to_string(),
@@ -336,6 +389,7 @@ impl Session {
             permission: None,
             usage: None,
             status: SessionStatus::Active,
+            task: None,
             metadata: HashMap::new(),
             created_at: now,
             updated_at: now,
@@ -352,6 +406,7 @@ impl Session {
             slug,
             project_id: parent.project_id.clone(),
             directory: parent.directory.clone(),
+            workspace_identity: parent.workspace_identity.clone(),
             parent_id: Some(parent.id.clone()),
             title: format!("Child session - {}", now.to_rfc3339()),
             version: Self::VERSION.to_string(),
@@ -363,6 +418,7 @@ impl Session {
             permission: parent.permission.clone(),
             usage: None,
             status: SessionStatus::Active,
+            task: None,
             metadata: HashMap::new(),
             created_at: now,
             updated_at: now,
@@ -388,6 +444,45 @@ impl Session {
 
         let timestamp_part = &self.title[prefix.len()..];
         chrono::DateTime::parse_from_rfc3339(timestamp_part).is_ok()
+    }
+
+    /// True when the title is an auto-generated fallback that has not yet been
+    /// finalized (upgraded by the LLM) and may still be retried.
+    pub fn is_auto_title_pending(&self) -> bool {
+        self.metadata
+            .get(Self::TITLE_AUTO_METADATA_KEY)
+            .and_then(|value| value.as_bool())
+            == Some(true)
+    }
+
+    /// True when the session still needs a generated title: either it never had
+    /// one (the creation placeholder is intact) or a previous auto title attempt
+    /// is still pending upgrade/retry.
+    pub fn should_generate_title(&self) -> bool {
+        self.is_default_title() || self.is_auto_title_pending()
+    }
+
+    /// Apply a durable fallback title and mark it as auto-generated so a later
+    /// prompt (or LLM upgrade) can still replace it while it stays pending.
+    pub fn set_auto_title(&mut self, title: impl Into<String>) {
+        self.set_title(title);
+        self.metadata.insert(
+            Self::TITLE_AUTO_METADATA_KEY.to_string(),
+            serde_json::json!(true),
+        );
+    }
+
+    /// Finalize an auto-generated title after a successful LLM upgrade so later
+    /// prompts do not regenerate it.
+    pub fn finalize_auto_title(&mut self, title: impl Into<String>) {
+        self.set_title(title);
+        self.metadata.remove(Self::TITLE_AUTO_METADATA_KEY);
+    }
+
+    /// Mark the current title as user-authored. Generated titles must never
+    /// overwrite a manual rename, so this clears any pending auto-title marker.
+    pub fn mark_title_user_owned(&mut self) {
+        self.metadata.remove(Self::TITLE_AUTO_METADATA_KEY);
     }
 
     /// Get a forked title
@@ -419,6 +514,22 @@ impl Session {
     /// Add a user message
     pub fn add_user_message(&mut self, text: impl Into<String>) -> &mut SessionMessage {
         let msg = SessionMessage::user(&self.id, text);
+        self.messages.push(msg);
+        self.touch();
+        self.messages.last_mut().unwrap()
+    }
+
+    /// Add a user message with a caller-provided stable ID.
+    ///
+    /// Used for accept-time materialization so the server can return the exact
+    /// message ID that the runner later consumes.
+    pub fn add_user_message_with_id(
+        &mut self,
+        id: impl Into<String>,
+        text: impl Into<String>,
+    ) -> &mut SessionMessage {
+        let mut msg = SessionMessage::user(&self.id, text);
+        msg.id = id.into();
         self.messages.push(msg);
         self.touch();
         self.messages.last_mut().unwrap()
@@ -467,11 +578,46 @@ impl Session {
     pub fn remove_message(&mut self, id: &str) -> Option<SessionMessage> {
         if let Some(pos) = self.messages.iter().position(|m| m.id == id) {
             let msg = self.messages.remove(pos);
+            self.mark_message_deleted(id);
             self.touch();
             Some(msg)
         } else {
             None
         }
+    }
+
+    /// Session metadata key holding the ids of messages explicitly removed from
+    /// this session. Kept as metadata so it persists with the session.
+    const DELETED_MESSAGES_METADATA_KEY: &'static str = "deleted_message_ids";
+
+    /// Record that a message was explicitly removed from this session.
+    ///
+    /// A detached run replays snapshots cloned before the removal; the merge
+    /// path consults these tombstones so a stale snapshot cannot resurrect a
+    /// message the shared session intentionally dropped (BUG-051).
+    pub fn mark_message_deleted(&mut self, id: &str) {
+        let entry = self
+            .metadata
+            .entry(Self::DELETED_MESSAGES_METADATA_KEY.to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(ids) = entry.as_array_mut() {
+            if !ids.iter().any(|existing| existing.as_str() == Some(id)) {
+                ids.push(serde_json::json!(id));
+            }
+        }
+    }
+
+    /// Ids of messages explicitly removed from this session.
+    pub fn deleted_message_ids(&self) -> std::collections::HashSet<String> {
+        self.metadata
+            .get(Self::DELETED_MESSAGES_METADATA_KEY)
+            .and_then(|value| value.as_array())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| id.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     // ========================================================================
@@ -620,6 +766,122 @@ impl Session {
         self.touch();
     }
 
+    pub fn set_task(&mut self, task: SessionTask) {
+        self.task = Some(task);
+        if !matches!(
+            self.status,
+            SessionStatus::Archived | SessionStatus::Compacting
+        ) {
+            self.status = SessionStatus::Active;
+        }
+        self.touch();
+    }
+
+    pub fn advance_task(&mut self, action: TaskAction) -> Result<(), TaskStageError> {
+        let task = self.task.as_mut().ok_or(TaskStageError::MissingTask)?;
+        let target_stage = action.target_stage();
+        let current_stage = task.stage.clone();
+
+        match action {
+            TaskAction::PrepareContext => {
+                Self::require_stage(&current_stage, TaskStage::Selected, &target_stage)?;
+                task.stage = TaskStage::ContextPrepared;
+                task.reopen_reason = None;
+            }
+            TaskAction::StartImplementing => {
+                Self::require_stage(&current_stage, TaskStage::ContextPrepared, &target_stage)?;
+                task.stage = TaskStage::Implementing;
+                task.reopen_reason = None;
+            }
+            TaskAction::StartVerifying => {
+                Self::require_stage(&current_stage, TaskStage::Implementing, &target_stage)?;
+                task.stage = TaskStage::Verifying;
+                task.reopen_reason = None;
+            }
+            TaskAction::RecordVerification { status, notes } => {
+                Self::require_stage(&current_stage, TaskStage::Verifying, &target_stage)?;
+                if matches!(status, TaskVerificationStatus::NotRun) {
+                    return Err(TaskStageError::VerificationRequired);
+                }
+                task.verification_status = status.clone();
+                task.verification_notes = notes;
+                task.review_status = TaskReviewStatus::NotReviewed;
+                task.review_notes = None;
+                match status {
+                    TaskVerificationStatus::Passed => {
+                        task.stage = TaskStage::Reviewing;
+                        task.reopen_reason = None;
+                    }
+                    TaskVerificationStatus::Failed | TaskVerificationStatus::Incomplete => {
+                        task.stage = TaskStage::Repairing;
+                        task.reopen_reason = Some(Self::notes_or_default(
+                            task.verification_notes.as_deref(),
+                            "verification did not pass",
+                        ));
+                    }
+                    TaskVerificationStatus::NotRun => unreachable!(),
+                }
+            }
+            TaskAction::RecordReview { status, notes } => {
+                Self::require_stage(&current_stage, TaskStage::Reviewing, &target_stage)?;
+                if task.verification_status != TaskVerificationStatus::Passed {
+                    return Err(TaskStageError::VerificationRequired);
+                }
+                if matches!(status, TaskReviewStatus::NotReviewed) {
+                    return Err(TaskStageError::ReviewApprovalRequired);
+                }
+                task.review_status = status.clone();
+                task.review_notes = notes;
+                match status {
+                    TaskReviewStatus::Approved => {
+                        task.stage = TaskStage::Completed;
+                        task.reopen_reason = None;
+                        self.status = SessionStatus::Completed;
+                    }
+                    TaskReviewStatus::ChangesRequested => {
+                        task.stage = TaskStage::Repairing;
+                        task.reopen_reason = Some(Self::notes_or_default(
+                            task.review_notes.as_deref(),
+                            "review requested changes",
+                        ));
+                        if !matches!(
+                            self.status,
+                            SessionStatus::Archived | SessionStatus::Compacting
+                        ) {
+                            self.status = SessionStatus::Active;
+                        }
+                    }
+                    TaskReviewStatus::NotReviewed => unreachable!(),
+                }
+            }
+            TaskAction::RestartImplementation => {
+                Self::require_stage(&current_stage, TaskStage::Repairing, &target_stage)?;
+                task.stage = TaskStage::Implementing;
+                task.reopen_reason = None;
+                if !matches!(
+                    self.status,
+                    SessionStatus::Archived | SessionStatus::Compacting
+                ) {
+                    self.status = SessionStatus::Active;
+                }
+            }
+            TaskAction::RebuildContext => {
+                Self::require_stage(&current_stage, TaskStage::Repairing, &target_stage)?;
+                task.stage = TaskStage::ContextPrepared;
+                if !matches!(
+                    self.status,
+                    SessionStatus::Archived | SessionStatus::Compacting
+                ) {
+                    self.status = SessionStatus::Active;
+                }
+            }
+        }
+
+        task.touch();
+        self.touch();
+        Ok(())
+    }
+
     /// Start compacting
     pub fn start_compacting(&mut self) {
         self.time.compacting = Some(Utc::now().timestamp_millis());
@@ -634,9 +896,17 @@ impl Session {
     }
 
     /// Mark as completed
-    pub fn complete(&mut self) {
+    pub fn complete(&mut self) -> Result<(), TaskStageError> {
+        let task = self.task.as_ref().ok_or(TaskStageError::MissingTask)?;
+        if task.verification_status != TaskVerificationStatus::Passed {
+            return Err(TaskStageError::VerificationRequired);
+        }
+        if task.review_status != TaskReviewStatus::Approved || task.stage != TaskStage::Completed {
+            return Err(TaskStageError::ReviewApprovalRequired);
+        }
         self.status = SessionStatus::Completed;
         self.touch();
+        Ok(())
     }
 
     // ========================================================================
@@ -650,6 +920,7 @@ impl Session {
             slug: self.slug.clone(),
             project_id: self.project_id.clone(),
             directory: self.directory.clone(),
+            workspace_identity: self.workspace_identity.clone(),
             parent_id: self.parent_id.clone(),
             title: self.title.clone(),
             version: self.version.clone(),
@@ -700,6 +971,7 @@ impl Session {
             slug: row.slug,
             project_id: row.project_id,
             directory: row.directory,
+            workspace_identity: row.workspace_identity,
             parent_id: row.parent_id,
             title: row.title,
             version: row.version,
@@ -716,6 +988,7 @@ impl Session {
             permission: row.permission,
             usage: None,
             status,
+            task: None,
             metadata: HashMap::new(),
             created_at,
             updated_at,
@@ -730,6 +1003,7 @@ pub struct SessionRow {
     pub slug: String,
     pub project_id: String,
     pub directory: String,
+    pub workspace_identity: Option<String>,
     pub parent_id: Option<String>,
     pub title: String,
     pub version: String,
@@ -743,6 +1017,59 @@ pub struct SessionRow {
     pub summary_files: Option<u64>,
     pub revert: Option<SessionRevert>,
     pub permission: Option<PermissionRuleset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskAction {
+    PrepareContext,
+    StartImplementing,
+    StartVerifying,
+    RecordVerification {
+        status: TaskVerificationStatus,
+        notes: Option<String>,
+    },
+    RecordReview {
+        status: TaskReviewStatus,
+        notes: Option<String>,
+    },
+    RestartImplementation,
+    RebuildContext,
+}
+
+impl TaskAction {
+    fn target_stage(&self) -> TaskStage {
+        match self {
+            TaskAction::PrepareContext => TaskStage::ContextPrepared,
+            TaskAction::StartImplementing => TaskStage::Implementing,
+            TaskAction::StartVerifying => TaskStage::Verifying,
+            TaskAction::RecordVerification { status, .. } => match status {
+                TaskVerificationStatus::Passed => TaskStage::Reviewing,
+                TaskVerificationStatus::Failed | TaskVerificationStatus::Incomplete => {
+                    TaskStage::Repairing
+                }
+                TaskVerificationStatus::NotRun => TaskStage::Verifying,
+            },
+            TaskAction::RecordReview { status, .. } => match status {
+                TaskReviewStatus::Approved => TaskStage::Completed,
+                TaskReviewStatus::ChangesRequested => TaskStage::Repairing,
+                TaskReviewStatus::NotReviewed => TaskStage::Reviewing,
+            },
+            TaskAction::RestartImplementation => TaskStage::Implementing,
+            TaskAction::RebuildContext => TaskStage::ContextPrepared,
+        }
+    }
+}
+
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum TaskStageError {
+    #[error("session has no active task")]
+    MissingTask,
+    #[error("invalid task transition from {from:?} to {to:?}")]
+    InvalidTransition { from: TaskStage, to: TaskStage },
+    #[error("verification must pass before completion can continue")]
+    VerificationRequired,
+    #[error("review approval is required before completion")]
+    ReviewApprovalRequired,
 }
 
 // ============================================================================
@@ -1044,6 +1371,11 @@ impl SessionManager {
                         return false;
                     }
                 }
+                if let Some(ref workspace_identity) = filter.workspace_identity {
+                    if s.workspace_identity.as_ref() != Some(workspace_identity) {
+                        return false;
+                    }
+                }
                 if filter.roots && s.parent_id.is_some() {
                     return false;
                 }
@@ -1218,6 +1550,7 @@ impl SessionManager {
 #[derive(Debug, Clone, Default)]
 pub struct SessionFilter {
     pub directory: Option<String>,
+    pub workspace_identity: Option<String>,
     pub roots: bool,
     pub start: Option<i64>,
     pub search: Option<String>,
@@ -1259,6 +1592,29 @@ mod tests {
         assert!(session.title.starts_with("New session"));
         assert!(session.parent_id.is_none());
         assert_eq!(session.status, SessionStatus::Active);
+        assert!(session.workspace_identity.is_some());
+    }
+
+    #[test]
+    fn test_session_workspace_identity_canonicalizes_relative_path() {
+        let current_dir = std::env::current_dir().expect("current dir should resolve");
+        let session = Session::new("project-1", ".");
+
+        assert_eq!(
+            session.workspace_identity,
+            Some(current_dir.to_string_lossy().to_string())
+        );
+    }
+
+    #[test]
+    fn test_sessions_from_different_directories_have_different_workspace_identities() {
+        let dir_a = tempfile::tempdir().expect("dir a should be created");
+        let dir_b = tempfile::tempdir().expect("dir b should be created");
+
+        let session_a = Session::new("project-1", dir_a.path().to_string_lossy());
+        let session_b = Session::new("project-1", dir_b.path().to_string_lossy());
+
+        assert_ne!(session_a.workspace_identity, session_b.workspace_identity);
     }
 
     #[test]
@@ -1268,7 +1624,65 @@ mod tests {
 
         assert!(child.parent_id.is_some());
         assert_eq!(child.parent_id.unwrap(), parent.id);
+        assert_eq!(child.workspace_identity, parent.workspace_identity);
         assert!(child.title.starts_with("Child session"));
+    }
+
+    #[test]
+    fn test_auto_title_lifecycle_and_user_rename_guard() {
+        let mut session = Session::new("project-1", "/path/to/project");
+        assert!(session.is_default_title());
+        assert!(session.should_generate_title());
+        assert!(!session.is_auto_title_pending());
+
+        // A fallback title is durable but still pending an LLM upgrade.
+        session.set_auto_title("Fix the build");
+        assert!(!session.is_default_title());
+        assert!(session.is_auto_title_pending());
+        assert!(session.should_generate_title());
+
+        // A manual rename clears the pending marker so generated titles never
+        // overwrite the user's choice.
+        session.set_title("My own title");
+        session.mark_title_user_owned();
+        assert_eq!(session.title, "My own title");
+        assert!(!session.is_auto_title_pending());
+        assert!(!session.should_generate_title());
+
+        // Finalizing an auto title also stops later regeneration.
+        let mut finalized = Session::new("project-1", "/path/to/project");
+        finalized.set_auto_title("Fix the build");
+        finalized.finalize_auto_title("Fix the broken build");
+        assert_eq!(finalized.title, "Fix the broken build");
+        assert!(!finalized.is_auto_title_pending());
+        assert!(!finalized.should_generate_title());
+    }
+
+    #[test]
+    fn test_legacy_session_row_keeps_unknown_workspace_identity() {
+        let now = Utc::now().timestamp_millis();
+        let session = Session::from_row(SessionRow {
+            id: "ses_legacy".to_string(),
+            slug: "legacy".to_string(),
+            project_id: "project-1".to_string(),
+            directory: "/path/to/project".to_string(),
+            workspace_identity: None,
+            parent_id: None,
+            title: "Legacy".to_string(),
+            version: "1.0.0".to_string(),
+            time_created: now,
+            time_updated: now,
+            time_compacting: None,
+            time_archived: None,
+            share_url: None,
+            summary_additions: None,
+            summary_deletions: None,
+            summary_files: None,
+            revert: None,
+            permission: None,
+        });
+
+        assert!(session.workspace_identity.is_none());
     }
 
     #[test]
@@ -1295,6 +1709,34 @@ mod tests {
 
         manager.delete(&session.id);
         assert_eq!(manager.count(), 0);
+    }
+
+    #[test]
+    fn test_list_filtered_by_workspace_identity_excludes_other_workspaces_and_legacy() {
+        let dir_a = tempfile::tempdir().expect("dir a should be created");
+        let dir_b = tempfile::tempdir().expect("dir b should be created");
+        let workspace_a = Session::canonical_workspace_identity(&dir_a.path().to_string_lossy())
+            .expect("workspace a should resolve");
+
+        let mut manager = SessionManager::new();
+        let session_a = manager.create("project-1", dir_a.path().to_string_lossy());
+        manager.create("project-1", dir_b.path().to_string_lossy());
+
+        let mut legacy = Session::new("project-1", dir_a.path().to_string_lossy());
+        legacy.workspace_identity = None;
+        manager.update(legacy);
+
+        let sessions = manager.list_filtered(SessionFilter {
+            directory: None,
+            workspace_identity: Some(workspace_a),
+            roots: false,
+            start: None,
+            search: None,
+            limit: None,
+        });
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, session_a.id);
     }
 
     #[test]

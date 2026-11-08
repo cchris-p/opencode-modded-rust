@@ -11,8 +11,9 @@ use futures::StreamExt;
 use opencode_plugin::{HookContext, HookEvent};
 use opencode_provider::transform::{apply_caching, ProviderType};
 use opencode_provider::{
-    get_model_context_limit, ChatRequest, ChatResponse, Content, ContentPart, Message, Provider,
-    Role, StreamEvent, ToolDefinition,
+    get_model_context_limit, stream_budget_from_env, with_idle_timeout, with_stream_budget,
+    ChatRequest, ChatResponse, Content, ContentPart, Message, Provider, Role, StreamEvent,
+    ToolDefinition, DEFAULT_STREAM_IDLE_TIMEOUT,
 };
 
 use crate::compaction::{
@@ -139,6 +140,14 @@ pub struct SessionPrompt {
     session_state: Arc<RwLock<SessionStateManager>>,
     mcp_clients: Option<Arc<opencode_mcp::McpClientRegistry>>,
     lsp_registry: Option<Arc<opencode_lsp::LspClientRegistry>>,
+    ask_callback: Option<opencode_tool::AskCallback>,
+    ask_question_callback: Option<opencode_tool::QuestionCallback>,
+    create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
+    prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+    background_subsession_callback: Option<opencode_tool::BackgroundSubsessionCallback>,
+    experimental_background_subagents: bool,
+    resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
+    session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
 }
 
 impl SessionPrompt {
@@ -148,6 +157,14 @@ impl SessionPrompt {
             session_state,
             mcp_clients: None,
             lsp_registry: None,
+            ask_callback: None,
+            ask_question_callback: None,
+            create_subsession_callback: None,
+            prompt_subsession_callback: None,
+            background_subsession_callback: None,
+            experimental_background_subagents: false,
+            resolve_subagent_callback: None,
+            session_inspect_callback: None,
         }
     }
 
@@ -158,6 +175,77 @@ impl SessionPrompt {
 
     pub fn with_lsp_registry(mut self, registry: Arc<opencode_lsp::LspClientRegistry>) -> Self {
         self.lsp_registry = Some(registry);
+        self
+    }
+
+    pub fn with_ask_callback(mut self, callback: opencode_tool::AskCallback) -> Self {
+        self.ask_callback = Some(callback);
+        self
+    }
+
+    pub fn with_ask_question_callback(mut self, callback: opencode_tool::QuestionCallback) -> Self {
+        self.ask_question_callback = Some(callback);
+        self
+    }
+
+    /// Install a server-owned child-session factory. When set, the `task` tool
+    /// creates a real, persisted child session instead of an in-memory
+    /// `task_*` subsession. The in-memory callbacks remain the fallback for
+    /// callers that do not provide these (e.g. direct `AgentExecutor` use).
+    pub fn with_create_subsession_callback(
+        mut self,
+        callback: opencode_tool::CreateSubsessionCallback,
+    ) -> Self {
+        self.create_subsession_callback = Some(callback);
+        self
+    }
+
+    /// Install a server-owned child-session prompt runner paired with
+    /// [`Self::with_create_subsession_callback`].
+    pub fn with_prompt_subsession_callback(
+        mut self,
+        callback: opencode_tool::PromptSubsessionCallback,
+    ) -> Self {
+        self.prompt_subsession_callback = Some(callback);
+        self
+    }
+
+    /// Install the async background subagent runner paired with the child
+    /// session callbacks (FEAT-048). When set, the `task` tool may run a
+    /// subagent with `background: true`; the runner notifies the parent on
+    /// completion. When absent, background runs are unavailable.
+    pub fn with_background_subsession_callback(
+        mut self,
+        callback: opencode_tool::BackgroundSubsessionCallback,
+    ) -> Self {
+        self.background_subsession_callback = Some(callback);
+        self
+    }
+
+    /// Enable the experimental background-subagent capability for tool contexts
+    /// built by this runner. Pairs with
+    /// [`Self::with_background_subsession_callback`].
+    pub fn with_experimental_background_subagents(mut self, enabled: bool) -> Self {
+        self.experimental_background_subagents = enabled;
+        self
+    }
+
+    /// Install the registry-backed subagent resolver paired with the child
+    /// session callbacks. When set, the `task` tool validates the requested
+    /// `subagent_type` (and enforces `subagent_depth`) before creating a child.
+    pub fn with_resolve_subagent_callback(
+        mut self,
+        callback: opencode_tool::ResolveSubagentCallback,
+    ) -> Self {
+        self.resolve_subagent_callback = Some(callback);
+        self
+    }
+
+    pub fn with_session_inspect_callback(
+        mut self,
+        callback: opencode_tool::SessionInspectCallback,
+    ) -> Self {
+        self.session_inspect_callback = Some(callback);
         self
     }
 
@@ -196,12 +284,74 @@ impl SessionPrompt {
 
         let project_root = session.directory.clone();
 
-        // Create the user message with text (or empty if only non-text parts)
-        let msg = if text.is_empty() {
-            session.add_user_message(" ")
+        // Retrieval-provider boundary: derive a request from authoritative task
+        // state plus this prompt's explicit file seeds and retain the provider's
+        // candidates as provenance. The provider is optional; on failure the
+        // generic path is unchanged.
+        let seed_files: Vec<String> = input
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                PartInput::File { url, .. } if !url.starts_with("data:") => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        let retrieval_response = if seed_files.is_empty() {
+            None
         } else {
-            session.add_user_message(&text)
+            // SCOPE-014: exact-fact enrichment is retired from default activation.
+            // It stays available opt-in for evaluation, but no LSP fact queries run
+            // unless explicitly requested. LSP being configured is not enough.
+            let exact_facts_enabled = matches!(
+                std::env::var("OPENCODE_SCOPEMUX_EXACT_FACTS").as_deref(),
+                Ok("1") | Ok("true") | Ok("on")
+            );
+            let exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>> =
+                if exact_facts_enabled {
+                    self.lsp_registry.as_ref().map(|registry| {
+                        let provider: std::sync::Arc<dyn opencode_retrieval::ExactFactProvider> =
+                            std::sync::Arc::new(opencode_lsp::LspExactFactProvider::new(
+                                registry.clone(),
+                            ));
+                        provider
+                    })
+                } else {
+                    None
+                };
+            crate::retrieval::retrieve(session, seed_files, input.model.as_ref(), exact_facts).await
         };
+
+        // Accept-time materialization: when the server has already persisted the
+        // user message for this prompt, consume that exact message instead of
+        // creating a second one. `message_id` ownership is enforced here.
+        let existing_id = input
+            .message_id
+            .as_deref()
+            .filter(|id| {
+                session
+                    .get_message(id)
+                    .is_some_and(|message| matches!(message.role, MessageRole::User))
+            })
+            .map(str::to_string);
+
+        // Create the user message with text (or empty if only non-text parts)
+        let msg = match existing_id {
+            Some(id) => session
+                .get_message_mut(&id)
+                .expect("existing_id is checked to exist above"),
+            None => {
+                let created = if text.is_empty() {
+                    session.add_user_message(" ")
+                } else {
+                    session.add_user_message(&text)
+                };
+                if let Some(id) = input.message_id.as_deref() {
+                    created.id = id.to_string();
+                }
+                created
+            }
+        };
+        msg.metadata.remove("queued_pending");
 
         // Add non-text parts to the message
         for part in &input.parts {
@@ -255,6 +405,43 @@ impl SessionPrompt {
                     );
                 }
             }
+        }
+
+        if let Some(response) = retrieval_response {
+            // Deterministic signal for the attach/detach QA convention: the
+            // effective provider after any fallback (SCOPE-005), plus the
+            // representation slice selected for the task stage (SCOPE-004).
+            tracing::info!(
+                provider = %response.provider,
+                representation = ?response.representation,
+                candidates = response.candidates.len(),
+                "retrieval provider selected"
+            );
+            // SCOPE-004: inject the selected map slice as bounded evidence. The
+            // runtime owns the budget; the generic provider path is unchanged.
+            if let Some(reminder) = crate::retrieval::retrieval_context_reminder(
+                &response,
+                crate::retrieval::RETRIEVAL_TOKEN_BUDGET,
+            ) {
+                push_synthetic_reminder(msg, reminder);
+            }
+            msg.metadata.insert(
+                "retrieval_provider".to_string(),
+                serde_json::Value::String(response.provider),
+            );
+            msg.metadata.insert(
+                "retrieval_representation".to_string(),
+                serde_json::to_value(response.representation).unwrap_or(serde_json::Value::Null),
+            );
+            let candidates: Vec<String> = response
+                .candidates
+                .iter()
+                .map(|candidate| candidate.path.clone())
+                .collect();
+            msg.metadata.insert(
+                "retrieval_candidates".to_string(),
+                serde_json::json!(candidates),
+            );
         }
 
         Ok(())
@@ -778,6 +965,7 @@ impl SessionPrompt {
             session,
             provider,
             system_prompt,
+            None,
             tools,
             agent_params,
             None,
@@ -791,6 +979,7 @@ impl SessionPrompt {
         session: &mut Session,
         provider: Arc<dyn Provider>,
         system_prompt: Option<String>,
+        dynamic_context: Option<String>,
         tools: Vec<ToolDefinition>,
         agent_params: AgentParams,
         update_hook: Option<SessionUpdateHook>,
@@ -837,9 +1026,20 @@ impl SessionPrompt {
             provider_id,
             session,
             input.agent.as_deref(),
+            input.variant.clone(),
             system_prompt,
+            dynamic_context,
             tools,
             &agent_params,
+            self.ask_callback.clone(),
+            self.ask_question_callback.clone(),
+            self.create_subsession_callback.clone(),
+            self.prompt_subsession_callback.clone(),
+            self.background_subsession_callback.clone(),
+            self.experimental_background_subagents,
+            self.resolve_subagent_callback.clone(),
+            self.session_inspect_callback.clone(),
+            self.lsp_registry.clone(),
             update_hook,
         )
         .await;
@@ -903,6 +1103,11 @@ impl SessionPrompt {
             .get("agent")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let resume_variant = session
+            .metadata
+            .get("model_variant")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         {
             let mut session_state = self.session_state.write().await;
@@ -917,9 +1122,20 @@ impl SessionPrompt {
             provider_id,
             session,
             resume_agent.as_deref(),
+            resume_variant,
             system_prompt,
+            None,
             tools,
             &agent_params,
+            self.ask_callback.clone(),
+            self.ask_question_callback.clone(),
+            self.create_subsession_callback.clone(),
+            self.prompt_subsession_callback.clone(),
+            self.background_subsession_callback.clone(),
+            self.experimental_background_subagents,
+            self.resolve_subagent_callback.clone(),
+            self.session_inspect_callback.clone(),
+            self.lsp_registry.clone(),
             None,
         )
         .await;
@@ -942,14 +1158,46 @@ impl SessionPrompt {
         provider_id: String,
         session: &mut Session,
         agent_name: Option<&str>,
+        variant: Option<String>,
         system_prompt: Option<String>,
+        dynamic_context: Option<String>,
         tools: Vec<ToolDefinition>,
         agent_params: &AgentParams,
+        ask_callback: Option<opencode_tool::AskCallback>,
+        ask_question_callback: Option<opencode_tool::QuestionCallback>,
+        create_subsession_callback: Option<opencode_tool::CreateSubsessionCallback>,
+        prompt_subsession_callback: Option<opencode_tool::PromptSubsessionCallback>,
+        background_subsession_callback: Option<opencode_tool::BackgroundSubsessionCallback>,
+        experimental_background_subagents: bool,
+        resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
+        session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
+        lsp_registry: Option<Arc<opencode_lsp::LspClientRegistry>>,
         update_hook: Option<SessionUpdateHook>,
     ) -> anyhow::Result<()> {
         let mut step = 0u32;
         let provider_type = ProviderType::from_provider_id(&provider_id);
         let mut post_first_step_ran = false;
+        let loaded_instructions = opencode_tool::LoadedInstructions::new();
+
+        // Title generation is driven by the first *user* message, not the first
+        // assistant step, so tool-first, aborted, and stream entrypoints all get
+        // a durable title. `should_generate_title` re-reads the session on every
+        // prompt, which lets a failed LLM upgrade retry later while a manual
+        // rename (which clears the pending marker) is never overwritten.
+        if session.should_generate_title() {
+            Self::ensure_title(session, provider.clone(), &model_id).await;
+            Self::emit_session_update(update_hook.as_ref(), session);
+        }
+
+        // A resumed session may have been persisted mid-tool-turn (crash, kill,
+        // or abort before cleanup ran), leaving an assistant tool call with no
+        // result. Repair those with durable error results so the next request is
+        // provider-valid and continuation proceeds from the latest persisted
+        // state instead of replaying an older prompt (BUG-044).
+        Self::append_missing_tool_results(
+            session,
+            "Tool execution did not complete before the previous run ended".to_string(),
+        );
 
         loop {
             if token.is_cancelled() {
@@ -959,19 +1207,16 @@ impl SessionPrompt {
 
             let mut filtered_messages = Self::filter_compacted_messages(&session.messages);
 
-            let last_user = filtered_messages
+            let last_user_idx = filtered_messages
                 .iter()
-                .rev()
-                .find(|m| matches!(m.role, MessageRole::User));
-
-            let last_assistant = filtered_messages
+                .rposition(|m| matches!(m.role, MessageRole::User));
+            let last_assistant_idx = filtered_messages
                 .iter()
-                .rev()
-                .find(|m| matches!(m.role, MessageRole::Assistant));
+                .rposition(|m| matches!(m.role, MessageRole::Assistant));
 
-            let last_user = match last_user {
-                Some(m) => m,
-                None => return Err(anyhow::anyhow!("No user message found")),
+            let (last_user_idx, last_assistant_idx) = match (last_user_idx, last_assistant_idx) {
+                (Some(ui), _) => (ui, last_assistant_idx),
+                (None, _) => return Err(anyhow::anyhow!("No user message found")),
             };
 
             if Self::process_pending_subtasks(session, provider.clone(), &model_id, &provider_id)
@@ -981,15 +1226,22 @@ impl SessionPrompt {
                 continue;
             }
 
-            if let Some(ref assistant) = last_assistant {
-                let has_finish = assistant.parts.iter().any(|p| match &p.part_type {
-                    PartType::Text { text, .. } => !text.is_empty(),
-                    _ => false,
-                });
-
-                if has_finish && last_user.id < assistant.id {
-                    tracing::info!("Prompt loop complete for session {}", session_id);
-                    break;
+            // A conversation that already ends in a finished assistant reply to the
+            // newest user prompt has nothing left to answer. Compare *positions*
+            // (assistant newer than user) rather than message ids: message ids are
+            // random UUIDs (user) vs time/base62 (assistant) and are not ordered,
+            // so an id comparison misfires on follow-up prompts and stalls the loop.
+            if let Some(ai) = last_assistant_idx {
+                if ai > last_user_idx {
+                    let assistant = &filtered_messages[ai];
+                    let has_finish = assistant.parts.iter().any(|p| match &p.part_type {
+                        PartType::Text { text, .. } => !text.is_empty(),
+                        _ => false,
+                    });
+                    if has_finish {
+                        tracing::info!("Prompt loop complete for session {}", session_id);
+                        break;
+                    }
                 }
             }
 
@@ -1037,12 +1289,17 @@ impl SessionPrompt {
 
             let mut prompt_messages = filtered_messages;
             if let Some(agent) = agent_name {
-                let was_plan = was_plan_agent(&prompt_messages);
-                prompt_messages = insert_reminders(&prompt_messages, agent, was_plan);
+                let plan = session_plan_reminder(session);
+                let last_assistant_was_plan = last_assistant_was_plan(&prompt_messages);
+                prompt_messages =
+                    insert_reminders(&prompt_messages, agent, last_assistant_was_plan, &plan);
             }
 
-            let mut chat_messages =
-                Self::build_chat_messages(&prompt_messages, system_prompt.as_deref())?;
+            let mut chat_messages = Self::build_chat_messages(
+                &prompt_messages,
+                system_prompt.as_deref(),
+                dynamic_context.as_deref(),
+            )?;
 
             apply_caching(&mut chat_messages, provider_type);
             let resolved_tools =
@@ -1061,18 +1318,28 @@ impl SessionPrompt {
                 },
                 stream: Some(true),
                 top_p: agent_params.top_p,
-                variant: None,
+                variant: variant.clone(),
                 provider_options: None,
             };
 
             // Stream the response (matching TS streamText approach).
-            let mut stream = match provider.chat_stream(request).await {
+            let stream = match provider.chat_stream(request).await {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("Provider error for session {}: {}", session_id, e);
                     return Err(anyhow::anyhow!("{}", e));
                 }
             };
+
+            // Bound each wait for a stream event so a provider that stops
+            // sending without closing the connection cannot wedge the turn
+            // forever. Without this, a mid-turn stall never reaches a terminal
+            // state and the session stays `active` indefinitely (BUG-038).
+            let stream = with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT);
+            // Also bound the whole step: an idle timeout resets on every event,
+            // so a provider that keeps streaming (endless reasoning) would never
+            // trip it (BUG-046).
+            let mut stream = with_stream_budget(stream, stream_budget_from_env());
 
             // Create assistant message placeholder before consuming the stream so
             // callers can observe incremental output updates.
@@ -1107,13 +1374,21 @@ impl SessionPrompt {
             let mut finish_reason: Option<String> = None;
             let mut prompt_tokens: u64 = 0;
             let mut completion_tokens: u64 = 0;
+            let mut cache_read_tokens: u64 = 0;
+            let mut cache_miss_tokens: u64 = 0;
             let mut last_emit = Instant::now() - Duration::from_millis(50);
 
-            while let Some(event_result) = stream.next().await {
-                if token.is_cancelled() {
-                    tracing::info!("Stream cancelled for session {}", session_id);
-                    break;
-                }
+            loop {
+                let event_result = tokio::select! {
+                    _ = token.cancelled() => {
+                        tracing::info!("Stream cancelled for session {}", session_id);
+                        break;
+                    }
+                    next = stream.next() => match next {
+                        Some(event) => event,
+                        None => break,
+                    },
+                };
                 match event_result {
                     Ok(StreamEvent::TextDelta(text)) => {
                         if let Some(assistant) = session.messages.get_mut(assistant_index) {
@@ -1189,13 +1464,20 @@ impl SessionPrompt {
                         finish_reason = fr;
                         prompt_tokens = usage.prompt_tokens;
                         completion_tokens = usage.completion_tokens;
+                        cache_read_tokens = usage.cache_read_tokens;
+                        cache_miss_tokens =
+                            usage.prompt_tokens.saturating_sub(usage.cache_read_tokens);
                     }
                     Ok(StreamEvent::Usage {
                         prompt_tokens: pt,
                         completion_tokens: ct,
+                        cache_read_tokens: crt,
+                        cache_miss_tokens: cmt,
                     }) => {
                         prompt_tokens = pt;
                         completion_tokens = ct;
+                        cache_read_tokens = crt;
+                        cache_miss_tokens = cmt;
                     }
                     Ok(StreamEvent::Done | StreamEvent::Finish) => break,
                     Ok(StreamEvent::Start) => {}
@@ -1244,11 +1526,14 @@ impl SessionPrompt {
                     serde_json::json!({
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
+                        "cache_read_tokens": cache_read_tokens,
+                        "cache_miss_tokens": cache_miss_tokens,
                     }),
                 );
                 assistant_msg.usage = Some(crate::message::MessageUsage {
                     input_tokens: prompt_tokens,
                     output_tokens: completion_tokens,
+                    cache_read_tokens,
                     ..Default::default()
                 });
             }
@@ -1267,8 +1552,7 @@ impl SessionPrompt {
             session.touch();
             Self::emit_session_update(update_hook.as_ref(), session);
 
-            if !post_first_step_ran {
-                Self::ensure_title(session, provider.clone(), &model_id).await;
+            if Self::should_run_first_step_postprocessing(post_first_step_ran, has_tool_calls) {
                 let _ = Self::summarize_session(
                     session,
                     &session_id,
@@ -1311,7 +1595,8 @@ impl SessionPrompt {
             if has_tool_calls {
                 tracing::info!("Processing tool calls for session {}", session_id);
 
-                let tool_context = opencode_tool::ToolContext::new(
+                let plan_path = session_plan_reminder(session).path.display().to_string();
+                let mut tool_context = opencode_tool::ToolContext::new(
                     session_id.clone(),
                     session
                         .messages
@@ -1321,7 +1606,80 @@ impl SessionPrompt {
                     session.directory.clone(),
                 )
                 .with_agent(String::new())
-                .with_abort(token.clone());
+                .with_abort(token.clone())
+                .with_plan_path(Some(plan_path))
+                .with_loaded_instructions(loaded_instructions.clone());
+
+                if let Some(lsp_registry) = lsp_registry.as_ref() {
+                    tool_context = tool_context.with_lsp_registry(lsp_registry.clone());
+                }
+
+                // SCOPE-019: inject the map-backed search capability on the same
+                // model scope the provider uses; every other model gets grep only.
+                if let Some(workspace_search) =
+                    opencode_scopemux::workspace_search_for(Some(&provider_id), Some(&model_id))
+                {
+                    tool_context = tool_context.with_workspace_search(Some(workspace_search));
+                }
+
+                if let Some(ask_callback) = ask_callback.clone() {
+                    tool_context = tool_context.with_ask(move |request| {
+                        let ask_callback = ask_callback.clone();
+                        async move { ask_callback(request).await }
+                    });
+                }
+
+                if let Some(ask_question_callback) = ask_question_callback.clone() {
+                    tool_context = tool_context.with_ask_question(move |questions| {
+                        let ask_question_callback = ask_question_callback.clone();
+                        async move { ask_question_callback(questions).await }
+                    });
+                }
+
+                if let Some(create_subsession_callback) = create_subsession_callback.clone() {
+                    tool_context = tool_context.with_create_subsession(
+                        move |agent, title, model, disabled_tools| {
+                            let create_subsession_callback = create_subsession_callback.clone();
+                            async move {
+                                create_subsession_callback(agent, title, model, disabled_tools)
+                                    .await
+                            }
+                        },
+                    );
+                }
+
+                if let Some(prompt_subsession_callback) = prompt_subsession_callback.clone() {
+                    tool_context =
+                        tool_context.with_prompt_subsession(move |session_id, prompt| {
+                            let prompt_subsession_callback = prompt_subsession_callback.clone();
+                            async move { prompt_subsession_callback(session_id, prompt).await }
+                        });
+                }
+
+                tool_context = tool_context
+                    .with_experimental_background_subagents(experimental_background_subagents);
+
+                if let Some(background_subsession_callback) = background_subsession_callback.clone()
+                {
+                    tool_context = tool_context.with_background_subsession(move |request| {
+                        let background_subsession_callback = background_subsession_callback.clone();
+                        async move { background_subsession_callback(request).await }
+                    });
+                }
+
+                if let Some(session_inspect_callback) = session_inspect_callback.clone() {
+                    tool_context = tool_context.with_session_inspect(move |request| {
+                        let session_inspect_callback = session_inspect_callback.clone();
+                        async move { session_inspect_callback(request).await }
+                    });
+                }
+
+                if let Some(resolve_subagent_callback) = resolve_subagent_callback.clone() {
+                    tool_context = tool_context.with_resolve_subagent(move |name| {
+                        let resolve_subagent_callback = resolve_subagent_callback.clone();
+                        async move { resolve_subagent_callback(name).await }
+                    });
+                }
 
                 let registry = Arc::new(opencode_tool::create_default_registry().await);
                 if let Err(e) = Self::execute_tool_calls(
@@ -1335,7 +1693,15 @@ impl SessionPrompt {
                 .await
                 {
                     tracing::error!("Tool execution error for session {}: {}", session_id, e);
+                    Self::append_missing_tool_results(
+                        session,
+                        format!("Tool execution failed before producing a result: {}", e),
+                    );
                 }
+                Self::append_missing_tool_results(
+                    session,
+                    "Tool execution ended before producing a result".to_string(),
+                );
                 session.touch();
                 Self::emit_session_update(update_hook.as_ref(), session);
                 continue;
@@ -1355,6 +1721,7 @@ impl SessionPrompt {
         // Mirrors TS processor.ts lines 393-409 where incomplete tool parts
         // are set to error status with "Tool execution aborted".
         if token.is_cancelled() {
+            Self::mark_aborted(session);
             Self::abort_pending_tool_calls(session);
         }
 
@@ -1363,6 +1730,13 @@ impl SessionPrompt {
         Self::emit_session_update(update_hook.as_ref(), session);
 
         Ok(())
+    }
+
+    fn should_run_first_step_postprocessing(
+        post_first_step_ran: bool,
+        has_tool_calls: bool,
+    ) -> bool {
+        !post_first_step_ran && !has_tool_calls
     }
 
     fn emit_session_update(update_hook: Option<&SessionUpdateHook>, session: &Session) {
@@ -1421,14 +1795,73 @@ impl SessionPrompt {
         });
     }
 
+    fn mark_aborted(session: &mut Session) {
+        Self::mark_finished(session, "aborted", "aborted", "Aborted by user.");
+    }
+
+    /// Mark the session's last assistant turn as finished with the given reason
+    /// and error, ensuring it carries provider-valid content.
+    fn mark_finished(session: &mut Session, finish_reason: &str, error: &str, fallback_text: &str) {
+        let assistant = session
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|message| matches!(message.role, MessageRole::Assistant));
+        let assistant = match assistant {
+            Some(assistant) => assistant,
+            None => {
+                session
+                    .messages
+                    .push(SessionMessage::assistant(session.id.clone()));
+                session.messages.last_mut().expect("just pushed assistant")
+            }
+        };
+
+        assistant
+            .metadata
+            .insert("error".to_string(), serde_json::json!(error));
+        assistant.metadata.insert(
+            "finish_reason".to_string(),
+            serde_json::json!(finish_reason),
+        );
+        // Stamp completion so a finalized-without-terminal run carries the same
+        // durable terminal record shape as a normal finish (BUG-043).
+        assistant.metadata.insert(
+            "completed_at".to_string(),
+            serde_json::json!(chrono::Utc::now().timestamp_millis()),
+        );
+        // Only real assistant output (text or a tool call) makes the message a
+        // valid provider turn. A run interrupted during its thinking phase can
+        // hold nothing but reasoning, and reasoning is not serialized as
+        // assistant content, so such a turn must still receive visible text or
+        // the next request fails with "content or tool_calls must be set".
+        let has_valid_content = assistant.parts.iter().any(|part| match &part.part_type {
+            PartType::Text { text, .. } => !text.is_empty(),
+            PartType::ToolCall { .. } => true,
+            _ => false,
+        });
+        if !has_valid_content {
+            assistant.add_text(fallback_text);
+        }
+    }
+
+    /// Force a run that ended without a terminal state (abort, panic, or
+    /// timeout) into a durable, provider-valid terminal state: mark the last
+    /// assistant turn finished with an error and resolve any tool calls that
+    /// never produced a result.
+    pub fn finalize_incomplete_turn(session: &mut Session, finish_reason: &str, error: &str) {
+        let message = format!("Run ended before completion: {}", error);
+        Self::mark_finished(session, finish_reason, error, &message);
+        Self::resolve_pending_tool_calls(session, &message);
+    }
+
     /// Mark any tool calls that lack a corresponding tool result as aborted.
     ///
     /// When the prompt loop is cancelled mid-execution, some tool calls in the
     /// assistant messages may not have received their results yet. This mirrors
     /// the TS abort handling in processor.ts that sets incomplete tool parts to
     /// error status with "Tool execution aborted".
-    fn abort_pending_tool_calls(session: &mut Session) {
-        // Collect all tool call IDs that already have a result
+    fn unresolved_tool_call_ids(session: &Session) -> Vec<String> {
         let mut resolved_call_ids: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         for msg in &session.messages {
@@ -1439,7 +1872,6 @@ impl SessionPrompt {
             }
         }
 
-        // Find unresolved tool calls and add error results
         let mut pending_calls: Vec<String> = Vec::new();
         for msg in &session.messages {
             for part in &msg.parts {
@@ -1451,26 +1883,50 @@ impl SessionPrompt {
             }
         }
 
+        pending_calls
+    }
+
+    fn append_missing_tool_results(session: &mut Session, content: String) -> usize {
+        let pending_calls = Self::unresolved_tool_call_ids(session);
+        if pending_calls.is_empty() {
+            return 0;
+        }
+
+        tracing::warn!(
+            count = pending_calls.len(),
+            "Appending error results for unresolved tool calls"
+        );
+
+        let repaired_count = pending_calls.len();
+        let mut result_message = SessionMessage::assistant(session.id.clone());
+        for call_id in pending_calls {
+            result_message.add_tool_result(call_id, content.clone(), true);
+        }
+        session.messages.push(result_message);
+        repaired_count
+    }
+
+    fn abort_pending_tool_calls(session: &mut Session) {
+        Self::resolve_pending_tool_calls(session, "Tool execution aborted");
+    }
+
+    fn resolve_pending_tool_calls(session: &mut Session, content: &str) {
+        let pending_calls = Self::unresolved_tool_call_ids(session);
+
         if pending_calls.is_empty() {
             return;
         }
 
         tracing::info!(
             count = pending_calls.len(),
-            "Marking pending tool calls as aborted"
+            "Resolving pending tool calls with error results"
         );
 
-        // Add error results for each pending tool call to the last assistant message
-        if let Some(last_assistant) = session
-            .messages
-            .iter_mut()
-            .rev()
-            .find(|m| matches!(m.role, MessageRole::Assistant))
-        {
-            for call_id in pending_calls {
-                last_assistant.add_tool_result(&call_id, "Tool execution aborted", true);
-            }
+        let mut result_message = SessionMessage::assistant(session.id.clone());
+        for call_id in pending_calls {
+            result_message.add_tool_result(call_id, content.to_string(), true);
         }
+        session.messages.push(result_message);
     }
 
     pub async fn execute_tool_calls(
@@ -1507,13 +1963,21 @@ impl SessionPrompt {
 
         let subsessions = Arc::new(Mutex::new(Self::load_persisted_subsessions(session)));
         let default_model = format!("{}:{}", provider_id, model_id);
-        let ctx = Self::with_persistent_subsession_callbacks(
-            ctx,
-            subsessions.clone(),
-            provider,
-            tool_registry.clone(),
-            default_model,
-        );
+        // Prefer server-owned real child-session callbacks when the caller
+        // installed them; only fall back to the in-memory `task_*` subsession
+        // map otherwise. Without this guard the fallback would silently shadow
+        // the server's real child sessions (FEAT-045).
+        let ctx = if ctx.create_subsession.is_none() && ctx.prompt_subsession.is_none() {
+            Self::with_persistent_subsession_callbacks(
+                ctx,
+                subsessions.clone(),
+                provider,
+                tool_registry.clone(),
+                default_model,
+            )
+        } else {
+            ctx
+        };
 
         let tool_results_msg = {
             let mut msg = SessionMessage::assistant(ctx.session_id.clone());
@@ -1667,7 +2131,7 @@ impl SessionPrompt {
                         output: output.clone(),
                     });
                 }
-                Ok(output)
+                Ok(opencode_tool::SubsessionPromptOutcome::Completed(output))
             }
         })
     }
@@ -1741,11 +2205,20 @@ impl SessionPrompt {
     fn build_chat_messages(
         session_messages: &[SessionMessage],
         system_prompt: Option<&str>,
+        dynamic_context: Option<&str>,
     ) -> anyhow::Result<Vec<Message>> {
         let mut messages = Vec::new();
 
+        // The stable system prompt leads so a date/environment/skills change
+        // cannot rewrite the cached prefix; dynamic context follows as its own
+        // system message and the conversation history stays byte-identical.
         if let Some(system) = system_prompt {
             messages.push(Message::system(system));
+        }
+        if let Some(dynamic) = dynamic_context {
+            if !dynamic.is_empty() {
+                messages.push(Message::system(dynamic));
+            }
         }
 
         for msg in session_messages {
@@ -1833,6 +2306,17 @@ impl SessionPrompt {
                     media_type: None,
                     provider_options: None,
                 }),
+                PartType::Reasoning { text } => Some(ContentPart {
+                    content_type: "reasoning".to_string(),
+                    text: Some(text.clone()),
+                    image_url: None,
+                    tool_use: None,
+                    tool_result: None,
+                    cache_control: None,
+                    filename: None,
+                    media_type: None,
+                    provider_options: None,
+                }),
                 _ => None,
             })
             .collect();
@@ -1858,7 +2342,11 @@ impl SessionPrompt {
         let parts = match content {
             Content::Text(text) => vec![crate::MessagePart {
                 id: format!("prt_{}", uuid::Uuid::new_v4()),
-                part_type: PartType::Text { text, synthetic: None, ignored: None },
+                part_type: PartType::Text {
+                    text,
+                    synthetic: None,
+                    ignored: None,
+                },
                 created_at: now,
                 message_id: None,
             }],
@@ -1867,7 +2355,11 @@ impl SessionPrompt {
                 .filter_map(|p| match p.content_type.as_str() {
                     "text" => p.text.map(|text| crate::MessagePart {
                         id: format!("prt_{}", uuid::Uuid::new_v4()),
-                        part_type: PartType::Text { text, synthetic: None, ignored: None },
+                        part_type: PartType::Text {
+                            text,
+                            synthetic: None,
+                            ignored: None,
+                        },
                         created_at: now,
                         message_id: None,
                     }),
@@ -1903,6 +2395,14 @@ impl SessionPrompt {
                         "tokens_output".to_string(),
                         serde_json::json!(usage.completion_tokens),
                     );
+                    m.insert(
+                        "cache_read_tokens".to_string(),
+                        serde_json::json!(usage.cache_read_tokens()),
+                    );
+                    m.insert(
+                        "cache_miss_tokens".to_string(),
+                        serde_json::json!(usage.cache_miss_tokens()),
+                    );
                 }
                 if let Some(reason) = finish_reason {
                     m.insert("finish_reason".to_string(), serde_json::json!(reason));
@@ -1926,7 +2426,7 @@ impl SessionPrompt {
                         let agent = item
                             .get("agent")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("general")
+                            .unwrap_or("build")
                             .to_string();
                         let prompt = item
                             .get("prompt")
@@ -2183,7 +2683,7 @@ impl SessionPrompt {
     }
 
     async fn ensure_title(session: &mut Session, provider: Arc<dyn Provider>, model_id: &str) {
-        if !session.is_default_title() {
+        if !session.should_generate_title() {
             return;
         }
 
@@ -2198,9 +2698,18 @@ impl SessionPrompt {
             return;
         }
 
+        let fallback = generate_session_title(&first_user_text);
         let title = generate_session_title_llm(&first_user_text, provider, model_id).await;
-        if !title.trim().is_empty() {
-            session.set_title(title);
+        if title.trim().is_empty() {
+            return;
+        }
+
+        if title.trim() == fallback.trim() {
+            // The LLM failed (or echoed the fallback). Keep the durable fallback
+            // and leave it pending so a later prompt can retry the upgrade.
+            session.set_auto_title(fallback);
+        } else {
+            session.finalize_auto_title(title);
         }
     }
 
@@ -2318,7 +2827,7 @@ impl SessionPrompt {
                             .metadata
                             .get("agent")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("general")
+                            .unwrap_or("build")
                             .to_string(),
                         model: V2ModelRef {
                             provider_id: msg
@@ -2392,7 +2901,7 @@ impl SessionPrompt {
                             .metadata
                             .get("agent")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("general")
+                            .unwrap_or("build")
                             .to_string(),
                         path: MessagePath {
                             cwd: ".".to_string(),
@@ -2605,6 +3114,8 @@ pub enum PromptError {
     Provider(String),
     #[error("Cancelled")]
     Cancelled,
+    #[error("{0}")]
+    InvalidAgentMention(String),
 }
 
 /// Regex that matches `@reference` patterns. We use a capturing group for the
@@ -2612,11 +3123,20 @@ pub enum PromptError {
 /// Group 1 = preceding char (or empty at start of string), Group 2 = the reference name.
 const FILE_REFERENCE_REGEX: &str = r"(?:^|([^\w`]))@(\.?[^\s`,.]*(?:\.[^\s`,.]+)*)";
 
+/// Resolve `@`-references in a prompt template into [`PartInput`]s.
+///
+/// Mirrors the reference `resolvePromptParts` file-first fallback: a token that
+/// resolves to a real path becomes a [`PartInput::File`]; otherwise, if it names
+/// a registered `@agent`, it becomes a [`PartInput::Agent`] that routes the turn
+/// to that subagent. `subagent_agents` holds the names that are valid task
+/// subagents; `non_subagent_agents` holds the other registered names, whose
+/// mention is rejected with a clear error instead of silently falling through.
 pub async fn resolve_prompt_parts(
     template: &str,
     worktree: &std::path::Path,
-    known_agents: &[String],
-) -> Vec<PartInput> {
+    subagent_agents: &[String],
+    non_subagent_agents: &[String],
+) -> Result<Vec<PartInput>, PromptError> {
     let mut parts = vec![PartInput::Text {
         text: template.to_string(),
     }];
@@ -2661,16 +3181,23 @@ pub async fn resolve_prompt_parts(
                         mime: Some("text/plain".to_string()),
                     });
                 }
-            } else if known_agents.iter().any(|a| a == name) {
-                // Not a file — check if it's a known agent name
+            } else if subagent_agents.iter().any(|a| a == name) {
+                // Not a file — route to a subagent-capable agent.
                 parts.push(PartInput::Agent {
                     name: name.to_string(),
                 });
+            } else if non_subagent_agents.iter().any(|a| a == name) {
+                // A registered agent that cannot be a subagent (e.g. a primary
+                // or hidden agent). Fail clearly instead of silently ignoring.
+                return Err(PromptError::InvalidAgentMention(format!(
+                    "Agent '@{}' is not a subagent-capable agent and cannot be mentioned as a subagent",
+                    name
+                )));
             }
         }
     }
 
-    parts
+    Ok(parts)
 }
 
 pub fn extract_file_references(template: &str) -> Vec<String> {
@@ -2764,13 +3291,14 @@ impl SubtaskExecutor {
             .await
             .unwrap_or_else(|_| format!("task_{}_{}", self.agent_name, uuid::Uuid::new_v4()));
 
-        if let Ok(output) = ctx
+        if let Ok(outcome) = ctx
             .do_prompt_subsession(subsession_id.clone(), self.prompt.clone())
             .await
         {
             return Ok(format!(
                 "task_id: {} (for resuming to continue this task if needed)\n\n<task_result>\n{}\n</task_result>",
-                subsession_id, output
+                subsession_id,
+                outcome.text()
             ));
         }
 
@@ -2883,9 +3411,9 @@ fn apply_chat_message_hook_outputs(
             }
         }
         if let Some(next_parts) = object.get("parts").and_then(|value| value.as_array()) {
-            let parsed = serde_json::from_value::<Vec<crate::MessagePart>>(serde_json::Value::Array(
-                next_parts.clone(),
-            ));
+            let parsed = serde_json::from_value::<Vec<crate::MessagePart>>(
+                serde_json::Value::Array(next_parts.clone()),
+            );
             if let Ok(parts) = parsed {
                 message.parts = parts;
             }
@@ -2997,87 +3525,195 @@ pub fn extract_structured_output(parts: &[crate::MessagePart]) -> Option<serde_j
     None
 }
 
-const PROMPT_PLAN: &str = r#"You are in PLAN mode. The user wants you to create a plan before executing.
+/// Ported `session/prompt/plan-mode.txt`. `${planInfo}` is replaced with the
+/// resolved plan path and its create-vs-edit wording when the reminder is
+/// injected.
+const PLAN_MODE: &str = r#"<system-reminder>
+Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
-## Your task:
-1. Understand the user's request thoroughly
-2. Explore the codebase to understand the current state
-3. Create a detailed plan in the plan file
-4. Use the plan_exit tool when done planning
+## Plan File Info:
+${planInfo}
+You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
-## Important:
-- Do NOT make any edits or run commands (except read operations)
-- Only create/modify the plan file
-- Ask clarifying questions if needed
-- Use explore subagent to understand the codebase"#;
+## Plan Workflow
 
-const BUILD_SWITCH: &str = r#"The user has approved your plan and wants you to execute it.
+### Phase 1: Initial Understanding
+Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
 
-## Your task:
-1. Execute the plan step by step
-2. Make the necessary changes to the codebase
-3. Test your changes
-4. Verify the implementation matches the plan
+1. Focus on understanding the user's request and the code associated with their request
 
-## Important:
-- You may now use all tools including edit, write, bash
-- Follow the plan closely but adapt as needed
-- Report progress to the user"#;
+2. **Launch up to 3 explore agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
+ - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
+ - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
+ - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
+ - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
 
+3. After exploring the code, use the question tool to clarify ambiguities in the user request up front.
+
+### Phase 2: Design
+Goal: Design an implementation approach.
+
+Launch general agent(s) to design the implementation based on the user's intent and your exploration results from Phase 1.
+
+You can launch up to 1 agent(s) in parallel.
+
+**Guidelines:**
+- **Default**: Launch at least 1 Plan agent for most tasks - it helps validate your understanding and consider alternatives
+- **Skip agents**: Only for truly trivial tasks (typo fixes, single-line changes, simple renames)
+
+Examples of when to use multiple agents:
+- The task touches multiple parts of the codebase
+- It's a large refactor or architectural change
+- There are many edge cases to consider
+- You'd benefit from exploring different approaches
+
+Example perspectives by task type:
+- New feature: simplicity vs performance vs maintainability
+- Bug fix: root cause vs workaround vs prevention
+- Refactoring: minimal change vs clean architecture
+
+In the agent prompt:
+- Provide comprehensive background context from Phase 1 exploration including filenames and code path traces
+- Describe requirements and constraints
+- Request a detailed implementation plan
+
+### Phase 3: Review
+Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
+1. Read the critical files identified by agents to deepen your understanding
+2. Ensure that the plans align with the user's original request
+3. Use question tool to clarify any remaining questions with the user
+
+### Phase 4: Final Plan
+Goal: Write your final plan to the plan file (the only file you can edit).
+- Include only your recommended approach, not all alternatives
+- Ensure that the plan file is concise enough to scan quickly, but detailed enough to execute effectively
+- Include the paths of critical files to be modified
+- Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
+
+### Phase 5: Call plan_exit tool
+At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
+This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
+
+**Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
+
+NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
+</system-reminder>"#;
+
+/// Ported `session/prompt/build-switch.txt`.
+const BUILD_SWITCH: &str = r#"<system-reminder>
+Your operational mode has changed from plan to build.
+You are no longer in read-only mode.
+You are permitted to make file changes, run shell commands, and utilize your arsenal of tools as needed.
+</system-reminder>"#;
+
+/// Plan-file context for the injected plan-mode reminder.
+#[derive(Debug, Clone)]
+pub struct PlanReminder {
+    pub path: std::path::PathBuf,
+    pub exists: bool,
+}
+
+fn push_synthetic_reminder(message: &mut SessionMessage, text: String) {
+    message.parts.push(crate::MessagePart {
+        id: format!("prt_{}", uuid::Uuid::new_v4()),
+        part_type: PartType::Text {
+            text,
+            synthetic: Some(true),
+            ignored: None,
+        },
+        created_at: chrono::Utc::now(),
+        message_id: None,
+    });
+}
+
+/// Resolve the session's plan file path and whether it already exists, using the
+/// shared `opencode_core::plan_file_path` helper so the reminder, the plan tools,
+/// and the permission allow-list all reference one path.
+pub fn session_plan_reminder(session: &Session) -> PlanReminder {
+    let worktree = Path::new(&session.directory);
+    let data_dir = opencode_core::opencode_data_dir().unwrap_or_else(|| worktree.join(".opencode"));
+    let path =
+        opencode_core::plan_file_path(worktree, &data_dir, &session.slug, session.time.created);
+    let exists = path.exists();
+    PlanReminder { path, exists }
+}
+
+/// Whether the most recent assistant message ran under the `plan` agent.
+///
+/// Mirrors the reference `assistantMessage?.info.agent === "plan"` transition
+/// check used to decide plan-mode entry and the build switch.
+pub fn last_assistant_was_plan(messages: &[SessionMessage]) -> bool {
+    messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.role, MessageRole::Assistant))
+        .and_then(|m| m.metadata.get("agent"))
+        .and_then(|agent| agent.as_str())
+        == Some("plan")
+}
+
+/// Inject plan-mode reminders onto the last user message.
+///
+/// Mirrors the reference `SessionReminders.apply` experimental plan-mode branch:
+/// entering plan mode injects the ported `plan-mode.txt` with the resolved plan
+/// path and create-vs-edit wording (creating the plans directory first when the
+/// file is absent); leaving plan mode injects `build-switch.txt`, plus the
+/// "a plan file exists" line when a plan file is present.
 pub fn insert_reminders(
     messages: &[SessionMessage],
     agent_name: &str,
-    was_plan: bool,
+    last_assistant_was_plan: bool,
+    plan: &PlanReminder,
 ) -> Vec<SessionMessage> {
-    let last_user_idx = messages
+    let Some(idx) = messages
         .iter()
-        .rposition(|m| matches!(m.role, MessageRole::User));
+        .rposition(|m| matches!(m.role, MessageRole::User))
+    else {
+        return messages.to_vec();
+    };
 
-    if let Some(idx) = last_user_idx {
-        let mut messages = messages.to_vec();
+    let mut messages = messages.to_vec();
 
-        if agent_name == "plan" {
-            let reminder_text = PROMPT_PLAN.to_string();
-            messages[idx].parts.push(crate::MessagePart {
-                id: format!("prt_{}", uuid::Uuid::new_v4()),
-                part_type: PartType::Text {
-                    text: reminder_text,
-                    synthetic: None,
-                    ignored: None,
-                },
-                created_at: chrono::Utc::now(),
-                message_id: None,
-            });
-        }
-
-        if was_plan && agent_name == "build" {
-            let reminder_text = BUILD_SWITCH.to_string();
-            messages[idx].parts.push(crate::MessagePart {
-                id: format!("prt_{}", uuid::Uuid::new_v4()),
-                part_type: PartType::Text {
-                    text: reminder_text,
-                    synthetic: None,
-                    ignored: None,
-                },
-                created_at: chrono::Utc::now(),
-                message_id: None,
-            });
-        }
-
-        messages
-    } else {
-        messages.to_vec()
-    }
-}
-
-pub fn was_plan_agent(messages: &[SessionMessage]) -> bool {
-    messages.iter().any(|m| {
-        if let Some(agent) = m.metadata.get("agent") {
-            agent.as_str() == Some("plan")
+    if agent_name != "plan" && last_assistant_was_plan {
+        let text = if plan.exists {
+            format!(
+                "{}\n\nA plan file exists at {}. You should execute on the plan defined within it",
+                BUILD_SWITCH,
+                plan.path.display()
+            )
         } else {
-            false
+            BUILD_SWITCH.to_string()
+        };
+        push_synthetic_reminder(&mut messages[idx], text);
+        return messages;
+    }
+
+    if agent_name != "plan" || last_assistant_was_plan {
+        return messages;
+    }
+
+    if !plan.exists {
+        if let Some(parent) = plan.path.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-    })
+    }
+    let plan_info = if plan.exists {
+        format!(
+            "A plan file already exists at {}. You can read it and make incremental edits using the edit tool.",
+            plan.path.display()
+        )
+    } else {
+        format!(
+            "No plan file exists yet. You should create your plan at {} using the write tool.",
+            plan.path.display()
+        )
+    };
+    push_synthetic_reminder(
+        &mut messages[idx],
+        PLAN_MODE.replace("${planInfo}", &plan_info),
+    );
+
+    messages
 }
 
 pub struct ResolvedTool {
@@ -3455,6 +4091,8 @@ mod tests {
     use opencode_provider::{
         ChatRequest, ChatResponse, ModelInfo, ProviderError, StreamEvent, StreamResult, StreamUsage,
     };
+    use std::collections::VecDeque;
+    use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
     struct StaticModelProvider {
@@ -3552,6 +4190,83 @@ mod tests {
     }
 
     #[test]
+    fn first_step_postprocessing_waits_for_tool_free_step() {
+        assert!(!SessionPrompt::should_run_first_step_postprocessing(
+            false, true
+        ));
+        assert!(SessionPrompt::should_run_first_step_postprocessing(
+            false, false
+        ));
+        assert!(!SessionPrompt::should_run_first_step_postprocessing(
+            true, false
+        ));
+    }
+
+    fn title_test_provider() -> Arc<dyn Provider> {
+        Arc::new(ScriptedStreamProvider {
+            model: ModelInfo {
+                id: "test-model".to_string(),
+                name: "Test Model".to_string(),
+                provider: "mock".to_string(),
+                context_window: 8192,
+                max_output_tokens: 1024,
+                supports_vision: false,
+                supports_tools: false,
+                cost_per_million_input: 0.0,
+                cost_per_million_output: 0.0,
+            },
+            events: Vec::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn ensure_title_titles_tool_first_session_from_first_user_message() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+        // Simulate a first assistant turn that only called tools. Title generation
+        // must not depend on `should_run_first_step_postprocessing`, so the
+        // fallback title is still applied even though the turn was tool-first.
+        let assistant = session.add_assistant_message();
+        assistant.add_tool_call(
+            "call_1",
+            "read".to_string(),
+            serde_json::json!({ "filePath": "src/lib.rs" }),
+        );
+
+        SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
+
+        assert!(!session.is_default_title());
+        assert_eq!(session.title, "Investigate the flaky test");
+    }
+
+    #[tokio::test]
+    async fn ensure_title_never_overwrites_user_rename() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+        session.set_title("My own title");
+        session.mark_title_user_owned();
+
+        SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
+
+        assert_eq!(session.title, "My own title");
+        assert!(!session.should_generate_title());
+    }
+
+    #[tokio::test]
+    async fn ensure_title_retries_pending_fallback_without_clobbering_it() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+        session.set_auto_title("Investigate the flaky test");
+
+        // The failing provider returns the fallback, so the title stays pending
+        // for a later retry instead of being finalized with the fallback text.
+        SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
+
+        assert_eq!(session.title, "Investigate the flaky test");
+        assert!(session.is_auto_title_pending());
+    }
+
+    #[test]
     fn filter_compacted_messages_keeps_tail_after_last_compaction() {
         let session_id = "ses_test".to_string();
         let before = SessionMessage::user(session_id.clone(), "before");
@@ -3574,12 +4289,8 @@ mod tests {
             .any(|p| matches!(p.part_type, PartType::Compaction { .. })));
     }
 
-    #[test]
-    fn insert_reminders_adds_plan_prompt_for_plan_agent() {
-        let messages = vec![SessionMessage::user("ses_test", "plan this")];
-        let output = insert_reminders(&messages, "plan", false);
-        let last = output.last().unwrap();
-        let injected = last
+    fn collect_text(message: &SessionMessage) -> String {
+        message
             .parts
             .iter()
             .filter_map(|p| match &p.part_type {
@@ -3587,8 +4298,36 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        assert!(injected.contains("You are in PLAN mode"));
+            .join("\n")
+    }
+
+    fn temp_plan_reminder(exists: bool) -> PlanReminder {
+        let path = std::env::temp_dir()
+            .join(format!("opencode-plan-reminder-{}", std::process::id()))
+            .join("plans")
+            .join("1-x.md");
+        PlanReminder { path, exists }
+    }
+
+    #[test]
+    fn insert_reminders_adds_plan_mode_with_create_wording() {
+        let messages = vec![SessionMessage::user("ses_test", "plan this")];
+        let plan = temp_plan_reminder(false);
+        let output = insert_reminders(&messages, "plan", false, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(injected.contains("Plan mode is active"));
+        assert!(injected.contains(&plan.path.display().to_string()));
+        assert!(injected.contains("No plan file exists yet"));
+    }
+
+    #[test]
+    fn insert_reminders_adds_plan_mode_with_incremental_wording() {
+        let messages = vec![SessionMessage::user("ses_test", "plan this")];
+        let plan = temp_plan_reminder(true);
+        let output = insert_reminders(&messages, "plan", false, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(injected.contains("A plan file already exists at"));
+        assert!(injected.contains(&plan.path.display().to_string()));
     }
 
     #[test]
@@ -3596,18 +4335,20 @@ mod tests {
         let mut user = SessionMessage::user("ses_test", "execute this");
         user.metadata
             .insert("agent".to_string(), serde_json::json!("plan"));
-        let output = insert_reminders(&[user], "build", true);
-        let last = output.last().unwrap();
-        let injected = last
-            .parts
-            .iter()
-            .filter_map(|p| match &p.part_type {
-                PartType::Text { text, .. } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(injected.contains("The user has approved your plan"));
+        let plan = temp_plan_reminder(true);
+        let output = insert_reminders(&[user], "build", true, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(injected.contains("Your operational mode has changed from plan to build"));
+        assert!(injected.contains(&plan.path.display().to_string()));
+    }
+
+    #[test]
+    fn insert_reminders_skips_plan_reminder_when_already_in_plan() {
+        let messages = vec![SessionMessage::user("ses_test", "continue")];
+        let plan = temp_plan_reminder(true);
+        let output = insert_reminders(&messages, "plan", true, &plan);
+        let injected = collect_text(output.last().unwrap());
+        assert!(!injected.contains("Plan mode is active"));
     }
 
     #[tokio::test]
@@ -3675,6 +4416,7 @@ mod tests {
                 &mut session,
                 provider,
                 None,
+                None,
                 Vec::new(),
                 AgentParams::default(),
                 Some(hook),
@@ -3706,6 +4448,163 @@ mod tests {
             .map(SessionMessage::get_text)
             .unwrap_or_default();
         assert_eq!(final_text, "Hello");
+    }
+
+    #[tokio::test]
+    async fn stalled_stream_error_fails_the_turn_visibly() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+        let provider = Arc::new(ScriptedStreamProvider {
+            model: ModelInfo {
+                id: "test-model".to_string(),
+                name: "Test Model".to_string(),
+                provider: "mock".to_string(),
+                context_window: 8192,
+                max_output_tokens: 1024,
+                supports_vision: false,
+                supports_tools: true,
+                cost_per_million_input: 0.0,
+                cost_per_million_output: 0.0,
+            },
+            // Reasoning then partial text, then the idle-timeout wrapper
+            // reports the stream stalled: the BUG-038 shape where no tool call,
+            // finish reason, or completion ever arrives.
+            events: vec![
+                StreamEvent::Start,
+                StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                },
+                StreamEvent::ReasoningDelta {
+                    id: "reasoning-0".to_string(),
+                    text: "Let me look for board files".to_string(),
+                },
+                StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                },
+                StreamEvent::TextDelta("I'll look".to_string()),
+                StreamEvent::Error(
+                    "Provider stream stalled: no events received for 90s".to_string(),
+                ),
+            ],
+        });
+
+        let input = PromptInput {
+            session_id: session.id.clone(),
+            message_id: None,
+            model: Some(ModelRef {
+                provider_id: "mock".to_string(),
+                model_id: "test-model".to_string(),
+            }),
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            tools: None,
+            parts: vec![PartInput::Text {
+                text: "find the board".to_string(),
+            }],
+        };
+
+        let result = prompt
+            .prompt_with_update_hook(
+                input,
+                &mut session,
+                provider,
+                None,
+                None,
+                Vec::new(),
+                AgentParams::default(),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a stalled stream must fail the turn instead of hanging silently"
+        );
+        let error = result.err().expect("error checked above").to_string();
+        assert!(
+            error.contains("stalled"),
+            "the failure must name the stall: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_user_message_reuses_materialized_message_exactly_once() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+        let materialized = session.add_user_message_with_id("msg_materialized", "queued text");
+        materialized
+            .metadata
+            .insert("queued_pending".to_string(), serde_json::json!(true));
+
+        let input = PromptInput {
+            session_id: session.id.clone(),
+            message_id: Some("msg_materialized".to_string()),
+            model: None,
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            tools: None,
+            parts: vec![PartInput::Text {
+                text: "queued text".to_string(),
+            }],
+        };
+
+        prompt
+            .create_user_message(&input, &mut session)
+            .await
+            .expect("materialized message should be consumed");
+
+        let user_messages: Vec<&SessionMessage> = session
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::User))
+            .collect();
+        assert_eq!(
+            user_messages.len(),
+            1,
+            "accept-time materialization must not create a second user message"
+        );
+        assert_eq!(user_messages[0].id, "msg_materialized");
+        assert!(
+            user_messages[0].metadata.get("queued_pending").is_none(),
+            "the queued marker clears once the runner consumes the message"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_user_message_creates_one_message_for_requested_id() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+
+        let input = PromptInput {
+            session_id: session.id.clone(),
+            message_id: Some("msg_requested".to_string()),
+            model: None,
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            tools: None,
+            parts: vec![PartInput::Text {
+                text: "fresh prompt".to_string(),
+            }],
+        };
+
+        prompt
+            .create_user_message(&input, &mut session)
+            .await
+            .expect("prompt should be materialized");
+
+        let user_messages: Vec<&SessionMessage> = session
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::User))
+            .collect();
+        assert_eq!(user_messages.len(), 1);
+        assert_eq!(user_messages[0].id, "msg_requested");
     }
 
     #[tokio::test]
@@ -4305,25 +5204,45 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_prompt_parts_plain_text() {
-        let parts =
-            resolve_prompt_parts("just plain text", std::path::Path::new("/tmp"), &[]).await;
+        let parts = resolve_prompt_parts("just plain text", std::path::Path::new("/tmp"), &[], &[])
+            .await
+            .unwrap();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], PartInput::Text { text } if text == "just plain text"));
     }
 
     #[tokio::test]
     async fn resolve_prompt_parts_agent_fallback() {
-        // @explore doesn't exist as a file, but is a known agent
-        let agents = vec!["explore".to_string(), "build".to_string()];
+        // @explore doesn't exist as a file, but is a known subagent.
+        let subagents = vec!["explore".to_string(), "general".to_string()];
+        let primaries = vec!["build".to_string(), "plan".to_string()];
         let parts = resolve_prompt_parts(
             "check @explore for details",
             std::path::Path::new("/tmp"),
-            &agents,
+            &subagents,
+            &primaries,
         )
-        .await;
+        .await
+        .unwrap();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], PartInput::Text { .. }));
         assert!(matches!(&parts[1], PartInput::Agent { name } if name == "explore"));
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_parts_routes_each_subagent_once() {
+        let subagents = vec!["explore".to_string(), "general".to_string()];
+        let parts = resolve_prompt_parts(
+            "see @general then @explore",
+            std::path::Path::new("/tmp"),
+            &subagents,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[1], PartInput::Agent { name } if name == "general"));
+        assert!(matches!(&parts[2], PartInput::Agent { name } if name == "explore"));
     }
 
     #[tokio::test]
@@ -4332,10 +5251,44 @@ mod tests {
             "see @explore and @explore again",
             std::path::Path::new("/tmp"),
             &["explore".to_string()],
+            &[],
         )
-        .await;
+        .await
+        .unwrap();
         // text + one agent (deduplicated)
         assert_eq!(parts.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_parts_rejects_non_subagent_mention() {
+        let error = resolve_prompt_parts(
+            "please @build this",
+            std::path::Path::new("/tmp"),
+            &["explore".to_string()],
+            &["build".to_string()],
+        )
+        .await
+        .expect_err("primary mention must not silently fall through");
+        assert!(
+            matches!(error, PromptError::InvalidAgentMention(ref message)
+            if message.contains("@build") && message.contains("not a subagent-capable agent"))
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_prompt_parts_leaves_unknown_mentions_as_text() {
+        // A token that is neither a file nor a registered agent is not an agent
+        // mention; it stays as plain prompt text.
+        let parts = resolve_prompt_parts(
+            "ping @nobody about it",
+            std::path::Path::new("/tmp"),
+            &["explore".to_string()],
+            &["build".to_string()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(parts.len(), 1);
+        assert!(matches!(&parts[0], PartInput::Text { .. }));
     }
 
     #[tokio::test]
@@ -4344,7 +5297,9 @@ mod tests {
         let file = dir.path().join("test.rs");
         tokio::fs::write(&file, "fn main() {}").await.unwrap();
 
-        let parts = resolve_prompt_parts("look at @test.rs", dir.path(), &[]).await;
+        let parts = resolve_prompt_parts("look at @test.rs", dir.path(), &[], &[])
+            .await
+            .unwrap();
         assert_eq!(parts.len(), 2);
         assert!(
             matches!(&parts[1], PartInput::File { mime, .. } if mime.as_deref() == Some("text/plain"))
@@ -4357,7 +5312,9 @@ mod tests {
         let sub = dir.path().join("src");
         tokio::fs::create_dir(&sub).await.unwrap();
 
-        let parts = resolve_prompt_parts("look at @src", dir.path(), &[]).await;
+        let parts = resolve_prompt_parts("look at @src", dir.path(), &[], &[])
+            .await
+            .unwrap();
         assert_eq!(parts.len(), 2);
         assert!(
             matches!(&parts[1], PartInput::File { mime, .. } if mime.as_deref() == Some("application/x-directory"))
@@ -4403,6 +5360,152 @@ mod tests {
             .collect();
 
         assert_eq!(error_results.len(), 1, "call_2 should have an error result");
+    }
+
+    #[test]
+    fn finalize_incomplete_turn_marks_terminal_and_resolves_calls() {
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "do something"));
+
+        let mut assistant = SessionMessage::assistant(sid.clone());
+        assistant.add_tool_call("call_1", "bash", serde_json::json!({"command": "echo a"}));
+        assistant.add_tool_call("call_2", "read_file", serde_json::json!({"path": "foo.rs"}));
+        assistant.add_tool_result("call_1", "output a", false);
+        session.messages.push(assistant);
+
+        SessionPrompt::finalize_incomplete_turn(
+            &mut session,
+            "error",
+            "internal error (run panicked)",
+        );
+
+        let marked = session
+            .messages
+            .iter()
+            .find(|m| m.metadata.get("finish_reason").is_some())
+            .expect("a terminal assistant message");
+        assert_eq!(
+            marked.metadata.get("finish_reason"),
+            Some(&serde_json::json!("error"))
+        );
+        assert_eq!(
+            marked.metadata.get("error"),
+            Some(&serde_json::json!("internal error (run panicked)"))
+        );
+
+        let last_assistant = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| matches!(m.role, MessageRole::Assistant))
+            .unwrap();
+        let resolved = last_assistant.parts.iter().any(|p| {
+            matches!(
+                &p.part_type,
+                PartType::ToolResult { tool_call_id, is_error, .. }
+                    if tool_call_id == "call_2" && *is_error
+            )
+        });
+        assert!(resolved, "call_2 should be resolved with an error result");
+    }
+
+    #[test]
+    fn mark_aborted_records_durable_error_state() {
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "stop this"));
+        session.messages.push(SessionMessage::assistant(sid));
+
+        SessionPrompt::mark_aborted(&mut session);
+
+        let assistant = session.messages.last().expect("assistant message exists");
+        assert_eq!(
+            assistant.metadata.get("error"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(
+            assistant.metadata.get("finish_reason"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(assistant.get_text(), "Aborted by user.");
+    }
+
+    #[test]
+    fn mark_aborted_adds_text_when_only_reasoning_present() {
+        // BUG-019: an interrupt during the thinking phase leaves an assistant
+        // message carrying only reasoning. Reasoning is not serialized as
+        // assistant content, so abort must add visible text to keep the next
+        // provider request valid.
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "stop this"));
+        let mut assistant = SessionMessage::assistant(sid);
+        assistant.add_reasoning("weighing the request");
+        session.messages.push(assistant);
+
+        SessionPrompt::mark_aborted(&mut session);
+
+        let assistant = session.messages.last().expect("assistant message exists");
+        assert_eq!(
+            assistant.metadata.get("error"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(
+            assistant.metadata.get("finish_reason"),
+            Some(&serde_json::json!("aborted"))
+        );
+        assert_eq!(assistant.get_text(), "Aborted by user.");
+        assert_eq!(assistant.get_reasoning(), "weighing the request");
+    }
+
+    #[test]
+    fn append_missing_tool_results_repairs_unresolved_calls() {
+        let mut session = Session::new("proj", ".");
+        let sid = session.id.clone();
+
+        session
+            .messages
+            .push(SessionMessage::user(sid.clone(), "inspect the repo"));
+
+        let mut assistant = SessionMessage::assistant(sid.clone());
+        assistant.add_tool_call("call_ls", "ls", serde_json::json!({"path": "."}));
+        assistant.add_tool_call(
+            "call_grep",
+            "grep",
+            serde_json::json!({"pattern": "BUG-016"}),
+        );
+        assistant.add_tool_result("call_ls", "files", false);
+        session.messages.push(assistant);
+
+        let repaired = SessionPrompt::append_missing_tool_results(
+            &mut session,
+            "Tool execution ended before producing a result".to_string(),
+        );
+
+        assert_eq!(repaired, 1);
+        let result_count = session
+            .messages
+            .iter()
+            .flat_map(|message| &message.parts)
+            .filter(|part| {
+                matches!(
+                    &part.part_type,
+                    PartType::ToolResult { tool_call_id, is_error, content, .. }
+                        if tool_call_id == "call_grep"
+                            && *is_error
+                            && content == "Tool execution ended before producing a result"
+                )
+            })
+            .count();
+        assert_eq!(result_count, 1);
+        assert!(SessionPrompt::unresolved_tool_call_ids(&session).is_empty());
     }
 
     #[test]
@@ -4472,6 +5575,193 @@ mod tests {
             abort_results.len(),
             3,
             "All three pending calls should be aborted"
+        );
+    }
+
+    /// Provider that returns the next canned reply for each `chat_stream` call,
+    /// in order, so consecutive prompts in one session get distinct answers.
+    struct SequencedStreamProvider {
+        model: ModelInfo,
+        replies: Arc<StdMutex<VecDeque<String>>>,
+    }
+
+    impl SequencedStreamProvider {
+        fn with_replies(model_id: &str, replies: Vec<String>) -> Self {
+            Self {
+                model: ModelInfo {
+                    id: model_id.to_string(),
+                    name: "Sequenced Model".to_string(),
+                    provider: "mock".to_string(),
+                    context_window: 8192,
+                    max_output_tokens: 1024,
+                    supports_vision: false,
+                    supports_tools: false,
+                    cost_per_million_input: 0.0,
+                    cost_per_million_output: 0.0,
+                },
+                replies: Arc::new(StdMutex::new(replies.into())),
+            }
+        }
+
+        fn reply_stream(&self) -> Vec<StreamEvent> {
+            let mut guard = self.replies.lock().expect("reply lock should not poison");
+            let text = guard.pop_front().unwrap_or_else(|| "FALLBACK".to_string());
+            vec![
+                StreamEvent::Start,
+                StreamEvent::TextDelta(text),
+                StreamEvent::FinishStep {
+                    finish_reason: Some("stop".to_string()),
+                    usage: StreamUsage {
+                        prompt_tokens: 3,
+                        completion_tokens: 2,
+                        ..Default::default()
+                    },
+                    provider_metadata: None,
+                },
+                StreamEvent::Done,
+            ]
+        }
+    }
+
+    #[async_trait]
+    impl Provider for SequencedStreamProvider {
+        fn id(&self) -> &str {
+            "mock"
+        }
+
+        fn name(&self) -> &str {
+            "Mock"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            vec![self.model.clone()]
+        }
+
+        fn get_model(&self, id: &str) -> Option<&ModelInfo> {
+            if self.model.id == id {
+                Some(&self.model)
+            } else {
+                None
+            }
+        }
+
+        async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest(
+                "chat() not used in this test".to_string(),
+            ))
+        }
+
+        async fn chat_stream(&self, _request: ChatRequest) -> Result<StreamResult, ProviderError> {
+            Ok(Box::pin(stream::iter(
+                self.reply_stream()
+                    .into_iter()
+                    .map(Result::<StreamEvent, ProviderError>::Ok),
+            )))
+        }
+    }
+
+    fn test_prompt_input(session_id: &str, text: &str) -> PromptInput {
+        PromptInput {
+            session_id: session_id.to_string(),
+            message_id: None,
+            model: Some(ModelRef {
+                provider_id: "mock".to_string(),
+                model_id: "test-model".to_string(),
+            }),
+            agent: None,
+            no_reply: false,
+            system: None,
+            variant: None,
+            parts: vec![PartInput::Text {
+                text: text.to_string(),
+            }],
+            tools: None,
+        }
+    }
+
+    /// Regression for BUG-003's second root cause: the session loop previously
+    /// compared unordered message IDs to decide a follow-up prompt was already
+    /// answered, which stalled every prompt after the first. Three consecutive
+    /// prompts on one session must each complete with the correct reply.
+    #[tokio::test]
+    async fn session_handles_three_consecutive_prompts() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+        let provider = Arc::new(SequencedStreamProvider::with_replies(
+            "test-model",
+            vec![
+                "answer-one".to_string(),
+                "answer-two".to_string(),
+                "answer-three".to_string(),
+            ],
+        ));
+
+        let prompts = ["prompt one", "prompt two", "prompt three"];
+        for (i, text) in prompts.iter().enumerate() {
+            prompt
+                .prompt_with_update_hook(
+                    test_prompt_input(&session.id, text),
+                    &mut session,
+                    provider.clone(),
+                    None,
+                    None,
+                    Vec::new(),
+                    AgentParams::default(),
+                    None,
+                )
+                .await
+                .unwrap_or_else(|e| panic!("prompt {} should succeed: {}", i + 1, e));
+
+            let assistant_texts: Vec<String> = session
+                .messages
+                .iter()
+                .filter(|m| matches!(m.role, MessageRole::Assistant))
+                .map(SessionMessage::get_text)
+                .collect();
+            assert_eq!(
+                assistant_texts.len(),
+                i + 1,
+                "after prompt {} there should be {} assistant reply(ies)",
+                i + 1,
+                i + 1
+            );
+            assert_eq!(
+                assistant_texts[i],
+                format!("answer-{}", ["one", "two", "three"][i]),
+                "reply {} should match the sequenced answer",
+                i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_context_does_not_rewrite_the_stable_system_prefix() {
+        let stable = "stable base prompt body";
+        let messages_a =
+            SessionPrompt::build_chat_messages(&[], Some(stable), Some("Today's date: Monday"))
+                .expect("messages build");
+        let messages_b =
+            SessionPrompt::build_chat_messages(&[], Some(stable), Some("Today's date: Tuesday"))
+                .expect("messages build");
+
+        let leading_a = match &messages_a[0].content {
+            Content::Text(text) => text.clone(),
+            _ => panic!("stable system prompt must be text"),
+        };
+        let leading_b = match &messages_b[0].content {
+            Content::Text(text) => text.clone(),
+            _ => panic!("stable system prompt must be text"),
+        };
+
+        assert_eq!(leading_a, stable);
+        assert_eq!(leading_a, leading_b, "leading prefix must not change");
+        assert!(
+            matches!(messages_a[1].content, Content::Text(ref text) if text.contains("Monday")),
+            "dynamic context is a separate system message"
+        );
+        assert!(
+            matches!(messages_b[1].content, Content::Text(ref text) if text.contains("Tuesday")),
+            "dynamic context is a separate system message"
         );
     }
 }

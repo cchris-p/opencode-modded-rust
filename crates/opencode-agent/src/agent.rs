@@ -9,8 +9,8 @@ use opencode_config::{
     PermissionRule as LoadedPermissionRule,
 };
 use opencode_permission::{
-    build_agent_ruleset, evaluate as evaluate_permission, PermissionAction, PermissionRule,
-    PermissionRuleset,
+    build_agent_ruleset, evaluate as evaluate_permission, expand_permission_pattern,
+    PermissionAction, PermissionRule, PermissionRuleset,
 };
 
 const PROMPT_GENERATE: &str = r#"You are an AI agent configuration generator. Given a description of what an agent should do, generate a JSON configuration with:
@@ -186,7 +186,7 @@ impl AgentInfo {
     }
 
     pub fn default_agent() -> Self {
-        Self::general()
+        Self::build()
     }
 
     pub fn build() -> Self {
@@ -236,19 +236,24 @@ impl AgentInfo {
     }
 
     pub fn general() -> Self {
+        // Reference `general` is a general-purpose subagent
+        // (`packages/opencode/src/agent/agent.ts:182-195`): `mode: subagent`,
+        // defaults plus a `todowrite` deny, and no dedicated prompt (so the
+        // model default prompt is used).
         Self {
             name: "general".to_string(),
-            description: Some("Default general-purpose agent.".to_string()),
-            mode: AgentMode::Primary,
+            description: Some(
+                "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."
+                    .to_string(),
+            ),
+            mode: AgentMode::Subagent,
             model: None,
             model_preference: None,
-            system_prompt: Some(
-                "You are a helpful assistant. Complete the task given to you.".to_string(),
-            ),
-            temperature: Some(0.7),
+            system_prompt: None,
+            temperature: None,
             top_p: None,
-            max_tokens: Some(8192),
-            max_steps: Some(20),
+            max_tokens: None,
+            max_steps: None,
             allowed_tools: Vec::new(),
             options: HashMap::new(),
             permission: build_agent_ruleset("general", &[]),
@@ -451,6 +456,24 @@ impl AgentInfo {
             PermissionDecision::Allow
         )
     }
+
+    /// Whether this agent's own ruleset declares a rule for `permission`.
+    ///
+    /// This mirrors the reference's `permission.some((rule) => rule.permission
+    /// === <name>)` check: it is about the rule *existing*, not about the
+    /// action it carries.
+    pub fn permits_permission(&self, permission: &str) -> bool {
+        self.permission
+            .iter()
+            .any(|rule| rule.permission == permission)
+    }
+
+    /// Whether this agent may be invoked as a `task` subagent. The reference
+    /// task surface is filtered to `subagent`/`all` agents (primaries are not
+    /// offered as subagents), and hidden agents are never surfaced.
+    pub fn is_subagent_capable(&self) -> bool {
+        matches!(self.mode, AgentMode::Subagent | AgentMode::All) && !self.hidden
+    }
 }
 
 pub struct AgentRegistry {
@@ -607,6 +630,15 @@ impl AgentRegistry {
         self.agents.get(name)
     }
 
+    /// Resolve a name to a subagent-capable agent. Returns `None` for unknown
+    /// names, primaries, and hidden agents so the `task` tool can fail without
+    /// creating a session.
+    pub fn resolve_subagent(&self, name: &str) -> Option<&AgentInfo> {
+        self.agents
+            .get(name)
+            .filter(|agent| agent.is_subagent_capable())
+    }
+
     pub fn get_mut(&mut self, name: &str) -> Option<&mut AgentInfo> {
         self.agents.get_mut(name)
     }
@@ -666,8 +698,8 @@ impl AgentRegistry {
     }
 
     pub fn default_agent(&self) -> &AgentInfo {
-        if let Some(general) = self.get(BuiltinAgent::General.as_str()) {
-            return general;
+        if let Some(build) = self.get(BuiltinAgent::Build.as_str()) {
+            return build;
         }
 
         if let Some(primary) = self
@@ -745,6 +777,49 @@ impl Default for AgentRegistry {
     }
 }
 
+/// Rust equivalent of the reference `deriveSubagentSessionPermission`.
+///
+/// Builds the `permission` ruleset for a subagent's session when it is spawned
+/// via the `task` tool. Combines:
+///
+/// 1. The parent session's deny rules and `external_directory` rules. Parent
+///    agent restrictions only govern that agent; the subagent's own
+///    permissions determine its capabilities.
+/// 2. Default `todowrite` and `task` denies unless the subagent's own ruleset
+///    already declares a rule for them.
+pub fn derive_subagent_session_permission(
+    parent_session_permission: &PermissionRuleset,
+    subagent: &AgentInfo,
+) -> PermissionRuleset {
+    let can_task = subagent.permits_permission("task");
+    let can_todo = subagent.permits_permission("todowrite");
+
+    let mut rules: PermissionRuleset = parent_session_permission
+        .iter()
+        .filter(|rule| {
+            rule.permission == "external_directory" || rule.action == PermissionAction::Deny
+        })
+        .cloned()
+        .collect();
+
+    if !can_todo {
+        rules.push(PermissionRule {
+            permission: "todowrite".to_string(),
+            pattern: "*".to_string(),
+            action: PermissionAction::Deny,
+        });
+    }
+    if !can_task {
+        rules.push(PermissionRule {
+            permission: "task".to_string(),
+            pattern: "*".to_string(),
+            action: PermissionAction::Deny,
+        });
+    }
+
+    rules
+}
+
 fn tool_to_permission(tool: &str) -> &str {
     match tool {
         "write" | "edit" | "multiedit" | "apply_patch" | "patch" => "edit",
@@ -774,7 +849,7 @@ fn permission_rules_from_config(permission: &LoadedPermissionConfig) -> Permissi
                 for (pattern, action) in patterns {
                     rules.push(PermissionRule {
                         permission: permission_name.clone(),
-                        pattern: pattern.clone(),
+                        pattern: expand_permission_pattern(permission_name, pattern),
                         action: map_loaded_permission_action(action),
                     });
                 }
@@ -861,14 +936,46 @@ mod tests {
             Some(AgentMode::Primary)
         ));
         assert!(matches!(
-            registry.get("general").map(|a| a.mode),
-            Some(AgentMode::Primary)
-        ));
-        assert!(matches!(
             registry.get("explore").map(|a| a.mode),
             Some(AgentMode::Subagent)
         ));
-        assert_eq!(registry.default_agent().name, "general");
+        assert!(matches!(
+            registry.get("general").map(|a| a.mode),
+            Some(AgentMode::Subagent)
+        ));
+        assert_eq!(registry.default_agent().name, "build");
+    }
+
+    #[test]
+    fn general_is_a_subagent_and_never_a_primary() {
+        let registry = AgentRegistry::new();
+
+        let general = registry
+            .get("general")
+            .expect("general must be registered by default");
+        assert!(matches!(general.mode, AgentMode::Subagent));
+        assert!(
+            general.is_subagent_capable(),
+            "general must be offered as a task subagent"
+        );
+        assert!(
+            registry.resolve_subagent("general").is_some(),
+            "general must resolve as a subagent"
+        );
+        assert!(
+            !registry
+                .list_primary()
+                .iter()
+                .any(|agent| agent.name == "general"),
+            "general must not appear in the primary picker"
+        );
+        assert!(
+            registry
+                .list_subagents()
+                .iter()
+                .any(|agent| agent.name == "general"),
+            "general must appear in the subagent list"
+        );
     }
 
     #[test]
@@ -906,7 +1013,7 @@ mod tests {
     }
 
     #[test]
-    fn config_can_override_builtin_agent_model() {
+    fn config_can_reintroduce_general_agent_with_model() {
         let mut config = LoadedConfig::default();
         config.agent = Some(LoadedAgentConfigs {
             entries: HashMap::from([(
@@ -1019,5 +1126,104 @@ mod tests {
             .get("investigate")
             .expect("investigate should be created from deprecated mode config");
         assert!(matches!(agent.mode, AgentMode::Primary));
+    }
+
+    #[test]
+    fn resolve_subagent_accepts_subagents_and_rejects_primaries_and_unknown() {
+        let registry = AgentRegistry::new();
+        assert!(registry.resolve_subagent("explore").is_some());
+        assert!(registry.resolve_subagent("general").is_some());
+        assert!(
+            registry.resolve_subagent("build").is_none(),
+            "primary is not a subagent"
+        );
+        assert!(
+            registry.resolve_subagent("plan").is_none(),
+            "primary is not a subagent"
+        );
+        assert!(registry.resolve_subagent("nope").is_none(), "unknown agent");
+        assert!(
+            registry.resolve_subagent("title").is_none(),
+            "hidden agents are not offered as subagents"
+        );
+    }
+
+    #[test]
+    fn derive_subagent_permission_denies_todo_and_task_unless_permitted() {
+        let explore = AgentInfo::explore();
+        let derived = derive_subagent_session_permission(&Vec::new(), &explore);
+
+        assert!(derived.iter().any(|rule| rule.permission == "todowrite"
+            && rule.pattern == "*"
+            && rule.action == PermissionAction::Deny));
+        assert!(derived.iter().any(|rule| rule.permission == "task"
+            && rule.pattern == "*"
+            && rule.action == PermissionAction::Deny));
+    }
+
+    #[test]
+    fn derive_subagent_permission_keeps_parent_denies_and_external_directory() {
+        let parent = vec![
+            PermissionRule {
+                permission: "bash".to_string(),
+                pattern: "*".to_string(),
+                action: PermissionAction::Deny,
+            },
+            PermissionRule {
+                permission: "external_directory".to_string(),
+                pattern: "/tmp/*".to_string(),
+                action: PermissionAction::Ask,
+            },
+            PermissionRule {
+                permission: "read".to_string(),
+                pattern: "*".to_string(),
+                action: PermissionAction::Allow,
+            },
+        ];
+
+        let derived = derive_subagent_session_permission(&parent, &AgentInfo::explore());
+
+        assert!(derived
+            .iter()
+            .any(|rule| rule.permission == "bash" && rule.action == PermissionAction::Deny));
+        assert!(derived
+            .iter()
+            .any(|rule| rule.permission == "external_directory"));
+        assert!(
+            !derived.iter().any(|rule| rule.permission == "read"),
+            "non-deny/non-external parent rules are dropped"
+        );
+    }
+
+    #[test]
+    fn derive_subagent_permission_honors_subagent_task_and_todo_permission() {
+        let mut subagent = AgentInfo::custom("reviewer");
+        subagent.permission = vec![
+            PermissionRule {
+                permission: "task".to_string(),
+                pattern: "*".to_string(),
+                action: PermissionAction::Allow,
+            },
+            PermissionRule {
+                permission: "todowrite".to_string(),
+                pattern: "*".to_string(),
+                action: PermissionAction::Allow,
+            },
+        ];
+        subagent.mode = AgentMode::Subagent;
+
+        let derived = derive_subagent_session_permission(&Vec::new(), &subagent);
+
+        assert!(
+            !derived
+                .iter()
+                .any(|rule| rule.permission == "task" && rule.action == PermissionAction::Deny),
+            "subagent that permits task must not get a default task deny"
+        );
+        assert!(
+            !derived.iter().any(|rule| rule.permission == "todowrite"
+                && rule.action == PermissionAction::Deny),
+            "subagent that permits todowrite must not get a default todowrite deny"
+        );
     }
 }

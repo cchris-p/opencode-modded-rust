@@ -3,16 +3,18 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, Padding, Paragraph},
     Frame,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::context::{AppContext, SessionStatus};
 use crate::file_index::FileIndex;
@@ -34,6 +36,7 @@ const PROMPT_BLOCK_PAD_RIGHT: u16 = 1;
 const PROMPT_BLOCK_PAD_TOP: u16 = 1;
 const PROMPT_BLOCK_PAD_BOTTOM: u16 = 1;
 const PROMPT_LINE_H_INSET: u16 = 1;
+const PROMPT_TAB_WIDTH: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptMode {
@@ -68,6 +71,86 @@ struct StashStore {
     entries: Vec<PromptStashEntry>,
 }
 
+/// Interrupt confirmation state machine.
+///
+/// `Esc` must be pressed twice within [`INTERRUPT_CONFIRM_WINDOW_SECS`] to
+/// interrupt a running turn. Once a press is confirmed the machine latches into
+/// [`InterruptState::Pending`] and stays there until the session leaves its
+/// running status (see `Prompt::set_spinner_active`) or a new run starts, so the
+/// status hint never flips back to "esc interrupt" while an abort is still in
+/// flight. Keeping the timing logic in a small, clock-injected struct makes the
+/// transitions unit-testable without an [`AppContext`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum InterruptState {
+    #[default]
+    Idle,
+    Armed {
+        since: Instant,
+    },
+    Pending,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct InterruptConfirmation {
+    state: InterruptState,
+}
+
+impl InterruptConfirmation {
+    fn is_armed_at(&self, now: Instant) -> bool {
+        matches!(
+            self.state,
+            InterruptState::Armed { since }
+                if now.saturating_duration_since(since)
+                    < Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS)
+        )
+    }
+
+    fn is_pending(&self) -> bool {
+        matches!(self.state, InterruptState::Pending)
+    }
+
+    /// Register one `Esc` press. Returns `true` only when this press completes a
+    /// confirmation and the interrupt should be issued. A press while pending is
+    /// ignored so a held key does not spam the abort endpoint.
+    fn press_at(&mut self, now: Instant) -> bool {
+        match self.state {
+            InterruptState::Pending => false,
+            InterruptState::Armed { since }
+                if now.saturating_duration_since(since)
+                    < Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS) =>
+            {
+                self.state = InterruptState::Pending;
+                true
+            }
+            _ => {
+                self.state = InterruptState::Armed { since: now };
+                false
+            }
+        }
+    }
+
+    /// Expire an armed, unconfirmed press once the window has elapsed. A pending
+    /// confirmation does not expire on its own; it is cleared by a status change.
+    fn maybe_expire_at(&mut self, now: Instant) -> bool {
+        if matches!(
+            self.state,
+            InterruptState::Armed { since }
+                if now.saturating_duration_since(since)
+                    >= Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS)
+        ) {
+            self.state = InterruptState::Idle;
+            return true;
+        }
+        false
+    }
+
+    fn reset(&mut self) -> bool {
+        let changed = !matches!(self.state, InterruptState::Idle);
+        self.state = InterruptState::Idle;
+        changed
+    }
+}
+
 pub struct Prompt {
     context: Arc<AppContext>,
     input: String,
@@ -90,8 +173,8 @@ pub struct Prompt {
     file_index: FileIndex,
     spinner: KnightRiderSpinner,
     mode: PromptMode,
-    interrupt_press_count: u8,
-    last_interrupt_time: Option<Instant>,
+    interrupt: InterruptConfirmation,
+    last_input_width: AtomicU16,
 }
 
 impl Prompt {
@@ -162,12 +245,12 @@ impl Prompt {
                 "/connect".to_string(),
                 "/editor".to_string(),
                 "/exit".to_string(),
+                "/detach".to_string(),
                 "/quit".to_string(),
             ],
             known_agents: vec![
                 "build".to_string(),
                 "plan".to_string(),
-                "general".to_string(),
                 "explore".to_string(),
                 "compaction".to_string(),
                 "title".to_string(),
@@ -179,8 +262,8 @@ impl Prompt {
             file_index: FileIndex::default(),
             spinner,
             mode: PromptMode::Normal,
-            interrupt_press_count: 0,
-            last_interrupt_time: None,
+            interrupt: InterruptConfirmation::default(),
+            last_input_width: AtomicU16::new(u16::MAX),
         };
         prompt.recompute_suggestions();
         prompt
@@ -229,7 +312,25 @@ impl Prompt {
             .saturating_sub(PROMPT_BLOCK_PAD_TOP)
             .saturating_sub(PROMPT_BLOCK_PAD_BOTTOM)
             .max(PROMPT_MIN_INPUT_LINES);
-        let content_lines = self.input_display_lines(area.width).min(max_content_lines);
+        let input_width = prompt_input_width(area.width);
+        self.last_input_width.store(input_width, Ordering::Relaxed);
+        let wrapped_input = wrap_prompt_input(&self.input, input_width);
+        let cursor_visual_position = wrapped_input.cursor_visual_position(
+            self.input.len(),
+            self.cursor_position.min(self.input.len()),
+            input_width,
+        );
+        let needed_lines = wrapped_input
+            .lines
+            .len()
+            .max(cursor_visual_position.row.saturating_add(1));
+        let content_lines = u16::try_from(needed_lines)
+            .unwrap_or(u16::MAX)
+            .max(PROMPT_MIN_INPUT_LINES)
+            .min(max_content_lines);
+        let input_scroll = cursor_visual_position
+            .row
+            .saturating_sub(usize::from(content_lines.saturating_sub(1)));
         let input_lines = content_lines
             .saturating_add(PROMPT_BLOCK_PAD_TOP)
             .saturating_add(PROMPT_BLOCK_PAD_BOTTOM);
@@ -278,7 +379,15 @@ impl Prompt {
                 theme.text_muted
             }))
         } else {
-            Paragraph::new(self.input.clone())
+            let mut display_lines: Vec<Line> = wrapped_input
+                .lines
+                .iter()
+                .map(|line| Line::from(line.clone()))
+                .collect();
+            while display_lines.len() < needed_lines {
+                display_lines.push(Line::from(""));
+            }
+            Paragraph::new(display_lines)
                 .block(
                     Block::default()
                         .borders(Borders::LEFT)
@@ -292,7 +401,7 @@ impl Prompt {
                         ))
                         .style(Style::default().bg(theme.background_element)),
                 )
-                .wrap(Wrap { trim: false })
+                .scroll((u16::try_from(input_scroll).unwrap_or(u16::MAX), 0))
                 .style(Style::default().fg(if self.focused {
                     theme.text
                 } else {
@@ -301,6 +410,20 @@ impl Prompt {
         };
 
         frame.render_widget(paragraph, chunks[0]);
+        if self.focused {
+            let cursor_col = cursor_visual_position.col;
+            let visible_row = cursor_visual_position.row.saturating_sub(input_scroll);
+            let cursor_row = u16::try_from(visible_row).unwrap_or(u16::MAX);
+            let content_x = chunks[0]
+                .x
+                .saturating_add(1)
+                .saturating_add(PROMPT_BLOCK_PAD_LEFT);
+            let content_y = chunks[0].y.saturating_add(PROMPT_BLOCK_PAD_TOP);
+            frame.set_cursor(
+                content_x.saturating_add(cursor_col),
+                content_y.saturating_add(cursor_row.min(content_lines.saturating_sub(1))),
+            );
+        }
 
         let mut info_parts = vec![
             Span::styled(
@@ -360,7 +483,10 @@ impl Prompt {
 
         let status_line = Paragraph::new(self.render_status_line(&theme))
             .style(Style::default().bg(theme.background));
-        frame.render_widget(status_line, inset_horizontal(chunks[3], PROMPT_LINE_H_INSET));
+        frame.render_widget(
+            status_line,
+            inset_horizontal(chunks[3], PROMPT_LINE_H_INSET),
+        );
     }
 
     pub fn tick_spinner(&mut self, delta_ms: u64) -> bool {
@@ -397,6 +523,21 @@ impl Prompt {
 
         match key.code {
             KeyCode::Char(c) => {
+                if key.modifiers.contains(KeyModifiers::ALT) {
+                    match c {
+                        'b' | 'B' => {
+                            self.cursor_position =
+                                prev_word_boundary(&self.input, self.cursor_position);
+                            return false;
+                        }
+                        'f' | 'F' => {
+                            self.cursor_position =
+                                next_word_boundary(&self.input, self.cursor_position);
+                            return false;
+                        }
+                        _ => {}
+                    }
+                }
                 if c == '!'
                     && key.modifiers.is_empty()
                     && matches!(self.mode, PromptMode::Normal)
@@ -431,12 +572,16 @@ impl Prompt {
                 }
             }
             KeyCode::Left => {
-                if let Some(prev) = prev_char_boundary(&self.input, self.cursor_position) {
+                if key.modifiers.contains(KeyModifiers::ALT) {
+                    self.cursor_position = prev_word_boundary(&self.input, self.cursor_position);
+                } else if let Some(prev) = prev_char_boundary(&self.input, self.cursor_position) {
                     self.cursor_position = prev;
                 }
             }
             KeyCode::Right => {
-                if let Some(next) = next_char_boundary(&self.input, self.cursor_position) {
+                if key.modifiers.contains(KeyModifiers::ALT) {
+                    self.cursor_position = next_word_boundary(&self.input, self.cursor_position);
+                } else if let Some(next) = next_char_boundary(&self.input, self.cursor_position) {
                     self.cursor_position = next;
                 }
             }
@@ -467,10 +612,18 @@ impl Prompt {
                 }
             }
             KeyCode::Up => {
-                self.history_previous();
+                if self.cursor_position == 0 {
+                    self.history_previous();
+                } else {
+                    self.move_cursor_vertical(true);
+                }
             }
             KeyCode::Down => {
-                self.history_next();
+                if self.cursor_position >= self.input.len() {
+                    self.history_next();
+                } else {
+                    self.move_cursor_vertical(false);
+                }
             }
             _ => {}
         }
@@ -546,7 +699,7 @@ impl Prompt {
     }
 
     pub fn set_input(&mut self, input: String) {
-        self.input = input;
+        self.input = normalize_prompt_text(&input);
         self.cursor_position = self.input.len();
         self.history_index = None;
         self.history_draft = None;
@@ -567,28 +720,32 @@ impl Prompt {
     }
 
     pub fn register_interrupt_keypress(&mut self) -> bool {
-        if self.interrupt_confirmation_active() {
-            self.reset_interrupt_confirmation();
-            return true;
-        }
-        self.interrupt_press_count = 1;
-        self.last_interrupt_time = Some(Instant::now());
-        false
+        self.interrupt.press_at(Instant::now())
     }
 
     pub fn clear_interrupt_confirmation(&mut self) {
         self.reset_interrupt_confirmation();
     }
 
+    /// True when an interrupt has been confirmed and its abort is still awaiting
+    /// a session status change.
+    pub fn interrupt_pending(&self) -> bool {
+        self.interrupt.is_pending()
+    }
+
     pub fn insert_text(&mut self, text: &str) {
-        self.input.insert_str(self.cursor_position, text);
-        self.cursor_position = self.cursor_position.saturating_add(text.len());
+        let normalized = normalize_prompt_text(text);
+        if normalized.is_empty() {
+            return;
+        }
+        self.input.insert_str(self.cursor_position, &normalized);
+        self.cursor_position = self.cursor_position.saturating_add(normalized.len());
         self.reset_history_cursor();
         self.recompute_suggestions();
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
-        self.input_display_lines(width)
+        self.prompt_content_lines(width)
             .saturating_add(PROMPT_BLOCK_PAD_TOP)
             .saturating_add(PROMPT_BLOCK_PAD_BOTTOM)
             .saturating_add(3)
@@ -659,7 +816,7 @@ impl Prompt {
 
         if let Some(idx) = self.history_index {
             self.input = self.history[idx].clone();
-            self.cursor_position = self.input.len();
+            self.cursor_position = 0;
             self.recompute_suggestions();
         }
     }
@@ -675,9 +832,16 @@ impl Prompt {
             self.input = self.history[next].clone();
             self.cursor_position = self.input.len();
         } else {
-            self.history_index = None;
-            self.input = self.history_draft.take().unwrap_or_default();
-            self.cursor_position = self.input.len();
+            match self.history_draft.take() {
+                Some(draft) if !draft.is_empty() => {
+                    self.history_index = None;
+                    self.input = draft;
+                    self.cursor_position = self.input.len();
+                }
+                _ => {
+                    self.history_index = Some(idx);
+                }
+            }
         }
         self.recompute_suggestions();
     }
@@ -685,6 +849,26 @@ impl Prompt {
     fn reset_history_cursor(&mut self) {
         self.history_index = None;
         self.history_draft = None;
+    }
+
+    fn move_cursor_vertical(&mut self, up: bool) {
+        let cursor = self.cursor_position.min(self.input.len());
+        let width = self.last_input_width.load(Ordering::Relaxed).max(1);
+        let wrapped = wrap_prompt_input(&self.input, width);
+        let position = wrapped.cursor_visual_position(self.input.len(), cursor, width);
+        let row = position.row;
+        let col = usize::from(position.col);
+
+        if up {
+            if row == 0 {
+                self.cursor_position = 0;
+                return;
+            }
+            self.cursor_position = offset_at_visual_position(&wrapped, row - 1, col).unwrap_or(0);
+        } else {
+            self.cursor_position =
+                offset_at_visual_position(&wrapped, row + 1, col).unwrap_or(self.input.len());
+        }
     }
 
     fn push_history(&mut self, entry: String) {
@@ -970,15 +1154,18 @@ impl Prompt {
         Some((start, end, token))
     }
 
-    fn input_display_lines(&self, width: u16) -> u16 {
-        let reserved = 1u16
-            .saturating_add(PROMPT_BLOCK_PAD_LEFT)
-            .saturating_add(PROMPT_BLOCK_PAD_RIGHT);
-        let input_width = usize::from(width.saturating_sub(reserved)).max(1);
-        let raw_lines = visual_line_count(&self.input, input_width) as u16;
-        raw_lines
-            .max(PROMPT_MIN_INPUT_LINES)
-            .min(PROMPT_MAX_INPUT_LINES)
+    fn prompt_content_lines(&self, width: u16) -> u16 {
+        let input_width = prompt_input_width(width);
+        let wrapped = wrap_prompt_input(&self.input, input_width);
+        let cursor = wrapped.cursor_visual_position(
+            self.input.len(),
+            self.cursor_position.min(self.input.len()),
+            input_width,
+        );
+        let needed = wrapped.lines.len().max(cursor.row.saturating_add(1));
+        u16::try_from(needed)
+            .unwrap_or(u16::MAX)
+            .clamp(PROMPT_MIN_INPUT_LINES, PROMPT_MAX_INPUT_LINES)
     }
 
     fn render_status_line(&self, theme: &Theme) -> Line<'static> {
@@ -1030,7 +1217,12 @@ impl Prompt {
                     Span::styled("thinking", Style::default().fg(theme.text_muted)),
                     Span::raw("  "),
                 ];
-                if self.interrupt_confirmation_active() {
+                if self.interrupt_pending() {
+                    spans.push(Span::styled(
+                        "interrupting",
+                        Style::default().fg(theme.warning),
+                    ));
+                } else if self.interrupt_confirmation_active() {
                     spans.push(Span::styled(interrupt, Style::default().fg(theme.warning)));
                     spans.push(Span::styled(
                         " again to interrupt",
@@ -1050,25 +1242,15 @@ impl Prompt {
     }
 
     fn interrupt_confirmation_active(&self) -> bool {
-        if self.interrupt_press_count == 0 {
-            return false;
-        }
-        self.last_interrupt_time
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS))
+        self.interrupt.is_armed_at(Instant::now())
     }
 
     fn maybe_reset_interrupt_confirmation(&mut self) -> bool {
-        if !self.interrupt_confirmation_active() {
-            return self.reset_interrupt_confirmation();
-        }
-        false
+        self.interrupt.maybe_expire_at(Instant::now())
     }
 
     fn reset_interrupt_confirmation(&mut self) -> bool {
-        let changed = self.interrupt_press_count != 0 || self.last_interrupt_time.is_some();
-        self.interrupt_press_count = 0;
-        self.last_interrupt_time = None;
-        changed
+        self.interrupt.reset()
     }
 
     fn hint_line(&self, theme: &Theme) -> Line<'static> {
@@ -1102,6 +1284,289 @@ impl Prompt {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CursorVisualPosition {
+    row: usize,
+    col: u16,
+}
+
+fn prompt_input_width(width: u16) -> u16 {
+    let reserved = 1u16
+        .saturating_add(PROMPT_BLOCK_PAD_LEFT)
+        .saturating_add(PROMPT_BLOCK_PAD_RIGHT);
+    width.saturating_sub(reserved).max(1)
+}
+
+fn prompt_grapheme_is_whitespace(grapheme: &str) -> bool {
+    grapheme == "\u{200b}" || (grapheme != "\u{00a0}" && grapheme.chars().all(char::is_whitespace))
+}
+
+fn prompt_grapheme_width(grapheme: &str) -> usize {
+    UnicodeWidthStr::width(grapheme)
+}
+
+fn prompt_text_width(text: &str) -> usize {
+    text.graphemes(true).map(prompt_grapheme_width).sum()
+}
+
+/// Normalize text entering the prompt input from paste or other non-keystroke
+/// sources so the wrap-and-render path only ever sees printable, LF-separated
+/// content.
+///
+/// Raw `\r`, `\t`, and other control characters would otherwise be written
+/// verbatim to the terminal (carriage returns jump to column 0, tabs advance to
+/// the next tab stop), desyncing the rendered cursor from the box. CRLF and lone
+/// CR line endings are collapsed to `\n`; tabs expand to the next
+/// [`PROMPT_TAB_WIDTH`] stop; remaining control characters are dropped.
+fn normalize_prompt_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut column = 0usize;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                out.push('\n');
+                column = 0;
+            }
+            '\n' => {
+                out.push('\n');
+                column = 0;
+            }
+            '\t' => {
+                let spaces = PROMPT_TAB_WIDTH - (column % PROMPT_TAB_WIDTH);
+                for _ in 0..spaces {
+                    out.push(' ');
+                }
+                column = column.saturating_add(spaces);
+            }
+            c if c.is_control() => {}
+            c => {
+                out.push(c);
+                column = column.saturating_add(UnicodeWidthChar::width(c).unwrap_or(0));
+            }
+        }
+    }
+    out
+}
+
+fn saturating_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+#[derive(Debug, Clone, Default)]
+struct WrappedPromptInput {
+    lines: Vec<String>,
+    positions: HashMap<usize, (usize, u16)>,
+}
+
+impl WrappedPromptInput {
+    fn cursor_visual_position(
+        &self,
+        input_len: usize,
+        cursor_position: usize,
+        width: u16,
+    ) -> CursorVisualPosition {
+        let width = usize::from(width.max(1));
+        let cursor_position = cursor_position.min(input_len);
+        let mut position = self.positions.get(&cursor_position).copied();
+        if position.is_none() && cursor_position < input_len {
+            position = self
+                .positions
+                .iter()
+                .filter(|(offset, _)| **offset <= cursor_position)
+                .max_by_key(|(offset, _)| **offset)
+                .map(|(_, value)| *value);
+        }
+
+        if let Some((line, col)) = position {
+            let col = usize::from(col);
+            if col >= width {
+                return CursorVisualPosition {
+                    row: line.saturating_add(1),
+                    col: 0,
+                };
+            }
+            return CursorVisualPosition {
+                row: line,
+                col: saturating_u16(col),
+            };
+        }
+
+        let last_line = self.lines.len().saturating_sub(1);
+        let last_width = self
+            .lines
+            .get(last_line)
+            .map_or(0, |line| prompt_text_width(line));
+        if last_width >= width {
+            CursorVisualPosition {
+                row: self.lines.len(),
+                col: 0,
+            }
+        } else {
+            CursorVisualPosition {
+                row: last_line,
+                col: saturating_u16(last_width),
+            }
+        }
+    }
+}
+
+fn prompt_grapheme_is_line_break(grapheme: &str) -> bool {
+    matches!(grapheme, "\n" | "\r" | "\r\n")
+}
+
+/// Append one whitespace grapheme to the current wrapped line, breaking to a new
+/// line first when it would push the line past `width`. This keeps runs of
+/// whitespace (including whitespace-only lines) bounded instead of letting them
+/// overflow the box.
+fn push_wrapped_whitespace(
+    lines: &mut Vec<String>,
+    current: &mut String,
+    current_width: &mut usize,
+    positions: &mut HashMap<usize, (usize, u16)>,
+    offset: usize,
+    whitespace: &str,
+    width: usize,
+) {
+    let grapheme_width = prompt_grapheme_width(whitespace);
+    if *current_width > 0 && *current_width + grapheme_width > width {
+        lines.push(std::mem::take(current));
+        *current_width = 0;
+    }
+    positions.insert(offset, (lines.len(), saturating_u16(*current_width)));
+    current.push_str(whitespace);
+    *current_width = current_width.saturating_add(grapheme_width);
+}
+
+fn append_pending_prompt_whitespace(
+    lines: &mut Vec<String>,
+    current: &mut String,
+    current_width: &mut usize,
+    pending_ws: &mut Vec<(usize, String)>,
+    pending_ws_width: &mut usize,
+    positions: &mut HashMap<usize, (usize, u16)>,
+    width: usize,
+) {
+    for (offset, grapheme) in pending_ws.drain(..) {
+        push_wrapped_whitespace(
+            lines,
+            current,
+            current_width,
+            positions,
+            offset,
+            &grapheme,
+            width,
+        );
+    }
+    *pending_ws_width = 0;
+}
+
+fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
+    let width = usize::from(width.max(1));
+    let mut lines: Vec<String> = Vec::new();
+    let mut positions: HashMap<usize, (usize, u16)> = HashMap::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    let mut pending_ws: Vec<(usize, String)> = Vec::new();
+    let mut pending_ws_width = 0usize;
+
+    let graphemes: Vec<(usize, &str)> = input.grapheme_indices(true).collect();
+    let mut index = 0usize;
+    while index < graphemes.len() {
+        let (byte_offset, grapheme) = graphemes[index];
+        if prompt_grapheme_is_line_break(grapheme) {
+            append_pending_prompt_whitespace(
+                &mut lines,
+                &mut current,
+                &mut current_width,
+                &mut pending_ws,
+                &mut pending_ws_width,
+                &mut positions,
+                width,
+            );
+            positions.insert(byte_offset, (lines.len(), saturating_u16(current_width)));
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            index += 1;
+            continue;
+        }
+        if prompt_grapheme_is_whitespace(grapheme) {
+            pending_ws_width = pending_ws_width.saturating_add(prompt_grapheme_width(grapheme));
+            pending_ws.push((byte_offset, grapheme.to_string()));
+            index += 1;
+            continue;
+        }
+
+        let word_start = index;
+        let mut word_end = index;
+        let mut word_width = 0usize;
+        while word_end < graphemes.len() {
+            let (_, candidate) = graphemes[word_end];
+            if prompt_grapheme_is_line_break(candidate) || prompt_grapheme_is_whitespace(candidate)
+            {
+                break;
+            }
+            word_width = word_width.saturating_add(prompt_grapheme_width(candidate));
+            word_end += 1;
+        }
+
+        if !current.is_empty() && current_width + pending_ws_width + word_width > width {
+            for (offset, _) in &pending_ws {
+                positions.insert(*offset, (lines.len(), saturating_u16(current_width)));
+            }
+            pending_ws.clear();
+            pending_ws_width = 0;
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        } else {
+            for (offset, whitespace) in pending_ws.drain(..) {
+                push_wrapped_whitespace(
+                    &mut lines,
+                    &mut current,
+                    &mut current_width,
+                    &mut positions,
+                    offset,
+                    &whitespace,
+                    width,
+                );
+            }
+            pending_ws_width = 0;
+        }
+
+        for (offset, grapheme) in graphemes[word_start..word_end].iter().copied() {
+            let grapheme_width = prompt_grapheme_width(grapheme);
+            if current_width > 0 && current_width + grapheme_width > width {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            positions.insert(offset, (lines.len(), saturating_u16(current_width)));
+            current.push_str(grapheme);
+            current_width = current_width.saturating_add(grapheme_width);
+        }
+
+        index = word_end;
+    }
+
+    append_pending_prompt_whitespace(
+        &mut lines,
+        &mut current,
+        &mut current_width,
+        &mut pending_ws,
+        &mut pending_ws_width,
+        &mut positions,
+        width,
+    );
+    lines.push(std::mem::take(&mut current));
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    WrappedPromptInput { lines, positions }
+}
+
 fn truncate_for_status(input: &str, max_chars: usize) -> String {
     if input.chars().count() <= max_chars {
         return input.to_string();
@@ -1112,31 +1577,6 @@ fn truncate_for_status(input: &str, max_chars: usize) -> String {
     }
     out.push('…');
     out
-}
-
-fn visual_line_count(text: &str, width: usize) -> usize {
-    if text.is_empty() {
-        return 1;
-    }
-
-    let mut rows = 1usize;
-    let mut col = 0usize;
-    for ch in text.chars() {
-        if ch == '\n' {
-            rows += 1;
-            col = 0;
-            continue;
-        }
-
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if col > 0 && col + ch_width > width {
-            rows += 1;
-            col = 0;
-        }
-        col += ch_width;
-    }
-
-    rows.max(1)
 }
 
 fn dedup_sort(mut items: Vec<String>) -> Vec<String> {
@@ -1242,7 +1682,7 @@ fn spinner_mode_from_env() -> SpinnerMode {
     }
 }
 
-fn prev_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
+pub(crate) fn prev_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
     if cursor_position == 0 || cursor_position > input.len() {
         return None;
     }
@@ -1252,7 +1692,7 @@ fn prev_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
         .map(|(idx, _)| idx)
 }
 
-fn next_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
+pub(crate) fn next_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
     if cursor_position >= input.len() {
         return None;
     }
@@ -1261,6 +1701,85 @@ fn next_char_boundary(input: &str, cursor_position: usize) -> Option<usize> {
         .chars()
         .next()
         .map(|ch| cursor_position + ch.len_utf8())
+}
+
+pub(crate) fn prev_word_boundary(input: &str, cursor_position: usize) -> usize {
+    let mut position = cursor_position.min(input.len());
+    while let Some((prev, ch)) = prev_char(input, position) {
+        if is_word_char(ch) {
+            break;
+        }
+        position = prev;
+    }
+    while let Some((prev, ch)) = prev_char(input, position) {
+        if !is_word_char(ch) {
+            break;
+        }
+        position = prev;
+    }
+    position
+}
+
+pub(crate) fn next_word_boundary(input: &str, cursor_position: usize) -> usize {
+    let mut position = cursor_position.min(input.len());
+    while let Some((next, ch)) = next_char(input, position) {
+        if is_word_char(ch) {
+            break;
+        }
+        position = next;
+    }
+    while let Some((next, ch)) = next_char(input, position) {
+        if !is_word_char(ch) {
+            break;
+        }
+        position = next;
+    }
+    position
+}
+
+fn prev_char(input: &str, cursor_position: usize) -> Option<(usize, char)> {
+    if cursor_position == 0 || cursor_position > input.len() {
+        return None;
+    }
+    input[..cursor_position].char_indices().last()
+}
+
+fn next_char(input: &str, cursor_position: usize) -> Option<(usize, char)> {
+    if cursor_position >= input.len() {
+        return None;
+    }
+    let ch = input[cursor_position..].chars().next()?;
+    Some((cursor_position + ch.len_utf8(), ch))
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn offset_at_visual_position(
+    wrapped: &WrappedPromptInput,
+    target_row: usize,
+    target_col: usize,
+) -> Option<usize> {
+    let mut best: Option<(usize, usize)> = None;
+    for (offset, (row, col)) in &wrapped.positions {
+        if *row != target_row {
+            continue;
+        }
+        let col = usize::from(*col);
+        if col > target_col {
+            continue;
+        }
+        match best {
+            Some((best_col, best_offset)) => {
+                if col > best_col || (col == best_col && *offset > best_offset) {
+                    best = Some((col, *offset));
+                }
+            }
+            None => best = Some((col, *offset)),
+        }
+    }
+    best.map(|(_, offset)| offset)
 }
 
 #[cfg(test)]
@@ -1291,6 +1810,62 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(state_dir);
         result
+    }
+
+    #[test]
+    fn interrupt_second_press_within_window_confirms() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        assert!(confirmation.is_armed_at(first + Duration::from_secs(1)));
+        assert!(confirmation.press_at(first + Duration::from_secs(1)));
+        assert!(confirmation.is_pending());
+    }
+
+    #[test]
+    fn interrupt_second_press_after_window_rearms_without_confirming() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        let late = first + Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS + 1);
+        assert!(!confirmation.press_at(late));
+        assert!(confirmation.is_armed_at(late));
+        assert!(!confirmation.is_pending());
+    }
+
+    #[test]
+    fn interrupt_pending_latches_until_reset() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        assert!(confirmation.press_at(first + Duration::from_secs(1)));
+        assert!(confirmation.is_pending());
+        assert!(!confirmation.maybe_expire_at(first + Duration::from_secs(30)));
+        assert!(!confirmation.press_at(first + Duration::from_secs(30)));
+        assert!(confirmation.is_pending());
+        assert!(confirmation.reset());
+        assert!(!confirmation.is_pending());
+    }
+
+    #[test]
+    fn interrupt_armed_press_expires_after_window() {
+        let mut confirmation = InterruptConfirmation::default();
+        let first = Instant::now();
+        assert!(!confirmation.press_at(first));
+        assert!(!confirmation.maybe_expire_at(first + Duration::from_secs(1)));
+        assert!(confirmation
+            .maybe_expire_at(first + Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS + 1)));
+        assert!(!confirmation
+            .is_armed_at(first + Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS + 1)));
+        assert!(!confirmation.maybe_expire_at(first + Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn plain_q_types_into_prompt() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "q");
+        });
     }
 
     #[test]
@@ -1326,6 +1901,144 @@ mod tests {
     }
 
     #[test]
+    fn bare_up_recalls_history_only_at_cursor_start() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+
+            // Mid-draft Up snaps the cursor to the start without recalling.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "draft");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // A second Up now recalls the previous entry, cursor landing at start.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "beta");
+            assert_eq!(prompt.cursor_position(), 0);
+        });
+    }
+
+    #[test]
+    fn bare_down_recalls_history_only_at_cursor_end() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+
+            // Recall "beta"; entering history places the cursor at the start.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "beta");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // From the start, Down first snaps to the end without recalling...
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "beta");
+            assert_eq!(prompt.cursor_position(), "beta".len());
+
+            // ...then the next Down recalls the preserved draft.
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "draft");
+            assert_eq!(prompt.cursor_position(), "draft".len());
+        });
+    }
+
+    #[test]
+    fn bare_arrows_navigate_multiline_draft_without_recall() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("old".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("ab\ncd".to_string());
+            assert_eq!(prompt.cursor_position(), "ab\ncd".len());
+
+            // Up walks the draft lines and never touches history.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "ab\ncd");
+            assert_eq!(prompt.cursor_position(), "ab".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "ab\ncd");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // Only at the very start does Up recall.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "old");
+            assert_eq!(prompt.cursor_position(), 0);
+
+            // Down from the recalled entry's start navigates, then recalls the draft.
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "old");
+            assert_eq!(prompt.cursor_position(), "old".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "ab\ncd");
+            assert_eq!(prompt.cursor_position(), "ab\ncd".len());
+        });
+    }
+
+    #[test]
+    fn bare_arrows_move_by_wrapped_visual_row_without_recall() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("old".to_string());
+            let _ = prompt.take_input();
+
+            // Width 4 wraps this single logical line into rows "abcd", "efgh", "ij".
+            prompt.set_input("abcdefghij".to_string());
+            prompt.last_input_width.store(4, Ordering::Relaxed);
+            assert_eq!(prompt.cursor_position(), "abcdefghij".len());
+
+            // Up moves one visual row at a time and preserves the column, without
+            // recalling history until the very first character is reached.
+            for expected in [6usize, 2, 0] {
+                prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+                assert_eq!(prompt.get_input(), "abcdefghij");
+                assert_eq!(prompt.cursor_position(), expected);
+            }
+
+            // Only at offset 0 does a further Up recall.
+            prompt.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::empty()));
+            assert_eq!(prompt.get_input(), "old");
+            assert_eq!(prompt.cursor_position(), 0);
+        });
+    }
+
+    #[test]
+    fn bare_down_moves_by_wrapped_visual_row_without_recall() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("old".to_string());
+            let _ = prompt.take_input();
+
+            prompt.set_input("abcdefghij".to_string());
+            prompt.last_input_width.store(4, Ordering::Relaxed);
+            prompt.cursor_position = 0;
+
+            for expected in [4usize, 8, "abcdefghij".len()] {
+                prompt.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()));
+                assert_eq!(prompt.get_input(), "abcdefghij");
+                assert_eq!(prompt.cursor_position(), expected);
+            }
+        });
+    }
+
+    #[test]
+    fn explicit_history_navigation_is_ungated() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+            prompt.cursor_position = 2;
+
+            prompt.history_previous_entry();
+            assert_eq!(prompt.get_input(), "alpha");
+        });
+    }
+
+    #[test]
     fn history_navigation_preserves_draft() {
         with_isolated_prompt(|mut prompt| {
             prompt.set_input("alpha".to_string());
@@ -1349,6 +2062,60 @@ mod tests {
     }
 
     #[test]
+    fn history_next_at_newest_without_draft_does_not_clear() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+
+            prompt.history_previous_entry();
+            assert_eq!(prompt.get_input(), "beta");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "beta");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "beta");
+        });
+    }
+
+    #[test]
+    fn history_next_after_restoring_draft_is_inert_without_recall() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("beta".to_string());
+            let _ = prompt.take_input();
+            prompt.set_input("draft".to_string());
+
+            prompt.history_previous_entry();
+            prompt.history_previous_entry();
+            assert_eq!(prompt.get_input(), "alpha");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "beta");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "draft");
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "draft");
+        });
+    }
+
+    #[test]
+    fn history_next_without_recall_is_noop() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha".to_string());
+            let _ = prompt.take_input();
+
+            prompt.history_next_entry();
+            assert_eq!(prompt.get_input(), "");
+        });
+    }
+
+    #[test]
     fn utf8_backspace_delete_and_cursor_are_char_safe() {
         with_isolated_prompt(|mut prompt| {
             prompt.set_input("你好".to_string());
@@ -1360,6 +2127,365 @@ mod tests {
             prompt.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::empty()));
             prompt.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::empty()));
             assert_eq!(prompt.get_input(), "");
+        });
+    }
+
+    #[test]
+    fn alt_left_and_right_move_by_words() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("hello, world_again 你好".to_string());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, world_again ".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, ".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), 0);
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, world_again".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "hello, world_again 你好".len());
+        });
+    }
+
+    #[test]
+    fn alt_b_and_f_move_by_words() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("alpha beta".to_string());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "alpha ".len());
+
+            prompt.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT));
+            assert_eq!(prompt.cursor_position(), "alpha beta".len());
+        });
+    }
+
+    fn cursor_position(input: &str, cursor: usize, width: u16) -> CursorVisualPosition {
+        wrap_prompt_input(input, width).cursor_visual_position(input.len(), cursor, width)
+    }
+
+    #[test]
+    fn cursor_visual_position_follows_wrapped_input() {
+        assert_eq!(
+            cursor_position("abcdef", 5, 3),
+            CursorVisualPosition { row: 1, col: 2 }
+        );
+        assert_eq!(
+            cursor_position("abcdef", 3, 3),
+            CursorVisualPosition { row: 1, col: 0 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_uses_word_boundaries_like_renderer() {
+        let wrapped = wrap_prompt_input("ab cdefgh", 6);
+        assert_eq!(wrapped.lines, vec!["ab".to_string(), "cdefgh".to_string()]);
+        assert_eq!(
+            wrapped.cursor_visual_position("ab cdefgh".len(), 7, 6),
+            CursorVisualPosition { row: 1, col: 4 }
+        );
+
+        let wrapped = wrap_prompt_input("hello world", 6);
+        assert_eq!(
+            wrapped.lines,
+            vec!["hello".to_string(), "world".to_string()]
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position("hello world".len(), "hello world".len(), 6),
+            CursorVisualPosition { row: 1, col: 5 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_handles_newlines_and_wide_chars() {
+        assert_eq!(
+            cursor_position("ab\ncd", 5, 10),
+            CursorVisualPosition { row: 1, col: 2 }
+        );
+
+        let wrapped = wrap_prompt_input("你a好", 3);
+        assert_eq!(wrapped.lines, vec!["你a".to_string(), "好".to_string()]);
+        assert_eq!(
+            wrapped.cursor_visual_position("你a好".len(), "你a".len(), 3),
+            CursorVisualPosition { row: 1, col: 0 }
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position("你a好".len(), "你a好".len(), 3),
+            CursorVisualPosition { row: 1, col: 2 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_handles_full_line_boundary() {
+        let wrapped = wrap_prompt_input("abc", 3);
+        assert_eq!(wrapped.lines, vec!["abc".to_string()]);
+        assert_eq!(
+            wrapped.cursor_visual_position(3, 2, 3),
+            CursorVisualPosition { row: 0, col: 2 }
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position(3, 3, 3),
+            CursorVisualPosition { row: 1, col: 0 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_handles_grapheme_clusters() {
+        let combining = "e\u{301}x";
+        let wrapped = wrap_prompt_input(combining, 3);
+        assert_eq!(wrapped.lines, vec![combining.to_string()]);
+        assert_eq!(
+            wrapped.cursor_visual_position(combining.len(), "e\u{301}".len(), 3),
+            CursorVisualPosition { row: 0, col: 1 }
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position(combining.len(), combining.len(), 3),
+            CursorVisualPosition { row: 0, col: 2 }
+        );
+        assert_eq!(
+            wrapped.cursor_visual_position(combining.len(), 1, 3),
+            CursorVisualPosition { row: 0, col: 0 }
+        );
+    }
+
+    #[test]
+    fn cursor_visual_position_never_reaches_full_width() {
+        // The render path no longer clamps the cursor column to `input_width`
+        // because `cursor_visual_position` can never return a column at or past
+        // the content width; a column that would reach the edge is reported on
+        // the next (phantom) row instead. This guards that invariant.
+        let inputs = [
+            "",
+            " ",
+            "abc",
+            "ab cdefgh",
+            "hello world",
+            "你a好",
+            "e\u{301}x",
+            "ab\ncd",
+            "abcdefghij",
+        ];
+        for width in 1..=6u16 {
+            for input in inputs {
+                let wrapped = wrap_prompt_input(input, width);
+                for cursor in 0..=input.len() {
+                    let pos = wrapped.cursor_visual_position(input.len(), cursor, width);
+                    assert!(
+                        pos.col < width,
+                        "col {} >= width {} for {input:?} at byte {cursor}",
+                        pos.col,
+                        width
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_cursor_matches_insertion_point() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        // (input, cursor byte offset, terminal width)
+        let cases: &[(&str, usize, u16)] = &[
+            ("ab cdefgh", 7, 9),
+            ("abc", 2, 6),
+            ("abc", 3, 6),
+            ("hello world", 6, 9),
+            ("你a好", 3, 6),
+            ("你a好", 7, 6),
+            ("ab\ncd", 3, 8),
+            ("e\u{301}x", 3, 6),
+        ];
+
+        with_isolated_prompt(|mut prompt| {
+            for &(input, cursor, width) in cases {
+                let input_width = prompt_input_width(width);
+                let wrapped = wrap_prompt_input(input, input_width);
+                let pos = wrapped.cursor_visual_position(input.len(), cursor, input_width);
+
+                // Render layout offsets: content_x = left border (1) + pad_left (1);
+                // content_y = pad_top (1). These short inputs never scroll.
+                let expected = (2 + pos.col, 1 + u16::try_from(pos.row).unwrap());
+
+                prompt.set_input(input.to_string());
+                prompt.cursor_position = cursor;
+
+                let mut terminal = Terminal::new(TestBackend::new(width, 12)).expect("terminal");
+                terminal
+                    .draw(|frame| prompt.render(frame, frame.size()))
+                    .expect("draw");
+
+                assert_eq!(
+                    terminal.get_cursor().expect("cursor"),
+                    expected,
+                    "cursor cell for {input:?} at byte {cursor} width {width}"
+                );
+
+                // Non-tautological check: when the cursor sits before a real
+                // grapheme, the cell under the cursor must be that grapheme.
+                if cursor < input.len() {
+                    let grapheme = input[cursor..].graphemes(true).next().unwrap();
+                    let cell = terminal.backend().buffer().get(expected.0, expected.1);
+                    assert_eq!(
+                        cell.symbol(),
+                        grapheme,
+                        "cursor cell content for {input:?} at byte {cursor} width {width}"
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn rendered_cursor_tracks_scroll_for_long_drafts() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let input = "one two three four five six seven eight nine ten";
+        let width = 9u16;
+        let height = 8u16;
+        let cursor = input.len();
+
+        let input_width = prompt_input_width(width);
+        let wrapped = wrap_prompt_input(input, input_width);
+        let pos = wrapped.cursor_visual_position(input.len(), cursor, input_width);
+        // Render content height for this area: height - 3 chrome rows - 2 padding.
+        let content_lines = height - 3 - PROMPT_BLOCK_PAD_TOP - PROMPT_BLOCK_PAD_BOTTOM;
+        let scroll = pos.row.saturating_sub(usize::from(content_lines - 1));
+        let visible_row = pos.row - scroll;
+        let expected = (2 + pos.col, 1 + u16::try_from(visible_row).unwrap());
+
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input(input.to_string());
+            prompt.cursor_position = cursor;
+
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+            terminal
+                .draw(|frame| prompt.render(frame, frame.size()))
+                .expect("draw");
+
+            assert!(
+                pos.row >= usize::from(content_lines),
+                "draft must overflow the visible content height to exercise scroll"
+            );
+            assert_eq!(terminal.get_cursor().expect("cursor"), expected);
+            assert!(
+                expected.1 < height,
+                "cursor must stay inside the prompt area"
+            );
+        });
+    }
+
+    #[test]
+    fn insert_text_normalizes_crlf_cr_and_tabs() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.insert_text("a\r\nb\tc\rd");
+            // CRLF and lone CR collapse to "\n"; the tab expands to the next
+            // multiple-of-4 stop (the column was 1 after "b", so 3 spaces land it at 4).
+            assert_eq!(prompt.get_input(), "a\nb   c\nd");
+            assert_eq!(prompt.cursor_position(), prompt.get_input().len());
+        });
+    }
+
+    #[test]
+    fn insert_text_drops_other_control_characters() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.insert_text("keep\u{7}\u{1b}[0mthis");
+            assert_eq!(prompt.get_input(), "keep[0mthis");
+        });
+    }
+
+    #[test]
+    fn set_input_normalizes_crlf_and_tabs() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.set_input("x\r\ny\tz".to_string());
+            assert_eq!(prompt.get_input(), "x\ny   z");
+            assert_eq!(prompt.cursor_position(), prompt.get_input().len());
+        });
+    }
+
+    #[test]
+    fn wrap_prompt_input_treats_crlf_and_cr_as_line_breaks() {
+        let wrapped = wrap_prompt_input("alpha\r\nbeta\rgamma\ndelta", 40);
+        assert_eq!(
+            wrapped.lines,
+            vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+                "gamma".to_string(),
+                "delta".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn wrap_prompt_input_never_exceeds_width_for_whitespace_runs() {
+        let width = 45u16;
+        for input in [" ".repeat(200), format!("{}word", " ".repeat(60))] {
+            let wrapped = wrap_prompt_input(&input, width);
+            for line in &wrapped.lines {
+                assert!(
+                    prompt_text_width(line) <= usize::from(width),
+                    "line {:?} exceeds inner width {width}",
+                    line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_paste_with_crlf_stays_inside_the_box() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        with_isolated_prompt(|mut prompt| {
+            prompt.insert_text("alpha\r\nbeta\r\ngamma\tdelta");
+            let width = 40u16;
+            let height = prompt.desired_height(width);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+            terminal
+                .draw(|frame| prompt.render(frame, frame.size()))
+                .expect("draw");
+
+            let buffer = terminal.backend().buffer();
+            for y in 0..height {
+                for x in 0..width {
+                    let symbol = buffer.get(x, y).symbol();
+                    assert!(
+                        !symbol.contains('\r') && !symbol.contains('\t') && !symbol.contains('\n'),
+                        "raw control character {symbol:?} rendered at ({x},{y})"
+                    );
+                }
+            }
+
+            let mut text = String::new();
+            for y in 0..height {
+                for x in 0..width {
+                    text.push_str(buffer.get(x, y).symbol());
+                }
+                text.push('\n');
+            }
+            assert!(
+                text.contains("alpha"),
+                "first pasted line visible in:\n{text}"
+            );
+            assert!(
+                text.contains("beta"),
+                "second pasted line visible in:\n{text}"
+            );
+            assert!(
+                text.contains("gamma"),
+                "third pasted line visible in:\n{text}"
+            );
         });
     }
 }

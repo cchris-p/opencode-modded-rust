@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Color;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -142,6 +142,23 @@ impl Theme {
 
     pub fn agent_color(&self, index: usize) -> Color {
         self.agent_colors[index % self.agent_colors.len()]
+    }
+
+    /// Foreground that stays legible on top of `bg`, mirroring vanilla
+    /// `selectedForeground`. When the theme background is opaque the theme
+    /// background color is used; for a transparent (`Reset`) background the
+    /// luminance of `bg` (or the primary color) picks black or white.
+    pub fn selected_foreground(&self, bg: Option<Color>) -> Color {
+        if self.background == Color::Reset {
+            let target = bg.unwrap_or(self.primary);
+            if color_luminance(target) > 0.5 {
+                Color::Black
+            } else {
+                Color::White
+            }
+        } else {
+            self.background
+        }
     }
 
     pub fn by_name(name: &str) -> Option<Self> {
@@ -636,30 +653,37 @@ fn ansi_to_color(code: u64) -> Color {
     Color::Reset
 }
 
-pub struct Styles;
+/// Perceived luminance (0.0-1.0) of a terminal color, used for contrast choice.
+fn color_luminance(color: Color) -> f32 {
+    let (r, g, b) = match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        other => match ansi_to_color_from_color(other) {
+            Color::Rgb(r, g, b) => (r, g, b),
+            _ => return 1.0,
+        },
+    };
+    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0
+}
 
-impl Styles {
-    pub fn title() -> Style {
-        Style::default().add_modifier(Modifier::BOLD)
-    }
-
-    pub fn muted() -> Style {
-        Style::default().fg(Color::Rgb(128, 128, 128))
-    }
-
-    pub fn success() -> Style {
-        Style::default().fg(Color::Rgb(80, 200, 120))
-    }
-
-    pub fn error() -> Style {
-        Style::default().fg(Color::Rgb(255, 80, 80))
-    }
-
-    pub fn warning() -> Style {
-        Style::default().fg(Color::Rgb(255, 200, 80))
-    }
-
-    pub fn selected() -> Style {
-        Style::default().add_modifier(Modifier::REVERSED)
+fn ansi_to_color_from_color(color: Color) -> Color {
+    match color {
+        Color::Black => Color::Rgb(0, 0, 0),
+        Color::Red => Color::Rgb(255, 0, 0),
+        Color::Green => Color::Rgb(0, 255, 0),
+        Color::Yellow => Color::Rgb(255, 255, 0),
+        Color::Blue => Color::Rgb(0, 0, 255),
+        Color::Magenta => Color::Rgb(255, 0, 255),
+        Color::Cyan => Color::Rgb(0, 255, 255),
+        Color::Gray => Color::Rgb(192, 192, 192),
+        Color::DarkGray => Color::Rgb(128, 128, 128),
+        Color::LightRed => Color::Rgb(255, 128, 128),
+        Color::LightGreen => Color::Rgb(128, 255, 128),
+        Color::LightYellow => Color::Rgb(255, 255, 128),
+        Color::LightBlue => Color::Rgb(128, 128, 255),
+        Color::LightMagenta => Color::Rgb(255, 128, 255),
+        Color::LightCyan => Color::Rgb(128, 255, 255),
+        Color::White => Color::Rgb(255, 255, 255),
+        Color::Indexed(code) => ansi_to_color(code as u64),
+        other => other,
     }
 }

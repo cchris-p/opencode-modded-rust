@@ -8,6 +8,7 @@ pub mod cohere;
 pub mod custom_fetch;
 pub mod deepinfra;
 pub mod deepseek;
+pub mod deepseek_anthropic;
 pub mod github_copilot;
 pub mod gitlab;
 pub mod google;
@@ -15,7 +16,9 @@ pub mod groq;
 pub mod message;
 pub mod mistral;
 pub mod models;
+pub mod ollama;
 pub mod openai;
+pub mod openai_chat;
 pub mod openrouter;
 pub mod perplexity;
 pub mod provider;
@@ -53,7 +56,8 @@ pub use transform::{
 };
 
 pub use models::{
-    get_model_context_limit, supports_function_calling, supports_vision, ModelCost,
+    cache_mtime_is_fresh, ensure_models_dev_cache, get_model_context_limit,
+    refresh_models_dev_cache, supports_function_calling, supports_vision, ModelCost,
     ModelInfo as ModelsDevInfo, ModelLimit, ModelModalities, ModelsData, ModelsRegistry,
-    ProviderInfo as ModelsProviderInfo,
+    ProviderInfo as ModelsProviderInfo, MODELS_DEV_TTL, MODELS_DEV_URL,
 };

@@ -1,10 +1,7 @@
 use async_trait::async_trait;
-use futures::StreamExt;
 use reqwest::Client;
 
-use crate::{
-    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamEvent, StreamResult,
-};
+use crate::{ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult};
 
 const OPENROUTER_API_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -183,7 +180,7 @@ impl Provider for OpenRouterProvider {
             .client
             .post(url)
             .headers(self.build_headers())
-            .json(&request)
+            .json(&crate::openai_chat::openai_chat_completions_body(&request)?)
             .send()
             .await
             .map_err(|e| ProviderError::NetworkError(e.to_string()))?;
@@ -215,7 +212,9 @@ impl Provider for OpenRouterProvider {
             .post(url)
             .headers(self.build_headers())
             .header("Accept", "text/event-stream")
-            .json(&stream_request)
+            .json(&crate::openai_chat::openai_chat_completions_body(
+                &stream_request,
+            )?)
             .send()
             .await
             .map_err(|e| ProviderError::NetworkError(e.to_string()))?;
@@ -226,24 +225,8 @@ impl Provider for OpenRouterProvider {
             return Err(ProviderError::ApiError(format!("{}: {}", status, body)));
         }
 
-        let stream = response
-            .bytes_stream()
-            .map(move |chunk_result| match chunk_result {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    for line in text.lines() {
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
-                            if let Some(event) = crate::stream::parse_openai_sse(data) {
-                                return Ok(event);
-                            }
-                        }
-                    }
-                    Ok(StreamEvent::TextDelta(String::new()))
-                }
-                Err(e) => Err(ProviderError::StreamError(e.to_string())),
-            });
+        let stream = crate::stream::openai_compat_sse_stream(response.bytes_stream());
 
-        Ok(Box::pin(stream))
+        Ok(stream)
     }
 }

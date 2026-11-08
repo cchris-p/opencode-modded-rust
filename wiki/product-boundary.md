@@ -2,14 +2,21 @@
 
 ## Boundary
 
-`scopemux-code` is the main product. `opencode-modded` remains the long-term reference and planning repository.
+`opencode-modded-rust` is the main product. `opencode-modded` remains the long-term reference and planning repository.
+
+## Naming
+
+- `opencode-modded-rust` is the canonical product name.
+- `opencode` remains the CLI command name only where compatibility is useful.
+- `opencode-modded-rust` and `opencode-*` names are retained as repository and implementation identifiers, not product branding.
 
 ## Documentation ownership
 
 - `opencode-modded` retains its own `docs/`, `wiki/`, `invariants/`, and `boards/` artifacts.
-- `scopemux-code` must maintain its own `docs/`, `wiki/`, `invariants/`, and `boards/` artifacts.
+- `opencode-modded-rust` must maintain its own `docs/`, `wiki/`, `invariants/`, and `boards/` artifacts.
 - The Rust repo may reference files in `opencode-modded` by explicit path.
 - Reference by path, not by inheritance: a document in `opencode-modded` does not become Rust-product policy unless it is adopted in this repo.
+- `invariants/documentation-boundary.md` is the canonical invariant for this documentation-ownership rule.
 
 ## Current scope
 
@@ -21,7 +28,8 @@
 ## Reference line freeze
 
 - The initial TypeScript reference line is the current `opencode-modded` state at planning adoption time.
-- The current recorded reference commit is `e62912b5d18b73316c7bfd6e894b040698f6c880` in `$HOME/repos/opencode-modded`.
+- The reference is read from the `dev` branch; fetch the latest `dev` before comparing vanilla behavior.
+- The recorded reference commit is `f54ce313b99a6661d7758ad042f7a6e05c8e0972` in `$HOME/repos/opencode-modded` (branch `dev`, package `1.18.31`, 2026-09-21), re-pinned by `GATE-004`. The prior pin `e62912b5d18b73316c7bfd6e894b040698f6c880` is unreachable and superseded.
 - Future upstream feature review is separate work and should be introduced only through explicit board items.
 
 ## Explicit exclusions

@@ -205,11 +205,48 @@ pub struct OpenAIProvider {
     legacy_only: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct LegacySseParserState {
     tool_call_ids: HashMap<u32, String>,
     tool_call_names: HashMap<u32, String>,
     reasoning_open: bool,
+    saw_structured_tool_calls: bool,
+    native: crate::stream::DeepSeekNativeToolCallExtractor,
+    qwen: crate::stream::QwenNativeNormalizer,
+}
+
+impl Default for LegacySseParserState {
+    fn default() -> Self {
+        Self {
+            tool_call_ids: HashMap::new(),
+            tool_call_names: HashMap::new(),
+            reasoning_open: false,
+            saw_structured_tool_calls: false,
+            native: crate::stream::DeepSeekNativeToolCallExtractor::default(),
+            qwen: crate::stream::QwenNativeNormalizer::default(),
+        }
+    }
+}
+
+/// Chained native finish for the legacy parser: DeepSeek pass-through text is
+/// routed through the Qwen content buffer before emits (BUG-060 + BUG-062).
+fn finish_legacy_native(state: &mut LegacySseParserState, events: &mut Vec<StreamEvent>) {
+    for ev in state.native.finish() {
+        match ev {
+            StreamEvent::TextDelta(t) => {
+                state
+                    .qwen
+                    .push_content(&t, events, &mut state.reasoning_open)
+            }
+            other => events.push(other),
+        }
+    }
+    state.qwen.finish(
+        events,
+        &mut state.reasoning_open,
+        !state.saw_structured_tool_calls,
+    );
+    events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
 }
 
 impl OpenAIProvider {
@@ -315,10 +352,7 @@ impl OpenAIProvider {
         self.legacy_only
     }
 
-    fn parse_legacy_sse_data(
-        data: &str,
-        state: &mut LegacySseParserState,
-    ) -> Vec<StreamEvent> {
+    fn parse_legacy_sse_data(data: &str, state: &mut LegacySseParserState) -> Vec<StreamEvent> {
         let mut events = Vec::new();
 
         if data == "[DONE]" {
@@ -328,6 +362,7 @@ impl OpenAIProvider {
                 });
                 state.reasoning_open = false;
             }
+            finish_legacy_native(state, &mut events);
             events.push(StreamEvent::Done);
             return events;
         }
@@ -346,11 +381,24 @@ impl OpenAIProvider {
             .and_then(|u| u.get("completion_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        let cache_read_tokens = usage
+            .and_then(|u| {
+                u.get("prompt_cache_hit_tokens")
+                    .or_else(|| u.get("cache_read_input_tokens"))
+            })
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let cache_miss_tokens = usage
+            .and_then(|u| u.get("prompt_cache_miss_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| prompt_tokens.saturating_sub(cache_read_tokens));
 
         if usage.is_some() {
             events.push(StreamEvent::Usage {
                 prompt_tokens,
                 completion_tokens,
+                cache_read_tokens,
+                cache_miss_tokens,
             });
         }
 
@@ -360,20 +408,16 @@ impl OpenAIProvider {
                     let reasoning = delta
                         .get("reasoning_content")
                         .or_else(|| delta.get("reasoning_text"))
+                        .or_else(|| delta.get("reasoning"))
                         .and_then(Value::as_str)
                         .unwrap_or_default();
 
                     if !reasoning.is_empty() {
-                        if !state.reasoning_open {
-                            state.reasoning_open = true;
-                            events.push(StreamEvent::ReasoningStart {
-                                id: "reasoning-0".to_string(),
-                            });
-                        }
-                        events.push(StreamEvent::ReasoningDelta {
-                            id: "reasoning-0".to_string(),
-                            text: reasoning.to_string(),
-                        });
+                        state.qwen.push_reasoning(
+                            reasoning,
+                            &mut events,
+                            &mut state.reasoning_open,
+                        );
                     }
 
                     if let Some(text) = delta.get("content").and_then(Value::as_str) {
@@ -384,20 +428,31 @@ impl OpenAIProvider {
                                     id: "reasoning-0".to_string(),
                                 });
                             }
-                            events.push(StreamEvent::TextDelta(text.to_string()));
+                            for ev in state.native.push(text) {
+                                match ev {
+                                    StreamEvent::TextDelta(t) => state.qwen.push_content(
+                                        &t,
+                                        &mut events,
+                                        &mut state.reasoning_open,
+                                    ),
+                                    other => events.push(other),
+                                }
+                            }
                         }
                     }
 
                     if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
-                        if !tool_calls.is_empty() && state.reasoning_open {
-                            state.reasoning_open = false;
-                            events.push(StreamEvent::ReasoningEnd {
-                                id: "reasoning-0".to_string(),
-                            });
+                        if !tool_calls.is_empty() {
+                            state.saw_structured_tool_calls = true;
+                            if state.reasoning_open {
+                                state.reasoning_open = false;
+                                events.push(StreamEvent::ReasoningEnd {
+                                    id: "reasoning-0".to_string(),
+                                });
+                            }
                         }
                         for tc in tool_calls {
-                            let index =
-                                tc.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
+                            let index = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
                             let id = if let Some(id) = tc.get("id").and_then(Value::as_str) {
                                 let id = id.to_string();
                                 state.tool_call_ids.insert(index, id.clone());
@@ -448,6 +503,7 @@ impl OpenAIProvider {
                             id: "reasoning-0".to_string(),
                         });
                     }
+                    finish_legacy_native(state, &mut events);
                     let normalized_reason = if reason == "tool_calls" {
                         "tool-calls".to_string()
                     } else {
@@ -509,8 +565,11 @@ impl OpenAIProvider {
     }
 
     fn build_request_body(request: &ChatRequest) -> Result<Value, ProviderError> {
-        let mut value = serde_json::to_value(request)
-            .map_err(|e| ProviderError::InvalidRequest(e.to_string()))?;
+        // OpenAI-compatible /chat/completions requires tools wrapped in
+        // `{ type: "function", function: {...} }` and tool messages in OpenAI
+        // wire form (tool_calls + role:tool). Serialize via the shared chat
+        // converter instead of the raw provider-neutral model. BUG-005.
+        let mut value = crate::openai_chat::openai_chat_completions_body(request)?;
 
         if let Value::Object(obj) = &mut value {
             // Merge provider_options into the top-level body (matching TS SDK behavior).
@@ -749,19 +808,16 @@ impl OpenAIProvider {
             return Err(ProviderError::ApiError(format!("{}: {}", status, body)));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| {
-                let mut msg = e.to_string();
-                let mut source = std::error::Error::source(&e);
-                while let Some(cause) = source {
-                    msg.push_str(": ");
-                    msg.push_str(&cause.to_string());
-                    source = cause.source();
-                }
-                ProviderError::ApiError(msg)
-            })?;
+        let body = response.text().await.map_err(|e| {
+            let mut msg = e.to_string();
+            let mut source = std::error::Error::source(&e);
+            while let Some(cause) = source {
+                msg.push_str(": ");
+                msg.push_str(&cause.to_string());
+                source = cause.source();
+            }
+            ProviderError::ApiError(msg)
+        })?;
 
         // Some OpenAI-compatible providers (e.g. ZhipuAI) return SSE-formatted
         // streaming data even for non-streaming requests. Detect and reassemble.
@@ -822,8 +878,10 @@ impl OpenAIProvider {
                         }
                         if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                             for tc in tcs {
-                                let idx = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                                let entry = tool_calls.entry(idx).or_insert((None, None, String::new()));
+                                let idx =
+                                    tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                let entry =
+                                    tool_calls.entry(idx).or_insert((None, None, String::new()));
                                 if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
                                     entry.0 = Some(id.to_string());
                                 }
@@ -831,7 +889,9 @@ impl OpenAIProvider {
                                     if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
                                         entry.1 = Some(name.to_string());
                                     }
-                                    if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                                    if let Some(args) =
+                                        func.get("arguments").and_then(|v| v.as_str())
+                                    {
                                         entry.2.push_str(args);
                                     }
                                 }
@@ -874,9 +934,17 @@ impl OpenAIProvider {
                 index: Some(0),
                 message: Some(RawMessage {
                     role: Some("assistant".to_string()),
-                    content: if content.is_empty() { None } else { Some(content) },
+                    content: if content.is_empty() {
+                        None
+                    } else {
+                        Some(content)
+                    },
                     tool_calls: raw_tool_calls,
-                    _reasoning_text: if reasoning.is_empty() { None } else { Some(reasoning) },
+                    _reasoning_text: if reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(reasoning)
+                    },
                 }),
                 finish_reason,
             }],
@@ -1215,7 +1283,9 @@ mod tests {
             &events[1],
             StreamEvent::Usage {
                 prompt_tokens: 1,
-                completion_tokens: 2
+                completion_tokens: 2,
+                cache_read_tokens: 0,
+                cache_miss_tokens: 1
             }
         ));
     }
@@ -1240,5 +1310,105 @@ mod tests {
             delta.first(),
             Some(StreamEvent::ToolCallDelta { id, input }) if id == "tool-call-0" && input == "{\"cmd\":\"ls\"}"
         ));
+    }
+
+    // BUG-060: novita-ai DeepSeek R1 leaks native tool tokens in content.
+    fn native_call_content(name: &str, args: &str) -> String {
+        let cb = "<\u{ff5c}tool\u{2581}calls\u{2581}begin\u{ff5c}>";
+        let cbeg = "<\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>";
+        let sep = "<\u{ff5c}tool\u{2581}sep\u{ff5c}>";
+        let ce = "<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}>";
+        let cs = "<\u{ff5c}tool\u{2581}calls\u{2581}end\u{ff5c}>";
+        format!("{cb}{cbeg}function{sep}{name}\n```json\n{args}\n```{ce}{cs}")
+    }
+
+    fn content_frame(content: &str) -> String {
+        format!(
+            "{{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}",
+            serde_json::to_string(content).unwrap()
+        )
+    }
+
+    fn collect_legacy_calls(events: &[StreamEvent]) -> Vec<(String, Value)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallEnd { name, input, .. } => Some((name.clone(), input.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parse_legacy_sse_data_extracts_native_deepseek_tool_call() {
+        let mut state = LegacySseParserState::default();
+        let mut events = OpenAIProvider::parse_legacy_sse_data(
+            &content_frame(&native_call_content("bash", "{\"command\":\"echo hi\"}")),
+            &mut state,
+        );
+        events.extend(state.native.finish());
+        events.extend(state.native.drain_pending(true));
+        assert_eq!(
+            collect_legacy_calls(&events),
+            vec![("bash".to_string(), serde_json::json!({"command":"echo hi"}))]
+        );
+    }
+
+    #[test]
+    fn parse_legacy_sse_data_extracts_native_deepseek_tool_call_split_across_frames() {
+        let whole = native_call_content("bash", "{\"command\":\"echo hi\"}");
+        let chars: Vec<char> = whole.chars().collect();
+        let mid = chars.len() / 2;
+        let first: String = chars[..mid].iter().collect();
+        let second: String = chars[mid..].iter().collect();
+
+        let mut state = LegacySseParserState::default();
+        let mut events = Vec::new();
+        for part in [first, second] {
+            events.extend(OpenAIProvider::parse_legacy_sse_data(
+                &content_frame(&part),
+                &mut state,
+            ));
+        }
+        events.extend(state.native.finish());
+        events.extend(state.native.drain_pending(true));
+        assert_eq!(
+            collect_legacy_calls(&events),
+            vec![("bash".to_string(), serde_json::json!({"command":"echo hi"}))]
+        );
+    }
+
+    // BUG-062: qwen on Ollama narrates calls as <tool_call>{...}</tool_call>
+    // inside the `reasoning` field (Ollama's reasoning channel).
+    fn reasoning_frame(reasoning: &str) -> String {
+        format!(
+            "{{\"choices\":[{{\"delta\":{{\"reasoning\":{}}}}}]}}",
+            serde_json::to_string(reasoning).unwrap()
+        )
+    }
+
+    #[test]
+    fn parse_legacy_sse_data_extracts_qwen_reasoning_field_tool_call() {
+        let mut state = LegacySseParserState::default();
+        let mut events = Vec::new();
+        for frame in [
+            "<tool_call>",
+            "{\"name\":\"read\",\"arguments\":{\"file_path\":\"hello.txt\"}}",
+            "</tool_call>",
+            "done",
+        ] {
+            events.extend(OpenAIProvider::parse_legacy_sse_data(
+                &reasoning_frame(frame),
+                &mut state,
+            ));
+        }
+        events.extend(OpenAIProvider::parse_legacy_sse_data("[DONE]", &mut state));
+        assert_eq!(
+            collect_legacy_calls(&events),
+            vec![(
+                "read".to_string(),
+                serde_json::json!({"file_path":"hello.txt"})
+            )]
+        );
     }
 }

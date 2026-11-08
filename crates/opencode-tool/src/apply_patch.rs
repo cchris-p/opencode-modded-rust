@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::{Metadata, PermissionRequest, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, Metadata, PermissionRequest, Tool, ToolContext,
+    ToolError, ToolResult,
+};
 
 pub struct ApplyPatchTool;
 #[cfg(feature = "lsp")]
@@ -107,9 +110,10 @@ impl Tool for ApplyPatchTool {
 
             let file_path_str = file_path.to_string_lossy().to_string();
             if ctx.is_external_path(&file_path_str) {
-                ctx.ask_permission(
-                    PermissionRequest::new("external_directory").with_pattern(&file_path_str),
-                )
+                ctx.ask_permission(external_directory_permission_request(
+                    &file_path_str,
+                    crate::ExternalDirectoryKind::File,
+                ))
                 .await?;
             }
 
@@ -377,9 +381,7 @@ fn parse_multi_file_patch(patch_text: &str) -> Result<Vec<FilePatch>, ToolError>
             let path = if operation.is_add() {
                 new_path.clone()
             } else {
-                old_path.clone().unwrap_or_else(|| {
-                    new_path.clone()
-                })
+                old_path.clone().unwrap_or_else(|| new_path.clone())
             };
 
             if path == "/dev/null" || path.is_empty() {
@@ -491,9 +493,7 @@ fn parse_model_patch(patch_text: &str) -> Result<Vec<FilePatch>, ToolError> {
         if let Some(caps) = move_to.captures(line) {
             if let Some(ref mut file) = current_file {
                 let target = caps[1].trim().to_string();
-                file.operation = PatchOperation::Move {
-                    move_path: target,
-                };
+                file.operation = PatchOperation::Move { move_path: target };
             }
             continue;
         }
@@ -766,11 +766,6 @@ async fn collect_lsp_diagnostics_for_targets(
             return (String::new(), HashMap::new());
         };
 
-        let clients = lsp_registry.list().await;
-        if clients.is_empty() {
-            return (String::new(), HashMap::new());
-        }
-
         let mut unique_targets = Vec::new();
         let mut seen = HashSet::new();
         for target in targets {
@@ -785,12 +780,7 @@ async fn collect_lsp_diagnostics_for_targets(
         for target in unique_targets {
             let path = base_path.join(&target);
             let language = detect_language(&path);
-            let client = clients
-                .iter()
-                .find(|(id, _)| id.contains(language))
-                .map(|(_, client)| client.clone());
-
-            let Some(client) = client else {
+            let Some(client) = lsp_registry.client_for_file(&path).await else {
                 continue;
             };
 

@@ -10,6 +10,7 @@ pub mod hooks;
 pub mod router;
 pub mod terminal;
 pub mod theme;
+pub mod trace;
 pub mod ui;
 
 pub use api::ApiClient;
@@ -18,6 +19,12 @@ pub use event::Event;
 pub use router::{Route, Router};
 pub use terminal::{reset_title, set_session_title, set_title};
 pub use theme::Theme;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TuiExit {
+    Exit { session_id: Option<String> },
+    Detach { session_id: Option<String> },
+}
 
 fn setup_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
@@ -31,8 +38,9 @@ fn setup_panic_hook() {
     }));
 }
 
-pub fn run_tui() -> anyhow::Result<()> {
+pub fn run_tui() -> anyhow::Result<TuiExit> {
     setup_panic_hook();
+    trace::init();
 
     let mut app = App::new()?;
     app.run()

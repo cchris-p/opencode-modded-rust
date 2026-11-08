@@ -9,6 +9,8 @@ use ratatui::{
 
 use crate::theme::Theme;
 
+use super::text_input::DialogTextInput;
+
 #[derive(Clone, Debug)]
 pub struct SessionItem {
     pub id: String,
@@ -34,7 +36,7 @@ pub struct SessionListDialog {
     active_session_id: Option<String>,
     pending_delete_session_id: Option<String>,
     rename_session_id: Option<String>,
-    rename_input: String,
+    rename_input: DialogTextInput,
 }
 
 impl SessionListDialog {
@@ -50,7 +52,7 @@ impl SessionListDialog {
             active_session_id: None,
             pending_delete_session_id: None,
             rename_session_id: None,
-            rename_input: String::new(),
+            rename_input: DialogTextInput::new(),
         }
     }
 
@@ -59,6 +61,19 @@ impl SessionListDialog {
         sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         self.sessions = sessions;
         self.filter();
+    }
+
+    pub fn update_session_title(&mut self, session_id: &str, title: String, updated_at: i64) {
+        let selected_id = self.selected_session_id();
+        if let Some(session) = self
+            .sessions
+            .iter_mut()
+            .find(|session| session.id == session_id)
+        {
+            session.title = title;
+            session.updated_at = updated_at;
+            self.filter_preserving_selection(selected_id.as_deref());
+        }
     }
 
     pub fn open(&mut self, current_session_id: Option<&str>) {
@@ -151,7 +166,7 @@ impl SessionListDialog {
         };
         self.pending_delete_session_id = None;
         self.rename_session_id = Some(session.id.clone());
-        self.rename_input = session.title.clone();
+        self.rename_input.set(session.title.clone());
         true
     }
 
@@ -161,16 +176,44 @@ impl SessionListDialog {
     }
 
     pub fn handle_rename_input(&mut self, c: char) {
-        self.rename_input.push(c);
+        self.rename_input.insert_char(c);
     }
 
     pub fn handle_rename_backspace(&mut self) {
-        self.rename_input.pop();
+        self.rename_input.backspace();
+    }
+
+    pub fn handle_rename_delete(&mut self) {
+        self.rename_input.delete();
+    }
+
+    pub fn rename_move_left(&mut self) {
+        self.rename_input.move_left();
+    }
+
+    pub fn rename_move_right(&mut self) {
+        self.rename_input.move_right();
+    }
+
+    pub fn rename_move_word_left(&mut self) {
+        self.rename_input.move_word_left();
+    }
+
+    pub fn rename_move_word_right(&mut self) {
+        self.rename_input.move_word_right();
+    }
+
+    pub fn rename_move_home(&mut self) {
+        self.rename_input.move_home();
+    }
+
+    pub fn rename_move_end(&mut self) {
+        self.rename_input.move_end();
     }
 
     pub fn confirm_rename(&mut self) -> Option<(String, String)> {
         let session_id = self.rename_session_id.clone()?;
-        let title = self.rename_input.trim().to_string();
+        let title = self.rename_input.value().trim().to_string();
         if title.is_empty() {
             return None;
         }
@@ -190,6 +233,10 @@ impl SessionListDialog {
     }
 
     fn filter(&mut self) {
+        self.filter_preserving_selection(None);
+    }
+
+    fn filter_preserving_selection(&mut self, selected_id: Option<&str>) {
         let query = self.query.to_lowercase();
         self.filtered = self
             .sessions
@@ -202,11 +249,14 @@ impl SessionListDialog {
             })
             .map(|(idx, _)| idx)
             .collect();
-        self.state.select(if self.filtered.is_empty() {
-            None
-        } else {
-            Some(0)
-        });
+        let selected = selected_id
+            .and_then(|id| {
+                self.filtered
+                    .iter()
+                    .position(|idx| self.sessions.get(*idx).is_some_and(|s| s.id == id))
+            })
+            .or_else(|| (!self.filtered.is_empty()).then_some(0));
+        self.state.select(selected);
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
@@ -309,10 +359,12 @@ impl SessionListDialog {
         frame.render_stateful_widget(list, layout[1], &mut self.state.clone());
 
         let action_line = if self.is_renaming() {
+            let (before, after) = self.rename_input.split_at_cursor();
             Line::from(vec![
                 Span::styled("Rename: ", Style::default().fg(theme.primary)),
-                Span::styled(&self.rename_input, Style::default().fg(theme.text)),
+                Span::styled(before.to_string(), Style::default().fg(theme.text)),
                 Span::styled("▏", Style::default().fg(theme.primary)),
+                Span::styled(after.to_string(), Style::default().fg(theme.text)),
             ])
         } else {
             Line::from(vec![
@@ -326,7 +378,8 @@ impl SessionListDialog {
 
         let footer = if self.is_renaming() {
             Paragraph::new(Line::from(vec![
-                Span::styled("Enter", Style::default().fg(theme.primary)),
+                Span::styled("←/→ move", Style::default().fg(theme.primary)),
+                Span::styled("  Enter", Style::default().fg(theme.primary)),
                 Span::styled(" save  ", Style::default().fg(theme.text_muted)),
                 Span::styled("Esc", Style::default().fg(theme.primary)),
                 Span::styled(" cancel", Style::default().fg(theme.text_muted)),
@@ -349,10 +402,46 @@ impl Default for SessionListDialog {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(id: &str, title: &str, updated_at: i64) -> SessionItem {
+        SessionItem {
+            id: id.to_string(),
+            title: title.to_string(),
+            directory: "/tmp/project".to_string(),
+            parent_id: None,
+            updated_at,
+            is_busy: false,
+        }
+    }
+
+    #[test]
+    fn update_session_title_updates_existing_row_without_reopening() {
+        let mut dialog = SessionListDialog::new();
+        dialog.set_sessions(vec![
+            item("ses_a", "Old title", 1),
+            item("ses_b", "Other", 2),
+        ]);
+        dialog.open(Some("ses_a"));
+
+        dialog.update_session_title("ses_a", "New title".to_string(), 3);
+
+        let session = dialog
+            .sessions
+            .iter()
+            .find(|session| session.id == "ses_a")
+            .expect("updated session should remain in the list");
+        assert_eq!(session.title, "New title");
+        assert_eq!(session.updated_at, 3);
+        assert_eq!(dialog.selected_session_id().as_deref(), Some("ses_a"));
+    }
+}
+
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     super::centered_rect(width, height, area)
 }
-
 
 fn format_session_time(updated_at_ms: i64) -> (String, String) {
     let Some(updated_local) = Local.timestamp_millis_opt(updated_at_ms).single() else {

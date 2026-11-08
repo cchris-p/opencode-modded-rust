@@ -1,8 +1,13 @@
+use opencode_config::Config as AppConfig;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Interactive OAuth flows wait on a human browser/device login, so they must
+/// not be bound by the default 30s request timeout used for regular API calls.
+const AUTH_FLOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(360);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
@@ -10,6 +15,8 @@ pub struct SessionInfo {
     pub slug: String,
     pub project_id: String,
     pub directory: String,
+    #[serde(default)]
+    pub workspace_identity: Option<String>,
     pub parent_id: Option<String>,
     pub title: String,
     pub version: String,
@@ -48,6 +55,12 @@ pub struct SessionStatusInfo {
     pub message: Option<String>,
     #[serde(default)]
     pub next: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +175,26 @@ pub struct ProviderListResponse {
     pub providers: Vec<ProviderInfo>,
     #[serde(rename = "default")]
     pub default_model: HashMap<String, String>,
+    #[serde(default)]
+    pub setup: ProviderSetupInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderSetupInfo {
+    #[serde(default)]
+    pub authoritative_path: String,
+    #[serde(default)]
+    pub effective_provider: Option<String>,
+    #[serde(default)]
+    pub effective_model: Option<String>,
+    #[serde(default)]
+    pub selection_source: String,
+    #[serde(default)]
+    pub ollama_base_url: String,
+    #[serde(default)]
+    pub ollama_base_url_source: String,
+    #[serde(default)]
+    pub auth: HashMap<String, ProviderAuthStatusInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,8 +245,138 @@ pub struct McpAuthStartInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAuthMethodInfo {
+    #[serde(default)]
+    pub index: usize,
+    #[serde(rename = "type", default)]
+    pub method_type: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+impl ProviderAuthMethodInfo {
+    pub fn is_api(&self) -> bool {
+        self.method_type.eq_ignore_ascii_case("api")
+    }
+
+    pub fn is_oauth(&self) -> bool {
+        self.method_type.eq_ignore_ascii_case("oauth")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAuthStatusInfo {
+    pub configured: bool,
+    #[serde(default)]
+    pub auth_type: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderOAuthStartInfo {
+    pub url: String,
+    #[serde(rename = "method")]
+    pub method_type: String,
+    pub instructions: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionRequestInfo {
+    pub id: String,
+    #[serde(alias = "sessionID")]
+    pub session_id: String,
+    pub permission: String,
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    pub tool: String,
+    pub input: serde_json::Value,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionReplyRequest {
+    pub reply: String,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PermissionReplyResult {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionOptionInfo {
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+fn default_question_custom() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionPromptInfo {
+    pub question: String,
+    #[serde(default)]
+    pub header: Option<String>,
+    #[serde(default)]
+    pub options: Vec<QuestionOptionInfo>,
+    #[serde(default)]
+    pub multiple: bool,
+    #[serde(default = "default_question_custom")]
+    pub custom: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionInfo {
+    pub id: String,
+    #[serde(alias = "sessionID")]
+    pub session_id: String,
+    pub questions: Vec<QuestionPromptInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplyQuestionRequest {
+    pub answers: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProviderOAuthAuthorizeRequest {
+    method: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProviderOAuthCallbackRequest {
+    method: usize,
+    code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ApiAuthWriteRequest {
+    #[serde(rename = "type")]
+    auth_type: String,
+    key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LspServerStatusInfo {
+    pub id: String,
+    pub root: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LspStatusResponse {
-    servers: Vec<String>,
+    servers: Vec<LspServerStatusInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,11 +407,12 @@ pub struct RevertResponse {
 pub struct ApiClient {
     client: Client,
     base_url: String,
+    workspace_identity: String,
     pub current_session: Arc<RwLock<Option<SessionInfo>>>,
 }
 
 impl ApiClient {
-    pub fn new(base_url: String) -> Self {
+    pub fn new(base_url: String, workspace_identity: String) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -257,6 +421,7 @@ impl ApiClient {
         Self {
             client,
             base_url,
+            workspace_identity,
             current_session: Arc::new(RwLock::new(None)),
         }
     }
@@ -292,14 +457,43 @@ impl ApiClient {
         Ok(session)
     }
 
-    pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionInfo>> {
-        self.list_sessions_filtered(None, None)
+    pub fn get_session_children(&self, session_id: &str) -> anyhow::Result<Vec<SessionInfo>> {
+        let url = format!("{}/session/{}/children", self.base_url, session_id);
+
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to get session children for `{}`: {} - {}",
+                session_id,
+                status,
+                text
+            );
+        }
+
+        let sessions: Vec<SessionInfo> = response.json()?;
+        Ok(sessions)
     }
 
-    pub fn list_sessions_filtered(
+    pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionInfo>> {
+        self.list_sessions_filtered(None, None, None)
+    }
+
+    pub fn list_workspace_sessions_filtered(
         &self,
         search: Option<&str>,
         limit: Option<usize>,
+    ) -> anyhow::Result<Vec<SessionInfo>> {
+        self.list_sessions_filtered(search, limit, Some(&self.workspace_identity))
+    }
+
+    fn list_sessions_filtered(
+        &self,
+        search: Option<&str>,
+        limit: Option<usize>,
+        workspace_identity: Option<&str>,
     ) -> anyhow::Result<Vec<SessionInfo>> {
         let url = format!("{}/session", self.base_url);
         let mut params: Vec<(&str, String)> = Vec::new();
@@ -308,6 +502,12 @@ impl ApiClient {
         }
         if let Some(limit) = limit.filter(|l| *l > 0) {
             params.push(("limit", limit.to_string()));
+        }
+        if let Some(workspace_identity) = workspace_identity
+            .map(str::trim)
+            .filter(|workspace| !workspace.is_empty())
+        {
+            params.push(("workspace_identity", workspace_identity.to_string()));
         }
 
         let request = if params.is_empty() {
@@ -444,6 +644,21 @@ impl ApiClient {
         Ok(response.json::<serde_json::Value>()?)
     }
 
+    /// FEAT-048: promote a running foreground `task` subagent of this session to
+    /// the background (`ctrl+b`).
+    pub fn background_session(&self, session_id: &str) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}/session/{}/background", self.base_url, session_id);
+        let response = self.client.post(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to background session task: {} - {}", status, text);
+        }
+
+        Ok(response.json::<serde_json::Value>()?)
+    }
+
     pub fn get_config_providers(&self) -> anyhow::Result<ProviderListResponse> {
         let url = format!("{}/config/providers", self.base_url);
 
@@ -457,6 +672,180 @@ impl ApiClient {
 
         let providers: ProviderListResponse = response.json()?;
         Ok(providers)
+    }
+
+    pub fn patch_config(&self, patch: &AppConfig) -> anyhow::Result<AppConfig> {
+        let url = format!("{}/config", self.base_url);
+        let response = self.client.patch(&url).json(patch).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to update config: {} - {}", status, text);
+        }
+
+        Ok(response.json::<AppConfig>()?)
+    }
+
+    /// Clears the persisted manual model selection so the product default is
+    /// effective again. Returns `true` when a local runtime config was found.
+    pub fn reset_model_selection(&self) -> anyhow::Result<bool> {
+        let url = format!("{}/config/model", self.base_url);
+        let response = self.client.delete(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to reset model selection: {} - {}", status, text);
+        }
+
+        Ok(response
+            .json::<serde_json::Value>()?
+            .get("reset")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false))
+    }
+
+    pub fn get_provider_auth_methods(
+        &self,
+    ) -> anyhow::Result<HashMap<String, Vec<ProviderAuthMethodInfo>>> {
+        let url = format!("{}/provider/auth", self.base_url);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to get provider auth methods: {} - {}", status, text);
+        }
+
+        Ok(response.json::<HashMap<String, Vec<ProviderAuthMethodInfo>>>()?)
+    }
+
+    pub fn get_provider_auth_status(
+        &self,
+        provider_id: &str,
+    ) -> anyhow::Result<ProviderAuthStatusInfo> {
+        let url = format!("{}/auth/{}", self.base_url, provider_id);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to get auth status for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<ProviderAuthStatusInfo>()?)
+    }
+
+    pub fn start_provider_oauth(
+        &self,
+        provider_id: &str,
+        method: usize,
+    ) -> anyhow::Result<ProviderOAuthStartInfo> {
+        let url = format!("{}/provider/{}/oauth/authorize", self.base_url, provider_id);
+        let response = self
+            .client
+            .post(&url)
+            .timeout(AUTH_FLOW_TIMEOUT)
+            .json(&ProviderOAuthAuthorizeRequest { method })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to start provider auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<ProviderOAuthStartInfo>()?)
+    }
+
+    pub fn complete_provider_oauth(
+        &self,
+        provider_id: &str,
+        method: usize,
+        code: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let url = format!("{}/provider/{}/oauth/callback", self.base_url, provider_id);
+        let response = self
+            .client
+            .post(&url)
+            .timeout(AUTH_FLOW_TIMEOUT)
+            .json(&ProviderOAuthCallbackRequest { method, code })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to complete provider auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<bool>()?)
+    }
+
+    pub fn set_provider_api_key(&self, provider_id: &str, key: String) -> anyhow::Result<bool> {
+        let url = format!("{}/auth/{}", self.base_url, provider_id);
+        let response = self
+            .client
+            .put(&url)
+            .json(&ApiAuthWriteRequest {
+                auth_type: "api".to_string(),
+                key,
+            })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to set auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response
+            .json::<serde_json::Value>()?
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true))
+    }
+
+    pub fn delete_provider_auth(&self, provider_id: &str) -> anyhow::Result<bool> {
+        let url = format!("{}/auth/{}", self.base_url, provider_id);
+        let response = self.client.delete(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to delete auth for `{}`: {} - {}",
+                provider_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response
+            .json::<serde_json::Value>()?
+            .get("deleted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true))
     }
 
     pub fn list_agents(&self) -> anyhow::Result<Vec<AgentInfo>> {
@@ -474,7 +863,7 @@ impl ApiClient {
         Ok(agents)
     }
 
-    pub fn list_skills(&self) -> anyhow::Result<Vec<String>> {
+    pub fn list_skills(&self) -> anyhow::Result<Vec<SkillSummary>> {
         let url = format!("{}/skill", self.base_url);
         let response = self.client.get(&url).send()?;
 
@@ -484,7 +873,114 @@ impl ApiClient {
             anyhow::bail!("Failed to list skills: {} - {}", status, text);
         }
 
-        Ok(response.json::<Vec<String>>()?)
+        Ok(response.json::<Vec<SkillSummary>>()?)
+    }
+
+    pub fn list_permissions(&self) -> anyhow::Result<Vec<PermissionRequestInfo>> {
+        let url = format!("{}/permission", self.base_url);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to list permissions: {} - {}", status, text);
+        }
+
+        Ok(response.json::<Vec<PermissionRequestInfo>>()?)
+    }
+
+    pub fn reply_permission(
+        &self,
+        request_id: &str,
+        reply: &str,
+        message: Option<String>,
+    ) -> anyhow::Result<PermissionReplyResult> {
+        let url = format!("{}/permission/{}/reply", self.base_url, request_id);
+        let response = self
+            .client
+            .post(&url)
+            .json(&PermissionReplyRequest {
+                reply: reply.to_string(),
+                message,
+            })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to reply to permission request `{}`: {} - {}",
+                request_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<PermissionReplyResult>()?)
+    }
+
+    pub fn list_questions(&self, session_id: &str) -> anyhow::Result<Vec<QuestionInfo>> {
+        let url = format!("{}/session/{}/question", self.base_url, session_id);
+        let response = self.client.get(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!("Failed to list questions: {} - {}", status, text);
+        }
+
+        Ok(response.json::<Vec<QuestionInfo>>()?)
+    }
+
+    pub fn reply_question(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        answers: Vec<Vec<String>>,
+    ) -> anyhow::Result<bool> {
+        let url = format!(
+            "{}/session/{}/question/{}/reply",
+            self.base_url, session_id, request_id
+        );
+        let response = self
+            .client
+            .post(&url)
+            .json(&ReplyQuestionRequest { answers })
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to reply to question request `{}`: {} - {}",
+                request_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<bool>()?)
+    }
+
+    pub fn reject_question(&self, session_id: &str, request_id: &str) -> anyhow::Result<bool> {
+        let url = format!(
+            "{}/session/{}/question/{}/reject",
+            self.base_url, session_id, request_id
+        );
+        let response = self.client.post(&url).send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            anyhow::bail!(
+                "Failed to reject question request `{}`: {} - {}",
+                request_id,
+                status,
+                text
+            );
+        }
+
+        Ok(response.json::<bool>()?)
     }
 
     pub fn get_mcp_status(&self) -> anyhow::Result<Vec<McpStatusInfo>> {
@@ -590,7 +1086,7 @@ impl ApiClient {
         Ok(messages)
     }
 
-    pub fn get_lsp_servers(&self) -> anyhow::Result<Vec<String>> {
+    pub fn get_lsp_servers(&self) -> anyhow::Result<Vec<LspServerStatusInfo>> {
         let url = format!("{}/lsp", self.base_url);
         let response = self.client.get(&url).send()?;
         if !response.status().is_success() {

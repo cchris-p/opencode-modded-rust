@@ -1,0 +1,57 @@
+#!/bin/sh
+# Auto-format staged Rust changes with `cargo fmt --all` before commit.
+#
+# - No-ops when no Rust files are staged, when cargo is unavailable, or when
+#   OPENCODE_SKIP_FMT_HOOK is set.
+# - Re-stages only files that were already fully staged; files with unstaged
+#   edits are left alone so their unstaged hunks are never captured.
+# - Bypass a single commit with `git commit --no-verify`.
+set -u
+
+if [ -n "${OPENCODE_SKIP_FMT_HOOK:-}" ]; then
+    exit 0
+fi
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$root" || exit 0
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.rs' 2>/dev/null || true)
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-commit: cargo not found; skipping cargo fmt" >&2
+    exit 0
+fi
+
+# Capture files that already had unstaged edits *before* formatting. After
+# `cargo fmt` every formatted file would look "unstaged", so this must be
+# sampled first.
+unstaged=$(git diff --name-only 2>/dev/null || true)
+
+if ! cargo fmt --all; then
+    echo "pre-commit: cargo fmt failed; fix syntax/formatting or use 'git commit --no-verify'" >&2
+    exit 1
+fi
+
+applied=0
+while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    if printf '%s\n' "$unstaged" | grep -Fxq -- "$file"; then
+        echo "pre-commit: $file has unstaged edits; not re-staging formatted version" >&2
+        continue
+    fi
+    if ! git diff --quiet -- "$file"; then
+        git add -- "$file"
+        applied=$((applied + 1))
+    fi
+done <<EOF
+$staged
+EOF
+
+if [ "$applied" -gt 0 ]; then
+    echo "pre-commit: applied cargo fmt to $applied staged Rust file(s)"
+fi
+
+exit 0

@@ -1,6 +1,6 @@
 # Vision
 
-`scopemux-code` is a new Rust-native coding-agent product optimized for local models and personal daily use.
+`opencode-modded-rust` is a new Rust-native coding-agent product optimized for local models and personal daily use.
 
 ## Intent
 
@@ -21,6 +21,23 @@
 - Preserve a clean runtime architecture that can grow without inheriting all historical OpenCode constraints.
 - Introduce higher-quality context construction as a first-class system capability.
 - Separate implementation from review so the runtime does not trust a single reasoning trajectory.
+
+## Absorption-resistant substrate
+
+The product is designed to stay useful as models absorb harness features. The
+durable value is not a better coding prompt; it is the layer the model cannot
+absorb:
+
+- a small, stable runtime core with deterministic task state and authority,
+- a volatile policy layer that can be versioned, canaried, and deleted cheaply,
+- an engine-neutral System-1 decision boundary (Jev, Laya, deterministic rules),
+- owned, provenance-bearing data from decisions and outcomes,
+- measured efficiency and trust.
+
+Model-facing scaffolding is allowed when it compensates for a specific local model,
+but it is policy, not core, and it must be removable when the model absorbs it.
+`wiki/harness-substrate.md` and `invariants/future-proofing.md` define the rules.
+The decision layer is planned in `wiki/decision-layer.md`.
 
 ## Non-goals for now
 

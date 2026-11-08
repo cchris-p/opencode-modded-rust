@@ -6,11 +6,14 @@ authors.workspace = true
 license.workspace = true
 
 [features]
-default = []
+# LSP is part of the default product build; disabling it falls back to the
+# placeholder tool. configure `lsp` in opencode.json(c) to start a server.
+default = ["lsp"]
 lsp = ["opencode-lsp", "lsp-types"]
 
 [dependencies]
 opencode-core = { path = "../opencode-core" }
+opencode-types = { path = "../opencode-types" }
 opencode-config = { path = "../opencode-config" }
 opencode-util = { path = "../opencode-util" }
 opencode-grep = { path = "../opencode-grep" }

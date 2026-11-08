@@ -114,8 +114,20 @@ impl CommandPalette {
                 category: "View".to_string(),
             },
             Command {
+                action: CommandAction::TogglePrompt,
+                title: "Hide prompt".to_string(),
+                keybind: Some("ctrl+t".to_string()),
+                category: "View".to_string(),
+            },
+            Command {
                 action: CommandAction::ToggleThinking,
                 title: "Toggle thinking".to_string(),
+                keybind: None,
+                category: "View".to_string(),
+            },
+            Command {
+                action: CommandAction::ToggleToolCalls,
+                title: "Toggle tool calls".to_string(),
                 keybind: None,
                 category: "View".to_string(),
             },
@@ -146,7 +158,7 @@ impl CommandPalette {
             Command {
                 action: CommandAction::RenameSession,
                 title: "Rename current session".to_string(),
-                keybind: None,
+                keybind: Some("ctrl+r".to_string()),
                 category: "Session".to_string(),
             },
             Command {
@@ -178,6 +190,12 @@ impl CommandPalette {
                 title: "New session".to_string(),
                 keybind: Some("ctrl+n".to_string()),
                 category: "Session".to_string(),
+            },
+            Command {
+                action: CommandAction::OpenSettings,
+                title: "Open provider settings".to_string(),
+                keybind: None,
+                category: "Navigation".to_string(),
             },
             Command {
                 action: CommandAction::SwitchTheme,
@@ -212,7 +230,7 @@ impl CommandPalette {
             Command {
                 action: CommandAction::Exit,
                 title: "Exit".to_string(),
-                keybind: Some("ctrl+c".to_string()),
+                keybind: Some("ctrl+d".to_string()),
                 category: "App".to_string(),
             },
         ];
@@ -285,12 +303,14 @@ impl CommandPalette {
     pub fn sync_visibility_labels(
         &mut self,
         show_thinking: bool,
+        show_tool_calls: bool,
         show_tool_details: bool,
         density: MessageDensity,
         semantic_highlight: bool,
         show_header: bool,
         show_scrollbar: bool,
         tips_hidden: bool,
+        prompt_hidden: bool,
     ) {
         for command in &mut self.commands {
             if matches!(&command.action, CommandAction::ToggleHeader) {
@@ -314,11 +334,25 @@ impl CommandPalette {
                     "Hide tips".to_string()
                 };
             }
+            if matches!(&command.action, CommandAction::TogglePrompt) {
+                command.title = if prompt_hidden {
+                    "Show prompt".to_string()
+                } else {
+                    "Hide prompt".to_string()
+                };
+            }
             if matches!(&command.action, CommandAction::ToggleThinking) {
                 command.title = if show_thinking {
                     "Hide thinking".to_string()
                 } else {
                     "Show thinking".to_string()
+                };
+            }
+            if matches!(&command.action, CommandAction::ToggleToolCalls) {
+                command.title = if show_tool_calls {
+                    "Hide tool calls".to_string()
+                } else {
+                    "Show tool calls".to_string()
                 };
             }
             if matches!(&command.action, CommandAction::ToggleToolDetails) {
@@ -472,4 +506,3 @@ impl Default for CommandPalette {
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     super::centered_rect(width, height, area)
 }
-

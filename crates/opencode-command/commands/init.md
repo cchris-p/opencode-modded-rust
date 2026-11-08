@@ -1,6 +1,6 @@
-# Initialize OpenCode
+# Initialize opencode-modded-rust
 
-Initialize OpenCode in the current project. This will:
+Initialize opencode-modded-rust in the current project. This will:
 
 1. Analyze the project structure
 2. Create `.opencode/` directory if needed

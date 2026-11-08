@@ -55,11 +55,14 @@ pub enum CommandAction {
     Redo,
     CopySession,
     ExportSession,
+    SessionChildFirst,
+    SessionParent,
+    SessionChildCycle,
+    SessionChildCycleReverse,
     // Model/Agent
     SwitchModel,
     SwitchAgent,
     ManageMcp,
-    ConnectProvider,
     CycleVariant,
     // Display
     SwitchTheme,
@@ -70,6 +73,7 @@ pub enum CommandAction {
     ExternalEditor,
     ToggleTimestamps,
     ToggleThinking,
+    ToggleToolCalls,
     ToggleToolDetails,
     ToggleDensity,
     ToggleSemanticHighlight,
@@ -78,8 +82,10 @@ pub enum CommandAction {
     ToggleSidebar,
     ToggleMcp,
     ToggleTips,
+    TogglePrompt,
     ToggleCommandPalette,
     // Navigation
+    OpenSettings,
     OpenSessionList,
     SwitchSession,
     OpenModelList,
@@ -99,8 +105,11 @@ pub enum CommandAction {
     PromptStashPush,
     PromptStashList,
     PromptSkillList,
+    // Skills
+    InsertSkill(String),
     // System
     Exit,
+    Detach,
 }
 
 pub struct CommandRegistry {
@@ -139,7 +148,7 @@ impl CommandRegistry {
             title: "New Session".to_string(),
             description: "Start a new conversation".to_string(),
             category: CommandCategory::Session,
-            keybind: Some("ctrl_n".to_string()),
+            keybind: None,
             suggested: true,
             action: CommandAction::NewSession,
         });
@@ -150,7 +159,7 @@ impl CommandRegistry {
             title: "Switch Session".to_string(),
             description: "Switch to another session".to_string(),
             category: CommandCategory::Session,
-            keybind: Some("ctrl_s".to_string()),
+            keybind: None,
             suggested: true,
             action: CommandAction::OpenSessionList,
         });
@@ -299,14 +308,14 @@ impl CommandRegistry {
         });
 
         self.register(SlashCommand {
-            name: "/connect".to_string(),
-            aliases: vec![],
-            title: "Connect Provider".to_string(),
-            description: "Connect to a new LLM provider".to_string(),
-            category: CommandCategory::ModelAgent,
+            name: "/settings".to_string(),
+            aliases: vec!["/provider".to_string(), "/connect".to_string()],
+            title: "Open Provider Settings".to_string(),
+            description: "Open the authoritative provider setup screen".to_string(),
+            category: CommandCategory::Navigation,
             keybind: None,
-            suggested: false,
-            action: CommandAction::ConnectProvider,
+            suggested: true,
+            action: CommandAction::OpenSettings,
         });
 
         self.register(SlashCommand {
@@ -365,6 +374,17 @@ impl CommandRegistry {
         });
 
         self.register(SlashCommand {
+            name: "/detach".to_string(),
+            aliases: vec![],
+            title: "Detach".to_string(),
+            description: "Exit TUI and leave local server running".to_string(),
+            category: CommandCategory::System,
+            keybind: None,
+            suggested: false,
+            action: CommandAction::Detach,
+        });
+
+        self.register(SlashCommand {
             name: "/timestamps".to_string(),
             aliases: vec!["/toggle-timestamps".to_string()],
             title: "Toggle Timestamps".to_string(),
@@ -387,6 +407,17 @@ impl CommandRegistry {
         });
 
         self.register(SlashCommand {
+            name: "/prompt".to_string(),
+            aliases: vec!["/prompt.toggle".to_string()],
+            title: "Hide prompt".to_string(),
+            description: "Show/hide the session prompt box".to_string(),
+            category: CommandCategory::Display,
+            keybind: None,
+            suggested: false,
+            action: CommandAction::TogglePrompt,
+        });
+
+        self.register(SlashCommand {
             name: "/thinking".to_string(),
             aliases: vec!["/toggle-thinking".to_string()],
             title: "Toggle Thinking".to_string(),
@@ -395,6 +426,17 @@ impl CommandRegistry {
             keybind: None,
             suggested: false,
             action: CommandAction::ToggleThinking,
+        });
+
+        self.register(SlashCommand {
+            name: "/tool-calls".to_string(),
+            aliases: vec!["/tools".to_string(), "/toggle-tools".to_string()],
+            title: "Toggle Tool Calls".to_string(),
+            description: "Show/hide tool call blocks".to_string(),
+            category: CommandCategory::Display,
+            keybind: None,
+            suggested: false,
+            action: CommandAction::ToggleToolCalls,
         });
 
         self.register(SlashCommand {
@@ -492,25 +534,36 @@ impl CommandRegistry {
     }
 
     pub fn search(&self, query: &str) -> Vec<&SlashCommand> {
-        let mut scored: Vec<(&SlashCommand, i32)> = self
-            .commands
-            .values()
-            .filter_map(|cmd| {
-                let name_score = fuzzy_match(query, &cmd.name);
-                let alias_score = cmd
-                    .aliases
-                    .iter()
-                    .filter_map(|a| fuzzy_match(query, a))
-                    .max();
-                let title_score = fuzzy_match(query, &cmd.title);
-                let best = name_score
-                    .into_iter()
-                    .chain(alias_score)
-                    .chain(title_score)
-                    .max();
-                best.map(|s| (cmd, s))
-            })
-            .collect();
+        let mut scored_by_name: HashMap<String, (&SlashCommand, i32)> = HashMap::new();
+
+        for cmd in self.commands.values() {
+            let name_score = fuzzy_match(query, &cmd.name);
+            let alias_score = cmd
+                .aliases
+                .iter()
+                .filter_map(|a| fuzzy_match(query, a))
+                .max();
+            let title_score = fuzzy_match(query, &cmd.title);
+            let Some(best) = name_score
+                .into_iter()
+                .chain(alias_score)
+                .chain(title_score)
+                .max()
+            else {
+                continue;
+            };
+
+            scored_by_name
+                .entry(cmd.name.clone())
+                .and_modify(|entry| {
+                    if best > entry.1 {
+                        *entry = (cmd, best);
+                    }
+                })
+                .or_insert((cmd, best));
+        }
+
+        let mut scored: Vec<(&SlashCommand, i32)> = scored_by_name.into_values().collect();
 
         scored.sort_by(|a, b| {
             b.1.cmp(&a.1)
@@ -551,5 +604,81 @@ impl CommandRegistry {
 impl Default for CommandRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandAction, CommandRegistry};
+
+    #[test]
+    fn search_deduplicates_commands_with_aliases() {
+        let registry = CommandRegistry::new();
+
+        let matching: Vec<_> = registry
+            .search("resume")
+            .into_iter()
+            .filter(|cmd| matches!(cmd.action, CommandAction::OpenSessionList))
+            .collect();
+
+        assert_eq!(matching.len(), 1);
+    }
+
+    #[test]
+    fn session_suggestions_do_not_expose_hotkey_hints() {
+        let registry = CommandRegistry::new();
+
+        let new_session = registry.get("/new").expect("/new command should exist");
+        let switch_session = registry
+            .get("/sessions")
+            .expect("/sessions command should exist");
+
+        assert_eq!(new_session.title, "New Session");
+        assert!(new_session.keybind.is_none());
+        assert_eq!(switch_session.title, "Switch Session");
+        assert!(switch_session.keybind.is_none());
+    }
+
+    #[test]
+    fn prompt_toggle_command_and_alias_resolve_to_toggle_prompt() {
+        let registry = CommandRegistry::new();
+
+        let primary = registry
+            .get("/prompt")
+            .expect("/prompt command should exist");
+        let alias = registry
+            .get("/prompt.toggle")
+            .expect("/prompt.toggle alias should exist");
+
+        assert!(matches!(primary.action, CommandAction::TogglePrompt));
+        assert!(matches!(alias.action, CommandAction::TogglePrompt));
+    }
+
+    #[test]
+    fn provider_settings_surface_exactly_one_entry() {
+        let registry = CommandRegistry::new();
+
+        for query in ["provider", "settings", "connect"] {
+            let matches: Vec<_> = registry
+                .search(query)
+                .into_iter()
+                .filter(|cmd| cmd.title == "Open Provider Settings")
+                .collect();
+
+            assert_eq!(
+                matches.len(),
+                1,
+                "query `{query}` should surface exactly one provider settings entry"
+            );
+        }
+
+        let connect = registry
+            .get("/connect")
+            .expect("/connect should remain a discoverable alias");
+        assert!(
+            matches!(connect.action, CommandAction::OpenSettings),
+            "/connect should route into Settings > Provider"
+        );
+        assert_eq!(connect.title, "Open Provider Settings");
     }
 }

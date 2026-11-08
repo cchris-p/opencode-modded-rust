@@ -6,8 +6,8 @@ use sqlx::{FromRow, SqlitePool};
 use std::collections::HashMap;
 
 use opencode_types::{
-    MessagePart, MessageRole, Session, SessionMessage,
-    SessionShare, SessionStatus, SessionSummary, SessionTime, SessionUsage,
+    MessagePart, MessageRole, Session, SessionMessage, SessionShare, SessionStatus, SessionSummary,
+    SessionTask, SessionTime, SessionUsage, TaskReviewStatus, TaskStage, TaskVerificationStatus,
 };
 
 use crate::database::DatabaseError;
@@ -19,6 +19,7 @@ struct SessionRow {
     parent_id: Option<String>,
     slug: String,
     directory: String,
+    workspace_identity: Option<String>,
     title: String,
     version: String,
     share_url: Option<String>,
@@ -67,6 +68,7 @@ impl SessionRow {
             slug: self.slug,
             project_id: self.project_id,
             directory: self.directory,
+            workspace_identity: self.workspace_identity,
             parent_id: self.parent_id,
             title: self.title,
             version: self.version,
@@ -94,9 +96,51 @@ impl SessionRow {
                 None
             },
             status: string_to_status(&self.status),
+            task: None,
             metadata: HashMap::new(),
             created_at: created_dt,
             updated_at: updated_dt,
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct SessionTaskRow {
+    session_id: String,
+    task_id: String,
+    objective: String,
+    completion_criteria: String,
+    workspace_target: String,
+    stage: String,
+    verification_plan: String,
+    verification_status: String,
+    verification_notes: Option<String>,
+    review_status: String,
+    review_notes: Option<String>,
+    reopen_reason: Option<String>,
+    artifacts: String,
+    created_at: i64,
+    updated_at: i64,
+}
+
+impl SessionTaskRow {
+    fn into_task(self) -> SessionTask {
+        let _ = &self.session_id;
+        SessionTask {
+            task_id: self.task_id,
+            objective: self.objective,
+            completion_criteria: deserialize_string_list(self.completion_criteria),
+            workspace_target: self.workspace_target,
+            stage: string_to_task_stage(&self.stage),
+            verification_plan: deserialize_string_list(self.verification_plan),
+            verification_status: string_to_verification_status(&self.verification_status),
+            verification_notes: self.verification_notes,
+            review_status: string_to_review_status(&self.review_status),
+            review_notes: self.review_notes,
+            reopen_reason: self.reopen_reason,
+            artifacts: deserialize_string_list(self.artifacts),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         }
     }
 }
@@ -133,13 +177,13 @@ impl SessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, project_id, parent_id, slug, directory, title, version, share_url,
+                id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                 summary_additions, summary_deletions, summary_files, summary_diffs,
                 revert, permission,
                 usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
                 usage_cache_write_tokens, usage_cache_read_tokens, usage_total_cost,
                 status, created_at, updated_at, time_compacting, time_archived
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&session.id)
@@ -147,6 +191,7 @@ impl SessionRepository {
         .bind(&session.parent_id)
         .bind(&session.slug)
         .bind(&session.directory)
+        .bind(&session.workspace_identity)
         .bind(&session.title)
         .bind(&session.version)
         .bind(share_url)
@@ -189,13 +234,15 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
+        self.save_task(&session.id, session.task.as_ref()).await?;
+
         Ok(())
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<Session>, DatabaseError> {
         let row = sqlx::query_as::<_, SessionRow>(
             r#"SELECT 
-                id, project_id, parent_id, slug, directory, title, version, share_url,
+                id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                 summary_additions, summary_deletions, summary_files, summary_diffs,
                 revert, permission,
                 usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
@@ -208,7 +255,13 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
-        Ok(row.map(|r| r.into_session()))
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let mut session = row.into_session();
+        session.task = self.load_task(&session.id).await?;
+        Ok(Some(session))
     }
 
     pub async fn list(
@@ -219,7 +272,7 @@ impl SessionRepository {
         let rows = match project_id {
             Some(pid) => sqlx::query_as::<_, SessionRow>(
                 r#"SELECT 
-                        id, project_id, parent_id, slug, directory, title, version, share_url,
+                        id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                         summary_additions, summary_deletions, summary_files, summary_diffs,
                         revert, permission,
                         usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
@@ -235,7 +288,7 @@ impl SessionRepository {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?,
             None => sqlx::query_as::<_, SessionRow>(
                 r#"SELECT 
-                        id, project_id, parent_id, slug, directory, title, version, share_url,
+                        id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                         summary_additions, summary_deletions, summary_files, summary_diffs,
                         revert, permission,
                         usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
@@ -250,7 +303,14 @@ impl SessionRepository {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?,
         };
 
-        Ok(rows.into_iter().map(|r| r.into_session()).collect())
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut session = row.into_session();
+            session.task = self.load_task(&session.id).await?;
+            sessions.push(session);
+        }
+
+        Ok(sessions)
     }
 
     pub async fn update(&self, session: &Session) -> Result<(), DatabaseError> {
@@ -276,7 +336,7 @@ impl SessionRepository {
         sqlx::query(
             r#"
             UPDATE sessions SET
-                title = ?, version = ?, share_url = ?,
+                workspace_identity = ?, title = ?, version = ?, share_url = ?,
                 summary_additions = ?, summary_deletions = ?, summary_files = ?, summary_diffs = ?,
                 revert = ?, permission = ?,
                 usage_input_tokens = ?, usage_output_tokens = ?, usage_reasoning_tokens = ?,
@@ -285,6 +345,7 @@ impl SessionRepository {
             WHERE id = ?
             "#,
         )
+        .bind(&session.workspace_identity)
         .bind(&session.title)
         .bind(&session.version)
         .bind(share_url)
@@ -327,6 +388,8 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
+        self.save_task(&session.id, session.task.as_ref()).await?;
+
         Ok(())
     }
 
@@ -343,7 +406,7 @@ impl SessionRepository {
     pub async fn list_children(&self, parent_id: &str) -> Result<Vec<Session>, DatabaseError> {
         let rows = sqlx::query_as::<_, SessionRow>(
             r#"SELECT 
-                id, project_id, parent_id, slug, directory, title, version, share_url,
+                id, project_id, parent_id, slug, directory, workspace_identity, title, version, share_url,
                 summary_additions, summary_deletions, summary_files, summary_diffs,
                 revert, permission,
                 usage_input_tokens, usage_output_tokens, usage_reasoning_tokens,
@@ -357,7 +420,78 @@ impl SessionRepository {
         .await
         .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
-        Ok(rows.into_iter().map(|r| r.into_session()).collect())
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut session = row.into_session();
+            session.task = self.load_task(&session.id).await?;
+            sessions.push(session);
+        }
+
+        Ok(sessions)
+    }
+
+    async fn load_task(&self, session_id: &str) -> Result<Option<SessionTask>, DatabaseError> {
+        let row = sqlx::query_as::<_, SessionTaskRow>(
+            r#"SELECT
+                session_id, task_id, objective, completion_criteria, workspace_target,
+                stage, verification_plan, verification_status, verification_notes,
+                review_status, review_notes, reopen_reason, artifacts,
+                created_at, updated_at
+            FROM session_tasks WHERE session_id = ?"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(row.map(SessionTaskRow::into_task))
+    }
+
+    async fn save_task(
+        &self,
+        session_id: &str,
+        task: Option<&SessionTask>,
+    ) -> Result<(), DatabaseError> {
+        sqlx::query("DELETE FROM session_tasks WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        let Some(task) = task else {
+            return Ok(());
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO session_tasks (
+                session_id, task_id, objective, completion_criteria, workspace_target,
+                stage, verification_plan, verification_status, verification_notes,
+                review_status, review_notes, reopen_reason, artifacts,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(session_id)
+        .bind(&task.task_id)
+        .bind(&task.objective)
+        .bind(serialize_string_list(&task.completion_criteria))
+        .bind(&task.workspace_target)
+        .bind(task_stage_to_string(&task.stage))
+        .bind(serialize_string_list(&task.verification_plan))
+        .bind(verification_status_to_string(&task.verification_status))
+        .bind(&task.verification_notes)
+        .bind(review_status_to_string(&task.review_status))
+        .bind(&task.review_notes)
+        .bind(&task.reopen_reason)
+        .bind(serialize_string_list(&task.artifacts))
+        .bind(task.created_at)
+        .bind(task.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(())
     }
 }
 
@@ -379,6 +513,120 @@ fn string_to_status(s: &str) -> SessionStatus {
     }
 }
 
+fn task_stage_to_string(stage: &TaskStage) -> &'static str {
+    match stage {
+        TaskStage::Selected => "selected",
+        TaskStage::ContextPrepared => "context_prepared",
+        TaskStage::Implementing => "implementing",
+        TaskStage::Verifying => "verifying",
+        TaskStage::Reviewing => "reviewing",
+        TaskStage::Repairing => "repairing",
+        TaskStage::Completed => "completed",
+    }
+}
+
+fn string_to_task_stage(s: &str) -> TaskStage {
+    match s {
+        "context_prepared" => TaskStage::ContextPrepared,
+        "implementing" => TaskStage::Implementing,
+        "verifying" => TaskStage::Verifying,
+        "reviewing" => TaskStage::Reviewing,
+        "repairing" => TaskStage::Repairing,
+        "completed" => TaskStage::Completed,
+        _ => TaskStage::Selected,
+    }
+}
+
+fn verification_status_to_string(status: &TaskVerificationStatus) -> &'static str {
+    match status {
+        TaskVerificationStatus::NotRun => "not_run",
+        TaskVerificationStatus::Passed => "passed",
+        TaskVerificationStatus::Failed => "failed",
+        TaskVerificationStatus::Incomplete => "incomplete",
+    }
+}
+
+fn string_to_verification_status(s: &str) -> TaskVerificationStatus {
+    match s {
+        "passed" => TaskVerificationStatus::Passed,
+        "failed" => TaskVerificationStatus::Failed,
+        "incomplete" => TaskVerificationStatus::Incomplete,
+        _ => TaskVerificationStatus::NotRun,
+    }
+}
+
+fn review_status_to_string(status: &TaskReviewStatus) -> &'static str {
+    match status {
+        TaskReviewStatus::NotReviewed => "not_reviewed",
+        TaskReviewStatus::Approved => "approved",
+        TaskReviewStatus::ChangesRequested => "changes_requested",
+    }
+}
+
+fn string_to_review_status(s: &str) -> TaskReviewStatus {
+    match s {
+        "approved" => TaskReviewStatus::Approved,
+        "changes_requested" => TaskReviewStatus::ChangesRequested,
+        _ => TaskReviewStatus::NotReviewed,
+    }
+}
+
+fn serialize_string_list(items: &[String]) -> String {
+    serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn deserialize_string_list(value: String) -> Vec<String> {
+    serde_json::from_str(&value).unwrap_or_default()
+}
+
+/// Serialize a message's durable payload (parts plus metadata) for the
+/// `messages.data` column.
+///
+/// The payload is stored as a JSON object `{ "parts": [...], "metadata": {...} }`.
+/// Persisting `metadata` is what makes terminal state (`error`, `finish_reason`,
+/// `completed_at`) survive a reload/restart (BUG-043, BUG-047).
+fn serialize_message_data(message: &SessionMessage) -> Result<String, DatabaseError> {
+    serde_json::to_string(&serde_json::json!({
+        "parts": message.parts,
+        "metadata": message.metadata,
+    }))
+    .map_err(|e| DatabaseError::QueryError(e.to_string()))
+}
+
+/// Read a message's durable payload, accepting both the current object form and
+/// the legacy bare-array form (parts only, no metadata). Missing metadata loads
+/// as empty rather than an error.
+fn deserialize_message_data(
+    data: Option<String>,
+) -> (Vec<MessagePart>, HashMap<String, serde_json::Value>) {
+    let Some(raw) = data else {
+        return (Vec::new(), HashMap::new());
+    };
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return (Vec::new(), HashMap::new());
+    };
+
+    match value {
+        serde_json::Value::Array(_) => (
+            serde_json::from_value(value).unwrap_or_default(),
+            HashMap::new(),
+        ),
+        serde_json::Value::Object(ref object) => {
+            let parts = object
+                .get("parts")
+                .and_then(|parts| serde_json::from_value(parts.clone()).ok())
+                .unwrap_or_default();
+            let metadata = object
+                .get("metadata")
+                .and_then(|metadata| serde_json::from_value(metadata.clone()).ok())
+                .unwrap_or_default();
+            (parts, metadata)
+        }
+        _ => (Vec::new(), HashMap::new()),
+    }
+}
+
 pub struct MessageRepository {
     pool: SqlitePool,
 }
@@ -389,8 +637,7 @@ impl MessageRepository {
     }
 
     pub async fn create(&self, message: &SessionMessage) -> Result<(), DatabaseError> {
-        let data_json = serde_json::to_string(&message.parts)
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+        let data_json = serialize_message_data(message)?;
 
         let role_str = match message.role {
             MessageRole::User => "user",
@@ -418,8 +665,7 @@ impl MessageRepository {
     }
 
     pub async fn upsert(&self, message: &SessionMessage) -> Result<(), DatabaseError> {
-        let data_json = serde_json::to_string(&message.parts)
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+        let data_json = serialize_message_data(message)?;
 
         let role_str = match message.role {
             MessageRole::User => "user",
@@ -484,10 +730,7 @@ impl MessageRepository {
                     _ => return None,
                 };
 
-                let parts: Vec<MessagePart> = row
-                    .data
-                    .and_then(|c| serde_json::from_str(&c).ok())
-                    .unwrap_or_default();
+                let (parts, metadata) = deserialize_message_data(row.data);
 
                 let created =
                     DateTime::from_timestamp_millis(row.created_at).unwrap_or_else(Utc::now);
@@ -498,7 +741,7 @@ impl MessageRepository {
                     role: msg_role,
                     parts,
                     created_at: created,
-                    metadata: HashMap::new(),
+                    metadata,
                 })
             })
             .collect();
@@ -535,10 +778,7 @@ impl MessageRepository {
                     _ => return Ok(None),
                 };
 
-                let parts: Vec<MessagePart> = row
-                    .data
-                    .and_then(|c| serde_json::from_str(&c).ok())
-                    .unwrap_or_default();
+                let (parts, metadata) = deserialize_message_data(row.data);
 
                 let created =
                     DateTime::from_timestamp_millis(row.created_at).unwrap_or_else(Utc::now);
@@ -549,7 +789,7 @@ impl MessageRepository {
                     role: msg_role,
                     parts,
                     created_at: created,
-                    metadata: HashMap::new(),
+                    metadata,
                 }))
             }
             None => Ok(None),
@@ -570,6 +810,60 @@ impl MessageRepository {
         sqlx::query("DELETE FROM messages WHERE session_id = ?")
             .bind(session_id)
             .execute(&self.pool)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Atomically replace a session's stored message history with `messages`.
+    ///
+    /// The delete and the re-insert run in one transaction so an interrupted
+    /// save can never leave a session with partially deleted messages.
+    pub async fn replace_for_session(
+        &self,
+        session_id: &str,
+        messages: &[SessionMessage],
+    ) -> Result<(), DatabaseError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        sqlx::query("DELETE FROM messages WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        for message in messages {
+            let data_json = serialize_message_data(message)?;
+
+            let role_str = match message.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::System => "system",
+                MessageRole::Tool => "tool",
+            };
+
+            sqlx::query(
+                r#"
+                INSERT INTO messages (id, session_id, role, created_at, data)
+                VALUES (?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&message.id)
+            .bind(&message.session_id)
+            .bind(role_str)
+            .bind(message.created_at.timestamp_millis())
+            .bind(&data_json)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+        }
+
+        tx.commit()
             .await
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
@@ -945,5 +1239,198 @@ impl PartRepository {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+
+    fn message(session_id: &str, id: &str, text: &str) -> SessionMessage {
+        let mut message = SessionMessage::user(session_id, text);
+        message.id = id.to_string();
+        message
+    }
+
+    fn session(id: &str) -> Session {
+        let now = Utc::now();
+        Session {
+            id: id.to_string(),
+            slug: id.to_string(),
+            project_id: "default".to_string(),
+            directory: ".".to_string(),
+            workspace_identity: None,
+            parent_id: None,
+            title: "test".to_string(),
+            version: "1".to_string(),
+            time: SessionTime {
+                created: now.timestamp_millis(),
+                updated: now.timestamp_millis(),
+                compacting: None,
+                archived: None,
+            },
+            messages: vec![],
+            summary: None,
+            share: None,
+            revert: None,
+            permission: None,
+            usage: None,
+            status: SessionStatus::Active,
+            task: None,
+            metadata: HashMap::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn replace_for_session_replaces_only_target_session() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        session_repo
+            .create(&session("ses_1"))
+            .await
+            .expect("create ses_1");
+        session_repo
+            .create(&session("ses_2"))
+            .await
+            .expect("create ses_2");
+        let repo = MessageRepository::new(pool);
+
+        repo.create(&message("ses_1", "msg_1", "one"))
+            .await
+            .expect("create one");
+        repo.create(&message("ses_1", "msg_2", "two"))
+            .await
+            .expect("create two");
+        repo.create(&message("ses_2", "msg_other", "other"))
+            .await
+            .expect("create other");
+
+        repo.replace_for_session("ses_1", &[message("ses_1", "msg_new", "replaced")])
+            .await
+            .expect("replace should succeed");
+
+        let ses_1 = repo
+            .list_for_session("ses_1")
+            .await
+            .expect("list ses_1 should succeed");
+        assert_eq!(ses_1.len(), 1);
+        assert_eq!(ses_1[0].id, "msg_new");
+
+        let ses_2 = repo
+            .list_for_session("ses_2")
+            .await
+            .expect("list ses_2 should succeed");
+        assert_eq!(ses_2.len(), 1);
+        assert_eq!(ses_2[0].id, "msg_other");
+    }
+
+    #[tokio::test]
+    async fn message_metadata_round_trips() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        session_repo
+            .create(&session("ses_md"))
+            .await
+            .expect("create ses_md");
+        let repo = MessageRepository::new(pool);
+
+        let mut message = SessionMessage::assistant("ses_md");
+        message.id = "msg_md".to_string();
+        message
+            .metadata
+            .insert("error".to_string(), serde_json::json!("aborted"));
+        message
+            .metadata
+            .insert("finish_reason".to_string(), serde_json::json!("aborted"));
+        message
+            .metadata
+            .insert("completed_at".to_string(), serde_json::json!(123));
+        repo.upsert(&message).await.expect("upsert message");
+
+        let loaded = repo
+            .get("msg_md")
+            .await
+            .expect("get message")
+            .expect("message exists");
+        assert_eq!(
+            loaded
+                .metadata
+                .get("error")
+                .and_then(|value| value.as_str()),
+            Some("aborted")
+        );
+        assert_eq!(
+            loaded
+                .metadata
+                .get("finish_reason")
+                .and_then(|value| value.as_str()),
+            Some("aborted")
+        );
+        assert_eq!(
+            loaded
+                .metadata
+                .get("completed_at")
+                .and_then(|value| value.as_i64()),
+            Some(123)
+        );
+
+        let listed = repo.list_for_session("ses_md").await.expect("list ses_md");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0]
+                .metadata
+                .get("finish_reason")
+                .and_then(|value| value.as_str()),
+            Some("aborted")
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_parts_only_data_loads_with_empty_metadata() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        session_repo
+            .create(&session("ses_legacy"))
+            .await
+            .expect("create ses_legacy");
+
+        let legacy_parts = serde_json::json!([{
+            "id": "prt_1",
+            "part_type": { "type": "text", "text": "legacy" },
+            "created_at": Utc::now().to_rfc3339(),
+        }]);
+        sqlx::query(
+            "INSERT INTO messages (id, session_id, role, created_at, data) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("msg_legacy")
+        .bind("ses_legacy")
+        .bind("assistant")
+        .bind(Utc::now().timestamp_millis())
+        .bind(legacy_parts.to_string())
+        .execute(&pool)
+        .await
+        .expect("insert legacy row");
+
+        let repo = MessageRepository::new(pool);
+        let loaded = repo
+            .get("msg_legacy")
+            .await
+            .expect("get legacy message")
+            .expect("legacy message exists");
+        assert!(loaded.metadata.is_empty());
+        assert_eq!(loaded.parts.len(), 1);
+        assert_eq!(loaded.get_text(), "legacy");
     }
 }

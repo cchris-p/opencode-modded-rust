@@ -2144,6 +2144,7 @@ name = "opencode-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "clap",
  "dirs",
@@ -2154,6 +2155,7 @@ dependencies = [
  "opencode-core",
  "opencode-grep",
  "opencode-lsp",
+ "opencode-oco",
  "opencode-permission",
  "opencode-plugin",
  "opencode-provider",
@@ -2213,7 +2215,9 @@ dependencies = [
 name = "opencode-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
+ "dirs",
  "hex",
  "rand 0.8.5",
  "serde",
@@ -2244,6 +2248,7 @@ dependencies = [
  "async-trait",
  "futures",
  "lsp-types",
+ "opencode-retrieval",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -2279,6 +2284,22 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "opencode-oco"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2342,6 +2363,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "opencode-retrieval"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "opencode-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "opencode-scopemux"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "opencode-lsp",
+ "opencode-retrieval",
+ "opencode-tool",
+ "opencode-types",
+ "opencode-watcher",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tree-sitter",
+]
+
+[[package]]
 name = "opencode-server"
 version = "0.1.0"
 dependencies = [
@@ -2356,11 +2409,14 @@ dependencies = [
  "opencode-agent",
  "opencode-config",
  "opencode-core",
+ "opencode-lsp",
  "opencode-mcp",
+ "opencode-permission",
  "opencode-plugin",
  "opencode-provider",
  "opencode-session",
  "opencode-storage",
+ "opencode-tool",
  "opencode-types",
  "portable-pty",
  "serde",
@@ -2391,6 +2447,8 @@ dependencies = [
  "opencode-mcp",
  "opencode-plugin",
  "opencode-provider",
+ "opencode-retrieval",
+ "opencode-scopemux",
  "opencode-storage",
  "opencode-tool",
  "opencode-types",
@@ -2448,6 +2506,7 @@ dependencies = [
  "opencode-lsp",
  "opencode-permission",
  "opencode-plugin",
+ "opencode-types",
  "opencode-util",
  "regex",
  "reqwest",
@@ -2500,6 +2559,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "unicode-segmentation",
  "unicode-width 0.1.14",
  "uuid",
  "walkdir",
@@ -2544,6 +2604,7 @@ dependencies = [
  "dashmap",
  "glob",
  "notify",
+ "opencode-types",
  "parking_lot",
  "serde",
  "serde_json",
@@ -3305,6 +3366,7 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -4328,22 +4390,23 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.24.7"
+version = "0.26.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5387dffa7ffc7d2dae12b50c6f7aab8ff79d6210147c6613561fc3d474c6f75"
+checksum = "17ebdd3a5a7e28a1890b876fdbd0c3c0fe0a6336cffaa104f11b9f720c9daa29"
 dependencies = [
  "cc",
  "regex",
  "regex-syntax",
+ "serde_json",
  "streaming-iterator",
  "tree-sitter-language",
 ]
 
 [[package]]
 name = "tree-sitter-bash"
-version = "0.23.3"
+version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "329a4d48623ac337d42b1df84e81a1c9dbb2946907c102ca72db158c1964a52e"
+checksum = "9e5ec769279cc91b561d3df0d8a5deb26b0ad40d183127f409494d6d8fc53062"
 dependencies = [
  "cc",
  "tree-sitter-language",

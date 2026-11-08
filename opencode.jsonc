@@ -1,5 +1,6 @@
 {
-  "model": "opencode/trinity-large-preview-free",
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-flash",
   "provider": {
   }
 }

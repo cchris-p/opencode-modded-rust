@@ -169,10 +169,24 @@ pub struct Usage {
     pub completion_tokens: u64,
     #[serde(default)]
     pub total_tokens: u64,
-    #[serde(default)]
+    #[serde(default, alias = "prompt_cache_hit_tokens")]
     pub cache_read_input_tokens: Option<u64>,
     #[serde(default)]
     pub cache_creation_input_tokens: Option<u64>,
+}
+
+impl Usage {
+    /// Cached input tokens read. DeepSeek reports these as
+    /// `prompt_cache_hit_tokens`, aliased into `cache_read_input_tokens`.
+    pub fn cache_read_tokens(&self) -> u64 {
+        self.cache_read_input_tokens.unwrap_or(0)
+    }
+
+    /// Uncached input tokens. DeepSeek reports `prompt_cache_miss_tokens`;
+    /// otherwise derive it from the prompt total minus the cache hit.
+    pub fn cache_miss_tokens(&self) -> u64 {
+        self.prompt_tokens.saturating_sub(self.cache_read_tokens())
+    }
 }
 
 impl Message {
@@ -253,5 +267,24 @@ impl ChatRequest {
     pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
         self.tools = Some(tools);
         self
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn deepseek_cache_hit_alias_populates_cache_read() {
+        let usage: Usage = serde_json::from_value(serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "prompt_cache_hit_tokens": 80,
+            "prompt_cache_miss_tokens": 20
+        }))
+        .expect("usage parses");
+
+        assert_eq!(usage.cache_read_tokens(), 80);
+        assert_eq!(usage.cache_miss_tokens(), 20);
     }
 }

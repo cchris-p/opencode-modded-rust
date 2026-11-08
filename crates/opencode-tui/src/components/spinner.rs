@@ -78,7 +78,10 @@ pub type Spinner = KnightRiderSpinner;
 
 impl KnightRiderSpinner {
     pub fn new() -> Self {
-        Self::with_color(Color::Rgb(255, 0, 0))
+        // Neutral default; callers provide the active theme/agent color via
+        // `with_color`/`set_color`. `Reset` falls back to the terminal default
+        // foreground instead of a hardcoded palette color.
+        Self::with_color(Color::Reset)
     }
 
     pub fn with_color(base_color: Color) -> Self {

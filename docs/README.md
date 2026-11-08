@@ -1,6 +1,6 @@
-# scopemux-code documentation index
+# opencode-modded-rust documentation index
 
-This documentation set corresponds to the current code state of `scopemux-code` (repository shorthand: `opencode-modded-rust`).
+This documentation set corresponds to the current code state of `opencode-modded-rust`.
 
  ## Quick links
  
@@ -9,7 +9,8 @@ This documentation set corresponds to the current code state of `scopemux-code` 
  - CLI: `docs/opencode-cli.md`
  - TUI: `docs/opencode-tui.md`
  - Server: `docs/opencode-server.md`
-- Archived session brainstorm artifact: `docs/archive/session.md`
+ - Archived session brainstorm artifact: `docs/archive/session.md`
+ - Session transcript references: `docs/transcripts/`
 - Wiki index: `wiki/README.md`
 - Vision: `wiki/vision.md`
 - Version roadmap: `wiki/v1.md`, `wiki/v2.md`, `wiki/v3.md`
@@ -39,7 +40,9 @@ This documentation set corresponds to the current code state of `scopemux-code` 
 
  ## Code and documentation conventions
 
- - The command name is still `opencode` (for compatibility with existing scripts).
+ - `opencode-modded-rust` is the canonical product name in product-facing and planning docs; `scopemux-code` is a retired/legacy name.
+ - The command name is `opencode-modded-rust` (launched via `omr`/`ort`).
+ - `opencode-*` document and crate names follow the current code layout and are not alternate product branding.
  - Documentation should follow the source code and `--help` output as the source of truth.
  - Behaviour differences or refactoring plans are documented in `docs/overview/` (if that directory exists).
  - Product direction, version planning, and invariants live in `wiki/` and `invariants/`.

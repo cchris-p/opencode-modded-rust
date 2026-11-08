@@ -1,8 +1,7 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use std::io::{self, BufRead, Write};
+use serde::Deserialize;
 
-use crate::{Tool, ToolContext, ToolError, ToolResult};
+use crate::{QuestionDef, Tool, ToolContext, ToolError, ToolResult};
 
 pub struct QuestionTool;
 
@@ -12,36 +11,21 @@ impl QuestionTool {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct QuestionInput {
-    #[serde(rename = "questions")]
     questions: Vec<QuestionDef>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct QuestionDef {
-    #[serde(rename = "question")]
-    question: String,
-    #[serde(rename = "header")]
-    header: Option<String>,
-    #[serde(rename = "options", default)]
-    options: Vec<QuestionOption>,
-    #[serde(rename = "multiple", default)]
-    multiple: bool,
-}
+const DESCRIPTION: &str = "Use this tool when you need to ask the user questions during execution. This allows you to:
+1. Gather user preferences or requirements
+2. Clarify ambiguous instructions
+3. Get decisions on implementation choices as you work
+4. Offer choices to the user about what direction to take.
 
-#[derive(Debug, Serialize, Deserialize)]
-struct QuestionOption {
-    #[serde(rename = "label")]
-    label: String,
-    #[serde(rename = "description", default)]
-    description: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct QuestionResponse {
-    answers: Vec<String>,
-}
+Usage notes:
+- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options
+- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one
+- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label";
 
 #[async_trait]
 impl Tool for QuestionTool {
@@ -50,7 +34,7 @@ impl Tool for QuestionTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the user clarifying questions during execution. Use to gather preferences, clarify ambiguous requests, or get decisions on implementation choices."
+        DESCRIPTION
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -59,36 +43,49 @@ impl Tool for QuestionTool {
             "properties": {
                 "questions": {
                     "type": "array",
+                    "description": "Questions to ask",
                     "items": {
                         "type": "object",
                         "properties": {
                             "question": {
                                 "type": "string",
-                                "description": "The complete question to ask"
+                                "description": "Complete question"
                             },
                             "header": {
                                 "type": "string",
-                                "description": "Short label for the question (max 30 chars)"
+                                "maxLength": 30,
+                                "description": "Very short label (max 30 chars)"
                             },
                             "multiple": {
                                 "type": "boolean",
                                 "default": false,
-                                "description": "Allow selecting multiple options"
+                                "description": "Allow selecting multiple choices"
+                            },
+                            "custom": {
+                                "type": "boolean",
+                                "default": true,
+                                "description": "Allow typing a custom answer (default: true)"
                             },
                             "options": {
                                 "type": "array",
+                                "description": "Available choices",
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "label": {"type": "string"},
-                                        "description": {"type": "string"}
+                                        "label": {
+                                            "type": "string",
+                                            "description": "Display text (1-5 words, concise)"
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "Explanation of choice"
+                                        }
                                     },
-                                    "required": ["label"]
-                                },
-                                "description": "Available choices for the user"
+                                    "required": ["label", "description"]
+                                }
                             }
                         },
-                        "required": ["question"]
+                        "required": ["question", "header", "options"]
                     }
                 }
             },
@@ -99,120 +96,288 @@ impl Tool for QuestionTool {
     async fn execute(
         &self,
         args: serde_json::Value,
-        _ctx: ToolContext,
+        ctx: ToolContext,
     ) -> Result<ToolResult, ToolError> {
         let input: QuestionInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
 
-        let mut all_answers: Vec<String> = Vec::new();
-
-        for q in input.questions.iter() {
-            let answer = ask_question(q)?;
-            all_answers.extend(answer);
+        if input.questions.is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "at least one question is required".to_string(),
+            ));
         }
 
-        let response = QuestionResponse {
-            answers: all_answers,
-        };
+        let answers = ctx.question(input.questions.clone()).await?;
 
-        let output = serde_json::to_string_pretty(&response)
-            .unwrap_or_else(|_| format!("{:?}", response.answers));
+        let output = to_model_output(&input.questions, &answers);
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("answers".to_string(), serde_json::json!(answers));
 
         Ok(ToolResult {
-            title: "User response received".to_string(),
+            title: "Question answered".to_string(),
             output,
-            metadata: std::collections::HashMap::new(),
+            metadata,
             truncated: false,
         })
     }
 }
 
-fn ask_question(q: &QuestionDef) -> Result<Vec<String>, ToolError> {
-    println!();
-
-    if let Some(ref header) = q.header {
-        println!("┌─ {} ─────────────────", header);
-    } else {
-        println!("┌─ Question ─────────────────");
-    }
-    println!("│");
-    println!("│ {}", q.question);
-    println!("│");
-
-    if q.options.is_empty() {
-        println!("└─ Type your answer: ");
-        print!("> ");
-        io::stdout()
-            .flush()
-            .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
-
-        let stdin = io::stdin();
-        let mut answer = String::new();
-        stdin
-            .lock()
-            .read_line(&mut answer)
-            .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
-
-        return Ok(vec![answer.trim().to_string()]);
-    }
-
-    println!("│ Options:");
-    for (i, opt) in q.options.iter().enumerate() {
-        let num = i + 1;
-        if let Some(ref desc) = opt.description {
-            println!("│   {}. {} - {}", num, opt.label, desc);
-        } else {
-            println!("│   {}. {}", num, opt.label);
-        }
-    }
-    println!("│");
-
-    if q.multiple {
-        println!("└─ Enter choices (comma-separated, e.g., 1,3): ");
-    } else {
-        println!("└─ Enter your choice: ");
-    }
-
-    print!("> ");
-    io::stdout()
-        .flush()
-        .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
-
-    let stdin = io::stdin();
-    let mut input = String::new();
-    stdin
-        .lock()
-        .read_line(&mut input)
-        .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
-
-    let input = input.trim();
-    let answers: Vec<String> = input
-        .split(',')
-        .filter_map(|s| {
-            let s = s.trim();
-            if s.is_empty() {
-                return None;
-            }
-
-            if let Ok(num) = s.parse::<usize>() {
-                if num > 0 && num <= q.options.len() {
-                    return Some(q.options[num - 1].label.clone());
-                }
-            }
-
-            Some(s.to_string())
+fn to_model_output(questions: &[QuestionDef], answers: &[Vec<String>]) -> String {
+    let formatted = questions
+        .iter()
+        .enumerate()
+        .map(|(index, question)| {
+            let rendered = answers
+                .get(index)
+                .filter(|answer| !answer.is_empty())
+                .map(|answer| answer.join(", "))
+                .unwrap_or_else(|| "Unanswered".to_string());
+            format!("\"{}\"=\"{}\"", question.question, rendered)
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .join(", ");
 
-    if answers.is_empty() && !q.options.is_empty() {
-        return Ok(vec![q.options[0].label.clone()]);
-    }
-
-    Ok(answers)
+    format!(
+        "User has answered your questions: {}. You can now continue with the user's answers in mind.",
+        formatted
+    )
 }
 
 impl Default for QuestionTool {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::QuestionOption;
+
+    fn question(header: &str) -> QuestionDef {
+        QuestionDef {
+            question: "Which database?".to_string(),
+            header: header.to_string(),
+            options: vec![
+                QuestionOption {
+                    label: "PostgreSQL".to_string(),
+                    description: "Relational database".to_string(),
+                },
+                QuestionOption {
+                    label: "SQLite".to_string(),
+                    description: "Embedded database".to_string(),
+                },
+            ],
+            multiple: false,
+            custom: true,
+        }
+    }
+
+    #[test]
+    fn parses_question_with_required_header_and_option_description() {
+        let input: QuestionInput = serde_json::from_value(serde_json::json!({
+            "questions": [{
+                "question": "Which database?",
+                "header": "Database",
+                "options": [{"label": "PostgreSQL", "description": "Relational database"}]
+            }]
+        }))
+        .expect("valid question input");
+
+        assert_eq!(input.questions[0].header, "Database");
+        assert_eq!(
+            input.questions[0].options[0].description,
+            "Relational database"
+        );
+        assert!(!input.questions[0].multiple);
+        assert!(input.questions[0].custom);
+    }
+
+    #[test]
+    fn missing_header_is_rejected() {
+        let result: Result<QuestionInput, _> = serde_json::from_value(serde_json::json!({
+            "questions": [{
+                "question": "Which database?",
+                "options": [{"label": "PostgreSQL", "description": "Relational database"}]
+            }]
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn missing_option_description_is_rejected() {
+        let result: Result<QuestionInput, _> = serde_json::from_value(serde_json::json!({
+            "questions": [{
+                "question": "Which database?",
+                "header": "Database",
+                "options": [{"label": "PostgreSQL"}]
+            }]
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn multiple_defaults_to_false_and_custom_to_true() {
+        let input: QuestionInput = serde_json::from_value(serde_json::json!({
+            "questions": [{
+                "question": "Q",
+                "header": "H",
+                "options": []
+            }]
+        }))
+        .expect("valid question input");
+
+        assert!(!input.questions[0].multiple);
+        assert!(input.questions[0].custom);
+    }
+
+    #[test]
+    fn custom_can_be_explicitly_disabled() {
+        let input: QuestionInput = serde_json::from_value(serde_json::json!({
+            "questions": [{
+                "question": "Q",
+                "header": "H",
+                "options": [],
+                "custom": false
+            }]
+        }))
+        .expect("valid question input");
+
+        assert!(!input.questions[0].custom);
+    }
+
+    #[test]
+    fn model_output_single_answer() {
+        let questions = vec![question("Database")];
+        let output = to_model_output(&questions, &[vec!["PostgreSQL".to_string()]]);
+        assert_eq!(
+            output,
+            "User has answered your questions: \"Which database?\"=\"PostgreSQL\". You can now continue with the user's answers in mind."
+        );
+    }
+
+    #[test]
+    fn model_output_joins_multi_select_and_marks_unanswered() {
+        let mut first = question("Database");
+        first.multiple = true;
+        let second = QuestionDef {
+            question: "Extras?".to_string(),
+            header: "Extras".to_string(),
+            options: vec![],
+            multiple: false,
+            custom: true,
+        };
+        let output = to_model_output(
+            &[first, second],
+            &[vec!["A".to_string(), "B".to_string()], vec![]],
+        );
+        assert_eq!(
+            output,
+            "User has answered your questions: \"Which database?\"=\"A, B\", \"Extras?\"=\"Unanswered\". You can now continue with the user's answers in mind."
+        );
+    }
+
+    #[test]
+    fn model_output_preserves_custom_text_answer() {
+        let questions = vec![question("Database")];
+        let output = to_model_output(&questions, &[vec!["My custom database".to_string()]]);
+        assert!(output.contains("\"Which database?\"=\"My custom database\""));
+    }
+
+    #[test]
+    fn parameters_require_header_options_and_option_description() {
+        let schema = QuestionTool::new().parameters();
+        let item = &schema["properties"]["questions"]["items"];
+        let required = item["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::json!("question")));
+        assert!(required.contains(&serde_json::json!("header")));
+        assert!(required.contains(&serde_json::json!("options")));
+        let option_required = item["properties"]["options"]["items"]["required"]
+            .as_array()
+            .unwrap();
+        assert!(option_required.contains(&serde_json::json!("label")));
+        assert!(option_required.contains(&serde_json::json!("description")));
+        assert_eq!(
+            item["properties"]["custom"]["default"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_uses_callback_and_preserves_per_question_answers() {
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into())
+            .with_ask_question(|questions| async move {
+                assert_eq!(questions.len(), 2);
+                Ok(vec![
+                    vec!["A".to_string(), "B".to_string()],
+                    vec!["C".to_string()],
+                ])
+            });
+
+        let result = QuestionTool::new()
+            .execute(
+                serde_json::json!({
+                    "questions": [
+                        {
+                            "question": "Q1",
+                            "header": "H1",
+                            "options": [
+                                {"label": "A", "description": "a"},
+                                {"label": "B", "description": "b"}
+                            ],
+                            "multiple": true
+                        },
+                        {
+                            "question": "Q2",
+                            "header": "H2",
+                            "options": [{"label": "C", "description": "c"}]
+                        }
+                    ]
+                }),
+                ctx,
+            )
+            .await
+            .expect("question callback resolves");
+
+        assert_eq!(
+            result.metadata["answers"],
+            serde_json::json!([["A", "B"], ["C"]])
+        );
+        assert_eq!(
+            result.output,
+            "User has answered your questions: \"Q1\"=\"A, B\", \"Q2\"=\"C\". You can now continue with the user's answers in mind."
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_without_callback_errors_instead_of_reading_stdin() {
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into());
+
+        let result = QuestionTool::new()
+            .execute(
+                serde_json::json!({
+                    "questions": [{
+                        "question": "Q",
+                        "header": "H",
+                        "options": [{"label": "A", "description": "a"}]
+                    }]
+                }),
+                ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_empty_question_list() {
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into());
+
+        let result = QuestionTool::new()
+            .execute(serde_json::json!({ "questions": [] }), ctx)
+            .await;
+
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
     }
 }

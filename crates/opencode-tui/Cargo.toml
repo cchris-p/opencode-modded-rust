@@ -29,7 +29,7 @@ walkdir = { workspace = true }
 syntect = { workspace = true }
 
 # TUI dependencies
-ratatui = "0.27"
+ratatui = { version = "0.27", features = ["unstable-rendered-line-info"] }
 crossterm = { version = "0.27", features = ["event-stream"] }
 atty = "0.2"
 nucleo-matcher = { workspace = true }
@@ -39,6 +39,7 @@ similar = { workspace = true }
 tokio-stream = { workspace = true }
 futures = { workspace = true }
 unicode-width = "0.1"
+unicode-segmentation = "1"
 uuid = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
 dirs = { workspace = true }

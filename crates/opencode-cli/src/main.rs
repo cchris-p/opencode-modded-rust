@@ -28,11 +28,11 @@ use opencode_session::system::{EnvironmentContext, SystemPrompt};
 use opencode_storage::{Database, MessageRepository, SessionRepository};
 use opencode_tool::skill::list_available_skills;
 use opencode_tool::{registry::create_default_registry, ToolContext};
-use opencode_types::{MessagePart, Session, SessionMessage};
+use opencode_types::{MessagePart, MessageRole, PartType, Session, SessionMessage, SessionStatus};
 
 #[derive(Parser)]
-#[command(name = "opencode")]
-#[command(about = "OpenCode - Open source AI coding agent", long_about = None)]
+#[command(name = "opencode-modded-rust")]
+#[command(about = "opencode-modded-rust - Rust-native AI coding agent", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -66,8 +66,10 @@ enum Commands {
         mdns_domain: String,
         #[arg(long)]
         cors: Vec<String>,
+        #[arg(long, value_name = "URL")]
+        attach: Option<String>,
     },
-    #[command(about = "Attach TUI to a running OpenCode server")]
+    #[command(about = "Attach TUI to a running opencode-modded-rust server")]
     Attach {
         #[arg(value_name = "URL")]
         url: String,
@@ -78,7 +80,7 @@ enum Commands {
         #[arg(short = 'p', long)]
         password: Option<String>,
     },
-    #[command(about = "Run opencode with a message")]
+    #[command(about = "Run opencode-modded-rust with a message")]
     Run {
         #[arg(value_name = "MESSAGE", trailing_var_arg = true)]
         message: Vec<String>,
@@ -113,12 +115,37 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         thinking: bool,
     },
+    #[command(
+        about = "Generate a commit message and commit staged changes (OpenCommit-compatible)",
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        disable_help_flag = true,
+        disable_version_flag = true
+    )]
+    Oco {
+        #[arg(
+            value_name = "ARGS",
+            num_args = 0..,
+            allow_hyphen_values = true,
+            trailing_var_arg = true
+        )]
+        args: Vec<String>,
+    },
+    #[command(about = "Manage CLI task workflows")]
+    Task {
+        #[command(subcommand)]
+        action: TaskCommands,
+    },
     #[command(about = "Start HTTP server")]
     Serve {
         #[arg(long, default_value_t = 0)]
         port: u16,
         #[arg(long, default_value = "127.0.0.1")]
         hostname: String,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+        #[arg(long = "startup-json", default_value_t = false)]
+        startup_json: bool,
         #[arg(long, default_value_t = false)]
         mdns: bool,
         #[arg(long = "mdns-domain", default_value = "opencode.local")]
@@ -229,19 +256,19 @@ enum Commands {
         #[command(subcommand)]
         action: GithubCommands,
     },
-    #[command(about = "Fetch and checkout a GitHub PR branch, then run opencode")]
+    #[command(about = "Fetch and checkout a GitHub PR branch, then run opencode-modded-rust")]
     Pr {
         #[arg(value_name = "NUMBER")]
         number: u32,
     },
-    #[command(about = "Upgrade opencode to latest or specific version")]
+    #[command(about = "Upgrade opencode-modded-rust to latest or specific version")]
     Upgrade {
         #[arg(value_name = "TARGET")]
         target: Option<String>,
         #[arg(short = 'm', long)]
         method: Option<String>,
     },
-    #[command(about = "Uninstall opencode and remove related files")]
+    #[command(about = "Uninstall opencode-modded-rust and remove related files")]
     Uninstall {
         #[arg(short = 'c', long = "keep-config", default_value_t = false)]
         keep_config: bool,
@@ -283,6 +310,77 @@ enum DbCommands {
 }
 
 #[derive(Subcommand)]
+enum TaskCommands {
+    #[command(about = "Start a new task session and submit a prompt")]
+    New {
+        #[arg(value_name = "PROMPT")]
+        prompt: Vec<String>,
+        #[arg(short = 'f', long = "file", value_name = "PATH")]
+        file: Vec<PathBuf>,
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long, default_value_t = false)]
+        stream: bool,
+    },
+    #[command(about = "Send a follow-up prompt to the selected task session")]
+    Send {
+        #[arg(value_name = "PROMPT")]
+        prompt: Vec<String>,
+        #[arg(short = 'f', long = "file", value_name = "PATH")]
+        file: Vec<PathBuf>,
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+        #[arg(long, default_value_t = false)]
+        stream: bool,
+    },
+    #[command(about = "View a task session transcript without opening the TUI")]
+    View {
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    #[command(about = "Show task session status from the selected server")]
+    Status {
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    #[command(about = "Manage the default CLI task target")]
+    Target {
+        #[command(subcommand)]
+        action: TaskTargetCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskTargetCommands {
+    #[command(about = "List explicit task target candidates and their sessions")]
+    List {
+        #[arg(long = "server", value_name = "URL")]
+        server: Vec<String>,
+    },
+    #[command(about = "Select the default task target")]
+    Select {
+        #[arg(long = "server", value_name = "URL")]
+        server: Option<String>,
+        #[arg(long = "session", value_name = "SESSION_ID")]
+        session: Option<String>,
+    },
+    #[command(about = "Show the selected default task target")]
+    Show,
+    #[command(about = "Clear the selected default task target")]
+    Clear,
+}
+
+#[derive(Subcommand)]
 enum SessionCommands {
     #[command(about = "List sessions")]
     List {
@@ -297,6 +395,26 @@ enum SessionCommands {
     Show {
         #[arg(required = true)]
         session_id: String,
+    },
+    #[command(about = "Find sessions by name (title, id, or slug)")]
+    Find {
+        #[arg(value_name = "NAME")]
+        name: String,
+        #[arg(long = "max-count", short = 'n', default_value_t = 20)]
+        max_count: i64,
+        #[arg(long, default_value = "table")]
+        format: SessionListFormat,
+        #[arg(long)]
+        project: Option<String>,
+    },
+    #[command(about = "Show a diagnostic for a session by name or id")]
+    Inspect {
+        #[arg(value_name = "NAME_OR_ID")]
+        target: String,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+        #[arg(long, default_value_t = false)]
+        full: bool,
     },
     #[command(about = "Delete a session")]
     Delete {
@@ -376,6 +494,17 @@ enum DebugCommands {
     Scrap,
     #[command(about = "Wait indefinitely (for debugging)")]
     Wait,
+    #[command(about = "Capture native stacks from a running process (macOS `sample`)")]
+    Stacks {
+        #[arg(long, value_name = "PID", conflicts_with = "port")]
+        pid: Option<u32>,
+        #[arg(long, value_name = "PORT", conflicts_with = "pid")]
+        port: Option<u16>,
+        #[arg(long, default_value_t = 5)]
+        seconds: u32,
+        #[arg(long, value_name = "PATH")]
+        out: Option<String>,
+    },
     #[command(about = "Snapshot debugging utilities")]
     Snapshot {
         #[command(subcommand)]
@@ -404,6 +533,11 @@ enum DebugCommands {
         tool: Option<String>,
         #[arg(long)]
         params: Option<String>,
+    },
+    #[command(about = "Show resolved Ollama endpoint configuration")]
+    Ollama {
+        #[arg(long, default_value_t = false)]
+        probe: bool,
     },
 }
 
@@ -571,7 +705,50 @@ enum GithubCommands {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let invoked_as_oco = raw_args
+        .first()
+        .and_then(|arg| Path::new(arg).file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| name == "oco" || name == "opencommit")
+        .unwrap_or(false);
+    if invoked_as_oco {
+        let args = raw_args
+            .iter()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        return opencode_oco::run(args).await;
+    }
+
     let cli = Cli::parse();
+
+    // Resolve the native Ollama endpoint once, before any server child is
+    // spawned, so provider bootstrap and the TUI server share one answer.
+    let cli_model = match &cli.command {
+        Some(Commands::Tui { model, .. }) | Some(Commands::Run { model, .. }) => model.clone(),
+        _ => None,
+    };
+    let ollama = resolve_ollama_startup(cli_model.as_deref());
+    let ollama_default_model = if cli_model.is_none() {
+        ollama.model_ref.clone()
+    } else {
+        None
+    };
+    let probes_ollama = matches!(
+        &cli.command,
+        Some(Commands::Tui { .. })
+            | Some(Commands::Run { .. })
+            | Some(Commands::Serve { .. })
+            | Some(Commands::Web { .. })
+            | Some(Commands::Acp { .. })
+    );
+    if probes_ollama && ollama.explicitly_configured() {
+        if let Err(reason) = opencode_provider::ollama::probe(&ollama, Duration::from_secs(3)).await
+        {
+            eprintln!("{}", ollama.connection_failure_message(&reason));
+        }
+    }
 
     match cli.command {
         Some(Commands::Tui {
@@ -587,6 +764,7 @@ async fn main() -> anyhow::Result<()> {
             mdns,
             mdns_domain,
             cors,
+            attach,
         }) => {
             run_tui(
                 project,
@@ -601,7 +779,7 @@ async fn main() -> anyhow::Result<()> {
                 mdns,
                 mdns_domain,
                 cors,
-                None,
+                attach,
                 None,
             )
             .await?;
@@ -655,7 +833,7 @@ async fn main() -> anyhow::Result<()> {
                 session,
                 fork,
                 share,
-                model,
+                model.or(ollama_default_model.clone()),
                 agent,
                 file,
                 format,
@@ -668,14 +846,32 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
+        Some(Commands::Oco { args }) => {
+            opencode_oco::run(args).await?;
+        }
+        Some(Commands::Task { action }) => {
+            handle_task_command(action).await?;
+        }
         Some(Commands::Serve {
             port,
             hostname,
+            cwd,
+            startup_json,
             mdns,
             mdns_domain,
             cors,
         }) => {
-            run_server_command("serve", port, hostname, mdns, mdns_domain, cors).await?;
+            run_server_command(
+                "serve",
+                port,
+                hostname,
+                cwd,
+                startup_json,
+                mdns,
+                mdns_domain,
+                cors,
+            )
+            .await?;
         }
         Some(Commands::Web {
             port,
@@ -763,7 +959,7 @@ async fn main() -> anyhow::Result<()> {
             handle_generate_command().await?;
         }
         Some(Commands::Version) => {
-            println!("OpenCode {}", env!("CARGO_PKG_VERSION"));
+            println!("opencode-modded-rust {}", env!("CARGO_PKG_VERSION"));
         }
         None => {
             run_tui(
@@ -815,31 +1011,19 @@ async fn run_tui(
         anyhow::bail!("--fork requires --continue or --session");
     }
 
-    let mut server_handle = None;
-    let mut mdns_publisher: Option<MdnsPublisher> = None;
+    let mut local_server = if attach_url.is_none() {
+        Some(prepare_local_tui_server(port, hostname, mdns, mdns_domain, cors).await?)
+    } else {
+        None
+    };
     let base_url = if let Some(url) = attach_url {
         url
     } else {
-        let bind_host = if mdns && hostname == "127.0.0.1" {
-            "0.0.0.0".to_string()
-        } else {
-            hostname.clone()
-        };
-        let client_host = if bind_host == "0.0.0.0" {
-            "127.0.0.1".to_string()
-        } else {
-            bind_host.clone()
-        };
-        let bind_port = if port == 0 { 3000 } else { port };
-        let addr: SocketAddr = format!("{}:{}", bind_host, bind_port).parse()?;
-        let server_url = format!("http://{}:{}", client_host, bind_port);
-        eprintln!("Starting local server for TUI at {}", server_url);
-        opencode_server::set_cors_whitelist(cors.clone());
-        let mut handle = tokio::spawn(async move { opencode_server::run_server(addr).await });
-        wait_for_server_ready(&server_url, Duration::from_secs(90), Some(&mut handle)).await?;
-        server_handle = Some(handle);
-        mdns_publisher = start_mdns_publisher_if_needed(mdns, &bind_host, bind_port, &mdns_domain);
-        server_url
+        local_server
+            .as_ref()
+            .expect("local server was prepared")
+            .base_url
+            .clone()
     };
 
     let selected_session = resolve_requested_session(continue_last, session, fork).await?;
@@ -855,9 +1039,9 @@ async fn run_tui(
         std::env::set_var("OPENCODE_TUI_SESSION", session_id);
     }
 
-    let run_result = tokio::task::spawn_blocking(|| {
-        opencode_tui::run_tui()
-    }).await.map_err(|e| anyhow::anyhow!("TUI task panicked: {}", e))?;
+    let run_result = tokio::task::spawn_blocking(|| opencode_tui::run_tui())
+        .await
+        .map_err(|e| anyhow::anyhow!("TUI task panicked: {}", e))?;
 
     std::env::remove_var("OPENCODE_TUI_BASE_URL");
     std::env::remove_var("OPENCODE_TUI_MODEL");
@@ -865,12 +1049,320 @@ async fn run_tui(
     std::env::remove_var("OPENCODE_TUI_AGENT");
     std::env::remove_var("OPENCODE_TUI_SESSION");
 
-    drop(mdns_publisher);
-    if let Some(handle) = server_handle {
-        handle.abort();
+    let tui_exit = run_result?;
+    match tui_exit {
+        opencode_tui::TuiExit::Detach { session_id } => {
+            if let Some(server) = local_server.as_mut() {
+                server.detach();
+            }
+            let workspace = std::env::current_dir()?;
+            eprintln!("Detached from TUI server.");
+            eprintln!("Server: {}", base_url);
+            eprintln!("Workspace: {}", workspace.display());
+            for line in reattach_hint_lines(&base_url, session_id.as_deref(), resume_launcher()) {
+                eprintln!("{line}");
+            }
+        }
+        opencode_tui::TuiExit::Exit { session_id } => {
+            print_resume_hint(session_id.as_deref());
+        }
     }
 
-    run_result
+    Ok(())
+}
+
+/// Print a copy-pasteable command that reopens the session the user just left.
+///
+/// FEAT-033: a normal TUI exit tears down the local server, so a server URL
+/// would be stale. A session-scoped CLI command relaunches a fresh server for
+/// the current workspace and reopens the stored session instead.
+fn print_resume_hint(session_id: Option<&str>) {
+    let launcher = resume_launcher();
+    for line in resume_hint_lines(session_id, launcher) {
+        eprintln!("{line}");
+    }
+}
+
+/// Choose the launcher named in the resume hint.
+///
+/// The personal `ort` wrapper exports `OPENCODE_RUST_REPO`; when that is
+/// present, prefer `ort` so the hint resolves to this Rust build instead of a
+/// possibly-vanilla `opencode` on `PATH`.
+fn resume_launcher() -> &'static str {
+    resume_launcher_from(std::env::var_os("OPENCODE_RUST_REPO").is_some())
+}
+
+fn resume_launcher_from(rust_launcher_env_present: bool) -> &'static str {
+    if rust_launcher_env_present {
+        "ort"
+    } else {
+        "opencode-modded-rust"
+    }
+}
+
+fn resume_hint_lines(session_id: Option<&str>, launcher: &str) -> Vec<String> {
+    match session_id {
+        Some(session_id) if !session_id.is_empty() => vec![
+            "Resume this session:".to_string(),
+            format!("  {launcher} --session {session_id}"),
+        ],
+        _ => vec![
+            "Resume your most recent session:".to_string(),
+            format!("  {launcher} --continue"),
+        ],
+    }
+}
+
+/// Prepare a fresh local server for the TUI in the current working directory.
+///
+/// CLI-003: the launcher never reuses or attaches to a previously recorded
+/// local server. Every `ort` run starts a brand-new server bound to the
+/// workspace it was activated in, so no stale/other-workspace or pre-fix
+/// process can serve the TUI. `opencode-modded-rust attach <url>` remains the explicit
+/// path for intentional re-attachment.
+struct LocalTuiServer {
+    base_url: String,
+    child: Child,
+    terminate_on_drop: bool,
+}
+
+impl LocalTuiServer {
+    fn detach(&mut self) {
+        self.terminate_on_drop = false;
+    }
+}
+
+impl Drop for LocalTuiServer {
+    fn drop(&mut self) {
+        if !self.terminate_on_drop {
+            return;
+        }
+        if matches!(self.child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+async fn prepare_local_tui_server(
+    port: u16,
+    hostname: String,
+    mdns: bool,
+    mdns_domain: String,
+    cors: Vec<String>,
+) -> anyhow::Result<LocalTuiServer> {
+    let cwd = std::env::current_dir()?;
+    let bind_host = if mdns && hostname == "127.0.0.1" {
+        "0.0.0.0".to_string()
+    } else {
+        hostname
+    };
+    let client_host = if bind_host == "0.0.0.0" {
+        "127.0.0.1".to_string()
+    } else {
+        bind_host.clone()
+    };
+    let base_port = if port == 0 { 3000 } else { port };
+
+    // Pick the first free port at or above the requested base port. Port choice
+    // is derived only from current bindability, never from prior launch state.
+    let bind_port = find_available_port(&bind_host, base_port)?;
+    let base_url = format!("http://{}:{}", client_host, bind_port);
+
+    eprintln!(
+        "Starting fresh local server for TUI at {} (workspace {})",
+        base_url,
+        cwd.display()
+    );
+    let child = spawn_detached_tui_server(&cwd, bind_port, &bind_host, mdns, &mdns_domain, &cors)?;
+    let server = LocalTuiServer {
+        base_url: base_url.clone(),
+        child,
+        terminate_on_drop: true,
+    };
+    wait_for_server_ready(&base_url, Duration::from_secs(90), None).await?;
+    Ok(server)
+}
+
+/// Return the first TCP port at or above `base_port` that can be bound on
+/// `host`. Used to give every fresh TUI launch its own port without consulting
+/// any recorded state.
+fn find_available_port(host: &str, base_port: u16) -> anyhow::Result<u16> {
+    const MAX_ATTEMPTS: u16 = 128;
+    for offset in 0..MAX_ATTEMPTS {
+        let Some(port) = base_port.checked_add(offset) else {
+            break;
+        };
+        let addr = format!("{}:{}", host, port);
+        if std::net::TcpListener::bind(&addr).is_ok() {
+            return Ok(port);
+        }
+    }
+    anyhow::bail!(
+        "could not find a free local port for the TUI server starting at {}",
+        base_port
+    )
+}
+
+/// Resolve the durable server log path.
+///
+/// `OPENCODE_SERVER_LOG` overrides the default path. Set it to `0`, `false`,
+/// `off`, or an empty string to disable the durable sink entirely.
+fn resolve_server_log_path(override_value: Option<&str>) -> Option<PathBuf> {
+    if let Some(value) = override_value {
+        let trimmed = value.trim();
+        if trimmed.is_empty()
+            || trimmed.eq_ignore_ascii_case("0")
+            || trimmed.eq_ignore_ascii_case("false")
+            || trimmed.eq_ignore_ascii_case("off")
+        {
+            return None;
+        }
+        return Some(PathBuf::from(trimmed));
+    }
+    let dir = dirs::data_local_dir()?.join("opencode").join("traces");
+    Some(dir.join("server.log"))
+}
+
+/// Resolve the server log path from the environment.
+fn server_log_path() -> Option<PathBuf> {
+    resolve_server_log_path(std::env::var("OPENCODE_SERVER_LOG").ok().as_deref())
+}
+
+/// Format a panic record containing the message, source location, and backtrace.
+fn format_panic_entry(
+    message: &str,
+    location: Option<&std::panic::Location<'_>>,
+    backtrace: &str,
+) -> String {
+    let location = location
+        .map(|location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        })
+        .unwrap_or_else(|| "<unknown>".to_string());
+    format!("\n[PANIC] {message}\n  at {location}\n{backtrace}\n")
+}
+
+/// Install a panic hook that appends panic message, location, and backtrace to
+/// `path`. The hook is process-global, so panics in detached tasks are captured
+/// too. This is durable even when the server is launched with stdio discarded.
+fn install_panic_hook_at(path: PathBuf) {
+    std::panic::set_hook(Box::new(move |info| {
+        let message = if let Some(message) = info.payload().downcast_ref::<&str>() {
+            (*message).to_string()
+        } else if let Some(message) = info.payload().downcast_ref::<String>() {
+            message.clone()
+        } else {
+            "panic with non-string payload".to_string()
+        };
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let entry = format_panic_entry(&message, info.location(), &backtrace.to_string());
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = file.write_all(entry.as_bytes());
+        }
+    }));
+}
+
+/// Ensure the serve process has a durable panic sink. Called at server start.
+fn install_server_panic_hook() {
+    if let Some(path) = server_log_path() {
+        install_panic_hook_at(path);
+    }
+}
+
+fn spawn_detached_tui_server(
+    cwd: &Path,
+    port: u16,
+    hostname: &str,
+    mdns: bool,
+    mdns_domain: &str,
+    cors: &[String],
+) -> anyhow::Result<Child> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = ProcessCommand::new(exe);
+    cmd.current_dir(cwd)
+        .arg("serve")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--hostname")
+        .arg(hostname)
+        .stdin(Stdio::null());
+
+    // BUG-045: route the server's stdout/stderr to a durable log instead of
+    // `/dev/null`, so tracing errors and panic output are not discarded.
+    let server_log = server_log_path().and_then(|path| {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::File::create(&path).ok().map(|file| (path, file))
+    });
+    match server_log {
+        Some((path, file)) => {
+            match file.try_clone() {
+                Ok(stderr) => {
+                    cmd.stdout(Stdio::from(file)).stderr(Stdio::from(stderr));
+                }
+                Err(_) => {
+                    cmd.stdout(Stdio::from(file)).stderr(Stdio::null());
+                }
+            }
+            eprintln!("Server log: {}", path.display());
+        }
+        None => {
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
+
+    if mdns {
+        cmd.arg("--mdns").arg("--mdns-domain").arg(mdns_domain);
+    }
+    for entry in cors {
+        cmd.arg("--cors").arg(entry);
+    }
+
+    Ok(cmd.spawn()?)
+}
+
+/// Build the terminal reattach hint printed after `/detach`.
+///
+/// The detached server is still running and already knows the session the user
+/// was viewing, so the hint carries `--session <id>` when available. Without it,
+/// reattaching opens a fresh session instead of returning to the detached one.
+///
+/// The command is launcher-specific so it is copy-paste runnable in the same
+/// shell that launched the TUI. `ort` injects the `tui` subcommand, so it takes
+/// `--attach <url>`; a bare product command uses the `attach <url>` subcommand.
+/// The command is printed on its own indented line so a label is never pasted as
+/// arguments.
+fn reattach_hint_lines(base_url: &str, session_id: Option<&str>, launcher: &str) -> Vec<String> {
+    let session_suffix = match session_id {
+        Some(id) if !id.is_empty() => format!(" --session {id}"),
+        _ => String::new(),
+    };
+    let command = if launcher == "ort" {
+        format!("{launcher} --attach {base_url}{session_suffix}")
+    } else {
+        format!("{launcher} attach {base_url}{session_suffix}")
+    };
+    let label = if session_suffix.is_empty() {
+        "Reattach to the server:"
+    } else {
+        "Reattach to this session:"
+    };
+    vec![label.to_string(), format!("  {command}")]
 }
 
 async fn resolve_requested_session(
@@ -938,6 +1430,27 @@ async fn wait_for_server_ready(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// Resolve Ollama configuration at startup and export it for the rest of the
+/// process and any spawned server child. The product only talks HTTP, so the
+/// resolved host replaces (rather than augments) `OLLAMA_HOST` downstream.
+fn resolve_ollama_startup(cli_model: Option<&str>) -> opencode_provider::ollama::OllamaResolution {
+    let resolution = opencode_provider::ollama::resolve(cli_model);
+    if resolution.explicitly_configured() {
+        std::env::set_var("OLLAMA_HOST", &resolution.host);
+    }
+    if cli_model.is_none() {
+        if let Some(model_ref) = &resolution.model_ref {
+            let already_set = std::env::var("OPENCODE_TUI_MODEL")
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty());
+            if !already_set {
+                std::env::set_var("OPENCODE_TUI_MODEL", model_ref);
+            }
+        }
+    }
+    resolution
 }
 
 fn parse_model_and_provider(model: Option<String>) -> (Option<String>, Option<String>) {
@@ -1061,6 +1574,72 @@ struct RemoteSessionInfo {
     id: String,
     #[serde(default)]
     parent_id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    directory: Option<String>,
+    #[serde(default)]
+    workspace_identity: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TaskTargetSelection {
+    server: String,
+    #[serde(default)]
+    session: Option<String>,
+    workspace: String,
+    selected_at: i64,
+}
+
+#[derive(Debug)]
+struct CheckedTaskTarget {
+    server: String,
+    available: bool,
+    sessions: Vec<RemoteSessionInfo>,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+struct ResolvedTaskTarget {
+    server: String,
+    session: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskPromptResponse {
+    status: String,
+    message_id: String,
+    model: Option<String>,
+    variant: Option<String>,
+    position: Option<usize>,
+    depth: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RemoteMessageInfo {
+    id: String,
+    role: String,
+    parts: Vec<RemoteMessagePart>,
+    created_at: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RemoteMessagePart {
+    #[serde(rename = "type")]
+    part_type: String,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RemoteSessionStatusInfo {
+    status: String,
+    idle: bool,
+    busy: bool,
+    attempt: Option<u32>,
+    message: Option<String>,
+    next: Option<i64>,
+    position: Option<usize>,
+    depth: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1478,7 +2057,8 @@ async fn run_chat_session(
     }
 
     println!("\n╔══════════════════════════════════════════╗");
-    println!("║        OpenCode Interactive Mode         ║");
+    println!("║         opencode-modded-rust              ║");
+    println!("║            Interactive Mode               ║");
     println!("╚══════════════════════════════════════════╝");
     println!();
     println!("  Model: {}", model.as_deref().unwrap_or("auto"));
@@ -1625,6 +2205,13 @@ async fn process_message(executor: &mut AgentExecutor, input: &str) -> anyhow::R
 fn list_models_interactive(registry: &ProviderRegistry) {
     println!("\nAvailable Models:\n");
     for provider in registry.list() {
+        if !matches!(
+            provider.id(),
+            "openai" | "anthropic" | "deepseek" | "openrouter"
+        ) || opencode_provider::is_provider_temporarily_hidden(provider.id())
+        {
+            continue;
+        }
         println!("  [{}]", provider.id());
         for model in provider.models() {
             println!("    {}", model.id);
@@ -1638,6 +2225,13 @@ fn list_models_interactive(registry: &ProviderRegistry) {
 fn list_providers_interactive(registry: &ProviderRegistry) {
     println!("\nConfigured Providers:\n");
     for provider in registry.list() {
+        if !matches!(
+            provider.id(),
+            "openai" | "anthropic" | "deepseek" | "openrouter"
+        ) || opencode_provider::is_provider_temporarily_hidden(provider.id())
+        {
+            continue;
+        }
         let models_count = provider.models().len();
         println!("  {} - {} model(s)", provider.id(), models_count);
     }
@@ -1674,6 +2268,8 @@ async fn setup_providers(config: &opencode_config::Config) -> anyhow::Result<Pro
         config.model.clone(),
         config.small_model.clone(),
     );
+
+    opencode_provider::ensure_models_dev_cache().await;
 
     Ok(create_registry_from_bootstrap_config(
         &bootstrap_config,
@@ -1730,7 +2326,10 @@ fn provider_to_bootstrap(provider: &opencode_config::ProviderConfig) -> Bootstra
 fn model_to_bootstrap(id: &str, model: &opencode_config::ModelConfig) -> BootstrapConfigModel {
     let mut options = HashMap::new();
     if let Some(api_key) = &model.api_key {
-        options.insert("apiKey".to_string(), serde_json::Value::String(api_key.clone()));
+        options.insert(
+            "apiKey".to_string(),
+            serde_json::Value::String(api_key.clone()),
+        );
     }
 
     let variants = model.variants.as_ref().map(|variants| {
@@ -1743,13 +2342,12 @@ fn model_to_bootstrap(id: &str, model: &opencode_config::ModelConfig) -> Bootstr
     BootstrapConfigModel {
         id: model.model.clone().or_else(|| Some(id.to_string())),
         name: model.name.clone(),
-        provider: model
-            .base_url
-            .as_ref()
-            .map(|url| opencode_provider::bootstrap::ConfigModelProvider {
+        provider: model.base_url.as_ref().map(|url| {
+            opencode_provider::bootstrap::ConfigModelProvider {
                 api: Some(url.clone()),
                 npm: None,
-            }),
+            }
+        }),
         options: (!options.is_empty()).then_some(options),
         variants,
         ..Default::default()
@@ -1804,7 +2402,10 @@ async fn load_plugin_auth_store(config: &opencode_config::Config) -> HashMap<Str
 
     let mut auth_store = HashMap::new();
     for (provider_id, bridge) in loader.auth_bridges().await {
-        match bridge.load().await {
+        let stored_auth = auth_store
+            .get(&provider_id)
+            .and_then(|auth| serde_json::to_value(auth).ok());
+        match bridge.load(stored_auth).await {
             Ok(result) => {
                 if let Some(api_key) = result.api_key {
                     auth_store.insert(
@@ -1854,12 +2455,25 @@ async fn run_server_command(
     mode: &str,
     port: u16,
     hostname: String,
+    cwd: PathBuf,
+    startup_json: bool,
     mdns: bool,
     mdns_domain: String,
     cors: Vec<String>,
 ) -> anyhow::Result<()> {
+    std::env::set_current_dir(&cwd)
+        .map_err(|e| anyhow::anyhow!("Failed to change directory to {}: {}", cwd.display(), e))?;
+    let workspace = std::env::current_dir()?;
+
     if std::env::var("OPENCODE_SERVER_PASSWORD").is_err() {
         eprintln!("Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.");
+    }
+
+    // BUG-045: guarantee a durable record of server errors and panics even when
+    // stdout/stderr are discarded by the launcher.
+    install_server_panic_hook();
+    if let Some(path) = server_log_path() {
+        eprintln!("Server errors are logged to {}", path.display());
     }
 
     let bind_host = if mdns && hostname == "127.0.0.1" {
@@ -1871,9 +2485,42 @@ async fn run_server_command(
     opencode_server::set_cors_whitelist(cors);
     let _mdns_publisher = start_mdns_publisher_if_needed(mdns, &bind_host, bind_port, &mdns_domain);
     let addr: SocketAddr = format!("{}:{}", bind_host, bind_port).parse()?;
-    println!("Starting OpenCode {} server on {}", mode, addr);
+    if startup_json {
+        println!(
+            "{}",
+            serde_json::to_string(&server_startup_event(
+                mode, &bind_host, bind_port, &workspace
+            ))?
+        );
+    } else {
+        println!("Starting opencode-modded-rust {} server on {}", mode, addr);
+    }
     opencode_server::run_server(addr).await?;
     Ok(())
+}
+
+fn server_startup_event(
+    mode: &str,
+    bind_host: &str,
+    bind_port: u16,
+    workspace: &Path,
+) -> serde_json::Value {
+    let display_host = if bind_host == "0.0.0.0" {
+        "localhost"
+    } else {
+        bind_host
+    };
+    let url = format!("http://{}:{}", display_host, bind_port);
+    serde_json::json!({
+        "event": "opencode.server.starting",
+        "mode": mode,
+        "pid": std::process::id(),
+        "bind_host": bind_host,
+        "port": bind_port,
+        "url": url,
+        "health_url": format!("{}/health", url),
+        "workspace": workspace.display().to_string(),
+    })
 }
 
 fn try_open_browser(url: &str) {
@@ -1925,7 +2572,17 @@ async fn run_web_command(
     let url = format!("http://{}:{}", display_host, bind_port);
     println!("Web interface: {}", url);
     try_open_browser(&url);
-    run_server_command("web", bind_port, hostname, mdns, mdns_domain, cors).await
+    run_server_command(
+        "web",
+        bind_port,
+        hostname,
+        PathBuf::from("."),
+        false,
+        mdns,
+        mdns_domain,
+        cors,
+    )
+    .await
 }
 
 async fn run_acp_command(
@@ -1946,7 +2603,17 @@ async fn run_acp_command(
     eprintln!(
         "Warning: no external ACP stdio bridge runtime found; falling back to HTTP server mode."
     );
-    run_server_command("acp", port, hostname, mdns, mdns_domain, cors).await
+    run_server_command(
+        "acp",
+        port,
+        hostname,
+        PathBuf::from("."),
+        false,
+        mdns,
+        mdns_domain,
+        cors,
+    )
+    .await
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -2244,6 +2911,819 @@ fn local_database_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("opencode")
         .join("opencode.db")
+}
+
+fn workspace_task_target_path() -> anyhow::Result<PathBuf> {
+    Ok(std::env::current_dir()?
+        .join(".opencode")
+        .join("task-target.json"))
+}
+
+fn normalize_task_server(server: &str) -> anyhow::Result<String> {
+    let trimmed = server.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        anyhow::bail!("Task target server URL cannot be empty");
+    }
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        anyhow::bail!("Task target server URL must start with http:// or https://");
+    }
+    Ok(trimmed.to_string())
+}
+
+fn load_task_target_selection() -> anyhow::Result<Option<TaskTargetSelection>> {
+    let path = workspace_task_target_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+    Ok(Some(serde_json::from_str(&raw)?))
+}
+
+fn save_task_target_selection(selection: &TaskTargetSelection) -> anyhow::Result<()> {
+    let path = workspace_task_target_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_string_pretty(selection)?)?;
+    Ok(())
+}
+
+fn clear_task_target_selection() -> anyhow::Result<bool> {
+    let path = workspace_task_target_path()?;
+    if path.exists() {
+        fs::remove_file(path)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+async fn check_task_target_server(client: &reqwest::Client, server: &str) -> CheckedTaskTarget {
+    let server = match normalize_task_server(server) {
+        Ok(server) => server,
+        Err(error) => {
+            return CheckedTaskTarget {
+                server: server.to_string(),
+                available: false,
+                sessions: Vec::new(),
+                error: Some(error.to_string()),
+            };
+        }
+    };
+
+    let health = server_url(&server, "/health");
+    match client.get(health).send().await {
+        Ok(response) if response.status().is_success() => {}
+        Ok(response) => {
+            return CheckedTaskTarget {
+                server,
+                available: false,
+                sessions: Vec::new(),
+                error: Some(format!("health check returned {}", response.status())),
+            };
+        }
+        Err(error) => {
+            return CheckedTaskTarget {
+                server,
+                available: false,
+                sessions: Vec::new(),
+                error: Some(error.to_string()),
+            };
+        }
+    }
+
+    let list_endpoint = server_url(&server, "/session?roots=true&limit=100");
+    match client.get(list_endpoint).send().await {
+        Ok(response) => match parse_http_json::<Vec<RemoteSessionInfo>>(response).await {
+            Ok(sessions) => CheckedTaskTarget {
+                server,
+                available: true,
+                sessions,
+                error: None,
+            },
+            Err(error) => CheckedTaskTarget {
+                server,
+                available: false,
+                sessions: Vec::new(),
+                error: Some(format!("failed to list sessions: {}", error)),
+            },
+        },
+        Err(error) => CheckedTaskTarget {
+            server,
+            available: false,
+            sessions: Vec::new(),
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn prompt_line(label: &str) -> anyhow::Result<String> {
+    print!("{}", label);
+    io::stdout().flush()?;
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    Ok(value.trim().to_string())
+}
+
+fn print_checked_task_target(checked: &CheckedTaskTarget, selected: Option<&TaskTargetSelection>) {
+    let is_selected_server = selected
+        .map(|target| target.server == checked.server)
+        .unwrap_or(false);
+    let marker = if is_selected_server { "*" } else { " " };
+    if checked.available {
+        println!("{} {} available", marker, checked.server);
+        if checked.sessions.is_empty() {
+            println!("    no root sessions reported");
+        } else {
+            for session in &checked.sessions {
+                let selected_session = selected
+                    .and_then(|target| target.session.as_deref())
+                    .map(|id| id == session.id)
+                    .unwrap_or(false);
+                let session_marker = if selected_session { "*" } else { " " };
+                let title = session.title.as_deref().unwrap_or("untitled");
+                let directory = session
+                    .workspace_identity
+                    .as_deref()
+                    .or(session.directory.as_deref())
+                    .unwrap_or("");
+                println!(
+                    "  {} {:<30} {:<30} {}",
+                    session_marker,
+                    session.id,
+                    truncate_text(title, 30),
+                    directory
+                );
+            }
+        }
+    } else {
+        println!(
+            "{} {} unavailable ({})",
+            marker,
+            checked.server,
+            checked.error.as_deref().unwrap_or("unknown error")
+        );
+    }
+}
+
+fn selected_task_target(
+    server: Option<String>,
+    session: Option<String>,
+    require_session: bool,
+) -> anyhow::Result<ResolvedTaskTarget> {
+    let selection = load_task_target_selection()?;
+    let server = match server {
+        Some(server) => normalize_task_server(&server)?,
+        None => selection
+            .as_ref()
+            .map(|target| target.server.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No task target selected. Run `opencode-modded-rust task target select --server <url>` or pass --server."
+                )
+            })?,
+    };
+    let session = session.or_else(|| selection.as_ref().and_then(|target| target.session.clone()));
+    if require_session && session.is_none() {
+        anyhow::bail!(
+            "No task session selected. Run `opencode-modded-rust task new ...`, `opencode-modded-rust task target select --server <url> --session <id>`, or pass --session."
+        );
+    }
+    Ok(ResolvedTaskTarget { server, session })
+}
+
+async fn ensure_task_target_available(
+    client: &reqwest::Client,
+    target: &ResolvedTaskTarget,
+) -> anyhow::Result<()> {
+    let checked = check_task_target_server(client, &target.server).await;
+    if !checked.available {
+        anyhow::bail!(
+            "Task target {} is unavailable: {}",
+            checked.server,
+            checked.error.as_deref().unwrap_or("unknown error")
+        );
+    }
+    if let Some(session_id) = target.session.as_deref() {
+        let exists = checked
+            .sessions
+            .iter()
+            .any(|session| session.id == session_id);
+        if !exists {
+            anyhow::bail!(
+                "Task session {} was not reported by target {}",
+                session_id,
+                checked.server
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn create_task_session(
+    client: &reqwest::Client,
+    server: &str,
+    title: Option<&str>,
+) -> anyhow::Result<String> {
+    let endpoint = server_url(server, "/session");
+    let created: RemoteSessionInfo = parse_http_json(
+        client
+            .post(endpoint)
+            .json(&serde_json::json!({ "title": title }))
+            .send()
+            .await?,
+    )
+    .await?;
+    Ok(created.id)
+}
+
+async fn send_task_prompt(
+    client: &reqwest::Client,
+    server: &str,
+    session_id: &str,
+    prompt: String,
+    parts: &[serde_json::Value],
+) -> anyhow::Result<TaskPromptResponse> {
+    let endpoint = server_url(server, &format!("/session/{}/prompt", session_id));
+    let mut body = serde_json::json!({ "message": prompt });
+    if !parts.is_empty() {
+        body["parts"] = serde_json::Value::Array(parts.to_vec());
+    }
+    parse_http_json(client.post(endpoint).json(&body).send().await?).await
+}
+
+/// Maximum size of a file inlined into a prompt for a target without a shared
+/// filesystem (remote server). Mirrors the reference CLI's 10 MiB cap.
+const TASK_ATTACH_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+/// A target is treated as sharing this machine's filesystem only when its host
+/// is loopback. Everything else must receive inline `data:` bytes, because the
+/// server cannot open the client's local path.
+fn server_is_loopback(server: &str) -> bool {
+    match url::Url::parse(server) {
+        Ok(parsed) => match parsed.host() {
+            Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => true,
+        },
+        Err(_) => true,
+    }
+}
+
+/// Classify an attachment as text (UTF-8 round-trip) or by file extension,
+/// matching the reference CLI's text/binary discrimination.
+fn guess_attachment_mime(path: &Path, bytes: &[u8]) -> String {
+    if std::str::from_utf8(bytes)
+        .map(|text| text.as_bytes() == bytes)
+        .unwrap_or(false)
+    {
+        return "text/plain".to_string();
+    }
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// Build the explicit file parts for a task prompt. On a shared filesystem the
+/// part is a `file://` reference the server reads through normal tools; on a
+/// remote target the bytes are inlined as a `data:` URL within the size cap.
+fn build_task_file_parts(
+    server: &str,
+    files: &[PathBuf],
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    use base64::Engine as _;
+
+    let loopback = server_is_loopback(server);
+    let mut parts = Vec::new();
+
+    for raw in files {
+        let path = fs::canonicalize(raw)
+            .map_err(|error| anyhow::anyhow!("Cannot read '{}': {}", raw.display(), error))?;
+        let metadata = fs::metadata(&path)
+            .map_err(|error| anyhow::anyhow!("Cannot read '{}': {}", raw.display(), error))?;
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("attachment")
+            .to_string();
+
+        if metadata.is_dir() {
+            if !loopback {
+                anyhow::bail!(
+                    "Cannot attach local directory to a remote server: {}",
+                    raw.display()
+                );
+            }
+            parts.push(serde_json::json!({
+                "type": "file",
+                "url": format!("file://{}", path.display()),
+                "filename": filename,
+                "mime": "application/x-directory",
+            }));
+            continue;
+        }
+
+        let bytes = fs::read(&path)
+            .map_err(|error| anyhow::anyhow!("Cannot read '{}': {}", raw.display(), error))?;
+        if bytes.len() as u64 > TASK_ATTACH_MAX_BYTES {
+            anyhow::bail!(
+                "Attachment '{}' is {} bytes; the limit is {} bytes",
+                raw.display(),
+                bytes.len(),
+                TASK_ATTACH_MAX_BYTES
+            );
+        }
+        let mime = guess_attachment_mime(&path, &bytes);
+
+        if loopback {
+            parts.push(serde_json::json!({
+                "type": "file",
+                "url": format!("file://{}", path.display()),
+                "filename": filename,
+                "mime": mime,
+            }));
+        } else {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            parts.push(serde_json::json!({
+                "type": "file",
+                "url": format!("data:{};base64,{}", mime, encoded),
+                "filename": filename,
+                "mime": mime,
+            }));
+        }
+    }
+
+    Ok(parts)
+}
+
+fn print_task_prompt_response(session_id: &str, response: &TaskPromptResponse) {
+    println!("Session: {}", session_id);
+    println!("Message: {}", response.message_id);
+    println!("Status: {}", response.status);
+    if let Some(model) = response.model.as_deref() {
+        println!("Model: {}", model);
+    }
+    if let Some(variant) = response.variant.as_deref() {
+        println!("Variant: {}", variant);
+    }
+    if let Some(position) = response.position {
+        println!("Queue position: {}", position);
+    }
+    if let Some(depth) = response.depth {
+        println!("Queue depth: {}", depth);
+    }
+}
+
+fn task_message_text(message: &RemoteMessageInfo) -> String {
+    message
+        .parts
+        .iter()
+        .filter_map(|part| part.text.as_deref())
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn print_task_messages(session_id: &str, messages: &[RemoteMessageInfo]) {
+    println!("Session: {}", session_id);
+    if messages.is_empty() {
+        println!("No messages.");
+        return;
+    }
+    for message in messages {
+        let text = task_message_text(message);
+        if text.trim().is_empty() {
+            continue;
+        }
+        println!("\n{}:", message.role.to_uppercase());
+        println!("{}", text.trim_end());
+    }
+}
+
+async fn fetch_task_messages(
+    client: &reqwest::Client,
+    server: &str,
+    session_id: &str,
+) -> anyhow::Result<Vec<RemoteMessageInfo>> {
+    let endpoint = server_url(server, &format!("/session/{}/message", session_id));
+    parse_http_json(client.get(endpoint).send().await?).await
+}
+
+async fn follow_task_until_idle(
+    client: &reqwest::Client,
+    server: &str,
+    session_id: &str,
+) -> anyhow::Result<()> {
+    let mut last_status = String::new();
+    loop {
+        let endpoint = server_url(server, "/session/status");
+        let statuses: HashMap<String, RemoteSessionStatusInfo> =
+            parse_http_json(client.get(endpoint).send().await?).await?;
+        let Some(status) = statuses.get(session_id) else {
+            anyhow::bail!(
+                "Task session {} was not reported by target {}",
+                session_id,
+                server
+            );
+        };
+        if status.status != last_status {
+            print!("Status: {}", status.status);
+            if let Some(position) = status.position {
+                print!(" position={}", position);
+            }
+            if let Some(depth) = status.depth {
+                print!(" depth={}", depth);
+            }
+            println!();
+            last_status = status.status.clone();
+        }
+        if status.idle {
+            let messages = fetch_task_messages(client, server, session_id).await?;
+            print_task_messages(session_id, &messages);
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn fetch_task_statuses(
+    client: &reqwest::Client,
+    server: &str,
+) -> anyhow::Result<HashMap<String, RemoteSessionStatusInfo>> {
+    let endpoint = server_url(server, "/session/status");
+    parse_http_json(client.get(endpoint).send().await?).await
+}
+
+fn print_task_statuses(
+    server: &str,
+    sessions: &[RemoteSessionInfo],
+    statuses: &HashMap<String, RemoteSessionStatusInfo>,
+    selected_session: Option<&str>,
+) {
+    println!("Server: {}", server);
+    let mut rows: Vec<_> = sessions
+        .iter()
+        .filter(|session| {
+            selected_session
+                .map(|selected| selected == session.id)
+                .unwrap_or(true)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    if rows.is_empty() {
+        println!("No sessions reported.");
+        return;
+    }
+    println!(
+        "{:<30} {:<12} {:<8} {}",
+        "Session", "Status", "Queue", "Title"
+    );
+    for session in rows {
+        let status = statuses.get(&session.id);
+        let status_label = match status {
+            Some(entry) if entry.idle && entry.status == "active" => "idle",
+            Some(entry) => entry.status.as_str(),
+            None => "unknown",
+        };
+        let queue = status
+            .and_then(|entry| match (entry.position, entry.depth) {
+                (Some(position), Some(depth)) => Some(format!("{}/{}", position, depth)),
+                (_, Some(depth)) => Some(format!("-/{}", depth)),
+                _ => None,
+            })
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "{:<30} {:<12} {:<8} {}",
+            session.id,
+            status_label,
+            queue,
+            truncate_text(session.title.as_deref().unwrap_or("untitled"), 40)
+        );
+    }
+}
+
+async fn handle_task_command(action: TaskCommands) -> anyhow::Result<()> {
+    match action {
+        TaskCommands::New {
+            prompt,
+            file,
+            server,
+            stream,
+        } => handle_task_new(prompt, file, server, stream).await,
+        TaskCommands::Send {
+            prompt,
+            file,
+            server,
+            session,
+            stream,
+        } => handle_task_send(prompt, file, server, session, stream).await,
+        TaskCommands::View {
+            server,
+            session,
+            json,
+        } => handle_task_view(server, session, json).await,
+        TaskCommands::Status {
+            server,
+            session,
+            json,
+        } => handle_task_status(server, session, json).await,
+        TaskCommands::Target { action } => handle_task_target_command(action).await,
+    }
+}
+
+async fn handle_task_new(
+    prompt: Vec<String>,
+    file: Vec<PathBuf>,
+    server: Option<String>,
+    stream: bool,
+) -> anyhow::Result<()> {
+    let input = collect_run_input(prompt)?;
+    if input.trim().is_empty() {
+        anyhow::bail!("task new requires prompt text from arguments or stdin");
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let target = selected_task_target(server, None, false)?;
+    ensure_task_target_available(&client, &target).await?;
+    let parts = build_task_file_parts(&target.server, &file)?;
+    let title = input.lines().next().map(truncate_text_for_title);
+    let session_id = create_task_session(&client, &target.server, title.as_deref()).await?;
+    let response = send_task_prompt(&client, &target.server, &session_id, input, &parts).await?;
+    let workspace = std::env::current_dir()?.display().to_string();
+    save_task_target_selection(&TaskTargetSelection {
+        server: target.server.clone(),
+        session: Some(session_id.clone()),
+        workspace,
+        selected_at: chrono::Utc::now().timestamp_millis(),
+    })?;
+    print_task_prompt_response(&session_id, &response);
+    if stream {
+        let stream_client = reqwest::Client::new();
+        follow_task_until_idle(&stream_client, &target.server, &session_id).await?;
+    }
+    Ok(())
+}
+
+async fn handle_task_send(
+    prompt: Vec<String>,
+    file: Vec<PathBuf>,
+    server: Option<String>,
+    session: Option<String>,
+    stream: bool,
+) -> anyhow::Result<()> {
+    let input = collect_run_input(prompt)?;
+    if input.trim().is_empty() {
+        anyhow::bail!("task send requires prompt text from arguments or stdin");
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let target = selected_task_target(server, session, true)?;
+    ensure_task_target_available(&client, &target).await?;
+    let session_id = target.session.as_deref().expect("session required");
+    let parts = build_task_file_parts(&target.server, &file)?;
+    let response = send_task_prompt(&client, &target.server, session_id, input, &parts).await?;
+    print_task_prompt_response(session_id, &response);
+    if stream {
+        let stream_client = reqwest::Client::new();
+        follow_task_until_idle(&stream_client, &target.server, session_id).await?;
+    }
+    Ok(())
+}
+
+async fn handle_task_view(
+    server: Option<String>,
+    session: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let target = selected_task_target(server, session, true)?;
+    ensure_task_target_available(&client, &target).await?;
+    let session_id = target.session.as_deref().expect("session required");
+    let messages = fetch_task_messages(&client, &target.server, session_id).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&messages)?);
+    } else {
+        print_task_messages(session_id, &messages);
+    }
+    Ok(())
+}
+
+async fn handle_task_status(
+    server: Option<String>,
+    session: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let explicit_session = session.clone();
+    let mut target = selected_task_target(server, session, false)?;
+    if explicit_session.is_none() {
+        target.session = None;
+    }
+    ensure_task_target_available(&client, &target).await?;
+    let sessions_endpoint = server_url(&target.server, "/session?roots=true&limit=100");
+    let sessions: Vec<RemoteSessionInfo> =
+        parse_http_json(client.get(sessions_endpoint).send().await?).await?;
+    let statuses = fetch_task_statuses(&client, &target.server).await?;
+    if let Some(session_id) = target.session.as_deref() {
+        if !sessions.iter().any(|session| session.id == session_id) {
+            anyhow::bail!(
+                "Task session {} was not reported by target {}",
+                session_id,
+                target.server
+            );
+        }
+    }
+    if json {
+        let rows: Vec<_> = sessions
+            .iter()
+            .filter(|session| {
+                target
+                    .session
+                    .as_deref()
+                    .map(|selected| selected == session.id)
+                    .unwrap_or(true)
+            })
+            .map(|session| {
+                serde_json::json!({
+                    "id": session.id,
+                    "title": session.title,
+                    "directory": session.directory,
+                    "workspaceIdentity": session.workspace_identity,
+                    "status": statuses.get(&session.id),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        print_task_statuses(
+            &target.server,
+            &sessions,
+            &statuses,
+            target.session.as_deref(),
+        );
+    }
+    Ok(())
+}
+
+fn truncate_text_for_title(text: &str) -> String {
+    truncate_text(text.trim(), 80)
+}
+
+async fn handle_task_target_command(action: TaskTargetCommands) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    match action {
+        TaskTargetCommands::List { server } => {
+            let selected = load_task_target_selection()?;
+            let mut servers = Vec::new();
+            if let Some(selection) = selected.as_ref() {
+                servers.push(selection.server.clone());
+            }
+            for candidate in server {
+                let normalized = normalize_task_server(&candidate)?;
+                if !servers.iter().any(|existing| existing == &normalized) {
+                    servers.push(normalized);
+                }
+            }
+            if servers.is_empty() {
+                println!("No task target candidates. Provide --server or select a target first.");
+                return Ok(());
+            }
+            println!("Task target candidates (* selected):");
+            for server in servers {
+                let checked = check_task_target_server(&client, &server).await;
+                print_checked_task_target(&checked, selected.as_ref());
+            }
+        }
+        TaskTargetCommands::Select { server, session } => {
+            let server = match server {
+                Some(server) => normalize_task_server(&server)?,
+                None if io::stdin().is_terminal() => {
+                    normalize_task_server(&prompt_line("Server URL: ")?)?
+                }
+                None => anyhow::bail!(
+                    "task target select requires --server when stdin is not interactive"
+                ),
+            };
+            let checked = check_task_target_server(&client, &server).await;
+            if !checked.available {
+                anyhow::bail!(
+                    "Cannot select unavailable task target {}: {}",
+                    checked.server,
+                    checked.error.as_deref().unwrap_or("unknown error")
+                );
+            }
+
+            let session = match session {
+                Some(session_id) => Some(session_id),
+                None if io::stdin().is_terminal() && !checked.sessions.is_empty() => {
+                    println!("Available root sessions:");
+                    for session in &checked.sessions {
+                        println!(
+                            "  {:<30} {}",
+                            session.id,
+                            session.title.as_deref().unwrap_or("untitled")
+                        );
+                    }
+                    let value = prompt_line("Default session ID (optional): ")?;
+                    if value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(value)
+                    }
+                }
+                None => None,
+            };
+
+            if let Some(session_id) = session.as_deref() {
+                if !checked
+                    .sessions
+                    .iter()
+                    .any(|candidate| candidate.id == session_id)
+                {
+                    anyhow::bail!(
+                        "Session {} was not reported by task target {}",
+                        session_id,
+                        checked.server
+                    );
+                }
+            }
+
+            let workspace = std::env::current_dir()?.display().to_string();
+            let selection = TaskTargetSelection {
+                server: checked.server,
+                session,
+                workspace,
+                selected_at: chrono::Utc::now().timestamp_millis(),
+            };
+            save_task_target_selection(&selection)?;
+            println!("Selected task target: {}", selection.server);
+            if let Some(session_id) = selection.session.as_deref() {
+                println!("Default session: {}", session_id);
+            }
+        }
+        TaskTargetCommands::Show => {
+            let Some(selection) = load_task_target_selection()? else {
+                println!("No default task target selected.");
+                return Ok(());
+            };
+            println!("Server: {}", selection.server);
+            println!(
+                "Session: {}",
+                selection.session.as_deref().unwrap_or("(none)")
+            );
+            println!("Workspace: {}", selection.workspace);
+            let checked = check_task_target_server(&client, &selection.server).await;
+            if checked.available {
+                if let Some(session_id) = selection.session.as_deref() {
+                    if checked
+                        .sessions
+                        .iter()
+                        .any(|session| session.id == session_id)
+                    {
+                        println!("Status: available");
+                    } else {
+                        println!("Status: unavailable (selected session not reported)");
+                    }
+                } else {
+                    println!("Status: available");
+                }
+            } else {
+                println!(
+                    "Status: unavailable ({})",
+                    checked.error.as_deref().unwrap_or("unknown error")
+                );
+            }
+        }
+        TaskTargetCommands::Clear => {
+            if clear_task_target_selection()? {
+                println!("Cleared default task target.");
+            } else {
+                println!("No default task target selected.");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn handle_db_command(
@@ -2660,7 +4140,10 @@ async fn handle_upgrade_command(
 
     let current = env!("CARGO_PKG_VERSION").trim_start_matches('v');
     if current == target {
-        println!("opencode upgrade skipped: {} is already installed", target);
+        println!(
+            "opencode-modded-rust upgrade skipped: {} is already installed",
+            target
+        );
         return Ok(());
     }
 
@@ -2853,7 +4336,7 @@ async fn handle_generate_command() -> anyhow::Result<()> {
     let spec = serde_json::json!({
         "openapi": "3.1.0",
         "info": {
-            "title": "OpenCode Rust Rewrite API",
+            "title": "opencode-modded-rust API",
             "version": env!("CARGO_PKG_VERSION")
         },
         "paths": paths
@@ -2868,9 +4351,11 @@ async fn list_models(
     verbose: bool,
 ) -> anyhow::Result<()> {
     if refresh {
-        eprintln!(
-            "Note: model cache refresh is parsed for parity, but Rust rewrite currently loads providers directly from runtime env."
-        );
+        if opencode_provider::refresh_models_dev_cache().await {
+            eprintln!("Model catalog refreshed from models.dev.");
+        } else {
+            eprintln!("Model catalog refresh failed; using the existing cached catalog.");
+        }
     }
 
     let current_dir = std::env::current_dir()?;
@@ -2887,7 +4372,6 @@ async fn list_models(
         println!("No providers configured. Set API keys to enable providers:");
         println!("  - ANTHROPIC_API_KEY");
         println!("  - OPENAI_API_KEY");
-        println!("  - OPENROUTER_API_KEY");
         println!("  - GOOGLE_API_KEY");
         println!("  - MISTRAL_API_KEY");
         println!("  - GROQ_API_KEY");
@@ -2904,6 +4388,9 @@ async fn list_models(
     }
 
     for provider in providers {
+        if opencode_provider::is_provider_temporarily_hidden(provider.id()) {
+            continue;
+        }
         if let Some(ref filter) = provider_filter {
             if !provider.id().contains(filter.to_lowercase().as_str()) {
                 continue;
@@ -2954,6 +4441,212 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
+const SESSION_LOOKUP_LIMIT: i64 = 1000;
+
+fn format_session_time(ms: i64) -> String {
+    match chrono::DateTime::from_timestamp_millis(ms) {
+        Some(dt) => dt
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        None => ms.to_string(),
+    }
+}
+
+fn session_status_label(status: &SessionStatus) -> &'static str {
+    match status {
+        SessionStatus::Active => "active",
+        SessionStatus::Completed => "completed",
+        SessionStatus::Archived => "archived",
+        SessionStatus::Compacting => "compacting",
+    }
+}
+
+/// CLI-010: serialize a session row, always carrying its `parentId` so child
+/// (subagent) sessions are visible rather than silently dropped from listings.
+fn session_json_row(session: &Session) -> serde_json::Value {
+    serde_json::json!({
+        "id": session.id,
+        "title": session.title,
+        "updated": session.time.updated,
+        "created": session.time.created,
+        "projectId": session.project_id,
+        "directory": session.directory,
+        "workspaceIdentity": session.workspace_identity,
+        "parentId": session.parent_id,
+    })
+}
+
+fn session_table_header() -> String {
+    format!(
+        "{:<30} {:<25} {:<30} {}",
+        "Session ID", "Title", "Parent (subagent)", "Updated"
+    )
+}
+
+fn session_table_row(id: &str, title: &str, parent_id: Option<&str>, updated: i64) -> String {
+    format!(
+        "{:<30} {:<25} {:<30} {}",
+        id,
+        truncate_text(title, 25),
+        parent_id.unwrap_or("-"),
+        updated
+    )
+}
+
+/// Resolve a session from an explicit id/slug or a human name (title). A name
+/// must match exactly one session; ambiguous names return an error listing the
+/// candidates instead of guessing.
+fn resolve_session<'a>(sessions: &'a [Session], target: &str) -> Result<&'a Session, String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err("Session name or id is required.".to_string());
+    }
+
+    if let Some(session) = sessions.iter().find(|s| s.id == target) {
+        return Ok(session);
+    }
+    if let Some(session) = sessions.iter().find(|s| s.slug == target) {
+        return Ok(session);
+    }
+
+    let needle = target.to_lowercase();
+    if let Some(session) = sessions.iter().find(|s| s.title.to_lowercase() == needle) {
+        return Ok(session);
+    }
+
+    let matches: Vec<&Session> = sessions
+        .iter()
+        .filter(|s| s.title.to_lowercase().contains(&needle))
+        .collect();
+
+    match matches.len() {
+        0 => Err(format!("No session matches '{}'.", target)),
+        1 => Ok(matches[0]),
+        _ => {
+            let mut message = format!(
+                "'{}' matches {} sessions; use the full id or a more specific name:",
+                target,
+                matches.len()
+            );
+            for session in matches.iter().take(10) {
+                message.push_str(&format!(
+                    "\n  {}  {}",
+                    session.id,
+                    truncate_text(&session.title, 60)
+                ));
+            }
+            Err(message)
+        }
+    }
+}
+
+fn part_label(part: &PartType) -> &'static str {
+    match part {
+        PartType::Text { .. } => "text",
+        PartType::ToolCall { .. } => "toolCall",
+        PartType::ToolResult { .. } => "toolResult",
+        PartType::Reasoning { .. } => "reasoning",
+        PartType::File { .. } => "file",
+        PartType::StepStart { .. } => "stepStart",
+        PartType::StepFinish { .. } => "stepFinish",
+        PartType::Snapshot { .. } => "snapshot",
+        PartType::Patch { .. } => "patch",
+        PartType::Agent { .. } => "agent",
+        PartType::Subtask { .. } => "subtask",
+        PartType::Retry { .. } => "retry",
+        PartType::Compaction { .. } => "compaction",
+    }
+}
+
+/// Heuristic for whether a session is wedged, based only on what was persisted.
+fn diagnostic_verdict(session: &Session, messages: &[SessionMessage]) -> String {
+    if session.status != SessionStatus::Active {
+        return format!(
+            "Session status is {} (not active).",
+            session_status_label(&session.status)
+        );
+    }
+
+    let Some(last) = messages.last() else {
+        return "Session is active but has no persisted messages.".to_string();
+    };
+
+    match &last.role {
+        MessageRole::User => {
+            "Session is active; the last persisted message is a user prompt with no assistant \
+             reply. The turn likely never started or produced no persisted output."
+                .to_string()
+        }
+        MessageRole::Assistant => {
+            let has_terminal_metadata = last.metadata.contains_key("finish_reason")
+                || last.metadata.contains_key("error")
+                || last.metadata.contains_key("completed_at");
+            if last.parts.is_empty() && !has_terminal_metadata {
+                return "Session is active; the last assistant message has no persisted parts. \
+                        The turn may have stalled before writing any output."
+                    .to_string();
+            }
+
+            let has_terminal = has_terminal_metadata
+                || last.parts.iter().any(|part| {
+                    matches!(
+                        part.part_type,
+                        PartType::ToolResult { .. }
+                            | PartType::StepFinish { .. }
+                            | PartType::Compaction { .. }
+                    )
+                });
+            let output_tokens = session.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
+
+            if !has_terminal && output_tokens == 0 {
+                "Session is active; the last assistant turn has no terminal record (no tool \
+                 result, step finish, or output tokens). This looks like a stalled turn."
+                    .to_string()
+            } else {
+                "Session is active; the last assistant turn has persisted output.".to_string()
+            }
+        }
+        other => format!("Session is active; the last message role is {:?}.", other),
+    }
+}
+
+fn part_preview(part: &MessagePart, full: bool) -> Option<String> {
+    let limit = if full { 400 } else { 160 };
+    match &part.part_type {
+        PartType::Text { text } => Some(format!("text: \"{}\"", truncate_text(text, limit))),
+        PartType::Reasoning { text } => {
+            Some(format!("reasoning: \"{}\"", truncate_text(text, limit)))
+        }
+        PartType::ToolCall { name, input, .. } => Some(format!(
+            "toolCall: {} {}",
+            name,
+            truncate_text(&input.to_string(), limit)
+        )),
+        PartType::ToolResult {
+            content, is_error, ..
+        } => Some(format!(
+            "toolResult{}: \"{}\"",
+            if *is_error { " (error)" } else { "" },
+            truncate_text(content, limit)
+        )),
+        PartType::StepFinish { .. } => Some("stepFinish".to_string()),
+        PartType::Retry { count, reason } => Some(format!("retry {}: {}", count, reason)),
+        PartType::Compaction { summary } => {
+            Some(format!("compaction: \"{}\"", truncate_text(summary, limit)))
+        }
+        PartType::File { filename, .. } => Some(format!("file: {}", filename)),
+        PartType::Patch { filepath, .. } => Some(format!("patch: {}", filepath)),
+        PartType::Agent { name, status } => Some(format!("agent: {} ({})", name, status)),
+        PartType::Subtask {
+            description,
+            status,
+            ..
+        } => Some(format!("subtask: {} ({})", description, status)),
+        PartType::Snapshot { .. } | PartType::StepStart { .. } => None,
+    }
+}
+
 async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
     let db = Database::new()
         .await
@@ -2979,33 +4672,25 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
 
             match format {
                 SessionListFormat::Json => {
-                    let rows: Vec<_> = sessions
-                        .into_iter()
-                        .filter(|s| s.parent_id.is_none())
-                        .map(|s| {
-                            serde_json::json!({
-                                "id": s.id,
-                                "title": s.title,
-                                "updated": s.time.updated,
-                                "created": s.time.created,
-                                "projectId": s.project_id,
-                                "directory": s.directory
-                            })
-                        })
-                        .collect();
+                    // CLI-010: child (subagent) sessions are included with an
+                    // explicit `parentId` instead of being silently dropped.
+                    let rows: Vec<_> = sessions.iter().map(session_json_row).collect();
                     println!("{}", serde_json::to_string_pretty(&rows)?);
                 }
                 SessionListFormat::Table => {
-                    println!("Session ID                      Title                      Updated");
+                    println!("{}", session_table_header());
                     println!(
-                        "-----------------------------------------------------------------------"
+                        "---------------------------------------------------------------------------------------------"
                     );
-                    for session in sessions.into_iter().filter(|s| s.parent_id.is_none()) {
+                    for session in sessions.iter() {
                         println!(
-                            "{:<30} {:<25} {}",
-                            session.id,
-                            truncate_text(&session.title, 25),
-                            session.time.updated
+                            "{}",
+                            session_table_row(
+                                &session.id,
+                                &session.title,
+                                session.parent_id.as_deref(),
+                                session.time.updated,
+                            )
                         );
                     }
                 }
@@ -3030,10 +4715,235 @@ async fn handle_session_command(action: SessionCommands) -> anyhow::Result<()> {
             println!("  Title: {}", session.title);
             println!("  Project: {}", session.project_id);
             println!("  Directory: {}", session.directory);
+            println!(
+                "  Workspace Identity: {}",
+                session
+                    .workspace_identity
+                    .as_deref()
+                    .unwrap_or("legacy/unknown")
+            );
             println!("  Status: {:?}", session.status);
             println!("  Created: {}", session.time.created);
             println!("  Updated: {}", session.time.updated);
             println!("  Messages: {}", messages.len());
+            // CLI-010: surface subagent parentage and child sessions instead of
+            // hiding them.
+            match session.parent_id.as_deref() {
+                Some(parent_id) => println!("  Parent (subagent): {}", parent_id),
+                None => println!("  Parent (subagent): (root)"),
+            }
+            let children = session_repo
+                .list_children(&session_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to load child sessions: {}", e))?;
+            println!("  Children: {}", children.len());
+            for child in &children {
+                println!("    {}  {}", child.id, truncate_text(&child.title, 60));
+            }
+        }
+        SessionCommands::Find {
+            name,
+            max_count,
+            format,
+            project,
+        } => {
+            let sessions = session_repo
+                .list(project.as_deref(), SESSION_LOOKUP_LIMIT)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to list sessions: {}", e))?;
+
+            let needle = name.to_lowercase();
+            // CLI-010: child (subagent) sessions are searchable too, not filtered
+            // out, so a child can be inspected by name/id/slug.
+            let mut hits: Vec<Session> = sessions
+                .into_iter()
+                .filter(|s| {
+                    s.title.to_lowercase().contains(&needle)
+                        || s.id.to_lowercase().contains(&needle)
+                        || s.slug.to_lowercase().contains(&needle)
+                })
+                .collect();
+
+            if hits.is_empty() {
+                println!("No sessions match '{}'.", name);
+                return Ok(());
+            }
+
+            let total = hits.len();
+            hits.truncate(max_count.max(1) as usize);
+
+            match format {
+                SessionListFormat::Json => {
+                    let rows: Vec<_> = hits.iter().map(session_json_row).collect();
+                    println!("{}", serde_json::to_string_pretty(&rows)?);
+                }
+                SessionListFormat::Table => {
+                    println!("Matched {} session(s) for '{}':", total, name);
+                    println!(
+                        "{:<30} {:<11} {:<30} {:<19} {}",
+                        "Session ID", "Status", "Parent (subagent)", "Updated", "Title"
+                    );
+                    println!("-------------------------------------------------------------------------------------------------------------------------");
+                    for session in &hits {
+                        println!(
+                            "{:<30} {:<11} {:<30} {:<19} {}",
+                            session.id,
+                            session_status_label(&session.status),
+                            session.parent_id.as_deref().unwrap_or("-"),
+                            format_session_time(session.time.updated),
+                            truncate_text(&session.title, 50)
+                        );
+                    }
+                    if total > hits.len() {
+                        println!("... and {} more (raise --max-count)", total - hits.len());
+                    }
+                }
+            }
+        }
+        SessionCommands::Inspect { target, json, full } => {
+            let sessions = session_repo
+                .list(None, SESSION_LOOKUP_LIMIT)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to list sessions: {}", e))?;
+
+            let session = match resolve_session(&sessions, &target) {
+                Ok(session) => session.clone(),
+                Err(message) => {
+                    eprintln!("{}", message);
+                    return Ok(());
+                }
+            };
+
+            let messages = message_repo
+                .list_for_session(&session.id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to load session messages: {}", e))?;
+
+            let verdict = diagnostic_verdict(&session, &messages);
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "session": session,
+                        "messages": messages,
+                        "verdict": verdict,
+                    }))?
+                );
+                return Ok(());
+            }
+
+            let mut part_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+            let mut total_parts = 0usize;
+            for message in &messages {
+                for part in &message.parts {
+                    *part_counts.entry(part_label(&part.part_type)).or_insert(0) += 1;
+                    total_parts += 1;
+                }
+            }
+
+            let user_messages = messages
+                .iter()
+                .filter(|m| m.role == MessageRole::User)
+                .count();
+            let assistant_messages = messages
+                .iter()
+                .filter(|m| m.role == MessageRole::Assistant)
+                .count();
+
+            println!("\nSession: {}", session.id);
+            println!("  Title: {}", session.title);
+            println!("  Slug: {}", session.slug);
+            println!("  Status: {}", session_status_label(&session.status));
+            println!("  Project: {}", session.project_id);
+            println!("  Directory: {}", session.directory);
+            println!(
+                "  Workspace: {}",
+                session
+                    .workspace_identity
+                    .as_deref()
+                    .unwrap_or("legacy/unknown")
+            );
+            if let Some(trace) = opencode_tui::trace::trace_path() {
+                println!(
+                    "  Trace: {} (grep session={} \"{}\")",
+                    trace, session.id, trace
+                );
+            }
+            if let Some(server_log) = server_log_path() {
+                println!("  Server log: {}", server_log.display());
+            }
+            println!(
+                "  Created: {} ({})",
+                format_session_time(session.time.created),
+                session.time.created
+            );
+            println!(
+                "  Updated: {} ({})",
+                format_session_time(session.time.updated),
+                session.time.updated
+            );
+            let age_ms = chrono::Utc::now().timestamp_millis() - session.time.updated;
+            println!("  Age since update: {:.1}s", age_ms as f64 / 1000.0);
+            println!(
+                "  Messages: {} (user={}, assistant={})",
+                messages.len(),
+                user_messages,
+                assistant_messages
+            );
+            println!("  Parts: {}", total_parts);
+            if !part_counts.is_empty() {
+                let summary = part_counts
+                    .iter()
+                    .map(|(label, count)| format!("{}={}", label, count))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!("    {}", summary);
+            }
+            if let Some(usage) = &session.usage {
+                println!(
+                    "  Tokens: input={} output={} reasoning={} cache_read={} cache_write={} cost={:.4}",
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.reasoning_tokens,
+                    usage.cache_read_tokens,
+                    usage.cache_write_tokens,
+                    usage.total_cost
+                );
+            }
+            println!("  Verdict: {}", verdict);
+            println!();
+
+            if messages.is_empty() {
+                println!("(No persisted messages)");
+                return Ok(());
+            }
+
+            let displayed = if full {
+                messages.len()
+            } else {
+                messages.len().min(40)
+            };
+            for (index, message) in messages.iter().take(displayed).enumerate() {
+                println!(
+                    "  [{}] {:?} {} parts={}",
+                    index,
+                    message.role,
+                    format_session_time(message.created_at.timestamp_millis()),
+                    message.parts.len()
+                );
+                for part in &message.parts {
+                    if let Some(preview) = part_preview(part, full) {
+                        println!("        {}", preview);
+                    }
+                }
+            }
+            if displayed < messages.len() {
+                println!(
+                    "  ... {} more message(s); pass --full to show all",
+                    messages.len() - displayed
+                );
+            }
         }
         SessionCommands::Delete { session_id } => {
             message_repo
@@ -3117,6 +5027,7 @@ const AUTH_ENV_PROVIDERS: &[(&str, &str)] = &[
     ("groq", "GROQ_API_KEY"),
     ("xai", "XAI_API_KEY"),
     ("deepseek", "DEEPSEEK_API_KEY"),
+    ("novita-ai", "NOVITA_API_KEY"),
     ("cohere", "COHERE_API_KEY"),
     ("together", "TOGETHER_API_KEY"),
     ("perplexity", "PERPLEXITY_API_KEY"),
@@ -3139,6 +5050,9 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
         AuthCommands::List => {
             println!("\nCredential providers:");
             for (provider, env_var) in AUTH_ENV_PROVIDERS {
+                if opencode_provider::is_provider_temporarily_hidden(provider) {
+                    continue;
+                }
                 let status = if std::env::var(env_var).is_ok() {
                     "set"
                 } else {
@@ -3154,6 +5068,9 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
             } else {
                 println!("No provider specified. Supported providers:");
                 for (p, _) in AUTH_ENV_PROVIDERS {
+                    if opencode_provider::is_provider_temporarily_hidden(p) {
+                        continue;
+                    }
                     println!("  - {}", p);
                 }
                 print!("Provider: ");
@@ -3165,13 +5082,13 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
 
             if provider.starts_with("http://") || provider.starts_with("https://") {
                 anyhow::bail!(
-                    "Well-known URL login is not fully wired in Rust CLI yet. Use `opencode auth login <provider> --token ...` for now."
+                    "Well-known URL login is not fully wired in Rust CLI yet. Use `opencode-modded-rust auth login <provider> --token ...` for now."
                 );
             }
 
             let Some(env_var) = provider_env_var(&provider) else {
                 anyhow::bail!(
-                    "Unknown provider: {}. Run `opencode auth list` to see supported providers.",
+                    "Unknown provider: {}. Run `opencode-modded-rust auth list` to see supported providers.",
                     provider
                 );
             };
@@ -3202,6 +5119,9 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
             } else {
                 println!("Specify provider to logout. Currently supported:");
                 for (p, _) in AUTH_ENV_PROVIDERS {
+                    if opencode_provider::is_provider_temporarily_hidden(p) {
+                        continue;
+                    }
                     println!("  - {}", p);
                 }
                 print!("Provider: ");
@@ -3213,7 +5133,7 @@ async fn handle_auth_command(action: AuthCommands) -> anyhow::Result<()> {
 
             let Some(env_var) = provider_env_var(&provider) else {
                 anyhow::bail!(
-                    "Unknown provider: {}. Run `opencode auth list` to see supported providers.",
+                    "Unknown provider: {}. Run `opencode-modded-rust auth list` to see supported providers.",
                     provider
                 );
             };
@@ -3375,17 +5295,96 @@ async fn create_lsp_client(file_hint: Option<&Path>) -> anyhow::Result<LspClient
         .map(serde_json::to_value)
         .transpose()?;
 
+    let root = file_hint
+        .map(opencode_lsp::detect_root)
+        .unwrap_or_else(|| opencode_lsp::detect_root(&cwd));
     LspClient::start(
         LspServerConfig {
             id,
             command,
             args,
+            extensions: server.extensions.clone(),
+            env: server.env.clone().unwrap_or_default(),
             initialization_options,
+            disabled: server.disabled.unwrap_or(false),
         },
-        cwd,
+        root,
     )
     .await
     .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+fn resolve_pid_listening_on_port(port: u16) -> anyhow::Result<u32> {
+    let output = ProcessCommand::new("lsof")
+        .args(["-nP", &format!("-iTCP:{}", port), "-sTCP:LISTEN", "-t"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run lsof: {}", e))?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.trim().parse::<u32>().ok())
+        .ok_or_else(|| anyhow::anyhow!("no process is listening on port {}", port))
+}
+
+fn default_stacks_path(pid: u32) -> PathBuf {
+    let dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("opencode")
+        .join("stacks");
+    let _ = fs::create_dir_all(&dir);
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    dir.join(format!("stacks-{}-{}.txt", pid, stamp))
+}
+
+/// Capture native stacks for a process. Uses `sample` on macOS and `gdb` on
+/// other unix platforms; writes the report to `out`.
+fn capture_process_stacks(pid: u32, seconds: u32, out: &Path) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = ProcessCommand::new("sample")
+            .arg(pid.to_string())
+            .arg(seconds.to_string())
+            .arg("-file")
+            .arg(out)
+            .status()
+            .map_err(|e| anyhow::anyhow!("failed to run sample: {}", e))?;
+        if !status.success() {
+            anyhow::bail!("sample exited with status {}", status);
+        }
+        Ok(())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = seconds;
+        let output = ProcessCommand::new("gdb")
+            .args([
+                "-p",
+                &pid.to_string(),
+                "-batch",
+                "-ex",
+                "thread apply all bt",
+                "-ex",
+                "detach",
+            ])
+            .output()
+            .map_err(|e| anyhow::anyhow!("failed to run gdb: {}", e))?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "gdb exited with status {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        fs::write(out, &output.stdout)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {}", out.display(), e))?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, seconds, out);
+        anyhow::bail!("stack capture is not supported on this platform")
+    }
 }
 
 async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
@@ -3421,20 +5420,75 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "<none>".to_string())
             );
+            println!(
+                "  {:<12} {}",
+                "server-log",
+                server_log_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<disabled>".to_string())
+            );
         }
         DebugCommands::Config => {
             let cwd = std::env::current_dir()?;
             let config = load_config(&cwd)?;
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
+        DebugCommands::Ollama { probe } => {
+            let resolution = opencode_provider::ollama::resolve(None);
+            println!("resolved URL: {}", resolution.base_url);
+            println!(
+                "host:         {} ({})",
+                resolution.host,
+                resolution.host_label()
+            );
+            println!(
+                "model:        {}",
+                resolution
+                    .model_ref
+                    .as_deref()
+                    .unwrap_or("<unset (provider default)>")
+            );
+            if let Some(model_label) = resolution.model_label() {
+                println!("model source: {model_label}");
+            }
+            println!(
+                "config file:  {} ({})",
+                resolution.config_path.display(),
+                if resolution.config_found {
+                    "found"
+                } else {
+                    "not found"
+                }
+            );
+            if let Some(error) = &resolution.config_error {
+                println!("config error: {error}");
+            }
+            println!(
+                "active:       {}",
+                if resolution.explicitly_configured() {
+                    "yes"
+                } else {
+                    "no (runtime default)"
+                }
+            );
+            if probe {
+                match opencode_provider::ollama::probe(&resolution, Duration::from_secs(5)).await {
+                    Ok(()) => println!("probe:        ok"),
+                    Err(reason) => {
+                        eprintln!("{}", resolution.connection_failure_message(&reason));
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
         DebugCommands::Skill => {
             let skills = list_available_skills();
             let list: Vec<_> = skills
                 .into_iter()
-                .map(|(name, description)| {
+                .map(|skill| {
                     serde_json::json!({
-                        "name": name,
-                        "description": description
+                        "name": skill.name,
+                        "description": skill.description
                     })
                 })
                 .collect();
@@ -3456,6 +5510,27 @@ async fn handle_debug_command(action: DebugCommands) -> anyhow::Result<()> {
         DebugCommands::Wait => loop {
             tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
         },
+        DebugCommands::Stacks {
+            pid,
+            port,
+            seconds,
+            out,
+        } => {
+            let target_pid = match (pid, port) {
+                (Some(pid), None) => pid,
+                (None, Some(port)) => resolve_pid_listening_on_port(port)?,
+                _ => anyhow::bail!("provide exactly one of --pid or --port"),
+            };
+            let out_path = out
+                .map(PathBuf::from)
+                .unwrap_or_else(|| default_stacks_path(target_pid));
+            capture_process_stacks(target_pid, seconds, &out_path)?;
+            println!(
+                "Captured stacks for pid {} to {}",
+                target_pid,
+                out_path.display()
+            );
+        }
         DebugCommands::Snapshot { action } => {
             let cwd = std::env::current_dir()?;
             match action {
@@ -3795,7 +5870,9 @@ async fn handle_mcp_command(server: String, action: McpCommands) -> anyhow::Resu
             }
 
             let name = name.ok_or_else(|| {
-                anyhow::anyhow!("Missing MCP server name. Use `opencode mcp auth <name>`.")
+                anyhow::anyhow!(
+                    "Missing MCP server name. Use `opencode-modded-rust mcp auth <name>`."
+                )
             })?;
 
             if authenticate {
@@ -3827,7 +5904,9 @@ async fn handle_mcp_command(server: String, action: McpCommands) -> anyhow::Resu
         }
         McpCommands::Logout { name } => {
             let name = name.ok_or_else(|| {
-                anyhow::anyhow!("Missing MCP server name. Use `opencode mcp logout <name>`.")
+                anyhow::anyhow!(
+                    "Missing MCP server name. Use `opencode-modded-rust mcp logout <name>`."
+                )
             })?;
             let endpoint = server_url(&server, &format!("/mcp/{}/auth", name));
             let _: serde_json::Value =
@@ -5156,7 +7235,7 @@ async fn handle_github_command(action: GithubCommands) -> anyhow::Result<()> {
                 .output()
                 .map_err(|e| anyhow::anyhow!("Failed to run git: {}", e))?;
             if !git_check.status.success() {
-                anyhow::bail!("Run `opencode github install` inside a git repository.");
+                anyhow::bail!("Run `opencode-modded-rust github install` inside a git repository.");
             }
 
             let remote = ProcessCommand::new("git")
@@ -5548,4 +7627,365 @@ async fn handle_github_command(action: GithubCommands) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_available_port_returns_base_when_free() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let free = find_available_port("127.0.0.1", base).unwrap();
+        assert_eq!(free, base);
+    }
+
+    #[test]
+    fn find_available_port_skips_a_bound_port() {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = held.local_addr().unwrap().port();
+
+        // `base` is held, so the next free port must be strictly greater.
+        let free = find_available_port("127.0.0.1", base).unwrap();
+        assert!(free > base);
+    }
+
+    #[test]
+    fn resume_launcher_prefers_ort_when_env_present() {
+        assert_eq!(resume_launcher_from(true), "ort");
+        assert_eq!(resume_launcher_from(false), "opencode-modded-rust");
+    }
+
+    #[test]
+    fn resume_hint_uses_session_id_when_available() {
+        let lines = resume_hint_lines(Some("ses_123"), "ort");
+        assert_eq!(
+            lines,
+            vec!["Resume this session:", "  ort --session ses_123"]
+        );
+    }
+
+    #[test]
+    fn resume_hint_falls_back_to_continue_without_session_id() {
+        let lines = resume_hint_lines(None, "opencode-modded-rust");
+        assert_eq!(
+            lines,
+            vec![
+                "Resume your most recent session:",
+                "  opencode-modded-rust --continue"
+            ]
+        );
+
+        let empty = resume_hint_lines(Some(""), "opencode-modded-rust");
+        assert_eq!(
+            empty,
+            vec![
+                "Resume your most recent session:",
+                "  opencode-modded-rust --continue"
+            ]
+        );
+    }
+
+    #[test]
+    fn reattach_hint_uses_ort_attach_flag_with_session() {
+        let lines = reattach_hint_lines("http://127.0.0.1:3189", Some("ses_123"), "ort");
+        assert_eq!(
+            lines,
+            vec![
+                "Reattach to this session:",
+                "  ort --attach http://127.0.0.1:3189 --session ses_123",
+            ]
+        );
+    }
+
+    #[test]
+    fn reattach_hint_uses_product_attach_subcommand_with_session() {
+        let lines = reattach_hint_lines(
+            "http://127.0.0.1:3189",
+            Some("ses_123"),
+            "opencode-modded-rust",
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "Reattach to this session:",
+                "  opencode-modded-rust attach http://127.0.0.1:3189 --session ses_123",
+            ]
+        );
+    }
+
+    #[test]
+    fn reattach_hint_omits_session_id_when_absent() {
+        let lines = reattach_hint_lines("http://127.0.0.1:3189", None, "ort");
+        assert_eq!(
+            lines,
+            vec![
+                "Reattach to the server:",
+                "  ort --attach http://127.0.0.1:3189",
+            ]
+        );
+
+        let empty = reattach_hint_lines("http://127.0.0.1:3189", Some(""), "opencode-modded-rust");
+        assert_eq!(
+            empty,
+            vec![
+                "Reattach to the server:",
+                "  opencode-modded-rust attach http://127.0.0.1:3189",
+            ]
+        );
+    }
+
+    #[test]
+    fn server_startup_event_exposes_supervisor_contract() {
+        let event = server_startup_event("serve", "127.0.0.1", 3199, Path::new("/tmp/example"));
+        assert_eq!(
+            event.get("event").and_then(|value| value.as_str()),
+            Some("opencode.server.starting")
+        );
+        assert_eq!(
+            event.get("mode").and_then(|value| value.as_str()),
+            Some("serve")
+        );
+        assert_eq!(
+            event.get("bind_host").and_then(|value| value.as_str()),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            event.get("port").and_then(|value| value.as_u64()),
+            Some(3199)
+        );
+        assert_eq!(
+            event.get("url").and_then(|value| value.as_str()),
+            Some("http://127.0.0.1:3199")
+        );
+        assert_eq!(
+            event.get("health_url").and_then(|value| value.as_str()),
+            Some("http://127.0.0.1:3199/health")
+        );
+        assert_eq!(
+            event.get("workspace").and_then(|value| value.as_str()),
+            Some("/tmp/example")
+        );
+    }
+
+    #[test]
+    fn server_startup_event_uses_localhost_display_for_wildcard_bind() {
+        let event = server_startup_event("serve", "0.0.0.0", 3199, Path::new("/tmp/example"));
+        assert_eq!(
+            event.get("url").and_then(|value| value.as_str()),
+            Some("http://localhost:3199")
+        );
+        assert_eq!(
+            event.get("health_url").and_then(|value| value.as_str()),
+            Some("http://localhost:3199/health")
+        );
+    }
+
+    fn test_session(id: &str, parent_id: Option<&str>) -> Session {
+        Session {
+            id: id.to_string(),
+            slug: id.to_string(),
+            project_id: "proj".to_string(),
+            directory: ".".to_string(),
+            workspace_identity: None,
+            parent_id: parent_id.map(str::to_string),
+            title: format!("Title {id}"),
+            version: "1".to_string(),
+            time: Default::default(),
+            messages: Vec::new(),
+            summary: None,
+            share: None,
+            revert: None,
+            permission: None,
+            usage: None,
+            status: Default::default(),
+            task: None,
+            metadata: Default::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn session_json_row_includes_parent_id() {
+        let root = session_json_row(&test_session("ses_root", None));
+        assert_eq!(root.get("parentId"), Some(&serde_json::Value::Null));
+
+        let child = session_json_row(&test_session("ses_child", Some("ses_root")));
+        assert_eq!(
+            child.get("parentId").and_then(|value| value.as_str()),
+            Some("ses_root")
+        );
+    }
+
+    #[test]
+    fn session_table_row_surfaces_child_parentage() {
+        let root = session_table_row("ses_root", "Root", None, 0);
+        assert!(root.contains("ses_root"));
+        assert!(root.contains('-'));
+
+        let child = session_table_row("ses_child", "Child", Some("ses_root"), 0);
+        assert!(child.contains("ses_child"));
+        assert!(child.contains("ses_root"));
+
+        assert!(session_table_header().contains("Parent"));
+    }
+
+    #[test]
+    fn diagnostic_verdict_recognizes_persisted_terminal_metadata() {
+        let session = test_session("ses_term", None);
+        let mut assistant = SessionMessage::assistant("ses_term");
+        assistant
+            .metadata
+            .insert("finish_reason".to_string(), serde_json::json!("aborted"));
+        assistant
+            .metadata
+            .insert("error".to_string(), serde_json::json!("aborted"));
+
+        let verdict = diagnostic_verdict(&session, &[assistant]);
+        assert!(
+            verdict.contains("persisted output"),
+            "a finalized turn must not be reported as stalled: {verdict}"
+        );
+    }
+
+    static PANIC_HOOK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn server_log_path_respects_override_and_disable() {
+        assert_eq!(
+            resolve_server_log_path(Some("/tmp/custom-server.log")),
+            Some(PathBuf::from("/tmp/custom-server.log"))
+        );
+        for disabled in ["", "0", "false", "off", "OFF"] {
+            assert_eq!(
+                resolve_server_log_path(Some(disabled)),
+                None,
+                "value {disabled:?} should disable the sink"
+            );
+        }
+        assert!(
+            resolve_server_log_path(None).is_some(),
+            "default path should be enabled"
+        );
+    }
+
+    #[test]
+    fn format_panic_entry_includes_message_location_and_backtrace() {
+        let entry = format_panic_entry("boom", None, "STACK-DUMMY");
+        assert!(entry.contains("[PANIC] boom"), "missing message: {entry}");
+        assert!(entry.contains("<unknown>"), "missing location: {entry}");
+        assert!(entry.contains("STACK-DUMMY"), "missing backtrace: {entry}");
+    }
+
+    #[test]
+    fn panic_hook_writes_message_and_location_to_sink() {
+        let _guard = PANIC_HOOK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("opencode-bug045-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("server.log");
+        let _ = std::fs::remove_file(&path);
+
+        let previous = std::panic::take_hook();
+        install_panic_hook_at(path.clone());
+        let result = std::panic::catch_unwind(|| panic!("bug045-panic-marker"));
+        std::panic::set_hook(previous);
+
+        assert!(result.is_err(), "closure should have panicked");
+        assert!(path.exists(), "panic hook should create the durable sink");
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(contents.contains("[PANIC]"), "missing header: {contents}");
+        assert!(
+            contents.contains("bug045-panic-marker"),
+            "missing message: {contents}"
+        );
+        assert!(
+            contents.contains("main.rs:"),
+            "missing location: {contents}"
+        );
+    }
+
+    #[test]
+    fn server_is_loopback_classifies_local_and_remote_targets() {
+        assert!(server_is_loopback("http://127.0.0.1:4096"));
+        assert!(server_is_loopback("http://localhost:4096"));
+        assert!(server_is_loopback("http://[::1]:4096"));
+        assert!(!server_is_loopback("http://10.0.0.5:4096"));
+        assert!(!server_is_loopback("https://example.com"));
+    }
+
+    #[test]
+    fn guess_attachment_mime_detects_text_and_binary() {
+        let path = Path::new("/tmp/notes.txt");
+        assert_eq!(guess_attachment_mime(path, b"hello world"), "text/plain");
+        assert_eq!(
+            guess_attachment_mime(Path::new("/tmp/pic.png"), &[0x89, 0x50, 0x4e, 0x47]),
+            "image/png"
+        );
+        assert_eq!(
+            guess_attachment_mime(Path::new("/tmp/blob.bin"), &[0x00, 0xff, 0x00]),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn build_task_file_parts_uses_file_url_for_loopback() {
+        let dir = std::env::temp_dir().join(format!("opencode-cli012-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"attach me").unwrap();
+
+        let parts = build_task_file_parts("http://127.0.0.1:4096", &[file.clone()]).unwrap();
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["type"], "file");
+        assert_eq!(parts[0]["mime"], "text/plain");
+        assert!(
+            parts[0]["url"].as_str().unwrap().starts_with("file://"),
+            "expected file:// url, got {}",
+            parts[0]["url"]
+        );
+    }
+
+    #[test]
+    fn build_task_file_parts_inlines_data_url_for_remote() {
+        let dir = std::env::temp_dir().join(format!("opencode-cli012r-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, b"attach me").unwrap();
+
+        let parts = build_task_file_parts("http://10.0.0.5:4096", &[file.clone()]).unwrap();
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["mime"], "text/plain");
+        assert!(
+            parts[0]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:text/plain;base64,"),
+            "expected inline data url, got {}",
+            parts[0]["url"]
+        );
+    }
+
+    #[test]
+    fn build_task_file_parts_rejects_remote_directory() {
+        let dir = std::env::temp_dir().join(format!("opencode-cli012d-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let result = build_task_file_parts("http://10.0.0.5:4096", &[dir.clone()]);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert!(result.is_err(), "remote directory attach must fail");
+    }
 }

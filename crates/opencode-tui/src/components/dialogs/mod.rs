@@ -3,7 +3,6 @@ use ratatui::layout::Rect;
 mod agent_select;
 mod alert;
 mod command_palette;
-mod confirm;
 mod fork;
 mod help;
 mod mcp;
@@ -15,8 +14,8 @@ mod session_list;
 mod session_rename;
 mod skill_list;
 mod status;
-mod subagent;
 mod tag;
+mod text_input;
 mod theme_list;
 mod timeline;
 
@@ -68,7 +67,6 @@ fn inset_rect(area: Rect, padding_x: u16, padding_y: u16) -> Rect {
 pub use agent_select::{Agent, AgentSelectDialog};
 pub use alert::AlertDialog;
 pub use command_palette::CommandPalette;
-pub use confirm::ConfirmDialog;
 pub use fork::{ForkDialog, ForkEntry};
 pub use help::HelpDialog;
 pub use mcp::{McpDialog, McpItem};
@@ -80,7 +78,7 @@ pub use session_list::{DeleteState as SessionDeleteState, SessionItem, SessionLi
 pub use session_rename::SessionRenameDialog;
 pub use skill_list::SkillListDialog;
 pub use status::{StatusDialog, StatusLine};
-pub use subagent::{SubagentDialog, SubagentInfo, SubagentMessage};
 pub use tag::{Tag, TagDialog};
+pub use text_input::DialogTextInput;
 pub use theme_list::{ThemeListDialog, ThemeOption};
 pub use timeline::{TimelineDialog, TimelineEntry};

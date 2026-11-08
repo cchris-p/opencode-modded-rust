@@ -1,6 +1,6 @@
 # Wiki Index
 
-The wiki contains architecture direction, version planning, and product-boundary documents for `scopemux-code`.
+The wiki contains architecture direction, version planning, and product-boundary documents for `opencode-modded-rust`.
 
 ## Document roles
 
@@ -14,7 +14,27 @@ The wiki contains architecture direction, version planning, and product-boundary
 - `vision.md` defines the product intent and near-term posture.
 - `product-boundary.md` defines what this product is and is not.
 - `reference-strategy.md` explains how the TypeScript repo is used as a reference line.
+- `agent-evaluation-strategy.md` defines how the Rust runtime is judged across V1 through V3, including decision quality and harness efficiency.
+- `harness-substrate.md` defines the absorption-resistant substrate: the flywheel, stable core versus volatile policy, the decision boundary, capability profiles, shim retirement, and the eight future-proofing tests.
+- `decision-layer.md` defines the System-1 decision layer (Jev/Laya), the decision inventory, authority tiers, waves, evaluation, and rollout.
+- `decision-log-egress.md` defines the decision-log schema, sensitivity tiers, egress rules, retention, deletion, and fine-tune export policy.
+- `post-jev-roadmap.md` defines the phases after the first Jev implementation, including Laya fine-tuning, engine swap, absorption review, and the next frontier.
+- `workspace-intelligence.md` defines the Workspace Intelligence Protocol (WIP), ScopeMux's role in the context/data pillar, the LSP analogy and its limits, the capability ladder, capability-profile activation, and the keep/expand/retire decision.
+- `scopemux-integration-plan.md` defines the deferred retrieval boundary, how `scopemux-core` can help this project, and the guardrails for integrating it.
+- `scopemux-map-integration.md` defines the idealized `scopemux` map model: current/target state, delta views, observability and refactor nodes, incremental reconciliation, and the runtime integration phases.
+- `scopemux-lsp-boundary.md` defines how ScopeMux and LSP divide responsibility: LSP as the exact semantic oracle, ScopeMux as the context producer, the redundancies to remove, and the optional LSP-derived type-fact enrichment.
+- `laya-integration.md` defines what `laya` is, its candidate integration surfaces (MCP tools or a decision-provider boundary), and the guardrails that keep runtime authority intact.
+- `jev-ultrafast-integration.md` defines what Jev UltraFast is, records that it is not planned for integration, and scopes the boundary and guardrails that would apply if a browser-automation capability were ever adopted.
+- `agent-debugging-without-tui.md` defines the preferred non-TUI QA/debug path for agent-session runtime work.
+- `ort-auto-update.md` defines how the published CLI artifact is built, distributed, verified, and auto-updated on artifact-only hosts (`INFRA-006`/`INFRA-007`).
+- `cli-surface.md` is the canonical reference for CLI task-surface and TUI launch/detach/attach behavior, and maps the owning `CLI-*` board items.
+- `advanced-coding-session-polling.md` defines the low-context waits on coding-session state, including the agreed first agent-tool slice and its follow-up cards.
+- `coding-session-parity-audit.md` audits the Rust coding-session agentic path against the reference behavior (`BUG-004` evidence).
+- `agent-modes-and-custom-agents.md` defines the agent/mode model, builtin agents, default resolution, custom-agent config, permission rulesets, and the disabled `general` builtin.
+- `provider-side-visibility.md` inventories what a coding-session provider receives, classifies it by sensitivity, and documents exposure-limiting controls and per-provider payload differences.
+- `deepseek-native-tool-call-normalization.md` records why DeepSeek native tool-call tokens leaked in `content` are normalized in the shared OpenAI-compatible parsers by token signature rather than by provider/model id (`BUG-060`).
 - `v1.md` defines the first serious personal daily-driver target.
+- `v1-runtime-loop.md` defines the concrete bounded-task execution model for V1.
 - `v2.md` defines the next reliability and retrieval step.
 - `v3.md` defines broader daily-use coverage.
 - `future-versions.md` captures later capability areas and deferred surfaces.

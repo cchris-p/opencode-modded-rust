@@ -1,0 +1,224 @@
+---
+id: "BUG-022"
+title: "BUG: /thinking toggle shows a line count instead of the actual reasoning in real time"
+priority: "P2"
+type: "bug"
+area: "BUG"
+spec: "wiki/v1.md"
+status: "qa"
+created: "2026-09-21"
+---
+
+# BUG: /thinking toggle shows a line count instead of the actual reasoning in real time
+
+## Summary
+
+The `/thinking` command (alias `/toggle-thinking`) is not useful in practice. Toggling it does not
+surface the model's reasoning text; when thinking is shown, each reasoning block renders collapsed as
+`▶ Thinking (N lines)` and only the line count is visible. The actual reasoning content never appears
+while the model is thinking — it only becomes readable after a manual mouse click on each individual
+block. The user's expectation is that showing thinking shows the thinking, live, as it streams.
+
+## Reported behavior
+
+- Running `/thinking` changes visibility but the user only sees the number of thinking lines.
+- The real reasoning text is not displayed in real time as it streams in.
+- The command therefore feels like it does nothing useful.
+
+## Why this exists
+
+Reasoning is the highest-signal part of a long agent turn. If the only display toggle for thinking
+renders a count until the user clicks every block, the toggle fails its purpose and the daily-driver
+workflow loses the ability to watch the model reason. This is a display correctness bug, not a
+missing feature: the toggle claims to "Show/hide thinking blocks" (`command.rs:417`) but does not
+reveal their content.
+
+## Code evidence
+
+- The command is registered as `Show/hide thinking blocks` and dispatched to a global flag:
+  `crates/opencode-tui/src/command.rs:413-422` → `crates/opencode-tui/src/app/app.rs:1776-1778`.
+- `AppContext::toggle_thinking` only flips the persisted `show_thinking` flag (ui key
+  `thinking_visibility`); it never touches reasoning expansion:
+  `crates/opencode-tui/src/context/app_context.rs:114`, `:151`, `:234-238`.
+- The flag gates whether reasoning renders at all, and collapse is decided per part:
+  `crates/opencode-tui/src/components/session.rs:520` (`show_thinking`),
+  `:687-733` (reasoning render loop),
+  `:697-704` (`collapsed = !self.expanded_reasoning.contains(&reasoning_id)`).
+- `expanded_reasoning` starts empty and is per-part keyed `{msg.id}:{part_idx}`, so nothing is
+  expanded by default: `crates/opencode-tui/src/components/session.rs:41`, `:59`, `:697`.
+- When collapsed, `render_reasoning_part` returns early with only the count line, before the
+  preview/content loop:
+  `crates/opencode-tui/src/components/session_text.rs:41-56`.
+  Because of that early return, `THINKING_PREVIEW_LINES` (`session.rs:24`) and the `preview_lines`
+  parameter are effectively dead in the default collapsed state — collapsed means count only, not a
+  preview.
+- The only way to reveal content is a mouse click on the block header; there is no keyboard or
+  command path to expand, and it is per-block:
+  `crates/opencode-tui/src/components/session.rs:886-931` (`handle_click`).
+- The reasoning id is stable during streaming, so an expanded block *would* update live; nothing
+  auto-expands the in-progress part and the toggle does not set expansion.
+
+Net effect: the toggle's two reachable states are "hidden" and "collapsed to a line count". Actual
+reasoning text is never shown by the toggle itself.
+
+## Suspected root cause
+
+The feature conflates visibility with expansion. `show_thinking` (global show/hide) and
+`expanded_reasoning` (per-part collapse) are independent, and the default for `expanded_reasoning`
+is collapsed. The command only flips the former, so the user-visible result of "showing thinking" is
+the collapsed count line rather than content.
+
+## Scope
+
+- Make `/thinking` reveal actual reasoning content, not just a count, when thinking is shown.
+- Ensure reasoning that is currently streaming is readable in real time (the in-progress part should
+  not require a click to be seen).
+- Keep hiding behavior intact: toggling thinking off still hides reasoning.
+- Keep per-block manual collapse/expand as an optional affordance, but it must not be the only way to
+  read reasoning.
+- Decide and document the intended default (expanded-when-shown vs. expanded-only-while-streaming).
+- Persist any new state consistently with the existing `thinking_visibility` ui key.
+
+## Non-goals
+
+- Changing what the model receives or what is stored; this is a render-time display fix.
+- Changing the `/thinking` command name, aliases, or category.
+- Reintroducing the `THINKING_PREVIEW_LINES` preview behavior unless it is chosen as the intended
+  default (it is currently unreachable when collapsed).
+- Redesigning the reasoning block styling or theme.
+- Tool-call compaction (`FEAT-028`); that is a separate display toggle.
+
+## Done when
+
+- Running `/thinking` to show thinking displays the actual reasoning text, not only `N lines`.
+- Reasoning that arrives during an active turn is visible as it streams without a per-block click.
+- Running `/thinking` to hide thinking still removes reasoning from the transcript.
+- Manual collapse/expand, if kept, still works and does not fight the global toggle.
+- The chosen default behavior is stated in the item Notes and reflected in the code.
+- `cargo check -p opencode-tui` and `cargo test -p opencode-tui` pass, with a test covering the
+  shown-state rendering path (content present, not just a count).
+
+## Recommended verification
+
+- `ort-build`, then `ort`; send a prompt that produces multi-line reasoning on the default model.
+- Confirm that with thinking shown, the reasoning content is visible while it streams, not a count.
+- Run `/thinking` to hide and confirm reasoning disappears; run it again and confirm content returns.
+- If manual collapse/expand is retained, click a block and confirm it toggles without breaking the
+  global visibility state.
+- Restart the TUI and confirm the persisted visibility state matches the last toggle.
+- Add a render test asserting the shown state emits reasoning text lines, not only the `N lines`
+  header.
+
+## Product decisions
+
+- The point of `/thinking` is to read reasoning; a state that only shows a count does not satisfy it.
+- Default should favor readability of live reasoning over a compact count, unless the user explicitly
+  collapses a block.
+
+## Related Items
+
+- `FEAT-028` Add a hide-tool-calls toggle that compacts runs to a tool-call count - same "collapse to
+  a count" display pattern; the two toggles should have consistent, correct semantics.
+- `FEAT-001` Improve historical chat transcripts workflow - reasoning visibility in transcripts.
+- `PHASE-001` V1 daily-driver hardening.
+
+## Notes
+
+- Relevant files: `crates/opencode-tui/src/command.rs`,
+  `crates/opencode-tui/src/app/app.rs`,
+  `crates/opencode-tui/src/context/app_context.rs`,
+  `crates/opencode-tui/src/components/session.rs`,
+  `crates/opencode-tui/src/components/session_text.rs`.
+- `crates/opencode-tui/src/components/thinking.rs` (`ThinkingBlock`) is a separate rendering path
+  (collapsed defaults to true as well). Confirmed 2026-09-23: the session transcript uses
+  `session_text::render_reasoning_part`, not `ThinkingBlock`, so `ThinkingBlock` is unreferenced and
+  is removed as part of this item.
+- Refinement settled 2026-09-23 (handoff `H-007`): default is expanded whenever `/thinking` is on,
+  tracked by an explicit per-block `collapsed_reasoning` set (replacing `expanded_reasoning`);
+  in-progress reasoning is always visible; hidden still hides.
+
+## Dev Notes - 2026-09-23
+
+- Replaced `expanded_reasoning` with `collapsed_reasoning` in `session.rs`; a block is collapsed
+  only when its `{msg.id}:{part_idx}` id is a member, so reasoning is expanded by default.
+- `session_text::render_reasoning_part` now takes `(text, theme, collapsed)`; the shown state emits
+  the actual content, the collapsed state emits `▶ Thinking (N lines)`. Removed the unreachable
+  preview behavior and `THINKING_PREVIEW_LINES`.
+- Removed the unused `components/thinking.rs` (`ThinkingBlock`) path and its `mod.rs` re-export.
+- `handle_click` toggles membership in `collapsed_reasoning`, preserving manual collapse/expand.
+- Tests: `shown_reasoning_emits_content_not_only_a_count`,
+  `collapsed_reasoning_shows_only_the_count_header`.
+- Verification: `cargo test -p opencode-tui` green (148 passed; two pre-existing flaky prompt tests
+  fail identically on clean `development`).
+- Branch `feature/tui-display-cluster`; awaiting local QA on the open PR.
+
+### Merge Closeout - 2026-09-23
+
+- Merged into `development` via PR #103 (merge commit `21d7d55`).
+- Feature branch `feature/tui-display-cluster` deleted (remote and local); local checkout returned to `development`.
+- Remains in `qa` pending a QA report or explicit completion.
+
+## Live Context - 2026-09-26 (shared observation)
+
+A live two-session capture (see `BUG-051`) confirmed a `deepseek/deepseek-flash` reasoning turn was
+actively streaming (persisted reasoning bytes growing) while the operator could not tell whether it
+was alive — the exact "count/opaque display hides a live stream" problem this card addresses.
+Dated context only; `qa` status and scope unchanged.
+
+## Dev Notes - 2026-09-28 (click reliability follow-up)
+
+Operator follow-up: "click to collapse is hard to click — I have to click `[click to collapse]` many
+times in different places." Root cause was hit registration, not the render.
+
+- `paint_block_lines` wraps each part and adds one blank padding line above and below the block
+  (`session.rs:1477-1492`). The old toggle hits were registered at `start_line` and `lines.len()-1`,
+  i.e. the two *blank padding rows*, while the visible `▼ Thinking` header and `[click to collapse]`
+  footer sat one row inside (`session.rs:852-863` before this change). Clicking the labeled text did
+  nothing; only the unlabeled padding row toggled, which is why repeated clicks "in different places"
+  eventually worked.
+- `ThinkingToggleHit` now carries a `start_line`/`end_line` range, and `handle_click` matches
+  containment instead of a single row (`session.rs:1170-1176`).
+- Hits are registered on the actual visible affordances: the wrapped "Thinking" header row(s) and,
+  when expanded, the wrapped `[click to collapse]` footer row(s), using
+  `painted_line_height` (`session.rs:1595-1599`) to stay correct on narrow terminals. Reasoning body
+  rows remain non-toggle so transcript text selection still works there.
+- Test: `clicking_the_visible_thinking_affordances_toggles_the_block` renders a reasoning part,
+  clicks the exact `[click to collapse]` row and then the `▶ Thinking` row, and asserts the block
+  collapses and re-expands.
+- Verification: `cargo test -p opencode-tui` green (170 passed); `cargo check -p opencode-tui` clean.
+- Related observation (out of scope): `tool_toggle_hits` uses the same padding-row endpoint scheme
+  (`append_rendered_tool_call`), so tool-run toggles likely have the same "click the blank row"
+  behavior. Candidate follow-up under `tool-and-script-display-improvements`.
+- Committed directly to `development` per operator request (no PR); status remains `qa`.
+
+## Merge Resolution - 2026-09-28 (development pull)
+
+Resolved the merge of local `BUG-022` (commit `aa560b5`) with `origin/development` (`BUG-049`
+windowed render + `BUG-054` pane sizing, commit `e0f66a8`). Both sides changed the session
+transcript renderer, so `crates/opencode-tui/src/components/session.rs` conflicted.
+
+Why it conflicted:
+
+- `BUG-049` extracted per-message rendering out of `render_messages` into
+  `render_message_body(ctx, msg, idx) -> RenderedBody { lines, thinking_hits, tool_hits }`, added the
+  bounded render window with a per-message height cache (`heights`, `leading_spacing`,
+  `window_start_line`), and offsets body hit indices by `base = window_start_line + lines.len()`.
+- `BUG-022` had edited the old inline `render_messages` body, so its changes had to be ported into the
+  extracted function rather than kept as a parallel arm.
+
+Resolution (origin refactor with `BUG-022` semantics layered on):
+
+- `ThinkingToggleHit` keeps the `start_line`/`end_line` range; the window conversion offsets both ends
+  by `base`.
+- `render_message_body` registers the wrapped "Thinking" header and `[click to collapse]` footer rows
+  using the re-added `painted_line_height` helper next to `wrap_block_line`.
+- `handle_click` matches the range (`hit.start_line <= line_index && line_index <= hit.end_line`).
+- Dropped `BUG-022`'s `visible_reasoning_ids` bookkeeping: `BUG-049`'s windowed layout no longer
+  prunes `collapsed_reasoning` by visible ids, since not every block is laid out each frame.
+- Kept both test sets; adapted `windowed_toggle_click_hits_visible_block` to range-hit selection.
+
+Verification: `cargo check -p opencode-tui` clean; `cargo test -p opencode-tui --lib` green
+(176 passed), including `clicking_the_visible_thinking_affordances_toggles_the_block`,
+`windowed_toggle_click_hits_visible_block`, and `queued_message_rows_do_not_jitter_while_streaming`.
+Status remains `qa`.
+

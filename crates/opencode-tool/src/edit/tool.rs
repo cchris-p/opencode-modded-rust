@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use super::replacers::CompositeReplacer;
-use crate::{with_file_lock, Metadata, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, with_file_lock, Metadata, Tool, ToolContext, ToolError,
+    ToolResult,
+};
 
 #[cfg(feature = "lsp")]
 const MAX_DIAGNOSTICS_PER_FILE: usize = 20;
@@ -98,17 +101,10 @@ impl Tool for EditTool {
         let path_str = path.to_string_lossy().to_string();
 
         if ctx.is_external_path(&path_str) {
-            let parent = path
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| path_str.clone());
-
-            ctx.ask_permission(
-                crate::PermissionRequest::new("external_directory")
-                    .with_pattern(format!("{}/*", parent))
-                    .with_metadata("filepath", serde_json::json!(&path_str))
-                    .with_metadata("parentDir", serde_json::json!(parent)),
-            )
+            ctx.ask_permission(external_directory_permission_request(
+                &path_str,
+                crate::ExternalDirectoryKind::File,
+            ))
             .await?;
         }
 
@@ -307,8 +303,6 @@ async fn get_lsp_diagnostics_with_meta(
 ) -> (String, Vec<serde_json::Value>) {
     #[cfg(feature = "lsp")]
     {
-        use opencode_lsp::detect_language;
-
         if let Some(lsp_registry) = &ctx.lsp_registry {
             return get_lsp_diagnostics_impl_with_meta(path, lsp_registry.clone()).await;
         }
@@ -330,14 +324,8 @@ async fn get_lsp_diagnostics_impl_with_meta(
     use opencode_lsp::detect_language;
 
     let language = detect_language(path);
-    let clients = lsp_registry.list().await;
 
-    let client = clients
-        .iter()
-        .find(|(id, _)| id.contains(language))
-        .map(|(_, c)| c.clone());
-
-    match client {
+    match lsp_registry.client_for_file(path).await {
         Some(client) => {
             if let Ok(content) = tokio::fs::read_to_string(path).await {
                 let _ = client.open_document(path, &content, language).await;

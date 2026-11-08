@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::{Metadata, Tool, ToolContext, ToolError, ToolResult};
+use crate::{
+    external_directory_permission_request, Metadata, Tool, ToolContext, ToolError, ToolResult,
+};
 
 #[cfg(feature = "lsp")]
 const MAX_DIAGNOSTICS_PER_FILE: usize = 20;
@@ -84,17 +86,10 @@ impl Tool for WriteTool {
         let path_str = path.to_string_lossy().to_string();
 
         if ctx.is_external_path(&path_str) {
-            let parent = path
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| path_str.clone());
-
-            ctx.ask_permission(
-                crate::PermissionRequest::new("external_directory")
-                    .with_pattern(format!("{}/*", parent))
-                    .with_metadata("filepath", serde_json::json!(&path_str))
-                    .with_metadata("parentDir", serde_json::json!(parent)),
-            )
+            ctx.ask_permission(external_directory_permission_request(
+                &path_str,
+                crate::ExternalDirectoryKind::File,
+            ))
             .await?;
         }
 
@@ -223,8 +218,6 @@ fn create_diff(filepath: &str, old_content: &str, new_content: &str) -> String {
 async fn get_lsp_diagnostics(path: &Path, ctx: &ToolContext) -> String {
     #[cfg(feature = "lsp")]
     {
-        use opencode_lsp::detect_language;
-
         if let Some(lsp_registry) = &ctx.lsp_registry {
             return get_lsp_diagnostics_impl(path, lsp_registry.clone()).await;
         }
@@ -241,20 +234,13 @@ async fn get_lsp_diagnostics(path: &Path, ctx: &ToolContext) -> String {
 #[cfg(feature = "lsp")]
 async fn get_lsp_diagnostics_impl(
     path: &Path,
-    lsp_registry: Arc<opencode_lsp::LspClientRegistry>,
+    lsp_registry: std::sync::Arc<opencode_lsp::LspClientRegistry>,
 ) -> String {
     use opencode_lsp::detect_language;
-    use std::collections::HashMap;
 
     let language = detect_language(path);
-    let clients = lsp_registry.list().await;
 
-    let client = clients
-        .iter()
-        .find(|(id, _)| id.contains(language))
-        .map(|(_, c)| c.clone());
-
-    let Some(client) = client else {
+    let Some(client) = lsp_registry.client_for_file(path).await else {
         return String::new();
     };
 

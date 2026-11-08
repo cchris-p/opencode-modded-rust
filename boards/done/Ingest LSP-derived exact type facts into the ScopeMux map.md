@@ -1,0 +1,122 @@
+---
+id: "SCOPE-013"
+title: "Ingest LSP-derived exact type facts into the ScopeMux map"
+priority: "P2"
+type: "feature"
+area: "SCOPE"
+spec: "wiki/scopemux-lsp-boundary.md"
+status: "done"
+created: "2026-11-05"
+updated: "2026-11-05"
+---
+
+# Ingest LSP-derived exact type facts into the ScopeMux map
+
+## Summary
+
+Let the ScopeMux map consume optional, exact semantic facts from LSP — type definitions,
+type references, implementations, inheritance, and relevant call-hierarchy edges — and
+label them as exact with provenance, without adding a type system or requiring LSP.
+
+## Why this exists
+
+ScopeMux's cross-file resolution is heuristic and has known gaps (Rust trait-object
+dispatch, macro expansion, generic binding). LSP has exact answers where a server exists.
+Ingesting those facts at selected anchors improves candidate precision, impact analysis,
+review context, and duplicate detection while keeping the map's offline and cross-language
+fallbacks.
+
+## Scope
+
+- Consume `LSP-002` facts at map anchors; do not issue LSP queries for every symbol.
+- Map exact facts into the existing reference classes where possible (type reference,
+  inheritance, implementation, call); extend the schema only if a fact cannot be
+  represented.
+- Label LSP-derived edges `confidence = exact` with server/provenance metadata.
+- Cache and invalidate by document version/file hash.
+- Keep heuristic edges when LSP is unavailable, unsupported, or slow.
+- Bound the number of LSP calls per retrieval request and record the fallback reason.
+- Record provenance for evaluation and diagnosis.
+
+## Acceptance criteria
+
+- A map query can consume type definition/reference/implementation facts for a supported
+  language and distinguish them from heuristic edges.
+- The map returns the same task result when LSP is absent, with heuristic confidence where
+  applicable.
+- Unsupported servers and timeouts degrade cleanly; no task fails because LSP is missing.
+- LSP calls are bounded and do not turn a retrieval request into a whole-repo query storm.
+- Exact facts are invalidated when the file changes.
+- No type checker, inference engine, or new language frontend is added.
+- Native and default builds both compile; LSP remains optional.
+- Provenance is sufficient for `SCOPE-014` to compare arms.
+
+## Non-goals
+
+- Project-wide eager typed indexing.
+- Type checking or inference.
+- Making LSP a hard dependency of ScopeMux or V1.
+- Replacing the parser or InfoBlock representation.
+- Using type facts to override explicit task scope.
+
+## Dev Notes
+
+- Depends on `LSP-002` for the fact interface and `SCOPE-012` for the ownership guard.
+- Prefer a small set of anchor-driven queries: definition, implementation, and references
+  for the nodes the map already selected.
+- Do not change the runtime's inclusion thresholds; this card only improves evidence.
+- Watch FFI/schema compatibility with the pinned `scopemux-core` revision; advance the pin
+  in lockstep if the map schema changes.
+
+## QA Verification
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/152 (merged into `development`).
+- Neutral `ExactFactProvider` contract lives in `opencode-retrieval`; `opencode-scopemux`
+  does not depend on `opencode-lsp` at runtime (SCOPE-012 guard still passes).
+- `LspExactFactProvider` is the only LSP-aware adapter; the runtime injects it only when a
+  workspace configured LSP.
+- Native enrichment follows map-selected anchors only (max 8 definition queries per
+  request) and labels exact edges `confidence = exact` with server provenance.
+- Unavailable facts leave the candidate set byte-identical to the no-LSP baseline and add
+  a `provider_notes` fallback reason (test asserts equality).
+- No `scopemux-core` schema/FFI change; pin untouched.
+- Tests: new native tests for exact provenance, bounded calls, unavailable-equals-baseline,
+  and no-provider-unchanged all pass. Non-native suite and the workspace suite (excluding
+  the documented pre-existing native artifact failures) pass.
+- At PR #152 time, two native failures were present on base `development`:
+  `native_delta_slice_returns_projected_entries` and
+  `native_provider_reports_plan_reconciliation_evidence` (segfault). They were unrelated to
+  this card and were fixed in PR #158 (stale `scopemux-core` FFI layout, `SCOPE-003`).
+
+## Related Items
+
+- `LSP-001` Standardize LSP runtime wiring and configuration.
+- `LSP-002` Add a capability-negotiated LSP semantic-fact interface.
+- `SCOPE-012` Consolidate ScopeMux and LSP responsibilities.
+- `SCOPE-014` Measure the context value of LSP-derived semantic facts.
+- `SCOPE-010` Language coverage and fallback matrix.
+- `wiki/scopemux-lsp-boundary.md`
+- `invariants/retrieval.md`
+
+## QA Re-confirmation (2026-11-05, H-018 step 3)
+
+Re-ran on merged `development` (`a701afd` + board commits):
+
+```bash
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-retrieval -p opencode-scopemux
+opencode_retrieval: test result: ok. 6 passed; 0 failed
+opencode_scopemux:  test result: ok. 5 passed; 0 failed
+
+$ cargo test -p opencode-scopemux --features native
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 filtered out
+
+$ cargo test -p opencode-scopemux --features native exact_fact
+test result: ok. 3 passed; 0 failed; 15 filtered out
+
+$ cargo test -p opencode-scopemux --features native native_
+test result: ok. 8 passed; 0 failed; 10 filtered out
+```
+
+Both previously recorded native failures now pass after the `SCOPE-003` FFI fix; the card
+text above was corrected accordingly. Exact facts remain opt-in only
+(`OPENCODE_SCOPEMUX_EXACT_FACTS=1`). Promoting `qa` -> `done`.

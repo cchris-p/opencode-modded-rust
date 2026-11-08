@@ -1,5 +1,6 @@
 #![allow(ambiguous_glob_reexports)]
 
+pub mod agentic;
 pub mod error;
 pub mod mcp_oauth;
 pub mod oauth;

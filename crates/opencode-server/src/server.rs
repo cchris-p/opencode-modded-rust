@@ -30,6 +30,11 @@ use crate::routes;
 
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:4096";
 
+/// Cadence for the background models.dev catalog refresh. Mirrors vanilla
+/// OpenCode's `Schedule.spaced("60 minutes")` in `packages/core/src/models-dev.ts`.
+pub const MODELS_DEV_REFRESH_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(60 * 60);
+
 struct PluginBridgeFetchProxy {
     bridge: Arc<PluginAuthBridge>,
 }
@@ -111,9 +116,12 @@ pub(crate) fn sync_custom_fetch_proxy(
 
 pub struct ServerState {
     pub sessions: Mutex<SessionManager>,
-    pub providers: ProviderRegistry,
+    pub providers: RwLock<ProviderRegistry>,
     pub auth_manager: Arc<AuthManager>,
     pub event_bus: broadcast::Sender<String>,
+    /// Lazily populated from `lsp` config per workspace root. Empty until a
+    /// workspace is configured, so an unconfigured product starts no LSP server.
+    pub lsp_registry: Arc<opencode_lsp::LspClientRegistry>,
     session_repo: Option<SessionRepository>,
     message_repo: Option<MessageRepository>,
 }
@@ -123,9 +131,10 @@ impl ServerState {
         let (tx, _) = broadcast::channel(1024);
         Self {
             sessions: Mutex::new(SessionManager::new()),
-            providers: ProviderRegistry::new(),
+            providers: RwLock::new(ProviderRegistry::new()),
             auth_manager: Arc::new(AuthManager::new()),
             event_bus: tx,
+            lsp_registry: Arc::new(opencode_lsp::LspClientRegistry::new()),
             session_repo: None,
             message_repo: None,
         }
@@ -142,26 +151,10 @@ impl ServerState {
         load_plugin_auth_store(&server_url, auth_manager.clone()).await;
         let auth_store = auth_manager.list().await;
 
-        // Load config and convert providers to bootstrap format
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let bootstrap_config = match load_config(&cwd) {
-            Ok(config) => {
-                let providers = convert_config_providers_for_bootstrap(&config);
-                bootstrap_config_from_raw(
-                    providers,
-                    config.disabled_providers.clone(),
-                    config.enabled_providers.clone(),
-                    config.model.clone(),
-                    config.small_model.clone(),
-                )
-            }
-            Err(error) => {
-                tracing::warn!(%error, "failed to load config for provider bootstrap, using defaults");
-                opencode_provider::BootstrapConfig::default()
-            }
-        };
-
-        state.providers = create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
+        let bootstrap_config = load_provider_bootstrap_config();
+        opencode_provider::ensure_models_dev_cache().await;
+        *state.providers.write().unwrap() =
+            create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
         let db = Database::new().await?;
         let pool = db.pool().clone();
         state.session_repo = Some(SessionRepository::new(pool.clone()));
@@ -172,6 +165,15 @@ impl ServerState {
 
     pub fn broadcast(&self, event: &str) {
         let _ = self.event_bus.send(event.to_string());
+    }
+
+    pub async fn refresh_providers(&self) -> anyhow::Result<()> {
+        let auth_store = self.auth_manager.list().await;
+        let bootstrap_config = load_provider_bootstrap_config();
+        opencode_provider::ensure_models_dev_cache().await;
+        *self.providers.write().unwrap() =
+            create_registry_from_bootstrap_config(&bootstrap_config, &auth_store);
+        Ok(())
     }
 
     async fn load_sessions_from_storage(&self) -> anyhow::Result<()> {
@@ -205,15 +207,18 @@ impl ServerState {
             manager.list().into_iter().cloned().collect()
         };
 
-        let snapshot_ids: HashSet<String> = snapshot.iter().map(|s| s.id.clone()).collect();
-        let persisted = session_repo.list(None, 100_000).await?;
-
-        for stale in persisted {
-            if !snapshot_ids.contains(&stale.id) {
-                message_repo.delete_for_session(&stale.id).await?;
-                session_repo.delete(&stale.id).await?;
-            }
-        }
+        // A running server only knows the sessions it loaded at startup plus the
+        // ones it created, so its snapshot may be stale relative to another live
+        // server. Saving is additive: never remove stored state that is absent
+        // from this view. Freshness comes from comparing stored `updated_at`
+        // against the in-memory `time.updated`, so a stale writer never
+        // overwrites newer durable state.
+        let stored_updated_at: HashMap<String, i64> = session_repo
+            .list(None, 100_000)
+            .await?
+            .into_iter()
+            .map(|stored| (stored.id, stored.time.updated))
+            .collect();
 
         for session in snapshot {
             let mut stored_session: opencode_types::Session =
@@ -222,19 +227,72 @@ impl ServerState {
                 stored_session.messages.clone();
             stored_session.messages.clear();
 
-            if session_repo.get(&stored_session.id).await?.is_some() {
-                session_repo.update(&stored_session).await?;
-            } else {
-                session_repo.create(&stored_session).await?;
+            let stored_updated = stored_updated_at.get(&stored_session.id).copied();
+            if stored_updated.is_some_and(|updated| updated > stored_session.time.updated) {
+                continue;
             }
 
-            message_repo.delete_for_session(&stored_session.id).await?;
-            for message in stored_messages {
-                message_repo.create(&message).await?;
+            match stored_updated {
+                Some(_) => session_repo.update(&stored_session).await?,
+                None => session_repo.create(&stored_session).await?,
             }
+
+            message_repo
+                .replace_for_session(&stored_session.id, &stored_messages)
+                .await?;
         }
 
         Ok(())
+    }
+
+    /// Explicitly remove sessions and their messages from durable storage.
+    ///
+    /// Deletion is user-initiated and must not rely on a later snapshot diff,
+    /// so the delete path drives this directly for the root session and every
+    /// descendant id.
+    pub(crate) async fn delete_sessions_from_storage(&self, ids: &[String]) -> anyhow::Result<()> {
+        let (Some(session_repo), Some(message_repo)) = (&self.session_repo, &self.message_repo)
+        else {
+            return Ok(());
+        };
+
+        for id in ids {
+            message_repo.delete_for_session(id).await?;
+            session_repo.delete(id).await?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_state_with_repos(
+    session_repo: SessionRepository,
+    message_repo: MessageRepository,
+) -> ServerState {
+    let mut state = ServerState::new();
+    state.session_repo = Some(session_repo);
+    state.message_repo = Some(message_repo);
+    state
+}
+
+fn load_provider_bootstrap_config() -> opencode_provider::BootstrapConfig {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    match load_config(&cwd) {
+        Ok(config) => {
+            let providers = convert_config_providers_for_bootstrap(&config);
+            bootstrap_config_from_raw(
+                providers,
+                config.disabled_providers.clone(),
+                config.enabled_providers.clone(),
+                config.model.clone(),
+                config.small_model.clone(),
+            )
+        }
+        Err(error) => {
+            tracing::warn!(%error, "failed to load config for provider bootstrap, using defaults");
+            opencode_provider::BootstrapConfig::default()
+        }
     }
 }
 
@@ -388,24 +446,34 @@ async fn load_plugin_auth_store(server_url: &str, auth_manager: Arc<AuthManager>
 
     let bridges = loader.auth_bridges().await;
     for (provider_id, bridge) in bridges {
-        match bridge.load().await {
+        let stored_auth = auth_manager.get(&provider_id).await;
+        let stored_auth_json = stored_auth
+            .as_ref()
+            .and_then(|auth| serde_json::to_value(auth).ok());
+        let has_oauth = matches!(stored_auth.as_ref(), Some(AuthInfo::OAuth { .. }));
+
+        match bridge.load(stored_auth_json).await {
             Ok(result) => {
                 sync_custom_fetch_proxy(&provider_id, bridge.clone(), result.has_custom_fetch);
 
+                // OAuth loaders return a placeholder key so the provider path can
+                // run; it must not replace the stored OAuth credential.
                 if let Some(api_key) = result.api_key {
-                    auth_manager
-                        .set(
-                            &provider_id,
-                            AuthInfo::Api {
-                                key: api_key.clone(),
-                            },
-                        )
-                        .await;
-                    // TS parity: copilot auth can power both standard and enterprise providers.
-                    if provider_id == "github-copilot" {
+                    if !has_oauth {
                         auth_manager
-                            .set("github-copilot-enterprise", AuthInfo::Api { key: api_key })
+                            .set(
+                                &provider_id,
+                                AuthInfo::Api {
+                                    key: api_key.clone(),
+                                },
+                            )
                             .await;
+                        // TS parity: copilot auth can power both standard and enterprise providers.
+                        if provider_id == "github-copilot" {
+                            auth_manager
+                                .set("github-copilot-enterprise", AuthInfo::Api { key: api_key })
+                                .await;
+                        }
                     }
                 }
             }
@@ -478,8 +546,31 @@ fn cors_layer() -> CorsLayer {
         .allow_headers(Any)
 }
 
+/// Spawn the periodic models.dev catalog refresh. `refresh_providers` re-reads
+/// the on-disk catalog (refetching when stale under `MODELS_DEV_TTL`) and
+/// rebuilds the provider registry, so long-running sessions pick up new models
+/// without a restart. Failures are logged and never stop the server.
+fn spawn_models_dev_refresh(state: Arc<ServerState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(MODELS_DEV_REFRESH_INTERVAL);
+        // `interval` completes immediately on the first tick; skip it so startup
+        // work stays in `new_with_storage_for_url` and the first scheduled
+        // refresh happens after one full interval.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(error) = state.refresh_providers().await {
+                tracing::warn!(%error, "scheduled models.dev catalog refresh failed");
+            }
+        }
+    });
+}
+
 pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     let state = Arc::new(ServerState::new_with_storage_for_url(format!("http://{}", addr)).await?);
+    spawn_models_dev_refresh(state.clone());
+    let cwd = std::env::current_dir().unwrap_or_default();
+    routes::configure_lsp_for_directory(&state.lsp_registry, &cwd).await;
 
     let app = routes::router()
         .layer(cors_layer())
@@ -499,6 +590,10 @@ pub async fn run_server_with_state(
     addr: SocketAddr,
     state: Arc<ServerState>,
 ) -> anyhow::Result<()> {
+    spawn_models_dev_refresh(state.clone());
+    let cwd = std::env::current_dir().unwrap_or_default();
+    routes::configure_lsp_for_directory(&state.lsp_registry, &cwd).await;
+
     let app = routes::router()
         .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
@@ -517,15 +612,13 @@ pub async fn run_server_with_state(
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use opencode_session::{SessionTask, TaskAction, TaskReviewStatus, TaskVerificationStatus};
 
     fn state_with_repos(
         session_repo: SessionRepository,
         message_repo: MessageRepository,
     ) -> ServerState {
-        let mut state = ServerState::new();
-        state.session_repo = Some(session_repo);
-        state.message_repo = Some(message_repo);
-        state
+        test_state_with_repos(session_repo, message_repo)
     }
 
     #[tokio::test]
@@ -556,6 +649,33 @@ mod tests {
             let session = manager
                 .get_mut(&session_id)
                 .expect("session should be available for mutation");
+            session.set_task(SessionTask::new(
+                "Persist task gates",
+                vec!["Verification passes".to_string()],
+                ".",
+                vec!["cargo test -p opencode-session".to_string()],
+            ));
+            session
+                .advance_task(TaskAction::PrepareContext)
+                .expect("task should prepare context");
+            session
+                .advance_task(TaskAction::StartImplementing)
+                .expect("task should enter implementing");
+            session
+                .advance_task(TaskAction::StartVerifying)
+                .expect("task should enter verifying");
+            session
+                .advance_task(TaskAction::RecordVerification {
+                    status: TaskVerificationStatus::Passed,
+                    notes: Some("cargo test passed".to_string()),
+                })
+                .expect("verification should pass");
+            session
+                .advance_task(TaskAction::RecordReview {
+                    status: TaskReviewStatus::Approved,
+                    notes: Some("review approved".to_string()),
+                })
+                .expect("review should approve completion");
             let user = session.add_user_message("hello");
             user.created_at = fixed_user_time;
             if let Some(part) = user.parts.first_mut() {
@@ -595,10 +715,13 @@ mod tests {
         assert_eq!(session.messages[1].created_at, assistant_created_at);
         assert_eq!(session.messages[0].get_text(), "hello");
         assert_eq!(session.messages[1].get_text(), "world");
+        let task = session.task.as_ref().expect("task should round-trip");
+        assert_eq!(task.verification_status, TaskVerificationStatus::Passed);
+        assert_eq!(task.review_status, TaskReviewStatus::Approved);
     }
 
     #[tokio::test]
-    async fn sync_removes_deleted_sessions_from_storage() {
+    async fn sync_does_not_remove_sessions_absent_from_snapshot() {
         let db = Database::in_memory()
             .await
             .expect("in-memory db should initialize");
@@ -632,14 +755,161 @@ mod tests {
             manager.delete(&session_id);
         }
 
+        // Saving is additive: a sync never removes a stored session that is
+        // absent from the caller's in-memory view. Explicit deletion owns removal.
         state
             .sync_sessions_to_storage()
             .await
-            .expect("delete sync should succeed");
+            .expect("additive sync should succeed");
         assert!(session_repo
             .get(&session_id)
             .await
             .expect("get should succeed")
-            .is_none());
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrent_states_keep_each_others_sessions_and_messages() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+
+        let state_a = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+        let state_b = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+
+        let id_a = {
+            let mut manager = state_a.sessions.lock().await;
+            let created = manager.create("default", ".");
+            let id = created.id.clone();
+            manager
+                .get_mut(&id)
+                .expect("session should exist")
+                .add_user_message("from a");
+            id
+        };
+        let id_b = {
+            let mut manager = state_b.sessions.lock().await;
+            let created = manager.create("default", ".");
+            let id = created.id.clone();
+            manager
+                .get_mut(&id)
+                .expect("session should exist")
+                .add_user_message("from b");
+            id
+        };
+
+        // A writes, then a stale B writes, then A writes again. Neither view
+        // knows about the other's session.
+        state_a
+            .sync_sessions_to_storage()
+            .await
+            .expect("state a should sync");
+        state_b
+            .sync_sessions_to_storage()
+            .await
+            .expect("state b should sync");
+        state_a
+            .sync_sessions_to_storage()
+            .await
+            .expect("state a should sync again");
+
+        let session_repo = SessionRepository::new(pool.clone());
+        let message_repo = MessageRepository::new(pool.clone());
+        assert!(session_repo.get(&id_a).await.expect("get a").is_some());
+        assert!(session_repo.get(&id_b).await.expect("get b").is_some());
+        assert_eq!(
+            message_repo
+                .list_for_session(&id_a)
+                .await
+                .expect("messages a")
+                .len(),
+            1
+        );
+        assert_eq!(
+            message_repo
+                .list_for_session(&id_b)
+                .await
+                .expect("messages b")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_state_does_not_overwrite_newer_stored_session() {
+        let db = Database::in_memory()
+            .await
+            .expect("in-memory db should initialize");
+        let pool = db.pool().clone();
+        let session_repo = SessionRepository::new(pool.clone());
+        let message_repo = MessageRepository::new(pool.clone());
+
+        let state_stale = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+        let session_id = {
+            let mut manager = state_stale.sessions.lock().await;
+            let created = manager.create("default", ".");
+            let id = created.id.clone();
+            let session = manager.get_mut(&id).expect("session should exist");
+            session.add_user_message("original");
+            session.time.updated = 1_000;
+            id
+        };
+        state_stale
+            .sync_sessions_to_storage()
+            .await
+            .expect("stale state should sync first");
+
+        // A second server loads the stored session and writes newer state.
+        let state_new = state_with_repos(
+            SessionRepository::new(pool.clone()),
+            MessageRepository::new(pool.clone()),
+        );
+        state_new
+            .load_sessions_from_storage()
+            .await
+            .expect("new state should load stored sessions");
+        {
+            let mut manager = state_new.sessions.lock().await;
+            let session = manager.get_mut(&session_id).expect("session should exist");
+            session.title = "newer title".to_string();
+            session.add_user_message("newer");
+            session.time.updated = 2_000;
+        }
+        state_new
+            .sync_sessions_to_storage()
+            .await
+            .expect("new state should sync");
+
+        // The stale server syncs again with an older `updated_at`.
+        state_stale
+            .sync_sessions_to_storage()
+            .await
+            .expect("stale state should sync again");
+
+        let stored = session_repo
+            .get(&session_id)
+            .await
+            .expect("get should succeed")
+            .expect("session should remain stored");
+        assert_eq!(stored.time.updated, 2_000);
+        assert_eq!(stored.title, "newer title");
+        assert_eq!(
+            message_repo
+                .list_for_session(&session_id)
+                .await
+                .expect("messages should load")
+                .len(),
+            2
+        );
     }
 }

@@ -5,11 +5,20 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# Build the local scopemux-core FFI provider into the retrieval layer. The
+# provider still only activates for the scoped local model (ollama + qwen);
+# this only makes it available to be selected.
+scopemux-native = ["opencode-scopemux/native"]
+
 [dependencies]
 opencode-core = { path = "../opencode-core" }
 opencode-types = { path = "../opencode-types" }
 opencode-storage = { path = "../opencode-storage" }
 opencode-provider = { path = "../opencode-provider" }
+opencode-retrieval = { path = "../opencode-retrieval" }
+opencode-scopemux = { path = "../opencode-scopemux" }
 opencode-tool = { path = "../opencode-tool" }
 opencode-mcp = { path = "../opencode-mcp" }
 opencode-lsp = { path = "../opencode-lsp" }

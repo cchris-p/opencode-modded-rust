@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -63,6 +63,12 @@ pub struct Config {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_agent: Option<String>,
+
+    /// Maximum subagent nesting depth. A root session may spawn this many
+    /// levels of `task` subagents; the reference default is `1`. Snake_case to
+    /// match the reference config key (`cfg.subagent_depth`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_depth: Option<u32>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
@@ -202,6 +208,8 @@ pub struct KeybindsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub messages_toggle_conceal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_details: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_list: Option<String>,
@@ -337,6 +345,29 @@ pub struct TuiConfig {
     pub scroll_acceleration: Option<ScrollAccelerationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_style: Option<String>,
+
+    // FEAT-053: display-toggle startup defaults. The persisted `kv.json` value
+    // always wins; these are consulted only when the runtime key is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_details: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamps: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_density: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_highlight: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollbar: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tips_hidden: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_hidden: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -378,12 +409,49 @@ pub struct CommandConfig {
     pub subtask: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct SkillsConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub urls: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SkillsConfigInput {
+    Legacy {
+        #[serde(default)]
+        paths: Vec<String>,
+        #[serde(default)]
+        urls: Vec<String>,
+    },
+    Current(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for SkillsConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match SkillsConfigInput::deserialize(deserializer)? {
+            SkillsConfigInput::Legacy { paths, urls } => Ok(Self { paths, urls }),
+            SkillsConfigInput::Current(items) => {
+                let mut paths = Vec::new();
+                let mut urls = Vec::new();
+
+                for item in items {
+                    if item.starts_with("http://") || item.starts_with("https://") {
+                        urls.push(item);
+                    } else {
+                        paths.push(item);
+                    }
+                }
+
+                Ok(Self { paths, urls })
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -658,12 +726,15 @@ pub struct CompactionConfig {
 pub struct ExperimentalConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disable_paste_summary: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_tool: Option<bool>,
     #[serde(alias = "openTelemetry", skip_serializing_if = "Option::is_none")]
     pub open_telemetry: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub primary_tools: Vec<String>,
+    /// Experimental background subagents (reference
+    /// `experimentalBackgroundSubagents` / `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS`).
+    /// Off by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_subagents: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continue_loop_on_deny: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -818,6 +889,7 @@ impl DeepMerge for KeybindsConfig {
             &mut self.messages_toggle_conceal,
             other.messages_toggle_conceal,
         );
+        merge_option_replace(&mut self.tool_calls, other.tool_calls);
         merge_option_replace(&mut self.tool_details, other.tool_details);
         merge_option_replace(&mut self.model_list, other.model_list);
         merge_option_replace(&mut self.model_cycle_recent, other.model_cycle_recent);
@@ -934,6 +1006,7 @@ impl DeepMerge for TuiConfig {
         merge_option_replace(&mut self.scroll_speed, other.scroll_speed);
         merge_option_replace(&mut self.scroll_acceleration, other.scroll_acceleration);
         merge_option_replace(&mut self.diff_style, other.diff_style);
+        merge_option_replace(&mut self.prompt_hidden, other.prompt_hidden);
     }
 }
 
@@ -1143,7 +1216,20 @@ impl DeepMerge for LspConfig {
 impl DeepMerge for PermissionConfig {
     fn deep_merge(&mut self, other: Self) {
         for (key, value) in other.rules {
-            self.rules.insert(key, value);
+            match (self.rules.remove(&key), value) {
+                // Merge sibling patterns under the same permission key instead of
+                // replacing the whole rule, so a later config overlay (e.g. a
+                // permanent grant) does not clobber unrelated patterns.
+                (Some(PermissionRule::Object(mut existing)), PermissionRule::Object(incoming)) => {
+                    for (pattern, action) in incoming {
+                        existing.insert(pattern, action);
+                    }
+                    self.rules.insert(key, PermissionRule::Object(existing));
+                }
+                (_, incoming) => {
+                    self.rules.insert(key, incoming);
+                }
+            }
         }
     }
 }
@@ -1166,17 +1252,37 @@ impl DeepMerge for CompactionConfig {
 impl DeepMerge for ExperimentalConfig {
     fn deep_merge(&mut self, other: Self) {
         merge_option_replace(&mut self.disable_paste_summary, other.disable_paste_summary);
-        merge_option_replace(&mut self.batch_tool, other.batch_tool);
         merge_option_replace(&mut self.open_telemetry, other.open_telemetry);
         if !other.primary_tools.is_empty() {
             self.primary_tools = other.primary_tools;
         }
+        merge_option_replace(&mut self.background_subagents, other.background_subagents);
         merge_option_replace(&mut self.continue_loop_on_deny, other.continue_loop_on_deny);
         merge_option_replace(&mut self.mcp_timeout, other.mcp_timeout);
     }
 }
 
 impl Config {
+    /// Maximum subagent nesting depth, defaulting to the reference `1`.
+    pub fn subagent_depth_limit(&self) -> u32 {
+        self.subagent_depth.unwrap_or(1)
+    }
+
+    /// Whether experimental background subagents are enabled. Matches the
+    /// reference: the `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` env var
+    /// or `experimental.background_subagents` in config. Off by default.
+    pub fn experimental_background_subagents(&self) -> bool {
+        let from_env = std::env::var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS")
+            .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
+            .unwrap_or(false);
+        let from_config = self
+            .experimental
+            .as_ref()
+            .and_then(|experimental| experimental.background_subagents)
+            .unwrap_or(false);
+        from_env || from_config
+    }
+
     pub fn merge(&mut self, other: Config) {
         merge_option_replace(&mut self.schema, other.schema);
         merge_option_replace(&mut self.theme, other.theme);
@@ -1194,6 +1300,7 @@ impl Config {
         merge_option_replace(&mut self.model, other.model);
         merge_option_replace(&mut self.small_model, other.small_model);
         merge_option_replace(&mut self.default_agent, other.default_agent);
+        merge_option_replace(&mut self.subagent_depth, other.subagent_depth);
         merge_option_replace(&mut self.username, other.username);
         merge_option_deep(&mut self.mode, other.mode);
         merge_option_deep(&mut self.agent, other.agent);
@@ -1430,5 +1537,79 @@ mod tests {
         assert_eq!(options.get("a"), Some(&serde_json::json!(1)));
         assert_eq!(options.get("b"), Some(&serde_json::json!(2)));
         assert!(agents.contains_key("research"));
+    }
+
+    #[test]
+    fn permission_merge_preserves_sibling_patterns_and_is_idempotent() {
+        let mut base = Config {
+            permission: Some(PermissionConfig {
+                rules: HashMap::from([(
+                    "bash".to_string(),
+                    PermissionRule::Object(HashMap::from([(
+                        "git *".to_string(),
+                        PermissionAction::Allow,
+                    )])),
+                )]),
+            }),
+            ..Default::default()
+        };
+
+        let grant = |pattern: &str| Config {
+            permission: Some(PermissionConfig {
+                rules: HashMap::from([(
+                    "bash".to_string(),
+                    PermissionRule::Object(HashMap::from([(
+                        pattern.to_string(),
+                        PermissionAction::Allow,
+                    )])),
+                )]),
+            }),
+            ..Default::default()
+        };
+
+        base.merge(grant("cargo test"));
+        base.merge(grant("cargo test"));
+
+        let rules = base.permission.unwrap().rules;
+        let PermissionRule::Object(patterns) = rules.get("bash").unwrap() else {
+            panic!("expected pattern map for bash");
+        };
+        assert_eq!(patterns.len(), 2);
+        assert_eq!(patterns.get("git *"), Some(&PermissionAction::Allow));
+        assert_eq!(patterns.get("cargo test"), Some(&PermissionAction::Allow));
+    }
+
+    #[test]
+    fn subagent_depth_defaults_to_one_and_merges_overlays() {
+        assert_eq!(Config::default().subagent_depth_limit(), 1);
+
+        let mut base = Config::default();
+        base.merge(Config {
+            subagent_depth: Some(3),
+            ..Default::default()
+        });
+        assert_eq!(base.subagent_depth_limit(), 3);
+    }
+
+    #[test]
+    fn experimental_background_subagents_defaults_off_and_honors_config() {
+        let previous = std::env::var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS").ok();
+        std::env::remove_var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS");
+
+        assert!(!Config::default().experimental_background_subagents());
+
+        let mut base = Config::default();
+        base.merge(Config {
+            experimental: Some(ExperimentalConfig {
+                background_subagents: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert!(base.experimental_background_subagents());
+
+        if let Some(previous) = previous {
+            std::env::set_var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS", previous);
+        }
     }
 }

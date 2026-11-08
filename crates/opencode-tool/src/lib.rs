@@ -1,6 +1,6 @@
 pub mod apply_patch;
 pub mod bash;
-pub mod batch;
+pub mod code_search_tool;
 pub mod codesearch;
 pub mod edit;
 pub mod external_directory;
@@ -14,6 +14,7 @@ pub mod plan;
 pub mod question;
 pub mod read;
 pub mod registry;
+pub mod session;
 pub mod skill;
 pub mod task;
 pub mod todo;
@@ -24,7 +25,8 @@ pub mod websearch;
 pub mod write;
 
 pub use external_directory::{
-    assert_external_directory, ExternalDirectoryKind, ExternalDirectoryOptions,
+    assert_external_directory, permission_request as external_directory_permission_request,
+    ExternalDirectoryKind, ExternalDirectoryOptions,
 };
 pub use registry::*;
 pub use tool::*;

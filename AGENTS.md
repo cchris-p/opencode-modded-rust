@@ -13,12 +13,30 @@
 - If a rule, invariant, or plan must constrain this product, it must be restated in this repo.
 - Cross-repo references are for context and traceability, not shared ownership.
 
+## Reference Repo Convention
+
+- The vanilla/reference codebase is `$HOME/repos/opencode-modded`, a mirror of `anomalyco/opencode` (`https://github.com/cchris-p/opencode-modded`).
+- Reference vanilla behavior from the `dev` branch, and fetch the latest `dev` before comparing (`git -C "$HOME/repos/opencode-modded" fetch origin dev`). Do not compare against a stale local checkout or an old pinned commit.
+- The recorded reference commit is pinned for reproducibility: `f54ce313b99a6661d7758ad042f7a6e05c8e0972` (branch `dev`, package `1.18.31`, 2026-09-21), re-pinned by `GATE-004`.
+- The previous pin `e62912b5d18b73316c7bfd6e894b040698f6c880` is unreachable on the remote (force-pushed) and is superseded; do not cite it as current.
+
+## aa-studies Workflow (Live Research Repo)
+
+- `$HOME/apps/aa-studies` (private `cchris-p/aa-studies`) is the live research repo behind the only active production workflow and the `GATE-001` V1 Readiness Gate. `RESEARCH-001`/`RESEARCH-002` operate against it.
+- Clone it locally if absent: `git clone --branch development git@github.com:cchris-p/aa-studies.git "$HOME/apps/aa-studies"` (private; auth required).
+- **Always work and read on the `development` branch, never `main`.** `main` is behind. Fetch first: `git -C "$HOME/apps/aa-studies" fetch origin development`. Prefer reading the local project directory directly; use `gh api repos/cchris-p/aa-studies/contents/<path>?ref=development` only as a fallback.
+- This machine **cannot run** aa-studies optimization/backtest scripts — they require data mounting that is not present here. Do not attempt them.
+- **Administrative/provisional work in the checkout is allowed**: board cards, docs, skills, and read-only analysis of committed artifacts.
+- Reference aa-studies by path; never copy private research outputs, prompts, or secrets into this repository.
+
 ## Planning Direction
 
 - `wiki/` contains architecture and version-direction documents.
 - `invariants/` contains absolute truths for the final desired system.
 - `boards/` tracks execution work, deferred work, and future feature triage.
+- Keep board lane directories flat: do not create subdirectories under `boards/<lane>/`; place board item markdown files directly in the lane directory.
 - `docs/archive/session.md` is archived brainstorming source material, not the authoritative plan.
+- The TypeScript reference line and the `dev`-branch convention are defined under "Reference Repo Convention" above.
 
 ## Current Product Stance
 
@@ -26,3 +44,59 @@
 - TUI is part of V1.
 - Full parity with OpenCode is deferred.
 - Upstream sync is optional and selective, not a standing maintenance obligation.
+
+## Future-Proofing And Decision Layer
+
+- The product must remain **absorption-resistant**: a small stable core, a volatile policy layer, deletion-ready shims, owned data, and first-class efficiency/trust.
+- Canonical substrate docs: `wiki/harness-substrate.md` and `invariants/future-proofing.md`.
+- System-1 decision layer docs: `wiki/decision-layer.md`, `wiki/decision-log-egress.md`, `wiki/post-jev-roadmap.md`, and `invariants/decision-layer.md`.
+- Workspace Intelligence Protocol docs: `wiki/workspace-intelligence.md` and `invariants/workspace-intelligence.md`. ScopeMux is the first WIP implementation and part of the project substrate; this repository is its main utilizer.
+- ScopeMux is optional and evidence-only. Activation is capability-profile-driven; the Qwen-via-Ollama path is the initial experiment profile, not a permanent model-ID rule. It composes with `opencode-lsp` and does not replace it.
+- System-1 routing may propose generic vs WIP, the rung, budget, and slice sufficiency within the capability profile. The profile is a hard bound; the runtime disposes; the classifier cannot widen it or bypass fallback/egress.
+- Board: `FUTURE-PROOFING-001` is the living guidance epic; `FUTURE-PROOFING-013` is the Workspace Intelligence Protocol program; `DECISION-001` is the Jev/Laya implementation epic.
+- Jev means the TypeSafe System One decision API (`POST https://api.typesafe.ai/v1/systemone`), not the `jev-ultrafast` browser agent. Jev is not a CLI; do not probe PATH for it.
+- Classifiers propose; deterministic rules, invariants, and humans dispose. No classifier may grant permission, change a disposition, merge, or weaken an invariant.
+- Structural changes must pass the eight future-proofing tests in `invariants/future-proofing.md` before implementation.
+
+## ScopeMux Integration Scope
+
+- Integration work includes the `scopemux` development it depends on.
+- The ScopeMux integration program owns the required `scopemux-core` engine changes and the `scopemux-notes` planning/board work that gates them; upstream `FIX-*`/`WI-*` items are in-scope deliverables, not external prerequisites.
+- Upstream artifacts are edited in their own repositories (`$HOME/apps/scopemux-core`, `$HOME/apps/scopemux-notes`); cross-repo ownership rules still apply.
+- This does not make `scopemux` a V1 dependency or change runtime authority over task state, lifecycle, verification, or review.
+- The native ScopeMux provider is compiled into the product binary. The current implementation uses a temporary `ollama` + `qwen*` selection gate as the initial experiment profile; every other model and unsupported workspace uses the generic provider. The target policy is capability-profile-driven activation, not a permanent model-ID rule (`FUTURE-PROOFING-015`). Canonical rules: `invariants/providers.md` and `invariants/workspace-intelligence.md`.
+- The long-term role is the Workspace Intelligence Protocol: an optional, evidence-only context/data capability. It composes with `opencode-lsp` and does not replace it. See `wiki/workspace-intelligence.md`.
+- Canonical rule: `invariants/integration-scope.md`.
+- In this repository (`opencode-modded-rust`), ScopeMux work must always use a separate git worktree for PR flows. This rule does not apply to the `scopemux` repositories themselves.
+
+## Storage Paths
+
+- The Rust product resolves its SQLite database as `dirs::data_local_dir()/opencode/opencode.db` (`crates/opencode-storage/src/database.rs:138`).
+- macOS: `~/Library/Application Support/opencode/opencode.db`.
+- Linux: `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode/opencode.db`).
+- This is the Rust product's database only. Do not confuse it with vanilla OpenCode, whose `xdg-basedir` storage resolves to `~/.local/share/opencode/opencode.db` even on macOS.
+- The TUI-spawned local server writes stdout/stderr (including panic message, location, and backtrace) to `dirs::data_local_dir()/opencode/traces/server.log`; locate it with `opencode-modded-rust debug paths` (`server-log`) or `opencode-modded-rust session inspect <id>` (`Server log:`). Set `OPENCODE_SERVER_LOG` to override the path or to `0`/`false`/`off` to disable it.
+- Runtime bounds: `OPENCODE_RUN_TIMEOUT_MS` (default 30 minutes) and `OPENCODE_STREAM_BUDGET_MS` (default 15 minutes) are documented under "Runtime bounds and server logs" in `README.md`; both use `0` to disable.
+
+## Local Launchers
+
+- `ort-build` builds the Rust TUI/CLI binary from the checkout named by `$OPENCODE_RUST_REPO` (default `$HOME/apps/opencode-modded-rust`, the ensure-on-demand clone `STD-083` decoupled from `~/standards/vendor`).
+- The default `opencode` binary compiles the native ScopeMux provider (`scopemux-native` is a default feature on `opencode-cli`). `INFRA-006`: CI builds the provider once and publishes platform bundles; `ort-build` prefers them. It calls `scripts/ensure-native-artifacts.sh` to download the matching bundle from the `native-artifacts` release into `~/.cache/opencode-modded-rust/native/` and exports `SCOPEMUX_PREBUILT_DIR`, so `build.rs` links the prebuilt `libparser_core.a` + grammar archives directly (`--check` reports the cache, `--force` re-downloads). This path needs no `scopemux-core` source tree, CMake, Python, or Tree-sitter/pybind11 submodules. Set `OPENCODE_RUST_PREBUILT_NATIVE=0` to force the source build, and set `SCOPEMUX_CORE_DIR`/`SCOPEMUX_PREBUILT_DIR` directly to override either path.
+- Source-build fallback (contributors, or when no bundle is available): `ort-build` fetches the pinned revision into `third_party/scopemux-core` (via `scripts/fetch-scopemux-core.sh`) when missing and warns when an existing checkout drifts from the pin (set `OPENCODE_RUST_REFRESH_CORE=1` to refresh). Set `SCOPEMUX_CORE_DIR` to use a different `scopemux-core` checkout, or `SCOPEMUX_SKIP_NATIVE_BUILD=1` to skip the C build for `cargo check --workspace`. The source tree is no longer needed at runtime: `build.rs` copies `queries/` into `OUT_DIR` (or bakes the bundle's `queries/`) and bakes that path. Advance the pin with `scripts/bump-scopemux-pin.sh <rev>` and verify a checkout with `scripts/fetch-scopemux-core.sh --check`. The native C build also needs Python 3.10 or 3.11 with development headers (scopemux-core's CMake range is `3.10...<3.12`); `scripts/fetch-scopemux-core.sh` provisions them through the system package manager and `build.rs` passes a compatible interpreter to CMake, so a pyenv/distro `python3` newer than 3.11 cannot break the build. Override the detected interpreter with `SCOPEMUX_PYTHON`.
+- `ort` launches the most recently built Rust TUI binary without rebuilding first.
+- `ort` runs the TUI in the directory it was activated from, so that directory is the workspace (config search root and displayed working directory).
+- `ort` always starts a fresh local TUI server for that workspace. It never reuses, rotates, or attaches to a previously recorded server, so a stale or other-workspace server can never serve the TUI. Use `opencode-modded-rust attach <url>` for intentional re-attachment.
+- When stopping Rust `ort` runtimes, target only confirmed PIDs whose command is `$OPENCODE_RUST_REPO/target/debug/opencode-modded-rust tui` or `$OPENCODE_RUST_REPO/target/debug/opencode-modded-rust serve` for the specific port/workspace under test. Do not kill `$HOME/.opencode/bin/opencode`, plugin-host processes, vanilla/reference OpenCode, or broad `opencode` process patterns.
+- The Rust product owns its default model (`deepseek/deepseek-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
+- When testing code changes, run `ort-build` before `ort` so the freshly started server runs the latest binary.
+- Worktree builds share one Cargo target directory. `scripts/setup-worktree-build-cache.sh` writes a managed `.cargo/config.toml` at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.cargo/config.toml` that points every git worktree beneath it at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.shared-target`, so worktrees no longer each duplicate a full `target/`. The main checkout (the `$OPENCODE_RUST_REPO` checkout, currently `$HOME/apps/opencode-modded-rust`) keeps its own `target/`.
+- Reclaim disk with `scripts/clean-build-caches.sh` (dry run by default; add `--yes` to delete). It removes duplicated per-worktree `target/` dirs; `--shared` also clears the shared cache and `--include-main` also clears the main checkout's `target/`.
+- `ort-build` warns when free disk on the build volume is below `OPENCODE_RUST_MIN_FREE_GB` (default 15) and points at `scripts/clean-build-caches.sh`.
+- `ort-build` also warns when the `$OPENCODE_RUST_REPO` checkout is on `development` and behind `origin/development`, since a binary built from a stale checkout can silently miss already-merged fixes (set `OPENCODE_RUST_STRICT_CHECKOUT=1` to refuse the build instead).
+
+## Git Hooks
+
+- The repo ships `.githooks/pre-commit`: when a commit stages Rust files it runs `cargo fmt --all` and re-stages the formatted result. It no-ops when `cargo` is unavailable or no Rust files are staged.
+- Install per clone with `./scripts/install-git-hooks.sh` (sets `core.hooksPath=.githooks`). Worktrees of the clone share the setting.
+- Bypass a commit with `git commit --no-verify`, or skip one hook run with `OPENCODE_SKIP_FMT_HOOK=1`.
+- Staged files that also have unstaged edits are intentionally not re-staged; the hook warns instead so unstaged work is never captured.

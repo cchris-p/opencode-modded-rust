@@ -26,7 +26,7 @@
 
 ## Use cases
 
-- CLI `opencode mcp ...`
+- CLI `opencode-modded-rust mcp ...`
 - Server `/mcp/*` routes
 - Tool/session dynamic tool extension
 

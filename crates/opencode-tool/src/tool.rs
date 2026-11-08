@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
+pub use tokio_util::sync::CancellationToken;
 
 use crate::ToolRegistry;
 
@@ -43,19 +43,23 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionDef {
     pub question: String,
-    #[serde(default)]
-    pub header: Option<String>,
+    pub header: String,
     #[serde(default)]
     pub options: Vec<QuestionOption>,
     #[serde(default)]
     pub multiple: bool,
+    #[serde(default = "default_custom")]
+    pub custom: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionOption {
     pub label: String,
-    #[serde(default)]
-    pub description: Option<String>,
+    pub description: String,
+}
+
+fn default_custom() -> bool {
+    true
 }
 
 pub type AskCallback = Arc<
@@ -97,13 +101,85 @@ pub type CreateSubsessionCallback = Arc<
         + Send
         + Sync,
 >;
+/// Outcome of prompting a subagent session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubsessionPromptOutcome {
+    /// The subagent run finished; carries its final assistant text.
+    Completed(String),
+    /// A running foreground subagent was promoted to the background. The caller
+    /// must return a running-state result immediately and stop waiting; the
+    /// owning runtime injects the eventual completion/error into the parent.
+    Backgrounded,
+}
+
+impl SubsessionPromptOutcome {
+    /// Convenience for tests and non-promoting callers: the final text, or an
+    /// empty string when the run was backgrounded.
+    pub fn text(&self) -> &str {
+        match self {
+            SubsessionPromptOutcome::Completed(text) => text,
+            SubsessionPromptOutcome::Backgrounded => "",
+        }
+    }
+}
+
 pub type PromptSubsessionCallback = Arc<
     dyn (Fn(
             String,
             String,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<SubsessionPromptOutcome, ToolError>> + Send,
+            >,
+        >) + Send
+        + Sync,
+>;
+
+/// Request to run a `task` subagent asynchronously (FEAT-048). The owning
+/// runtime spawns the child run, returns control to the caller immediately, and
+/// injects a synthetic `<task ...>` completion/error message into the parent
+/// session when the run finishes.
+#[derive(Debug, Clone)]
+pub struct BackgroundSubsessionRequest {
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    pub agent: String,
+    pub description: String,
+    pub prompt: String,
+    pub abort: CancellationToken,
+}
+
+pub type BackgroundSubsessionCallback = Arc<
+    dyn (Fn(
+            BackgroundSubsessionRequest,
         )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send>>)
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ToolError>> + Send>>)
         + Send
+        + Sync,
+>;
+
+/// A `task` subagent resolved from the owning agent registry.
+///
+/// The tool crate cannot depend on `opencode-agent` (that would be a cycle), so
+/// the owning runtime injects this resolved view through
+/// [`ToolContext::with_resolve_subagent`]. It carries exactly what the `task`
+/// contract needs: the canonical name, the subagent's configured model
+/// (`"provider:model"`), and whether the subagent's own ruleset already permits
+/// `task`/`todowrite`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSubagent {
+    pub name: String,
+    pub model: Option<String>,
+    pub permits_task: bool,
+    pub permits_todowrite: bool,
+}
+
+pub type ResolveSubagentCallback = Arc<
+    dyn (Fn(
+            String,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<ResolvedSubagent, ToolError>> + Send>,
+        >) + Send
         + Sync,
 >;
 
@@ -210,6 +286,71 @@ pub type CreateSyntheticMessageCallback = Arc<
         + Sync,
 >;
 
+/// A compact, read-only description of a session the agent may inspect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummaryData {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub updated: i64,
+    pub directory: String,
+}
+
+/// Request for the read-only cross-session inspection callback.
+#[derive(Debug, Clone)]
+pub enum SessionInspectRequest {
+    /// Enumerate the sessions visible to the caller's workspace.
+    List { query: Option<String>, limit: usize },
+    /// Read a bounded slice of one session's transcript.
+    Read {
+        id: String,
+        limit: usize,
+        offset: usize,
+    },
+}
+
+/// One message from an inspected session, reduced to role/time/part previews.
+#[derive(Debug, Clone)]
+pub struct SessionTranscriptMessageData {
+    pub role: String,
+    pub created: i64,
+    pub previews: Vec<String>,
+}
+
+/// A bounded, paginated transcript of one inspected session.
+#[derive(Debug, Clone)]
+pub struct SessionTranscriptData {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub directory: String,
+    pub total: usize,
+    pub offset: usize,
+    pub returned: usize,
+    pub messages: Vec<SessionTranscriptMessageData>,
+}
+
+/// Result of the read-only cross-session inspection callback.
+#[derive(Debug, Clone)]
+pub enum SessionInspectResponse {
+    List {
+        sessions: Vec<SessionSummaryData>,
+        total: usize,
+    },
+    Read(SessionTranscriptData),
+}
+
+/// Resolves read-only cross-session inspection requests. Implementations are
+/// responsible for workspace scoping and for bounding/paginating the result.
+pub type SessionInspectCallback = Arc<
+    dyn Fn(
+            SessionInspectRequest,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<SessionInspectResponse, ToolError>> + Send>,
+        > + Send
+        + Sync,
+>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionRequest {
     pub permission: String,
@@ -278,6 +419,59 @@ impl ToolResult {
     }
 }
 
+/// Tracks which instruction files (`AGENTS.md`, etc.) have already been
+/// injected into a session's tool output, so repeated `read` calls do not
+/// re-attach identical content.
+///
+/// Values are the last-injected content per instruction file path. A path is
+/// injected again only when its content differs from the recorded version.
+#[derive(Clone, Default)]
+pub struct LoadedInstructions {
+    loaded: Arc<std::sync::Mutex<HashMap<String, String>>>,
+}
+
+impl LoadedInstructions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns `true` when the instruction file at `path` should be injected
+    /// (never seen, or content changed) and records the new content.
+    pub fn mark_for_injection(&self, path: &str, content: &str) -> bool {
+        let mut loaded = self
+            .loaded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match loaded.get(path) {
+            Some(existing) if existing == content => false,
+            _ => {
+                loaded.insert(path.to_string(), content.to_string());
+                true
+            }
+        }
+    }
+
+    pub fn is_loaded(&self, path: &str) -> bool {
+        self.loaded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(path)
+    }
+}
+
+impl std::fmt::Debug for LoadedInstructions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let count = self
+            .loaded
+            .lock()
+            .map(|loaded| loaded.len())
+            .unwrap_or_default();
+        f.debug_struct("LoadedInstructions")
+            .field("count", &count)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct ToolContext {
     pub session_id: String,
@@ -293,6 +487,12 @@ pub struct ToolContext {
     pub switch_agent: Option<SwitchAgentCallback>,
     pub create_subsession: Option<CreateSubsessionCallback>,
     pub prompt_subsession: Option<PromptSubsessionCallback>,
+    pub background_subsession: Option<BackgroundSubsessionCallback>,
+    /// Whether experimental background subagents are enabled for this context.
+    /// The owning runtime sets this from config/env (reference
+    /// `experimentalBackgroundSubagents`). Off by default.
+    pub experimental_background_subagents: bool,
+    pub resolve_subagent: Option<ResolveSubagentCallback>,
     pub file_time_assert: Option<FileTimeAssertCallback>,
     pub file_time_read: Option<FileTimeReadCallback>,
     pub publish_bus: Option<PublishBusCallback>,
@@ -303,8 +503,20 @@ pub struct ToolContext {
     pub todo_get: Option<TodoGetCallback>,
     pub get_last_model: Option<GetLastModelCallback>,
     pub create_synthetic_message: Option<CreateSyntheticMessageCallback>,
+    pub session_inspect: Option<SessionInspectCallback>,
+    /// Resolved session-scoped plan file path, when plan mode is active. Set by
+    /// the session prompt loop from the shared `opencode_core::plan_file_path`
+    /// helper so `plan_exit` reports the exact file the reminder named.
+    pub plan_path: Option<String>,
     pub project_root: String,
+    pub loaded_instructions: LoadedInstructions,
     pub registry: Option<Arc<ToolRegistry>>,
+    /// Map-backed code-search capability injected by the runtime (`SCOPE-018`).
+    ///
+    /// The runtime decides activation once and installs this only on the
+    /// map-backed path. `None` means the tool must use grep/generic search; the
+    /// tool never parses model strings or calls FFI directly.
+    pub workspace_search: Option<Arc<dyn opencode_types::WorkspaceSearch>>,
     #[cfg(feature = "lsp")]
     pub lsp_registry: Option<Arc<LspClientRegistry>>,
 }
@@ -325,6 +537,9 @@ impl ToolContext {
             switch_agent: None,
             create_subsession: None,
             prompt_subsession: None,
+            background_subsession: None,
+            experimental_background_subagents: false,
+            resolve_subagent: None,
             file_time_assert: None,
             file_time_read: None,
             publish_bus: None,
@@ -335,8 +550,12 @@ impl ToolContext {
             todo_get: None,
             get_last_model: None,
             create_synthetic_message: None,
+            session_inspect: None,
+            plan_path: None,
             project_root: directory,
+            loaded_instructions: LoadedInstructions::new(),
             registry: None,
+            workspace_search: None,
             #[cfg(feature = "lsp")]
             lsp_registry: None,
         }
@@ -352,8 +571,33 @@ impl ToolContext {
         self
     }
 
+    /// Attach the resolved session-scoped plan file path so the plan tools report
+    /// and approve the same file the plan-mode reminder advertises.
+    pub fn with_plan_path(mut self, plan_path: Option<String>) -> Self {
+        self.plan_path = plan_path;
+        self
+    }
+
     pub fn with_registry(mut self, registry: Arc<ToolRegistry>) -> Self {
         self.registry = Some(registry);
+        self
+    }
+
+    /// Install the neutral map-backed search capability.
+    ///
+    /// Activation is decided by the runtime; the tool only sees the capability.
+    pub fn with_workspace_search(
+        mut self,
+        workspace_search: Option<Arc<dyn opencode_types::WorkspaceSearch>>,
+    ) -> Self {
+        self.workspace_search = workspace_search;
+        self
+    }
+
+    /// Share a loaded-instruction set across tool calls in the same session or
+    /// prompt turn so instruction files are injected at most once.
+    pub fn with_loaded_instructions(mut self, loaded: LoadedInstructions) -> Self {
+        self.loaded_instructions = loaded;
         self
     }
 
@@ -453,7 +697,9 @@ impl ToolContext {
     pub fn with_prompt_subsession<F, Fut>(mut self, callback: F) -> Self
     where
         F: Fn(String, String) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<String, ToolError>> + Send + 'static,
+        Fut: std::future::Future<Output = Result<SubsessionPromptOutcome, ToolError>>
+            + Send
+            + 'static,
     {
         self.prompt_subsession = Some(Arc::new(move |session_id, prompt| {
             Box::pin(callback(session_id, prompt))
@@ -465,13 +711,68 @@ impl ToolContext {
         &self,
         session_id: String,
         prompt: String,
-    ) -> Result<String, ToolError> {
+    ) -> Result<SubsessionPromptOutcome, ToolError> {
         if let Some(ref callback) = self.prompt_subsession {
             callback(session_id, prompt).await
         } else {
             Err(ToolError::ExecutionError(
                 "Subsession prompt callback not configured".to_string(),
             ))
+        }
+    }
+
+    /// Install the async subagent runner used by the `task` tool when a call
+    /// requests `background: true`. When absent, background runs fail unless
+    /// [`Self::with_experimental_background_subagents`] is also enabled.
+    pub fn with_background_subsession<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(BackgroundSubsessionRequest) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<(), ToolError>> + Send + 'static,
+    {
+        self.background_subsession = Some(Arc::new(move |request| Box::pin(callback(request))));
+        self
+    }
+
+    pub async fn do_background_subsession(
+        &self,
+        request: BackgroundSubsessionRequest,
+    ) -> Result<(), ToolError> {
+        if let Some(ref callback) = self.background_subsession {
+            callback(request).await
+        } else {
+            Err(ToolError::ExecutionError(
+                "Background subagents are not available in this context".to_string(),
+            ))
+        }
+    }
+
+    pub fn with_experimental_background_subagents(mut self, enabled: bool) -> Self {
+        self.experimental_background_subagents = enabled;
+        self
+    }
+
+    /// Install the registry-backed subagent resolver used by the `task` tool.
+    /// When absent, the tool falls back to accepting the requested type as-is
+    /// (the legacy in-memory path).
+    pub fn with_resolve_subagent<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<ResolvedSubagent, ToolError>> + Send + 'static,
+    {
+        self.resolve_subagent = Some(Arc::new(move |name| Box::pin(callback(name))));
+        self
+    }
+
+    pub async fn do_resolve_subagent(&self, name: String) -> Result<ResolvedSubagent, ToolError> {
+        if let Some(ref callback) = self.resolve_subagent {
+            callback(name).await
+        } else {
+            Ok(ResolvedSubagent {
+                name,
+                model: None,
+                permits_task: false,
+                permits_todowrite: false,
+            })
         }
     }
 
@@ -659,6 +960,30 @@ impl ToolContext {
         }
     }
 
+    pub fn with_session_inspect<F, Fut>(mut self, callback: F) -> Self
+    where
+        F: Fn(SessionInspectRequest) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<SessionInspectResponse, ToolError>>
+            + Send
+            + 'static,
+    {
+        self.session_inspect = Some(Arc::new(move |request| Box::pin(callback(request))));
+        self
+    }
+
+    pub async fn do_session_inspect(
+        &self,
+        request: SessionInspectRequest,
+    ) -> Result<SessionInspectResponse, ToolError> {
+        if let Some(ref callback) = self.session_inspect {
+            callback(request).await
+        } else {
+            Err(ToolError::ExecutionError(
+                "Session inspection is not available in this context".to_string(),
+            ))
+        }
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.abort.is_cancelled()
     }
@@ -745,5 +1070,45 @@ impl ToolError {
                 suggestions.join("\n")
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod workspace_capability_tests {
+    use super::*;
+    use opencode_types::{
+        MapFreshness, WorkspaceSearch, WorkspaceSearchRequest, WorkspaceSearchResponse,
+    };
+
+    struct StubSearch;
+
+    impl WorkspaceSearch for StubSearch {
+        fn search_code(&self, _request: &WorkspaceSearchRequest) -> WorkspaceSearchResponse {
+            WorkspaceSearchResponse {
+                candidates: Vec::new(),
+                freshness: MapFreshness::Fresh,
+                fallback_reason: None,
+            }
+        }
+    }
+
+    #[test]
+    fn tool_context_receives_the_workspace_search_capability() {
+        let capability: Arc<dyn WorkspaceSearch> = Arc::new(StubSearch);
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into())
+            .with_workspace_search(Some(capability));
+
+        let response = ctx
+            .workspace_search
+            .as_ref()
+            .expect("capability should be installed")
+            .search_code(&WorkspaceSearchRequest::new("/workspace", "where is X", 5));
+        assert_eq!(response.freshness, MapFreshness::Fresh);
+    }
+
+    #[test]
+    fn absent_capability_means_grep_fallback() {
+        let ctx = ToolContext::new("session".into(), "message".into(), "/tmp".into());
+        assert!(ctx.workspace_search.is_none());
     }
 }

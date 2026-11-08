@@ -1,13 +1,14 @@
-use futures::stream::BoxStream;
+use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{AgentInfo, Conversation, ToolCall};
+use opencode_permission::{evaluate as evaluate_permission, PermissionAction, PermissionRuleset};
 use opencode_plugin::{HookContext, HookEvent};
-use opencode_provider::{ChatRequest, Provider, ProviderRegistry, StreamEvent};
-use opencode_tool::{ToolContext, ToolError, ToolRegistry};
+use opencode_provider::{ChatRequest, Provider, ProviderRegistry, StreamEvent, ToolDefinition};
+use opencode_tool::{PermissionRequest, ToolContext, ToolError, ToolRegistry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
@@ -23,6 +24,13 @@ pub enum AgentError {
     #[error("No provider available")]
     NoProvider,
 
+    #[error("Provider '{provider_id}' is not available for model '{model_id}'. {hint}")]
+    ProviderUnavailable {
+        provider_id: String,
+        model_id: String,
+        hint: String,
+    },
+
     #[error("Invalid response")]
     InvalidResponse,
 }
@@ -35,6 +43,7 @@ pub struct AgentExecutor {
     disabled_tools: HashSet<String>,
     subsessions: Arc<Mutex<HashMap<String, SubsessionState>>>,
     max_steps: u32,
+    ask_callback: opencode_tool::AskCallback,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +69,7 @@ impl AgentExecutor {
     ) -> Self {
         let max_steps = agent.max_steps.unwrap_or(100);
         let conversation = Conversation::new();
+        let ask_callback = noninteractive_permission_callback(agent.permission.clone());
 
         Self {
             agent,
@@ -69,6 +79,7 @@ impl AgentExecutor {
             disabled_tools: HashSet::new(),
             subsessions: Arc::new(Mutex::new(HashMap::new())),
             max_steps,
+            ask_callback,
         }
     }
 
@@ -161,7 +172,7 @@ impl AgentExecutor {
             )
             .await;
 
-            let request = ChatRequest::new(model_id, self.conversation.to_provider_messages());
+            let request = self.build_request(&provider, model_id).await;
 
             let stream = provider
                 .chat_stream(request)
@@ -175,7 +186,8 @@ impl AgentExecutor {
                 break;
             }
 
-            self.conversation.add_assistant_message(&response);
+            self.conversation
+                .add_assistant_message_with_tools(&response, tool_calls.clone());
 
             for tool_call in tool_calls {
                 let result = self.execute_tool(&tool_call).await;
@@ -223,7 +235,7 @@ impl AgentExecutor {
 
             let provider = self.get_provider()?;
             let model_id = self.get_model_id(&provider);
-            let request = ChatRequest::new(model_id, self.conversation.to_provider_messages());
+            let request = self.build_request(&provider, model_id).await;
 
             let stream = provider
                 .chat_stream(request)
@@ -237,7 +249,8 @@ impl AgentExecutor {
                 break;
             }
 
-            self.conversation.add_assistant_message(&response);
+            self.conversation
+                .add_assistant_message_with_tools(&response, tool_calls.clone());
 
             for tool_call in tool_calls {
                 let result = self.execute_tool_without_subsessions(&tool_call).await;
@@ -269,25 +282,124 @@ impl AgentExecutor {
     ) -> Result<BoxStream<'static, Result<StreamEvent, AgentError>>, AgentError> {
         self.conversation.add_user_message(user_message);
 
-        let provider = self.get_provider()?;
-        let model_id = self.get_model_id(&provider);
-        let request = ChatRequest::new(model_id, self.conversation.to_provider_messages());
+        let response = self.execute_agentic_loop().await?;
+        let events = if response.is_empty() {
+            vec![Ok(StreamEvent::Done)]
+        } else {
+            vec![Ok(StreamEvent::TextDelta(response)), Ok(StreamEvent::Done)]
+        };
 
-        let stream = provider
-            .chat_stream(request)
+        Ok(stream::iter(events).boxed())
+    }
+
+    async fn execute_agentic_loop(&mut self) -> Result<String, AgentError> {
+        let mut steps = 0;
+        let mut final_response = String::new();
+
+        while steps < self.max_steps {
+            steps += 1;
+
+            let provider = self.get_provider()?;
+            let model_id = self.get_model_id(&provider);
+            let request = self.build_request(&provider, model_id).await;
+
+            let stream = provider
+                .chat_stream(request)
+                .await
+                .map_err(|e| AgentError::ProviderError(e.to_string()))?;
+
+            let (response, tool_calls) = self.process_stream(stream).await?;
+
+            if tool_calls.is_empty() {
+                final_response = response;
+                break;
+            }
+
+            self.conversation
+                .add_assistant_message_with_tools(&response, tool_calls.clone());
+
+            for tool_call in tool_calls {
+                let result = self.execute_tool(&tool_call).await;
+
+                let (content, is_error) = match result {
+                    Ok(output) => (output, false),
+                    Err(e) => (e.to_string(), true),
+                };
+
+                self.conversation.add_tool_result(
+                    &tool_call.id,
+                    &tool_call.name,
+                    content,
+                    is_error,
+                );
+            }
+        }
+
+        if steps >= self.max_steps {
+            return Err(AgentError::MaxStepsExceeded);
+        }
+
+        Ok(final_response)
+    }
+
+    async fn build_request(&self, provider: &Arc<dyn Provider>, model_id: String) -> ChatRequest {
+        let mut request =
+            ChatRequest::new(model_id.clone(), self.conversation.to_provider_messages());
+
+        if let Some(max_tokens) = self.agent.max_tokens {
+            request = request.with_max_tokens(max_tokens);
+        }
+        if let Some(temperature) = self.agent.temperature {
+            request = request.with_temperature(temperature);
+        }
+        if let Some(top_p) = self.agent.top_p {
+            request = request.with_top_p(top_p);
+        }
+
+        let supports_tools = provider
+            .get_model(&model_id)
+            .map(|model| model.supports_tools)
+            .unwrap_or(true);
+        if supports_tools {
+            let tools = self.available_tool_definitions().await;
+            if !tools.is_empty() {
+                request = request.with_tools(tools);
+            }
+        }
+
+        request
+    }
+
+    async fn available_tool_definitions(&self) -> Vec<ToolDefinition> {
+        self.tools
+            .list_schemas()
             .await
-            .map_err(|e| AgentError::ProviderError(e.to_string()))?;
-
-        Ok(stream
-            .map(|r| r.map_err(|e| AgentError::ProviderError(e.to_string())))
-            .boxed())
+            .into_iter()
+            .filter(|schema| {
+                schema.name != "invalid"
+                    && !self.disabled_tools.contains(&schema.name)
+                    && !matches!(
+                        self.agent.tool_permission_decision(&schema.name),
+                        crate::PermissionDecision::Deny
+                    )
+            })
+            .map(|schema| ToolDefinition {
+                name: schema.name,
+                description: Some(schema.description),
+                parameters: schema.parameters,
+            })
+            .collect()
     }
 
     fn get_provider(&self) -> Result<Arc<dyn Provider>, AgentError> {
         if let Some(ref model_ref) = self.agent.model {
-            self.providers
-                .get(&model_ref.provider_id)
-                .ok_or(AgentError::NoProvider)
+            self.providers.get(&model_ref.provider_id).ok_or_else(|| {
+                AgentError::ProviderUnavailable {
+                    provider_id: model_ref.provider_id.clone(),
+                    model_id: model_ref.model_id.clone(),
+                    hint: unavailable_provider_hint(&model_ref.provider_id),
+                }
+            })
         } else {
             let providers = self.providers.list();
             if providers.is_empty() {
@@ -312,6 +424,7 @@ impl AgentExecutor {
     ) -> Result<(String, Vec<ToolCall>), AgentError> {
         let mut content = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut tool_args: HashMap<String, String> = HashMap::new();
 
         while let Some(event) = stream.next().await {
             match event {
@@ -326,12 +439,7 @@ impl AgentExecutor {
                     });
                 }
                 Ok(StreamEvent::ToolCallDelta { id, input }) => {
-                    if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == id) {
-                        if tc.arguments.is_null() {
-                            tc.arguments =
-                                serde_json::from_str(&input).unwrap_or(serde_json::Value::Null);
-                        }
-                    }
+                    tool_args.entry(id).or_default().push_str(&input);
                 }
                 Ok(StreamEvent::Done) => break,
                 Ok(StreamEvent::Error(e)) => {
@@ -341,6 +449,13 @@ impl AgentExecutor {
                     return Err(AgentError::ProviderError(e.to_string()));
                 }
                 _ => {}
+            }
+        }
+
+        for tool_call in &mut tool_calls {
+            if let Some(input) = tool_args.get(&tool_call.id) {
+                tool_call.arguments = serde_json::from_str(input)
+                    .unwrap_or_else(|_| serde_json::Value::String(input.clone()));
             }
         }
 
@@ -370,6 +485,10 @@ impl AgentExecutor {
                     let current_model = current_model.clone();
                     async move { Ok(current_model) }
                 }
+            })
+            .with_ask({
+                let ask_callback = self.ask_callback.clone();
+                move |request| ask_callback(request)
             });
         let ctx = self.with_subsession_callbacks(base_ctx);
 
@@ -405,6 +524,10 @@ impl AgentExecutor {
                     let current_model = current_model.clone();
                     async move { Ok(current_model) }
                 }
+            })
+            .with_ask({
+                let ask_callback = self.ask_callback.clone();
+                move |request| ask_callback(request)
             });
         let ctx = self.with_subsession_callbacks(base_ctx);
 
@@ -419,7 +542,26 @@ impl AgentExecutor {
         let providers = self.providers.clone();
         let tools = self.tools.clone();
 
-        ctx.with_create_subsession({
+        ctx.with_resolve_subagent(|name| async move {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let registry = crate::AgentRegistry::from_project_dir(&cwd);
+            let subagent = registry.resolve_subagent(&name).ok_or_else(|| {
+                ToolError::ExecutionError(format!(
+                    "Unknown agent type: {} is not a valid agent type",
+                    name
+                ))
+            })?;
+            Ok(opencode_tool::ResolvedSubagent {
+                name: subagent.name.clone(),
+                model: subagent
+                    .model
+                    .as_ref()
+                    .map(|model| format!("{}:{}", model.provider_id, model.model_id)),
+                permits_task: subagent.permits_permission("task"),
+                permits_todowrite: subagent.permits_permission("todowrite"),
+            })
+        })
+        .with_create_subsession({
             let subsessions = subsessions.clone();
             move |agent_name, _title, model, disabled_tools| {
                 let subsessions = subsessions.clone();
@@ -492,7 +634,7 @@ impl AgentExecutor {
                         state.conversation = executor.conversation.clone();
                     }
 
-                    Ok(output)
+                    Ok(opencode_tool::SubsessionPromptOutcome::Completed(output))
                 }
             }
         })
@@ -524,6 +666,83 @@ impl AgentExecutor {
             ))),
         }
     }
+}
+
+/// Fail-closed permission callback for non-interactive execution.
+///
+/// The TUI/server path wires an ask callback that can route `Ask` decisions to
+/// the user. Non-interactive CLI runs have no user to ask, so they must still
+/// evaluate path- and command-scoped rules instead of silently allowing every
+/// tool request. `Allow` proceeds, `Deny` is rejected, and `Ask` fails closed.
+fn noninteractive_permission_callback(ruleset: PermissionRuleset) -> opencode_tool::AskCallback {
+    Arc::new(move |request: PermissionRequest| {
+        let ruleset = ruleset.clone();
+        Box::pin(async move {
+            let patterns = if request.patterns.is_empty() {
+                vec![request.permission.clone()]
+            } else {
+                request.patterns.clone()
+            };
+
+            let mut action = PermissionAction::Allow;
+            for pattern in &patterns {
+                let rule = evaluate_permission(
+                    &request.permission,
+                    pattern,
+                    std::slice::from_ref(&ruleset),
+                );
+                action = strictest_permission_action(action, rule.action);
+            }
+
+            match action {
+                PermissionAction::Allow => Ok(()),
+                PermissionAction::Ask => Err(ToolError::PermissionDenied(format!(
+                    "Tool '{}' requires approval, but this non-interactive run cannot ask; use the TUI or a server session",
+                    request.permission
+                ))),
+                PermissionAction::Deny => Err(ToolError::PermissionDenied(format!(
+                    "Tool '{}' is denied by agent permission rules",
+                    request.permission
+                ))),
+            }
+        })
+    })
+}
+
+fn strictest_permission_action(
+    current: PermissionAction,
+    next: PermissionAction,
+) -> PermissionAction {
+    let rank = |action: PermissionAction| match action {
+        PermissionAction::Allow => 0,
+        PermissionAction::Ask => 1,
+        PermissionAction::Deny => 2,
+    };
+    if rank(next) > rank(current) {
+        next
+    } else {
+        current
+    }
+}
+
+fn unavailable_provider_hint(provider_id: &str) -> String {
+    let env_vars: &[&str] = match provider_id {
+        "anthropic" => &["ANTHROPIC_API_KEY"],
+        "openai" => &["OPENAI_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "ollama" => &["OLLAMA_HOST"],
+        _ => &[],
+    };
+
+    if env_vars.is_empty() {
+        return "Configure credentials for this provider and restart the server.".to_string();
+    }
+
+    format!(
+        "Set {} or configure this provider's API key, then restart the server.",
+        env_vars.join(" or ")
+    )
 }
 
 fn parse_model_string(raw: Option<&str>) -> Option<(String, String)> {
@@ -618,5 +837,139 @@ mod tests {
             matches!(denied, ToolError::PermissionDenied(_)),
             "expected permission denied, got: {denied}"
         );
+    }
+
+    #[tokio::test]
+    async fn executor_exposes_permission_filtered_tools() {
+        let executor = AgentExecutor::new(
+            AgentInfo::explore(),
+            Arc::new(ProviderRegistry::new()),
+            Arc::new(opencode_tool::create_default_registry().await),
+        );
+
+        let names: HashSet<String> = executor
+            .available_tool_definitions()
+            .await
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+
+        assert!(names.contains("read"));
+        assert!(names.contains("grep"));
+        assert!(!names.contains("write"));
+        assert!(!names.contains("invalid"));
+    }
+
+    fn callback_with(rules: &[PermissionRule]) -> opencode_tool::AskCallback {
+        noninteractive_permission_callback(opencode_permission::build_agent_ruleset(
+            "review", rules,
+        ))
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_denies_path_scoped_edit() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "edit".to_string(),
+            pattern: "/tmp/demo/*".to_string(),
+            action: PermissionAction::Deny,
+        }]);
+
+        let result =
+            callback(PermissionRequest::new("edit").with_pattern("/tmp/demo/file.ts")).await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "expected path-scoped deny, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_allows_unmatched_request() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "edit".to_string(),
+            pattern: "/tmp/demo/*".to_string(),
+            action: PermissionAction::Deny,
+        }]);
+
+        let result =
+            callback(PermissionRequest::new("edit").with_pattern("/tmp/other/file.md")).await;
+
+        assert!(result.is_ok(), "expected allow, got: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_fails_closed_on_ask() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "bash".to_string(),
+            pattern: "*".to_string(),
+            action: PermissionAction::Ask,
+        }]);
+
+        let result = callback(PermissionRequest::new("bash").with_pattern("git push")).await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "ask must fail closed without a user, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn noninteractive_callback_takes_strictest_pattern() {
+        let callback = callback_with(&[PermissionRule {
+            permission: "bash".to_string(),
+            pattern: "git push*".to_string(),
+            action: PermissionAction::Deny,
+        }]);
+
+        let result = callback(PermissionRequest::new("bash").with_patterns(vec![
+            "git status".to_string(),
+            "git push origin".to_string(),
+        ]))
+        .await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "one denied pattern must not be auto-allowed, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn executor_wires_fail_closed_callback() {
+        let agent =
+            AgentInfo::custom("review").with_permission(opencode_permission::build_agent_ruleset(
+                "review",
+                &[PermissionRule {
+                    permission: "edit".to_string(),
+                    pattern: "/tmp/demo/*".to_string(),
+                    action: PermissionAction::Deny,
+                }],
+            ));
+        let executor = build_executor(agent);
+
+        let result = (executor.ask_callback)(
+            PermissionRequest::new("edit").with_pattern("/tmp/demo/file.ts"),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ToolError::PermissionDenied(_))),
+            "executor must enforce path-scoped rules without a host callback, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn missing_selected_provider_reports_model_and_auth_hint() {
+        let executor =
+            build_executor(AgentInfo::general().with_model("deepseek-v4-flash", "deepseek"));
+
+        let error = match executor.get_provider() {
+            Ok(_) => panic!("empty registry should not provide deepseek"),
+            Err(error) => error,
+        };
+
+        let message = error.to_string();
+        assert!(message.contains("Provider 'deepseek' is not available"));
+        assert!(message.contains("model 'deepseek-v4-flash'"));
+        assert!(message.contains("DEEPSEEK_API_KEY"));
     }
 }

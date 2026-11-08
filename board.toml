@@ -1,9 +1,10 @@
-lanes = ["todo", "refinement", "doing", "qa", "done"]
+lanes = ["todo", "hold", "refinement", "doing", "qa", "done"]
 board_dir = "boards"
 bin = "archive"
 
 [icons]
 todo = "📒"
+hold = "⏸️"
 refinement = "🧠"
 doing = "🔧"
 qa = "🧪"

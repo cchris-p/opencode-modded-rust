@@ -6,6 +6,7 @@ pub mod llm;
 pub mod message;
 pub mod message_v2;
 pub mod prompt;
+pub mod retrieval;
 pub mod retry;
 pub mod revert;
 pub mod session;
@@ -29,8 +30,10 @@ pub use summary::*;
 pub use system::*;
 pub use todo::*;
 
+pub use opencode_types::{SessionTask, TaskReviewStatus, TaskStage, TaskVerificationStatus};
 pub use session::{
     BusyError, FileDiff, PermissionRuleset, RunStatus, Session, SessionError, SessionEvent,
     SessionFilter, SessionManager, SessionRevert, SessionRow, SessionShare, SessionStateEvent,
-    SessionStateManager, SessionStatus, SessionSummary, SessionTime, SessionUsage,
+    SessionStateManager, SessionStatus, SessionSummary, SessionTime, SessionUsage, TaskAction,
+    TaskStageError,
 };

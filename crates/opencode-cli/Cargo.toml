@@ -5,8 +5,15 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = ["scopemux-native"]
+# Enable the local scopemux-core FFI provider in the shipped binary. It only
+# activates for the scoped local model (ollama + qwen). Requires
+# scripts/fetch-scopemux-core.sh and a C toolchain (see AGENTS.md).
+scopemux-native = ["opencode-session/scopemux-native"]
+
 [[bin]]
-name = "opencode"
+name = "opencode-modded-rust"
 path = "src/main.rs"
 
 [dependencies]
@@ -25,10 +32,12 @@ opencode-tool = { path = "../opencode-tool" }
 opencode-tui = { path = "../opencode-tui" }
 opencode-types = { path = "../opencode-types" }
 opencode-command = { path = "../opencode-command" }
+opencode-oco = { path = "../opencode-oco" }
 opencode-lsp = { path = "../opencode-lsp" }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+base64 = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 futures = { workspace = true }

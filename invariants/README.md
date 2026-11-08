@@ -1,6 +1,6 @@
 # Invariants Index
 
-The `invariants/` directory contains absolute truths for the final desired `scopemux-code` system.
+The `invariants/` directory contains absolute truths for the final desired `opencode-modded-rust` system.
 
 ## What belongs here
 
@@ -20,9 +20,46 @@ The `invariants/` directory contains absolute truths for the final desired `scop
 - `wiki/` explains the roadmap and architecture direction.
 - `docs/` explains the current implementation surface.
 - `boards/` track the work required to move implementation toward the invariants.
+- `wiki/cli-surface.md` is the canonical current/target behavior reference for the CLI task surface and TUI launch/detach/attach lifecycle.
+
+## Current invariant set
+
+- `documentation-boundary.md` defines the cross-repo documentation ownership rule.
+- `reference-boundary.md` defines how the TypeScript/OpenCode reference line constrains adoption.
+- `context.md` defines context-construction requirements.
+- `task-state.md` defines authoritative task-state rules.
+- `runtime-lifecycle.md` defines task lifecycle expectations.
+- `session-durability.md` defines durable session/message ownership, additive persistence, explicit deletion, and resume integrity.
+- `retrieval.md` defines retrieval expectations.
+- `research-department.md` defines departments as separation-of-concern areas and the Research Department's advisory, non-canonical external-evidence role.
+- `coding-session-behavior.md` defines agentic coding-session request requirements (agent identity, system prompt, environment context, tool attachment).
+- `plan-mode.md` defines plan-mode plan-file path, permissions, reminder injection, and tools.
+- `cli-task-targeting.md` defines CLI task target selection and queued cross-client send requirements.
+- `message-queuing.md` defines per-session prompt ordering, queue-aware status, abort/cancel, and durable ordering intent.
+- `coding-session-polling.md` defines low-context polling requirements for coding-session waits.
+- `verification.md` defines verification requirements.
+- `future-proofing.md` defines the absorption-resistant substrate: stable core versus volatile policy, deletion-ready shims, capability profiles, the eight tests, and first-class efficiency/trust.
+- `decision-layer.md` defines the System-1 decision-layer authority rule, engine neutrality, typed/calibrated/budgeted/audited decisions, egress, degradation, and post-Jev swap requirements.
+- `workspace-intelligence.md` defines the Workspace Intelligence Protocol role, optionality, evidence-only authority, capability ladder, profile-driven activation, subagent scoping, protocol versioning, data/egress, packaging, and evaluation.
+- `option-selection.md` defines the two sanctioned option-selection methods (mnemonic and focus) and when each may be used.
+- `integration-scope.md` defines that ScopeMux integration work includes the `scopemux-core` and `scopemux-notes` development it depends on.
+- Background session continuation is constrained by `runtime-lifecycle.md` and `task-state.md`.
+
+## CLI invariants group
+
+The CLI surface invariants are referenced as this group:
+
+- `cli-task-targeting.md` - CLI task target selection and `task new|send|view|status` rules.
+- `message-queuing.md` - per-session prompt ordering, queue-aware status, abort/cancel, and the shared
+  queued-send contract the CLI task client obeys.
+- `runtime-lifecycle.md` - CLI/TUI launch, detach, attach, and session lifecycle constraints.
+
+`coding-session-behavior.md` also constrains the CLI prompt path (it must attach the agent system
+prompt, environment context, and tools like the TUI path), but it is shared with the TUI rather than
+being exclusive to the CLI group.
 
 ## Cross-repo boundary
 
 - Reference by path, not by inheritance.
 - Files in `$HOME/repos/opencode-modded` may be used as context or historical reference.
-- A rule is binding for `scopemux-code` only when documented in this repo.
+- A rule is binding for `opencode-modded-rust` only when documented in this repo.

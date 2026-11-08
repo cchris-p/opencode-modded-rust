@@ -55,16 +55,15 @@ pub struct WatcherConfig {
 
 impl Default for WatcherConfig {
     fn default() -> Self {
+        // One ignore policy shared with grep and the map indexer (`SCOPE-018`).
+        let mut ignore_patterns = opencode_types::default_ignore_globs();
+        ignore_patterns.extend(
+            opencode_types::default_ignore_file_globs()
+                .iter()
+                .map(|pattern| (*pattern).to_string()),
+        );
         Self {
-            ignore_patterns: vec![
-                "**/node_modules/**".to_string(),
-                "**/.git/**".to_string(),
-                "**/target/**".to_string(),
-                "**/.DS_Store".to_string(),
-                "**/*.swp".to_string(),
-                "**/*.swo".to_string(),
-                "**/*~".to_string(),
-            ],
+            ignore_patterns,
             debounce_ms: 100,
             recursive: true,
         }
@@ -130,7 +129,8 @@ impl FileWatcher {
 
                     for path in &event.paths {
                         let path_str = path.to_string_lossy();
-                        let should_ignore = ignore_patterns.iter().any(|p| p.matches(&path_str));
+                        let should_ignore = opencode_types::path_has_excluded_dir(path)
+                            || ignore_patterns.iter().any(|p| p.matches(&path_str));
 
                         if should_ignore {
                             debug!(path = ?path, "Ignoring file event");
@@ -234,6 +234,21 @@ mod tests {
         let config = WatcherConfig::default();
         assert!(!config.ignore_patterns.is_empty());
         assert!(config.recursive);
+    }
+
+    #[test]
+    fn default_ignore_policy_comes_from_the_shared_source() {
+        let config = WatcherConfig::default();
+        for dir in opencode_types::EXCLUDED_DIRS {
+            let glob = format!("**/{dir}/**");
+            assert!(
+                config.ignore_patterns.contains(&glob),
+                "watcher must consume the shared ignore policy, missing {glob}"
+            );
+        }
+        assert!(opencode_types::path_has_excluded_dir(Path::new(
+            "/repo/target/debug/lib.rs"
+        )));
     }
 
     #[test]

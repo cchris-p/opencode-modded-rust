@@ -1,0 +1,41 @@
+[package]
+name = "opencode-scopemux"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[features]
+default = []
+# Enable the native scopemux-core FFI provider. Requires a scopemux-core
+# checkout (SCOPEMUX_CORE_DIR or third_party/scopemux-core) and a C toolchain.
+# `dep:tree-sitter` is pulled in as a link-time dependency only: its bundled C
+# runtime is the single `ts_*` definition in the final binary, so build.rs does
+# not link scopemux-core's own tree-sitter copy (which would collide).
+native = ["dep:tree-sitter"]
+
+[dependencies]
+opencode-types = { path = "../opencode-types" }
+opencode-retrieval = { path = "../opencode-retrieval" }
+opencode-watcher = { path = "../opencode-watcher" }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tree-sitter = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"
+# Evaluation/test tooling only (SCOPE-014): the runtime dependency stays neutral,
+# and the example is what injects the LSP-backed exact-fact adapter.
+opencode-lsp = { path = "../opencode-lsp" }
+# SCOPE-006 end-to-end verification: drive the real code_search tool.
+opencode-tool = { path = "../opencode-tool" }
+serde_json = { workspace = true }
+
+[build-dependencies]
+
+[[example]]
+name = "evaluate_exact_facts"
+required-features = ["native"]

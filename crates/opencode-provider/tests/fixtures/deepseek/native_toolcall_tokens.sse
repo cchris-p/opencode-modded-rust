@@ -1,0 +1,13 @@
+data: {"id": "chatcmpl-native", "object": "chat.completion.chunk", "created": 1, "model": "deepseek/deepseek-r1-0528", "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-native", "object": "chat.completion.chunk", "created": 1, "model": "deepseek/deepseek-r1-0528", "choices": [{"index": 0, "delta": {"content": "I'll run it:"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-native", "object": "chat.completion.chunk", "created": 1, "model": "deepseek/deepseek-r1-0528", "choices": [{"index": 0, "delta": {"content": "<｜tool▁calls▁begin｜>"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-native", "object": "chat.completion.chunk", "created": 1, "model": "deepseek/deepseek-r1-0528", "choices": [{"index": 0, "delta": {"content": "<｜tool▁call▁begin｜>function<｜tool▁sep｜>b"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-native", "object": "chat.completion.chunk", "created": 1, "model": "deepseek/deepseek-r1-0528", "choices": [{"index": 0, "delta": {"content": "ash\n```json\n{\"command\": \"echo native\"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-native", "object": "chat.completion.chunk", "created": 1, "model": "deepseek/deepseek-r1-0528", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+
+data: [DONE]

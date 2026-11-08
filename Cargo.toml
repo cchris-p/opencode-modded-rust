@@ -8,6 +8,8 @@ members = [
     "crates/opencode-grep",
     "crates/opencode-permission",
     "crates/opencode-provider",
+    "crates/opencode-retrieval",
+    "crates/opencode-scopemux",
     "crates/opencode-session",
     "crates/opencode-storage",
     "crates/opencode-tool",
@@ -18,6 +20,7 @@ members = [
     "crates/opencode-mcp",
     "crates/opencode-cli",
     "crates/opencode-command",
+    "crates/opencode-oco",
     "crates/opencode-plugin",
     "crates/opencode-tui",
 ]
@@ -77,5 +80,5 @@ portable-pty = "0.8"
 oauth2 = "5"
 sha2 = "0.10"
 base64 = "0.22"
-tree-sitter = "0.24"
-tree-sitter-bash = "0.23"
+tree-sitter = "0.26"
+tree-sitter-bash = "0.25"

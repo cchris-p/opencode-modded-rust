@@ -82,6 +82,7 @@ pub enum PermissionAction {
     Approve,
     Deny,
     ApproveAlways,
+    ApprovePermanent,
 }
 
 pub struct PermissionPrompt {
@@ -106,6 +107,13 @@ impl PermissionPrompt {
     pub fn add_request(&mut self, request: PermissionRequest) {
         self.requests.push(request);
         self.is_open = !self.requests.is_empty();
+    }
+
+    pub fn set_requests(&mut self, requests: Vec<PermissionRequest>) {
+        self.requests = requests;
+        self.current_index = 0;
+        self.is_open = !self.requests.is_empty();
+        self.pending_action = None;
     }
 
     pub fn current_request(&self) -> Option<&PermissionRequest> {
@@ -175,8 +183,9 @@ impl PermissionPrompt {
             // The button line is at the bottom of the content (area.y + area.height - 2 for border)
             let button_row = area.y + area.height - 2;
             if row == button_row {
-                // "[y] Allow  [n] Deny  [a] Always allow"
-                // Rough column ranges inside the border:
+                // "[y] Allow  [n] Deny  [a] Always allow  [p] Permanently allow"
+                // Column ranges are derived from the rendered hint row widths:
+                //   11 + 10 + 18 + 21
                 let inner_col = col.saturating_sub(area.x + 1);
                 if inner_col < 11 {
                     // [y] Allow
@@ -184,9 +193,12 @@ impl PermissionPrompt {
                 } else if inner_col < 21 {
                     // [n] Deny
                     self.pending_action = Some(PermissionAction::Deny);
-                } else {
+                } else if inner_col < 39 {
                     // [a] Always allow
                     self.pending_action = Some(PermissionAction::ApproveAlways);
+                } else {
+                    // [p] Permanently allow
+                    self.pending_action = Some(PermissionAction::ApprovePermanent);
                 }
             }
         }
@@ -243,7 +255,8 @@ impl PermissionPrompt {
             Line::from(vec![
                 Span::styled("[y] Allow  ", Style::default().fg(theme.success)),
                 Span::styled("[n] Deny  ", Style::default().fg(theme.error)),
-                Span::styled("[a] Always allow", Style::default().fg(theme.primary)),
+                Span::styled("[a] Always allow  ", Style::default().fg(theme.primary)),
+                Span::styled("[p] Permanently allow", Style::default().fg(theme.warning)),
             ]),
         ];
 

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionAction {
@@ -50,6 +51,56 @@ fn expand(pattern: &str) -> String {
     pattern.to_string()
 }
 
+fn trim_trailing_separators(path: &str) -> &str {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        path
+    } else {
+        trimmed
+    }
+}
+
+fn normalize_external_directory_pattern(pattern: &str) -> String {
+    if pattern == "*" {
+        return pattern.to_string();
+    }
+
+    if let Some(prefix) = pattern
+        .strip_suffix("/*")
+        .or_else(|| pattern.strip_suffix("\\*"))
+    {
+        let prefix = trim_trailing_separators(prefix);
+        return if prefix == "/" || prefix.ends_with(':') {
+            format!("{prefix}*")
+        } else {
+            format!("{prefix}/*")
+        };
+    }
+
+    if pattern.contains('*') {
+        return pattern.to_string();
+    }
+
+    let normalized = trim_trailing_separators(pattern);
+    if normalized == "/" || normalized.ends_with(':') {
+        format!("{normalized}*")
+    } else {
+        format!("{normalized}/*")
+    }
+}
+
+pub fn normalize_permission_pattern(permission: &str, pattern: &str) -> String {
+    match permission {
+        "external_directory" => normalize_external_directory_pattern(pattern),
+        _ => pattern.to_string(),
+    }
+}
+
+pub fn expand_permission_pattern(permission: &str, pattern: &str) -> String {
+    let expanded = expand(pattern);
+    normalize_permission_pattern(permission, &expanded)
+}
+
 pub fn from_config(permission: &ConfigPermission) -> PermissionRuleset {
     let mut ruleset: PermissionRuleset = Vec::new();
 
@@ -66,7 +117,7 @@ pub fn from_config(permission: &ConfigPermission) -> PermissionRuleset {
                 for (pattern, action) in patterns.iter() {
                     ruleset.push(PermissionRule {
                         permission: key.clone(),
-                        pattern: expand(pattern),
+                        pattern: expand_permission_pattern(key, pattern),
                         action: *action,
                     });
                 }
@@ -81,11 +132,51 @@ pub fn merge(rulesets: &[PermissionRuleset]) -> PermissionRuleset {
     rulesets.iter().flat_map(|r| r.clone()).collect()
 }
 
+/// Plan-file permission overrides appended to the `plan` agent ruleset.
+///
+/// The plan agent blanket-denies `edit` (`build_agent_ruleset("plan", ..)`), so
+/// it may only touch files under the session's plans directory. These rules are
+/// appended *after* that deny so the last matching rule wins for plan paths
+/// (`evaluate` scans in reverse). They mirror the reference plan agent
+/// (`packages/opencode/src/agent/agent.ts`): an `edit` allow for
+/// `.opencode/plans/*.md` in the worktree and the relative global `plans/*.md`,
+/// plus an `external_directory` allow for the global plans directory.
+pub fn plan_file_edit_rules(
+    worktree_plans_dir: &Path,
+    global_plans_dir: &Path,
+) -> PermissionRuleset {
+    let worktree_pattern = worktree_plans_dir.join("*").to_string_lossy().into_owned();
+    let global_pattern = global_plans_dir.join("*").to_string_lossy().into_owned();
+
+    vec![
+        PermissionRule {
+            permission: "edit".to_string(),
+            pattern: worktree_pattern.clone(),
+            action: PermissionAction::Allow,
+        },
+        PermissionRule {
+            permission: "edit".to_string(),
+            pattern: global_pattern.clone(),
+            action: PermissionAction::Allow,
+        },
+        PermissionRule {
+            permission: "external_directory".to_string(),
+            pattern: global_pattern,
+            action: PermissionAction::Allow,
+        },
+    ]
+}
+
 pub fn evaluate(permission: &str, pattern: &str, rulesets: &[PermissionRuleset]) -> PermissionRule {
     let merged = merge(rulesets);
+    let pattern = normalize_permission_pattern(permission, pattern);
 
     let matched = merged.iter().rev().find(|rule| {
-        wildcard_match(permission, &rule.permission) && wildcard_match(pattern, &rule.pattern)
+        wildcard_match(permission, &rule.permission)
+            && wildcard_match(
+                &pattern,
+                &normalize_permission_pattern(permission, &rule.pattern),
+            )
     });
 
     matched.cloned().unwrap_or(PermissionRule {
@@ -298,6 +389,16 @@ pub fn build_agent_ruleset(agent_name: &str, user_ruleset: &[PermissionRule]) ->
             ];
             merge(&[explore_specific, user])
         }
+        "general" => {
+            // Reference `general` is a subagent whose permission is defaults
+            // plus a `todowrite` deny (`packages/opencode/src/agent/agent.ts`).
+            let general_specific = vec![PermissionRule {
+                permission: "todowrite".to_string(),
+                pattern: "*".to_string(),
+                action: PermissionAction::Deny,
+            }];
+            merge(&[defaults, general_specific, user])
+        }
         _ => merge(&[defaults, user]),
     }
 }
@@ -342,5 +443,163 @@ mod tests {
 
         assert!(disabled_tools.contains("bash"));
         assert!(!disabled_tools.contains("read"));
+    }
+
+    #[test]
+    fn plan_rules_disable_edit_tools_but_keep_read_search_tools() {
+        let ruleset = build_agent_ruleset("plan", &[]);
+        let tools = vec![
+            "edit".to_string(),
+            "write".to_string(),
+            "ls".to_string(),
+            "grep".to_string(),
+            "read".to_string(),
+        ];
+
+        let disabled_tools = disabled(&tools, &ruleset);
+
+        assert!(disabled_tools.contains("edit"));
+        assert!(disabled_tools.contains("write"));
+        assert!(!disabled_tools.contains("ls"));
+        assert!(!disabled_tools.contains("grep"));
+        assert!(!disabled_tools.contains("read"));
+    }
+
+    #[test]
+    fn question_permission_is_denied_by_default_and_allowed_for_build_and_plan() {
+        // The default ruleset denies the question permission, so agents that do
+        // not opt in lose access to the tool.
+        assert_eq!(
+            evaluate("question", "*", &[default_ruleset()]).action,
+            PermissionAction::Deny
+        );
+
+        // The Rust product grants `question` through the agent ruleset rather
+        // than an execution-time permission assert (documented deviation from
+        // vanilla), so build and plan must resolve to Allow.
+        assert_eq!(
+            evaluate("question", "*", &[build_agent_ruleset("build", &[])]).action,
+            PermissionAction::Allow
+        );
+        assert_eq!(
+            evaluate("question", "*", &[build_agent_ruleset("plan", &[])]).action,
+            PermissionAction::Allow
+        );
+    }
+
+    #[test]
+    fn user_ruleset_can_revoke_question_from_build() {
+        let deny_question = vec![PermissionRule {
+            permission: "question".to_string(),
+            pattern: "*".to_string(),
+            action: PermissionAction::Deny,
+        }];
+
+        assert_eq!(
+            evaluate(
+                "question",
+                "*",
+                &[build_agent_ruleset("build", &deny_question)]
+            )
+            .action,
+            PermissionAction::Deny
+        );
+    }
+
+    #[test]
+    fn general_ruleset_denies_todowrite_and_keeps_default_allows() {
+        let ruleset = build_agent_ruleset("general", &[]);
+
+        assert_eq!(
+            evaluate("todowrite", "*", &[ruleset.clone()]).action,
+            PermissionAction::Deny
+        );
+        // `default_ruleset` still allows ordinary tools for `general`.
+        assert_eq!(
+            evaluate("read", "*", &[ruleset]).action,
+            PermissionAction::Allow
+        );
+    }
+
+    #[test]
+    fn external_directory_patterns_normalize_to_directory_boundary() {
+        assert_eq!(
+            normalize_permission_pattern("external_directory", "/tmp/demo"),
+            "/tmp/demo/*"
+        );
+        assert_eq!(
+            normalize_permission_pattern("external_directory", "/tmp/demo/"),
+            "/tmp/demo/*"
+        );
+        assert_eq!(
+            normalize_permission_pattern("external_directory", "/tmp/demo/*"),
+            "/tmp/demo/*"
+        );
+    }
+
+    #[test]
+    fn plan_file_rules_allow_only_plan_paths() {
+        let worktree_plans = Path::new("/repo/.opencode/plans");
+        let global_plans = Path::new("/home/u/.local/share/opencode/plans");
+        let mut ruleset = build_agent_ruleset("plan", &[]);
+        ruleset.extend(plan_file_edit_rules(worktree_plans, global_plans));
+
+        // Plan file in the worktree is allowed...
+        assert_eq!(
+            evaluate("edit", "/repo/.opencode/plans/1-x.md", &[ruleset.clone()]).action,
+            PermissionAction::Allow
+        );
+        // ...a global plan file is allowed...
+        assert_eq!(
+            evaluate(
+                "edit",
+                "/home/u/.local/share/opencode/plans/1-x.md",
+                &[ruleset.clone()]
+            )
+            .action,
+            PermissionAction::Allow
+        );
+        // ...but a regular source edit is denied.
+        assert_eq!(
+            evaluate("edit", "/repo/src/main.rs", &[ruleset.clone()]).action,
+            PermissionAction::Deny
+        );
+        // The global plans directory is an allowed external directory.
+        assert_eq!(
+            evaluate(
+                "external_directory",
+                "/home/u/.local/share/opencode/plans/1-x.md",
+                &[ruleset]
+            )
+            .action,
+            PermissionAction::Allow
+        );
+    }
+
+    #[test]
+    fn plan_file_rules_keep_edit_tools_visible_for_plan_agent() {
+        let mut ruleset = build_agent_ruleset("plan", &[]);
+        ruleset.extend(plan_file_edit_rules(
+            Path::new("/repo/.opencode/plans"),
+            Path::new("/home/u/opencode/plans"),
+        ));
+
+        let disabled_tools = disabled(&["edit".to_string(), "write".to_string()], &ruleset);
+        // A trailing plan-file allow means `disabled` no longer treats the last
+        // `edit` rule as a hard deny, so the tools stay declared.
+        assert!(!disabled_tools.contains("edit"));
+        assert!(!disabled_tools.contains("write"));
+    }
+
+    #[test]
+    fn evaluate_matches_normalized_external_directory_patterns() {
+        let ruleset = vec![PermissionRule {
+            permission: "external_directory".to_string(),
+            pattern: "/tmp/demo/".to_string(),
+            action: PermissionAction::Allow,
+        }];
+
+        let matched = evaluate("external_directory", "/tmp/demo/*", &[ruleset]);
+        assert_eq!(matched.action, PermissionAction::Allow);
     }
 }

@@ -10,20 +10,45 @@ use opencode_config::load_config;
 
 pub struct SkillTool;
 
+const SKILL_TOOL_DESCRIPTION: &str = "Load a specialized skill when the task at hand matches one of the skills listed in the system prompt.\n\nUse this tool to inject the skill's instructions and resources into current conversation. The output may contain detailed workflow guidance as well as references to scripts, files, etc in the same directory as the skill.\n\nThe skill name must match one of the skills listed in your system prompt.";
+
+/// Emitted inside `<skill_content>` so a loaded skill is treated as a workflow to
+/// execute with tools, not as an answer to summarize. Without this, models with
+/// weak instruction-following (for example the fallback prompt path) reply with a
+/// fabricated answer and never run the workflow (`BUG-065`).
+const SKILL_EXECUTION_DIRECTIVE: &str = "IMPORTANT: This skill defines a workflow, not an answer. Execute its steps with the available tools now. Do not answer from memory and do not summarize this text back to the user; a skill whose workflow was not executed with tools is not complete.";
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SkillInput {
+    #[serde(default)]
+    name: Option<String>,
     #[serde(rename = "skill_name")]
-    skill_name: String,
+    #[serde(default)]
+    skill_name: Option<String>,
     #[serde(default)]
     arguments: Option<serde_json::Value>,
     #[serde(default)]
     prompt: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AvailableSkill {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SkillMetadata {
+    pub name: String,
+    pub description: Option<String>,
+    pub location: PathBuf,
+}
+
 #[derive(Debug, Clone)]
 struct SkillInfo {
     name: String,
-    description: String,
+    description: Option<String>,
     content: String,
     location: PathBuf,
 }
@@ -41,6 +66,48 @@ fn home_dir() -> Option<PathBuf> {
     })
 }
 
+fn normalize_existing_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn detect_worktree_root(start: &Path) -> PathBuf {
+    let mut current = normalize_existing_path(start);
+    loop {
+        if current.join(".git").exists() {
+            return current;
+        }
+        let Some(parent) = current.parent() else {
+            return current;
+        };
+        if parent == current {
+            return current;
+        }
+        current = parent.to_path_buf();
+    }
+}
+
+fn walk_up_directories(start: &Path, stop: &Path) -> Vec<PathBuf> {
+    let mut current = normalize_existing_path(start);
+    let stop = normalize_existing_path(stop);
+    let mut result = Vec::new();
+
+    loop {
+        result.push(current.clone());
+        if current == stop {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        if parent == current {
+            break;
+        }
+        current = parent.to_path_buf();
+    }
+
+    result
+}
+
 fn resolve_skill_path(base: &Path, raw: &str) -> PathBuf {
     if let Some(stripped) = raw.strip_prefix("~/") {
         if let Some(home) = home_dir() {
@@ -56,14 +123,30 @@ fn resolve_skill_path(base: &Path, raw: &str) -> PathBuf {
     }
 }
 
+fn collect_project_skill_roots(base: &Path) -> Vec<PathBuf> {
+    let worktree = detect_worktree_root(base);
+    let mut roots = Vec::new();
+
+    for dir in walk_up_directories(base, &worktree).into_iter().rev() {
+        roots.push(dir.join(".agents/skills"));
+        roots.push(dir.join(".claude/skills"));
+        roots.push(dir.join(".opencode/skill"));
+        roots.push(dir.join(".opencode/skills"));
+    }
+
+    roots
+}
+
 fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = home_dir() {
         roots.push(home.join(".agents/skills"));
         roots.push(home.join(".claude/skills"));
+        roots.push(home.join(".config/opencode/skill"));
+        roots.push(home.join(".config/opencode/skills"));
     }
 
-    // Global config directory (e.g. ~/.config/opencode/skills)
+    // Platform config directory (e.g. ~/Library/Application Support/opencode/skills on macOS)
     if let Some(config_dir) = dirs::config_dir() {
         roots.push(config_dir.join("opencode/skill"));
         roots.push(config_dir.join("opencode/skills"));
@@ -75,10 +158,7 @@ fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
         roots.push(home.join(".opencode/skills"));
     }
 
-    roots.push(base.join(".agents/skills"));
-    roots.push(base.join(".claude/skills"));
-    roots.push(base.join(".opencode/skill"));
-    roots.push(base.join(".opencode/skills"));
+    roots.extend(collect_project_skill_roots(base));
 
     if let Ok(config) = load_config(base) {
         if let Some(skills) = config.skills {
@@ -95,6 +175,30 @@ fn collect_skill_roots(base: &Path) -> Vec<PathBuf> {
         }
     }
     deduped
+}
+
+fn resolve_skill_name(input: SkillInput) -> Result<ResolvedSkillInput, ToolError> {
+    let skill_name = input
+        .skill_name
+        .or(input.name)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ToolError::InvalidArguments(
+                "Missing required field: provide either 'skill_name' or 'name'".to_string(),
+            )
+        })?;
+
+    Ok(ResolvedSkillInput {
+        skill_name,
+        arguments: input.arguments,
+        prompt: input.prompt,
+    })
+}
+
+struct ResolvedSkillInput {
+    skill_name: String,
+    arguments: Option<serde_json::Value>,
+    prompt: Option<String>,
 }
 
 fn parse_frontmatter_value(frontmatter: &str, key: &str) -> Option<String> {
@@ -143,7 +247,7 @@ fn parse_skill_file(path: &Path) -> Option<SkillInfo> {
     let frontmatter = frontmatter_lines.join("\n");
     let content = lines.collect::<Vec<_>>().join("\n");
     let name = parse_frontmatter_value(&frontmatter, "name")?;
-    let description = parse_frontmatter_value(&frontmatter, "description")?;
+    let description = parse_frontmatter_value(&frontmatter, "description");
 
     Some(SkillInfo {
         name,
@@ -222,21 +326,20 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        "Load and execute a skill (predefined expertise module). Skills provide specialized knowledge for specific tasks."
+        SKILL_TOOL_DESCRIPTION
     }
 
     fn parameters(&self) -> serde_json::Value {
-        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let skills = discover_skills(&base);
-        let skill_names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
-
         serde_json::json!({
             "type": "object",
             "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The name of the skill from available_skills"
+                },
                 "skill_name": {
                     "type": "string",
-                    "description": "Name of the skill to load",
-                    "enum": skill_names
+                    "description": "Alias of 'name': the name of the skill from available_skills"
                 },
                 "arguments": {
                     "type": "object",
@@ -247,7 +350,10 @@ impl Tool for SkillTool {
                     "description": "Additional prompt/instructions for the skill"
                 }
             },
-            "required": ["skill_name"]
+            "anyOf": [
+                {"required": ["skill_name"]},
+                {"required": ["name"]}
+            ]
         })
     }
 
@@ -256,8 +362,9 @@ impl Tool for SkillTool {
         args: serde_json::Value,
         ctx: ToolContext,
     ) -> Result<ToolResult, ToolError> {
-        let input: SkillInput =
+        let raw_input: SkillInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        let input = resolve_skill_name(raw_input)?;
 
         let skills = discover_skills(Path::new(&ctx.directory));
 
@@ -286,6 +393,8 @@ impl Tool for SkillTool {
         .await?;
 
         let mut output = format!("<skill_content name=\"{}\">\n\n", skill.name);
+        output.push_str(SKILL_EXECUTION_DIRECTIVE);
+        output.push_str("\n\n");
         output.push_str(&format!("# Skill: {}\n\n", skill.name));
         output.push_str(&skill.content);
         output.push_str("\n\n");
@@ -353,11 +462,39 @@ impl Default for SkillTool {
     }
 }
 
-pub fn list_available_skills() -> Vec<(String, String)> {
+pub fn list_available_skills() -> Vec<AvailableSkill> {
     let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    discover_skills(&base)
+    list_available_skills_for_base(&base)
+}
+
+pub fn list_available_skills_for_base(base: &Path) -> Vec<AvailableSkill> {
+    discover_skills(base)
         .into_iter()
-        .map(|s| (s.name, s.description))
+        .map(|s| AvailableSkill {
+            name: s.name,
+            description: s.description,
+        })
+        .collect()
+}
+
+/// Full discovered-skill metadata, including the source `SKILL.md` location.
+///
+/// This backs the runtime's available-skills system-prompt block, which needs the
+/// skill location in addition to the name and description surfaced by
+/// [`list_available_skills_for_base`].
+pub fn list_skill_metadata() -> Vec<SkillMetadata> {
+    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    list_skill_metadata_for_base(&base)
+}
+
+pub fn list_skill_metadata_for_base(base: &Path) -> Vec<SkillMetadata> {
+    discover_skills(base)
+        .into_iter()
+        .map(|s| SkillMetadata {
+            name: s.name,
+            description: s.description,
+            location: s.location,
+        })
         .collect()
 }
 
@@ -386,8 +523,30 @@ Do a thorough review.
 
         let parsed = parse_skill_file(&skill_path).unwrap();
         assert_eq!(parsed.name, "reviewer");
-        assert_eq!(parsed.description, "Review code changes");
+        assert_eq!(parsed.description.as_deref(), Some("Review code changes"));
         assert!(parsed.content.contains("Do a thorough review."));
+    }
+
+    #[test]
+    fn parse_skill_file_accepts_missing_description_like_vanilla() {
+        let dir = tempdir().unwrap();
+        let skill_path = dir.path().join("SKILL.md");
+        fs::write(
+            &skill_path,
+            r#"---
+name: reviewer
+---
+
+# Reviewer
+
+Do a thorough review.
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_skill_file(&skill_path).unwrap();
+        assert_eq!(parsed.name, "reviewer");
+        assert_eq!(parsed.description, None);
     }
 
     #[test]
@@ -437,5 +596,241 @@ custom content
 
         assert!(names.contains(&"local-skill".to_string()));
         assert!(names.contains(&"custom-skill".to_string()));
+    }
+
+    #[test]
+    fn discover_skills_walks_up_to_worktree_root() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join(".git"), "gitdir").unwrap();
+
+        let root_skill = root.join(".opencode/skills/root/SKILL.md");
+        fs::create_dir_all(root_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &root_skill,
+            r#"---
+name: shared-skill
+description: root copy
+---
+root content
+"#,
+        )
+        .unwrap();
+
+        let nested = root.join("apps/cli");
+        fs::create_dir_all(&nested).unwrap();
+
+        let discovered = discover_skills(&nested);
+        let skill = discovered
+            .into_iter()
+            .find(|skill| skill.name == "shared-skill")
+            .unwrap();
+
+        assert_eq!(skill.description.as_deref(), Some("root copy"));
+    }
+
+    #[test]
+    fn nearer_project_roots_override_ancestor_duplicates() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join(".git"), "gitdir").unwrap();
+
+        let root_skill = root.join(".opencode/skills/reviewer/SKILL.md");
+        fs::create_dir_all(root_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &root_skill,
+            r#"---
+name: reviewer
+description: root reviewer
+---
+root
+"#,
+        )
+        .unwrap();
+
+        let nested = root.join("apps/cli");
+        let nested_skill = nested.join(".opencode/skills/reviewer/SKILL.md");
+        fs::create_dir_all(nested_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &nested_skill,
+            r#"---
+name: reviewer
+description: nested reviewer
+---
+nested
+"#,
+        )
+        .unwrap();
+
+        let discovered = discover_skills(&nested);
+        let skill = discovered
+            .into_iter()
+            .find(|skill| skill.name == "reviewer")
+            .unwrap();
+
+        assert_eq!(skill.description.as_deref(), Some("nested reviewer"));
+    }
+
+    #[test]
+    fn discover_skills_includes_descriptionless_skill_names_like_vanilla() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let skill_path = root.join(".opencode/skill/manual/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            r#"---
+name: manual-skill
+---
+manual content
+"#,
+        )
+        .unwrap();
+
+        let discovered = discover_skills(root);
+        let skill = discovered
+            .into_iter()
+            .find(|skill| skill.name == "manual-skill")
+            .unwrap();
+
+        assert_eq!(skill.description, None);
+    }
+
+    #[test]
+    fn discover_skills_loads_flat_config_paths_like_current_vanilla() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let extra_root = root.join("custom-skills");
+        let extra_skill = extra_root.join("flat/SKILL.md");
+        fs::create_dir_all(extra_skill.parent().unwrap()).unwrap();
+        fs::write(
+            &extra_skill,
+            r#"---
+name: flat-config-skill
+description: flat config
+---
+flat content
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            root.join("opencode.json"),
+            r#"{
+  "skills": ["custom-skills", "https://example.test/skills/"]
+}"#,
+        )
+        .unwrap();
+
+        let discovered = discover_skills(root);
+        let names: Vec<String> = discovered.into_iter().map(|s| s.name).collect();
+
+        assert!(names.contains(&"flat-config-skill".to_string()));
+    }
+
+    #[test]
+    fn resolve_skill_name_accepts_reference_name_alias() {
+        let resolved = resolve_skill_name(SkillInput {
+            name: Some("reviewer".to_string()),
+            skill_name: None,
+            arguments: None,
+            prompt: None,
+        })
+        .unwrap();
+
+        assert_eq!(resolved.skill_name, "reviewer");
+    }
+
+    #[test]
+    fn parameters_use_free_form_name_without_discovered_enum() {
+        let params = SkillTool.parameters();
+
+        let name = &params["properties"]["name"];
+        assert_eq!(
+            name["description"].as_str(),
+            Some("The name of the skill from available_skills")
+        );
+        assert!(
+            name.get("enum").is_none(),
+            "skill name must be free-form rather than an enumerated list"
+        );
+        assert!(
+            params["properties"]["skill_name"].get("enum").is_none(),
+            "skill_name alias must also be free-form"
+        );
+    }
+
+    #[test]
+    fn description_points_at_skills_listed_in_system_prompt() {
+        assert!(SkillTool
+            .description()
+            .contains("listed in the system prompt"));
+    }
+
+    #[tokio::test]
+    async fn skill_output_instructs_executing_the_workflow_with_tools() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let skill_path = root.join(".opencode/skills/board-review/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            r#"---
+name: board-review
+description: review a board
+---
+# Board review
+
+Read the board, then answer.
+"#,
+        )
+        .unwrap();
+
+        let ctx = ToolContext::new(
+            "session".to_string(),
+            "message".to_string(),
+            root.to_string_lossy().to_string(),
+        );
+        let result = SkillTool
+            .execute(serde_json::json!({"name": "board-review"}), ctx)
+            .await
+            .unwrap();
+
+        assert!(result.output.contains(SKILL_EXECUTION_DIRECTIVE));
+        let directive_at = result.output.find(SKILL_EXECUTION_DIRECTIVE).unwrap();
+        let body_at = result.output.find("# Skill: board-review").unwrap();
+        assert!(
+            directive_at < body_at,
+            "execution directive must precede the skill body"
+        );
+    }
+
+    #[test]
+    fn list_skill_metadata_includes_source_location() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let skill_path = root.join(".opencode/skills/located/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            r#"---
+name: located
+description: has location
+---
+body
+"#,
+        )
+        .unwrap();
+
+        let metadata = list_skill_metadata_for_base(root);
+        let skill = metadata
+            .iter()
+            .find(|skill| skill.name == "located")
+            .unwrap();
+
+        assert_eq!(skill.description.as_deref(), Some("has location"));
+        assert_eq!(skill.location, fs::canonicalize(&skill_path).unwrap());
     }
 }

@@ -1,10 +1,7 @@
 use async_trait::async_trait;
-use futures::StreamExt;
 use reqwest::Client;
 
-use crate::{
-    ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamEvent, StreamResult,
-};
+use crate::{ChatRequest, ChatResponse, ModelInfo, Provider, ProviderError, StreamResult};
 
 const DEEPINFRA_API_URL: &str = "https://api.deepinfra.com/v1/openai/chat/completions";
 
@@ -91,7 +88,7 @@ impl Provider for DeepInfraProvider {
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": request.messages,
+            "messages": crate::openai_chat::convert_messages(&request.messages),
         });
 
         if let Some(temp) = request.temperature {
@@ -102,7 +99,7 @@ impl Provider for DeepInfraProvider {
         }
         if let Some(tools) = &request.tools {
             if !tools.is_empty() {
-                body["tools"] = serde_json::json!(tools);
+                body["tools"] = crate::openai_chat::openai_chat_tools(tools);
             }
         }
 
@@ -132,7 +129,7 @@ impl Provider for DeepInfraProvider {
     async fn chat_stream(&self, request: ChatRequest) -> Result<StreamResult, ProviderError> {
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": request.messages,
+            "messages": crate::openai_chat::convert_messages(&request.messages),
             "stream": true,
         });
 
@@ -144,7 +141,7 @@ impl Provider for DeepInfraProvider {
         }
         if let Some(tools) = &request.tools {
             if !tools.is_empty() {
-                body["tools"] = serde_json::json!(tools);
+                body["tools"] = crate::openai_chat::openai_chat_tools(tools);
             }
         }
 
@@ -163,34 +160,8 @@ impl Provider for DeepInfraProvider {
             return Err(ProviderError::ApiError(error_text));
         }
 
-        let stream = response
-            .bytes_stream()
-            .then(|result| async move {
-                match result {
-                    Ok(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        let mut events: Vec<Result<StreamEvent, ProviderError>> = Vec::new();
+        let stream = crate::stream::openai_compat_sse_stream(response.bytes_stream());
 
-                        for line in text.lines() {
-                            if let Some(data) = line.strip_prefix("data: ") {
-                                if data == "[DONE]" {
-                                    events.push(Ok(StreamEvent::Done));
-                                    continue;
-                                }
-
-                                if let Some(event) = crate::stream::parse_openai_sse(data) {
-                                    events.push(Ok(event));
-                                }
-                            }
-                        }
-
-                        events
-                    }
-                    Err(e) => vec![Err(ProviderError::StreamError(e.to_string()))],
-                }
-            })
-            .flat_map(|events| futures::stream::iter(events));
-
-        Ok(Box::pin(stream))
+        Ok(stream)
     }
 }

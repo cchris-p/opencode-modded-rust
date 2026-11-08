@@ -1,6 +1,7 @@
 use crate::provider::ProviderError;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::pin::Pin;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +82,10 @@ pub enum StreamEvent {
     Usage {
         prompt_tokens: u64,
         completion_tokens: u64,
+        #[serde(default)]
+        cache_read_tokens: u64,
+        #[serde(default)]
+        cache_miss_tokens: u64,
     },
     /// Stream finished (maps to "finish" in TS).
     Finish,
@@ -124,6 +129,1200 @@ pub struct StreamUsage {
 
 pub type StreamResult = Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderError>> + Send>>;
 
+/// Maximum time the agent loop will wait between provider stream events before
+/// treating the stream as stalled and ending it with a [`StreamEvent::Error`].
+///
+/// Without this bound, a provider that holds the HTTP connection open but stops
+/// sending (for example after a reasoning block and partial text) leaves the
+/// session loop awaiting an event that never arrives. The turn then never
+/// reaches a terminal state, the session stays `active`, and the user is stuck
+/// until they abandon it (BUG-038).
+pub const DEFAULT_STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Wrap a provider event stream so a gap longer than `idle_timeout` between
+/// events ends the stream with a [`StreamEvent::Error`] instead of hanging
+/// forever.
+///
+/// This converts a silently wedged provider connection into a visible terminal
+/// error that the session loop can record and surface, guaranteeing every turn
+/// either completes or fails loudly (BUG-038).
+pub fn with_idle_timeout(stream: StreamResult, idle_timeout: std::time::Duration) -> StreamResult {
+    use futures::StreamExt;
+
+    let stream = futures::stream::unfold(
+        (stream, idle_timeout, false),
+        |(mut stream, idle_timeout, finished)| async move {
+            if finished {
+                return None;
+            }
+            match tokio::time::timeout(idle_timeout, stream.next()).await {
+                Ok(Some(Ok(event))) => Some((Ok(event), (stream, idle_timeout, false))),
+                Ok(Some(Err(error))) => Some((Err(error), (stream, idle_timeout, true))),
+                Ok(None) => None,
+                Err(_) => Some((
+                    Ok(StreamEvent::Error(format!(
+                        "Provider stream stalled: no events received for {}s",
+                        idle_timeout.as_secs()
+                    ))),
+                    (stream, idle_timeout, true),
+                )),
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
+/// Maximum wall-clock time a single provider step may run, regardless of how
+/// many events it emits.
+///
+/// The idle timeout resets on every event, so a provider that keeps streaming
+/// (for example an endless reasoning loop) never trips it. This budget bounds
+/// the whole step and ends it with a [`StreamEvent::Error`] (BUG-046). `0`
+/// disables the bound.
+pub const DEFAULT_STREAM_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Resolve the per-step stream budget. `OPENCODE_STREAM_BUDGET_MS` overrides
+/// the default; `0` disables the bound.
+pub fn stream_budget_from_env() -> std::time::Duration {
+    std::env::var("OPENCODE_STREAM_BUDGET_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(DEFAULT_STREAM_BUDGET)
+}
+
+/// Wrap a provider event stream so it ends with a [`StreamEvent::Error`] once
+/// its total wall-clock budget is exceeded, even if it keeps emitting events.
+///
+/// This complements [`with_idle_timeout`]: a stream that never goes idle is
+/// still bounded (BUG-046). A zero budget is a no-op.
+pub fn with_stream_budget(stream: StreamResult, budget: std::time::Duration) -> StreamResult {
+    use futures::StreamExt;
+
+    if budget.is_zero() {
+        return stream;
+    }
+
+    let deadline = tokio::time::Instant::now() + budget;
+    let stream = futures::stream::unfold(
+        (stream, deadline, false),
+        move |(mut stream, deadline, finished)| async move {
+            if finished {
+                return None;
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Some((
+                    Ok(StreamEvent::Error(format!(
+                        "Provider step exceeded its {}s budget",
+                        budget.as_secs()
+                    ))),
+                    (stream, deadline, true),
+                ));
+            }
+            match tokio::time::timeout(remaining, stream.next()).await {
+                Ok(Some(Ok(event))) => Some((Ok(event), (stream, deadline, false))),
+                Ok(Some(Err(error))) => Some((Err(error), (stream, deadline, true))),
+                Ok(None) => None,
+                Err(_) => Some((
+                    Ok(StreamEvent::Error(format!(
+                        "Provider step exceeded its {}s budget",
+                        budget.as_secs()
+                    ))),
+                    (stream, deadline, true),
+                )),
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
+/// Build a provider event stream from a raw SSE byte stream.
+///
+/// Raw HTTP chunk boundaries do not align with SSE frame boundaries: a single
+/// network chunk can carry several `data:` frames and a single frame can be
+/// split across two chunks. Naive per-chunk line parsing silently drops every
+/// frame except the first one in each chunk, which garbles or truncates model
+/// output. This adapter buffers bytes across chunks, splits complete lines,
+/// and emits every event produced for each line so no frame is lost.
+///
+/// `parse_line` receives each complete, CRLF-trimmed line and returns zero or
+/// more events for it. Lines that produce no events (comments, keepalives,
+/// malformed frames, etc.) are simply skipped.
+pub fn sse_event_stream<S, B, F>(chunks: S, parse_line: F) -> StreamResult
+where
+    S: Stream<Item = Result<B, reqwest::Error>> + Unpin + Send + 'static,
+    B: AsRef<[u8]> + Send + 'static,
+    F: Fn(&str) -> Vec<StreamEvent> + Send + Sync + 'static,
+{
+    use futures::StreamExt;
+    use std::collections::VecDeque;
+
+    let stream = futures::stream::try_unfold(
+        (
+            chunks,
+            String::new(),
+            VecDeque::<StreamEvent>::new(),
+            false,
+            parse_line,
+        ),
+        |(mut chunks, mut buffer, mut pending, mut exhausted, parse_line)| async move {
+            loop {
+                if let Some(event) = pending.pop_front() {
+                    return Ok(Some((
+                        event,
+                        (chunks, buffer, pending, exhausted, parse_line),
+                    )));
+                }
+
+                if let Some(idx) = buffer.find('\n') {
+                    let mut line = buffer[..idx].to_string();
+                    buffer.drain(..=idx);
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    pending.extend(parse_line(line.trim()));
+                    continue;
+                }
+
+                if exhausted {
+                    let tail = std::mem::take(&mut buffer);
+                    if !tail.trim().is_empty() {
+                        pending.extend(parse_line(tail.trim()));
+                    }
+                    if let Some(event) = pending.pop_front() {
+                        return Ok(Some((event, (chunks, buffer, pending, true, parse_line))));
+                    }
+                    return Ok(None);
+                }
+
+                match chunks.next().await {
+                    Some(Ok(bytes)) => {
+                        buffer.push_str(&String::from_utf8_lossy(bytes.as_ref()));
+                    }
+                    Some(Err(e)) => {
+                        return Err(ProviderError::StreamError(e.to_string()));
+                    }
+                    None => exhausted = true,
+                }
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
+/// Parse one complete SSE line in the OpenAI-compatible `data: <json>` shape.
+///
+/// Handles the `data: [DONE]` terminator and delegates every other payload to
+/// [`parse_openai_sse`]. Lines that are not `data:` frames produce no events.
+pub fn openai_compat_line_events(line: &str) -> Vec<StreamEvent> {
+    let Some(payload) = line.strip_prefix("data:") else {
+        return Vec::new();
+    };
+    let payload = payload.trim();
+    if payload.is_empty() {
+        return Vec::new();
+    }
+    if payload == "[DONE]" {
+        return vec![StreamEvent::Done];
+    }
+    parse_openai_sse(payload).into_iter().collect()
+}
+
+// DeepSeek native tool-call special tokens. DeepSeek-family models sometimes
+// emit a tool call as these tokens inside the assistant `content` instead of an
+// OpenAI `tool_calls` array (observed on `novita-ai/deepseek/deepseek-r1-0528`,
+// BUG-060). The characters are: `<`, U+FF5C, `tool`, U+2581, `calls`, U+2581,
+// `begin`, U+FF5C, `>` (and analogous forms below).
+const DS_TOOL_CALLS_BEGIN: &str = "<\u{ff5c}tool\u{2581}calls\u{2581}begin\u{ff5c}>";
+const DS_TOOL_CALL_BEGIN: &str = "<\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>";
+const DS_TOOL_SEP: &str = "<\u{ff5c}tool\u{2581}sep\u{ff5c}>";
+const DS_TOOL_CALL_END: &str = "<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}>";
+const DS_TOOL_CALLS_END: &str = "<\u{ff5c}tool\u{2581}calls\u{2581}end\u{ff5c}>";
+
+/// Normalizes DeepSeek native tool-call tokens that leak into streamed
+/// assistant `content` into real tool-call events, stripping the raw tokens
+/// from the visible text (BUG-060).
+///
+/// The stream is fed chunk by chunk via [`push`](Self::push); text is emitted
+/// immediately except while a calls block is open, plus a short suffix that
+/// could be the start of a token (so a token split across deltas is not emitted
+/// as text). [`finish`](Self::finish) flushes any remainder. A block may carry
+/// several calls and may wrap the JSON arguments in a Markdown code fence.
+#[derive(Debug)]
+pub struct DeepSeekNativeToolCallExtractor {
+    buffer: String,
+    capturing: bool,
+    counter: u64,
+    pending_calls: Vec<(String, String, serde_json::Value)>,
+    unterminated_block: bool,
+    enabled: bool,
+}
+
+impl Default for DeepSeekNativeToolCallExtractor {
+    fn default() -> Self {
+        Self {
+            buffer: String::new(),
+            capturing: false,
+            counter: 0,
+            pending_calls: Vec::new(),
+            unterminated_block: false,
+            enabled: native_normalization_enabled(),
+        }
+    }
+}
+
+impl DeepSeekNativeToolCallExtractor {
+    /// Feed a content delta and return the events it produces.
+    pub fn push(&mut self, text: &str) -> Vec<StreamEvent> {
+        if !self.enabled {
+            return vec![StreamEvent::TextDelta(text.to_string())];
+        }
+        self.buffer.push_str(text);
+        self.drain(false)
+    }
+
+    /// Flush any buffered remainder at end of stream.
+    ///
+    /// An unterminated native calls block has its raw token markup discarded
+    /// (never leaked into assistant text), and a visible error is returned so
+    /// the truncated tool call fails loudly instead of silently (BUG-063).
+    pub fn finish(&mut self) -> Vec<StreamEvent> {
+        if !self.enabled {
+            return Vec::new();
+        }
+        let mut events = self.drain(true);
+        if self.unterminated_block {
+            self.unterminated_block = false;
+            events.push(StreamEvent::Error(
+                "incomplete DeepSeek native tool-call block (missing closing token) was discarded; no tool was executed"
+                    .to_string(),
+            ));
+        }
+        events
+    }
+
+    /// Emit the buffered native calls as tool-call events, or discard them when
+    /// `include` is false (a structured `tool_calls` array already arrived this
+    /// turn, so the leaked tokens are redundant). Always clears the buffer.
+    pub fn drain_pending(&mut self, include: bool) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+        for (id, name, input) in std::mem::take(&mut self.pending_calls) {
+            if include {
+                events.push(StreamEvent::ToolCallStart {
+                    id: id.clone(),
+                    name: name.clone(),
+                });
+                events.push(StreamEvent::ToolCallEnd { id, name, input });
+            }
+        }
+        events
+    }
+
+    /// Override whether normalization is active (tests / callers that already
+    /// resolved the flag).
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn drain(&mut self, flush_all: bool) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+        loop {
+            if self.capturing {
+                if let Some(end) = self.buffer.find(DS_TOOL_CALLS_END) {
+                    let block = self.buffer[..end].to_string();
+                    self.buffer.drain(..end + DS_TOOL_CALLS_END.len());
+                    self.capturing = false;
+                    self.emit_block(&block);
+                    continue;
+                }
+                if flush_all {
+                    // Unterminated calls block: discard the raw native-token
+                    // markup instead of leaking it as assistant text, and flag
+                    // it so `finish` can report a visible error (BUG-063).
+                    let rest = std::mem::take(&mut self.buffer);
+                    self.capturing = false;
+                    if !rest.trim().is_empty() {
+                        self.unterminated_block = true;
+                    }
+                }
+                break;
+            }
+
+            if let Some(begin) = self.buffer.find(DS_TOOL_CALLS_BEGIN) {
+                let before = self.buffer[..begin].to_string();
+                self.buffer.drain(..begin + DS_TOOL_CALLS_BEGIN.len());
+                if !before.is_empty() {
+                    events.push(StreamEvent::TextDelta(before));
+                }
+                self.capturing = true;
+                continue;
+            }
+
+            if flush_all {
+                let rest = std::mem::take(&mut self.buffer);
+                if !rest.is_empty() {
+                    events.push(StreamEvent::TextDelta(rest));
+                }
+                break;
+            }
+
+            // Hold back a suffix that could be a partial start token.
+            let hold = partial_suffix_len(&self.buffer, DS_TOOL_CALLS_BEGIN);
+            let emit_len = self.buffer.len() - hold;
+            if emit_len > 0 {
+                let safe = self.buffer[..emit_len].to_string();
+                self.buffer.drain(..emit_len);
+                events.push(StreamEvent::TextDelta(safe));
+            }
+            break;
+        }
+        events
+    }
+
+    fn emit_block(&mut self, block: &str) {
+        let mut rest = block;
+        loop {
+            let Some(cb) = rest.find(DS_TOOL_CALL_BEGIN) else {
+                break;
+            };
+            let after = &rest[cb + DS_TOOL_CALL_BEGIN.len()..];
+            let (segment, remainder) = match after.find(DS_TOOL_CALL_END) {
+                Some(e) => (&after[..e], &after[e + DS_TOOL_CALL_END.len()..]),
+                None => (after, ""),
+            };
+            if let Some((name, input)) = parse_native_call_segment(segment) {
+                let id = format!("deepseek-native-call-{}", self.counter);
+                self.counter += 1;
+                self.pending_calls.push((id, name, input));
+            }
+            if remainder.is_empty() {
+                break;
+            }
+            rest = remainder;
+        }
+    }
+}
+
+/// Length (in bytes, on a char boundary) of the longest suffix of `buf` that is
+/// a proper prefix of `token`, so it can be held back until more text arrives.
+fn partial_suffix_len(buf: &str, token: &str) -> usize {
+    let token_len = token.chars().count();
+    let max = buf.chars().count().min(token_len.saturating_sub(1));
+    for k in (1..=max).rev() {
+        let prefix: String = token.chars().take(k).collect();
+        if buf.ends_with(&prefix) {
+            return prefix.len();
+        }
+    }
+    0
+}
+
+/// Parse one `<｜tool▁call▁begin｜>type<｜tool▁sep｜>name[<｜tool▁sep｜>|newline]args`
+/// segment into a `(name, arguments)` pair. Arguments may be wrapped in a
+/// Markdown code fence; unparseable arguments become an empty object.
+fn parse_native_call_segment(segment: &str) -> Option<(String, serde_json::Value)> {
+    let segment = segment.trim_start();
+    let after_type = match segment.find(DS_TOOL_SEP) {
+        Some(sep) => &segment[sep + DS_TOOL_SEP.len()..],
+        None => segment,
+    };
+    let (name_raw, args_raw) = if let Some(sep) = after_type.find(DS_TOOL_SEP) {
+        (&after_type[..sep], &after_type[sep + DS_TOOL_SEP.len()..])
+    } else if let Some(nl) = after_type.find('\n') {
+        (&after_type[..nl], &after_type[nl + 1..])
+    } else {
+        (after_type, "")
+    };
+    let name = name_raw.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((name.to_string(), parse_native_args(args_raw)))
+}
+
+fn parse_native_args(raw: &str) -> serde_json::Value {
+    let mut s = raw.trim();
+    if let Some(stripped) = s.strip_prefix("```json") {
+        s = stripped;
+    } else if let Some(stripped) = s.strip_prefix("```") {
+        s = stripped;
+    }
+    if let Some(idx) = s.rfind("```") {
+        s = &s[..idx];
+    }
+    let s = s.trim();
+    if s.is_empty() {
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+    serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+}
+
+/// Whether DeepSeek native-token normalization is active. Enabled by default;
+/// `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` (truthy) is the kill switch.
+///
+/// The same switch also gates the Qwen `<tool_call>` normalization below: both
+/// are "native tool-call normalization" restorations of the same kind, so the
+/// operator kill switch covers the whole feature.
+fn native_normalization_enabled() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(
+        || match std::env::var("OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS") {
+            Ok(value) => !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            ),
+            Err(_) => true,
+        },
+    )
+}
+
+/// A tool call decoded from Qwen/Hermes-style inline `<tool_call>` markup
+/// instead of a structured `tool_calls` array (BUG-062).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeToolCall {
+    pub name: String,
+    /// JSON-encoded arguments object.
+    pub arguments: String,
+}
+
+/// Visible text plus any native tool calls extracted from a fed fragment.
+#[derive(Debug, Default)]
+pub struct NativeToolCallExtraction {
+    /// Text with any complete native tool-call blocks removed.
+    pub text: String,
+    /// Tool calls decoded from complete native blocks in this feed.
+    pub calls: Vec<NativeToolCall>,
+}
+
+const QWEN_TOOL_CALL_OPEN: &str = "<tool_call>";
+const QWEN_TOOL_CALL_CLOSE: &str = "</tool_call>";
+
+/// Buffers streamed text/reasoning fragments and extracts Qwen/Hermes-style
+/// `<tool_call>{json}</tool_call>` blocks (BUG-062).
+///
+/// Qwen on Ollama intermittently narrates its tool calls this way inside the
+/// streamed `reasoning` field (Ollama's reasoning channel) or `content`, with
+/// `finish_reason: "stop"`, instead of emitting an OpenAI `tool_calls` array.
+/// Without extraction the call is invisible and no tool runs. Partial open and
+/// close tags split across SSE chunk boundaries are retained until the rest
+/// arrives, so extraction is stable across chunks.
+#[derive(Debug, Default)]
+pub struct NativeToolCallBuffer {
+    buffer: String,
+}
+
+impl NativeToolCallBuffer {
+    /// Feed one streamed fragment, returning visible text and complete calls.
+    pub fn push(&mut self, fragment: &str) -> NativeToolCallExtraction {
+        self.buffer.push_str(fragment);
+        let mut out = NativeToolCallExtraction::default();
+
+        loop {
+            if let Some(start) = self.buffer.find(QWEN_TOOL_CALL_OPEN) {
+                if start > 0 {
+                    out.text.push_str(&self.buffer[..start]);
+                }
+                let after_open = start + QWEN_TOOL_CALL_OPEN.len();
+                match self.buffer[after_open..].find(QWEN_TOOL_CALL_CLOSE) {
+                    Some(rel_end) => {
+                        let inner = self.buffer[after_open..after_open + rel_end]
+                            .trim()
+                            .to_string();
+                        let block_end = after_open + rel_end + QWEN_TOOL_CALL_CLOSE.len();
+                        self.buffer.drain(..block_end);
+                        match parse_qwen_tool_call(&inner) {
+                            Some(call) => out.calls.push(call),
+                            None => out.text.push_str(&inner),
+                        }
+                        continue;
+                    }
+                    None => {
+                        // Unclosed block: keep from the open tag onward buffered.
+                        self.buffer.drain(..start);
+                        break;
+                    }
+                }
+            } else {
+                // No open tag: emit all but a possible partial open-tag suffix.
+                let keep = partial_suffix_len(&self.buffer, QWEN_TOOL_CALL_OPEN);
+                let split = self.buffer.len() - keep;
+                out.text.push_str(&self.buffer[..split]);
+                self.buffer.drain(..split);
+                break;
+            }
+        }
+
+        out
+    }
+
+    /// Flush any buffered remainder (e.g. at end of stream) as plain text.
+    pub fn flush(&mut self) -> String {
+        std::mem::take(&mut self.buffer)
+    }
+}
+
+fn parse_qwen_tool_call(inner: &str) -> Option<NativeToolCall> {
+    let value: serde_json::Value = serde_json::from_str(inner).ok()?;
+    let name = value.get("name").and_then(|v| v.as_str())?.to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let arguments = match value.get("arguments") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => serde_json::to_string(other).ok()?,
+        None => "{}".to_string(),
+    };
+    Some(NativeToolCall { name, arguments })
+}
+
+/// Qwen `<tool_call>` normalization shared by the stateful and legacy
+/// OpenAI-compatible parsers (BUG-062). Extracts markup from the content and
+/// reasoning channels, defers synthesized calls to end-of-stream, and drops them
+/// when the turn already delivered a structured `tool_calls` array (BUG-061
+/// guard). Gated by [`native_normalization_enabled`].
+#[derive(Debug)]
+pub struct QwenNativeNormalizer {
+    content: NativeToolCallBuffer,
+    reasoning: NativeToolCallBuffer,
+    pending: Vec<NativeToolCall>,
+    counter: u64,
+    enabled: bool,
+}
+
+impl Default for QwenNativeNormalizer {
+    fn default() -> Self {
+        Self {
+            content: NativeToolCallBuffer::default(),
+            reasoning: NativeToolCallBuffer::default(),
+            pending: Vec::new(),
+            counter: 0,
+            enabled: native_normalization_enabled(),
+        }
+    }
+}
+
+impl QwenNativeNormalizer {
+    /// Override whether normalization is active (tests / pre-resolved callers).
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// Extract from a content delta, closing any open reasoning block first.
+    pub fn push_content(
+        &mut self,
+        text: &str,
+        events: &mut Vec<StreamEvent>,
+        reasoning_open: &mut bool,
+    ) {
+        if !self.enabled {
+            events.push(StreamEvent::TextDelta(text.to_string()));
+            return;
+        }
+        let extracted = self.content.push(text);
+        if !extracted.text.is_empty() {
+            if *reasoning_open {
+                *reasoning_open = false;
+                events.push(StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::TextDelta(extracted.text));
+        }
+        self.pending.extend(extracted.calls);
+    }
+
+    /// Extract from a reasoning delta (Ollama's `reasoning` channel).
+    pub fn push_reasoning(
+        &mut self,
+        text: &str,
+        events: &mut Vec<StreamEvent>,
+        reasoning_open: &mut bool,
+    ) {
+        if !self.enabled {
+            if !*reasoning_open {
+                *reasoning_open = true;
+                events.push(StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::ReasoningDelta {
+                id: "reasoning-0".to_string(),
+                text: text.to_string(),
+            });
+            return;
+        }
+        let extracted = self.reasoning.push(text);
+        if !extracted.text.is_empty() {
+            if !*reasoning_open {
+                *reasoning_open = true;
+                events.push(StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::ReasoningDelta {
+                id: "reasoning-0".to_string(),
+                text: extracted.text,
+            });
+        }
+        if !extracted.calls.is_empty() {
+            if *reasoning_open {
+                *reasoning_open = false;
+                events.push(StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            self.pending.extend(extracted.calls);
+        }
+    }
+
+    /// Flush buffered tails and emit deferred calls unless `include` is false.
+    pub fn finish(
+        &mut self,
+        events: &mut Vec<StreamEvent>,
+        reasoning_open: &mut bool,
+        include: bool,
+    ) {
+        let reason_tail = self.reasoning.flush();
+        if !reason_tail.is_empty() {
+            if !*reasoning_open {
+                *reasoning_open = true;
+                events.push(StreamEvent::ReasoningStart {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::ReasoningDelta {
+                id: "reasoning-0".to_string(),
+                text: reason_tail,
+            });
+        }
+        let content_tail = self.content.flush();
+        if !content_tail.is_empty() {
+            if *reasoning_open {
+                *reasoning_open = false;
+                events.push(StreamEvent::ReasoningEnd {
+                    id: "reasoning-0".to_string(),
+                });
+            }
+            events.push(StreamEvent::TextDelta(content_tail));
+        }
+        for call in std::mem::take(&mut self.pending) {
+            if !include {
+                continue;
+            }
+            let id = format!("qwen-native-call-{}", self.counter);
+            self.counter += 1;
+            let input = serde_json::from_str(&call.arguments)
+                .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
+            events.push(StreamEvent::ToolCallStart {
+                id: id.clone(),
+                name: call.name.clone(),
+            });
+            events.push(StreamEvent::ToolCallEnd {
+                id,
+                name: call.name,
+                input,
+            });
+        }
+    }
+}
+
+/// Flush the DeepSeek extractor (routing its pass-through text through the Qwen
+/// content buffer), then the Qwen buffers, then emit any deferred native calls.
+fn finish_native_stream(state: &mut OpenAiCompatParserState, events: &mut Vec<StreamEvent>) {
+    for ev in state.native.finish() {
+        match ev {
+            StreamEvent::TextDelta(t) => {
+                state
+                    .qwen
+                    .push_content(&t, events, &mut state.reasoning_open)
+            }
+            other => events.push(other),
+        }
+    }
+    state.qwen.finish(
+        events,
+        &mut state.reasoning_open,
+        !state.saw_structured_tool_calls,
+    );
+    events.extend(state.native.drain_pending(!state.saw_structured_tool_calls));
+}
+
+/// State retained across SSE lines for OpenAI-compatible chat providers.
+///
+/// OpenAI-compatible streams send a tool call's `id`/`name` in one delta and
+/// the remaining `arguments` fragments in later deltas that only carry an
+/// `index`. Retaining the per-index id and name lets us join fragments into one
+/// tool call (BUG-006 split-tool-call) and lets `reasoning_content` deltas be
+/// surfaced as reasoning events (needed to echo reasoning back on follow-ups).
+#[derive(Debug)]
+pub struct OpenAiCompatParserState {
+    tool_call_ids: HashMap<u32, String>,
+    tool_call_names: HashMap<u32, String>,
+    reasoning_open: bool,
+    saw_structured_tool_calls: bool,
+    native: DeepSeekNativeToolCallExtractor,
+    qwen: QwenNativeNormalizer,
+}
+
+impl Default for OpenAiCompatParserState {
+    fn default() -> Self {
+        Self {
+            tool_call_ids: HashMap::new(),
+            tool_call_names: HashMap::new(),
+            reasoning_open: false,
+            saw_structured_tool_calls: false,
+            native: DeepSeekNativeToolCallExtractor::default(),
+            qwen: QwenNativeNormalizer::default(),
+        }
+    }
+}
+
+/// Parse one OpenAI-compatible SSE `data:` payload with retained state.
+///
+/// Handles multiple events per payload (usage + content + reasoning + tool
+/// calls + finish), unlike the stateless [`parse_openai_sse`] which returns at
+/// most one event. Modeled on `OpenAIProvider::parse_legacy_sse_data`.
+pub fn parse_openai_sse_stateful(
+    data: &str,
+    state: &mut OpenAiCompatParserState,
+) -> Vec<StreamEvent> {
+    use serde_json::Value;
+    let mut events = Vec::new();
+
+    if data == "[DONE]" {
+        if state.reasoning_open {
+            events.push(StreamEvent::ReasoningEnd {
+                id: "reasoning-0".to_string(),
+            });
+            state.reasoning_open = false;
+        }
+        finish_native_stream(state, &mut events);
+        events.push(StreamEvent::Done);
+        return events;
+    }
+
+    let chunk: Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return events,
+    };
+
+    let usage = chunk.get("usage");
+    let prompt_tokens = usage
+        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let completion_tokens = usage
+        .and_then(|u| u.get("completion_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read_tokens = usage
+        .and_then(|u| {
+            u.get("prompt_cache_hit_tokens")
+                .or_else(|| u.get("cache_read_input_tokens"))
+        })
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_miss_tokens = usage
+        .and_then(|u| u.get("prompt_cache_miss_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| prompt_tokens.saturating_sub(cache_read_tokens));
+    if usage.is_some() {
+        events.push(StreamEvent::Usage {
+            prompt_tokens,
+            completion_tokens,
+            cache_read_tokens,
+            cache_miss_tokens,
+        });
+    }
+
+    if let Some(choices) = chunk.get("choices").and_then(Value::as_array) {
+        for choice in choices {
+            if let Some(delta) = choice.get("delta") {
+                let reasoning = delta
+                    .get("reasoning_content")
+                    .or_else(|| delta.get("reasoning_text"))
+                    .or_else(|| delta.get("reasoning"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !reasoning.is_empty() {
+                    state
+                        .qwen
+                        .push_reasoning(reasoning, &mut events, &mut state.reasoning_open);
+                }
+
+                if let Some(text) = delta.get("content").and_then(Value::as_str) {
+                    if !text.is_empty() {
+                        if state.reasoning_open {
+                            state.reasoning_open = false;
+                            events.push(StreamEvent::ReasoningEnd {
+                                id: "reasoning-0".to_string(),
+                            });
+                        }
+                        for ev in state.native.push(text) {
+                            match ev {
+                                StreamEvent::TextDelta(t) => state.qwen.push_content(
+                                    &t,
+                                    &mut events,
+                                    &mut state.reasoning_open,
+                                ),
+                                other => events.push(other),
+                            }
+                        }
+                    }
+                }
+
+                if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
+                    if !tool_calls.is_empty() {
+                        state.saw_structured_tool_calls = true;
+                        if state.reasoning_open {
+                            state.reasoning_open = false;
+                            events.push(StreamEvent::ReasoningEnd {
+                                id: "reasoning-0".to_string(),
+                            });
+                        }
+                    }
+                    for tc in tool_calls {
+                        let index = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
+                        let id = if let Some(id) = tc.get("id").and_then(Value::as_str) {
+                            let id = id.to_string();
+                            state.tool_call_ids.insert(index, id.clone());
+                            id
+                        } else {
+                            state
+                                .tool_call_ids
+                                .entry(index)
+                                .or_insert_with(|| format!("tool-call-{}", index))
+                                .clone()
+                        };
+
+                        if let Some(func) = tc.get("function") {
+                            if let Some(name) = func.get("name").and_then(Value::as_str) {
+                                let should_emit_start = state
+                                    .tool_call_names
+                                    .get(&index)
+                                    .map(|existing| existing != name)
+                                    .unwrap_or(true);
+                                state.tool_call_names.insert(index, name.to_string());
+                                if should_emit_start {
+                                    events.push(StreamEvent::ToolCallStart {
+                                        id: id.clone(),
+                                        name: name.to_string(),
+                                    });
+                                }
+                            }
+                            if let Some(arguments) = func.get("arguments").and_then(Value::as_str) {
+                                if !arguments.is_empty() {
+                                    events.push(StreamEvent::ToolCallDelta {
+                                        id,
+                                        input: arguments.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                if state.reasoning_open {
+                    state.reasoning_open = false;
+                    events.push(StreamEvent::ReasoningEnd {
+                        id: "reasoning-0".to_string(),
+                    });
+                }
+                finish_native_stream(state, &mut events);
+                let normalized_reason = if reason == "tool_calls" {
+                    "tool-calls".to_string()
+                } else {
+                    reason.to_string()
+                };
+                events.push(StreamEvent::FinishStep {
+                    finish_reason: Some(normalized_reason),
+                    usage: StreamUsage {
+                        prompt_tokens,
+                        completion_tokens,
+                        ..Default::default()
+                    },
+                    provider_metadata: None,
+                });
+            }
+        }
+    }
+
+    events
+}
+
+/// Build a stateful OpenAI-compatible chat SSE event stream.
+///
+/// Buffers HTTP bytes, splits CRLF/CR lines, and feeds each `data:` payload to
+/// [`parse_openai_sse_stateful`], which retains per-index tool-call state and
+/// surfaces reasoning across the whole stream (BUG-006).
+pub fn openai_compat_sse_stream<S, B>(chunks: S) -> StreamResult
+where
+    S: Stream<Item = Result<B, reqwest::Error>> + Unpin + Send + 'static,
+    B: AsRef<[u8]> + Send + 'static,
+{
+    use futures::StreamExt;
+    use std::collections::VecDeque;
+
+    let stream = futures::stream::try_unfold(
+        (
+            chunks,
+            String::new(),
+            VecDeque::<StreamEvent>::new(),
+            OpenAiCompatParserState::default(),
+            false,
+        ),
+        |(mut chunks, mut buffer, mut pending, mut state, mut exhausted)| async move {
+            loop {
+                if let Some(event) = pending.pop_front() {
+                    return Ok(Some((event, (chunks, buffer, pending, state, exhausted))));
+                }
+
+                if let Some(idx) = buffer.find('\n') {
+                    let mut line = buffer[..idx].to_string();
+                    buffer.drain(..=idx);
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let data = line
+                        .strip_prefix("data:")
+                        .map(str::trim)
+                        .unwrap_or_default();
+                    if !data.is_empty() {
+                        pending.extend(parse_openai_sse_stateful(data, &mut state));
+                    }
+                    continue;
+                }
+
+                if exhausted {
+                    let tail = std::mem::take(&mut buffer);
+                    let data = tail
+                        .strip_prefix("data:")
+                        .map(str::trim)
+                        .unwrap_or_default();
+                    if !data.trim().is_empty() {
+                        pending.extend(parse_openai_sse_stateful(data.trim(), &mut state));
+                    }
+                    if let Some(event) = pending.pop_front() {
+                        return Ok(Some((event, (chunks, buffer, pending, state, true))));
+                    }
+                    return Ok(None);
+                }
+
+                match chunks.next().await {
+                    Some(Ok(bytes)) => {
+                        buffer.push_str(&String::from_utf8_lossy(bytes.as_ref()));
+                    }
+                    Some(Err(e)) => {
+                        return Err(ProviderError::StreamError(e.to_string()));
+                    }
+                    None => exhausted = true,
+                }
+            }
+        },
+    );
+
+    Box::pin(stream)
+}
+
+#[cfg(test)]
+mod stateful_parser_tests {
+    use super::*;
+    use crate::stream::StreamEvent;
+
+    fn collect_stateful<B>(chunks: Vec<Result<B, reqwest::Error>>) -> Vec<StreamEvent>
+    where
+        B: AsRef<[u8]> + Send + 'static,
+    {
+        use futures::StreamExt;
+        let stream = openai_compat_sse_stream(futures::stream::iter(chunks));
+        futures::executor::block_on(stream.map(Result::unwrap).collect())
+    }
+
+    #[test]
+    fn joins_split_tool_call_fragments_into_one_call() {
+        // Mirrors deepseek wire behavior: id+name in first chunk, then
+        // argument-only fragments carrying only `index`. They must join the
+        // original id rather than creating an empty-name `tool-call-0`.
+        let chunk1 = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_00_ls\",\"type\":\"function\",\"function\":{\"name\":\"ls\",\"arguments\":\"\"}}]}}]}\n\n";
+        let chunk2 = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"/tmp\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}\n\n",
+            "data: {\"choices\":[{\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_stateful(vec![
+            Ok(Vec::from(chunk1.as_bytes())),
+            Ok(Vec::from(chunk2.as_bytes())),
+        ]);
+        let starts: Vec<(String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallStart { id, name } => Some((id.clone(), name.clone())),
+                _ => None,
+            })
+            .collect();
+        let deltas: Vec<(String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallDelta { id, input } => Some((id.clone(), input.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![("call_00_ls".to_string(), "ls".to_string())]);
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].0, "call_00_ls");
+        assert_eq!(deltas[0].1, "{\"path\":\"/tmp\"}");
+    }
+
+    #[test]
+    fn captures_reasoning_and_closes_before_content() {
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"ing\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n",
+            "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_stateful(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let reasoning: String = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ReasoningDelta { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, "thinking");
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ReasoningStart { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ReasoningEnd { .. })));
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["answer".to_string(), "!".to_string()]);
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::FinishStep { .. })));
+    }
+
+    #[test]
+    fn multi_frame_chunks_and_trailing_flush_still_work() {
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" two\"}}]}\n\n",
+            "data: [DONE]",
+        );
+        let events = collect_stateful(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["one".to_string(), " two".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+}
+
+#[cfg(test)]
+mod idle_timeout_tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn stalled_stream_ends_with_visible_error() {
+        let inner: StreamResult = Box::pin(futures::stream::pending());
+        let stream = with_idle_timeout(inner, std::time::Duration::from_millis(20));
+
+        let events: Vec<_> =
+            tokio::time::timeout(std::time::Duration::from_secs(2), stream.collect())
+                .await
+                .expect("idle timeout should terminate the stream");
+
+        assert_eq!(
+            events.len(),
+            1,
+            "stalled stream should emit one error event"
+        );
+        match &events[0] {
+            Ok(StreamEvent::Error(message)) => {
+                assert!(
+                    message.contains("stalled"),
+                    "error should name the stall: {message}"
+                );
+            }
+            other => panic!("expected stalled-stream error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn active_stream_passes_events_through_unchanged() {
+        let inner: StreamResult = Box::pin(futures::stream::iter(vec![
+            Ok(StreamEvent::TextDelta("hi".to_string())),
+            Ok(StreamEvent::Done),
+        ]));
+        let stream = with_idle_timeout(inner, std::time::Duration::from_secs(60));
+
+        let events: Vec<Result<StreamEvent, ProviderError>> = stream.collect().await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], Ok(StreamEvent::TextDelta(_))));
+        assert!(matches!(events[1], Ok(StreamEvent::Done)));
+    }
+
+    #[tokio::test]
+    async fn never_idle_stream_is_stopped_by_budget() {
+        // Emits continuously (never idle) but slowly, so the idle timeout alone
+        // would never fire.
+        let inner: StreamResult = Box::pin(futures::stream::unfold((), |_| async {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            Some((Ok(StreamEvent::TextDelta("x".to_string())), ()))
+        }));
+        let stream = with_stream_budget(inner, std::time::Duration::from_millis(20));
+
+        let events: Vec<_> =
+            tokio::time::timeout(std::time::Duration::from_secs(2), stream.collect())
+                .await
+                .expect("budget should terminate the stream");
+
+        assert!(
+            matches!(events.last(), Some(Ok(StreamEvent::Error(message))) if message.contains("budget")),
+            "stream should end with a budget error, got {events:?}"
+        );
+    }
+}
+
+/// Parse one complete SSE line in the Anthropic `data: <json>` shape.
+pub fn anthropic_line_events(line: &str) -> Vec<StreamEvent> {
+    let Some(payload) = line.strip_prefix("data:") else {
+        return Vec::new();
+    };
+    let payload = payload.trim();
+    if payload.is_empty() || payload == "[DONE]" {
+        return Vec::new();
+    }
+    parse_anthropic_sse(payload).into_iter().collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAISSEvent {
     #[serde(default)]
@@ -166,6 +1365,10 @@ pub struct OpenAIUsage {
     pub prompt_tokens: u64,
     #[serde(default)]
     pub completion_tokens: u64,
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: u64,
+    #[serde(default)]
+    pub prompt_cache_miss_tokens: u64,
 }
 
 fn openai_tool_call_id(tc: &OpenAIToolCall) -> String {
@@ -222,6 +1425,12 @@ pub fn parse_openai_sse(data: &str) -> Option<StreamEvent> {
         return Some(StreamEvent::Usage {
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
+            cache_read_tokens: usage.prompt_cache_hit_tokens,
+            cache_miss_tokens: usage.prompt_cache_miss_tokens.max(
+                usage
+                    .prompt_tokens
+                    .saturating_sub(usage.prompt_cache_hit_tokens),
+            ),
         });
     }
 
@@ -310,6 +1519,8 @@ pub fn parse_anthropic_sse(data: &str) -> Option<StreamEvent> {
                     return Some(StreamEvent::Usage {
                         prompt_tokens: usage.input_tokens,
                         completion_tokens: usage.output_tokens,
+                        cache_read_tokens: 0,
+                        cache_miss_tokens: usage.input_tokens,
                     });
                 }
             }
@@ -318,6 +1529,263 @@ pub fn parse_anthropic_sse(data: &str) -> Option<StreamEvent> {
     }
 
     None
+}
+
+/// Block kind tracked per Anthropic content-block index so tool deltas can be
+/// attributed to the tool id announced by `content_block_start`.
+#[derive(Debug, Clone, Default)]
+pub enum AnthropicBlockState {
+    #[default]
+    Unknown,
+    Thinking,
+    Text,
+    Tool {
+        id: String,
+    },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AnthropicCompatParserState {
+    blocks: HashMap<u32, AnthropicBlockState>,
+}
+
+fn anthropic_usage_event(usage: &serde_json::Value) -> StreamEvent {
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let completion_tokens = usage
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache_read_tokens = usage
+        .get("cache_read_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation_tokens = usage
+        .get("cache_creation_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    // Anthropic reports `input_tokens` as the uncached remainder only. Expose the
+    // full prompt total internally so cache accounting matches OpenAI-compatible
+    // providers (which include cached tokens in `prompt_tokens`).
+    let prompt_tokens = input_tokens + cache_read_tokens + cache_creation_tokens;
+    let cache_miss_tokens = input_tokens + cache_creation_tokens;
+
+    StreamEvent::Usage {
+        prompt_tokens,
+        completion_tokens,
+        cache_read_tokens,
+        cache_miss_tokens,
+    }
+}
+
+/// Stateful Anthropic Messages SSE parser. Unlike the legacy stateless parser it
+/// retains the content-block index table, so thinking deltas close their block and
+/// tool-input deltas keep the real `tool_use` id.
+pub fn parse_anthropic_sse_stateful(
+    data: &str,
+    state: &mut AnthropicCompatParserState,
+) -> Vec<StreamEvent> {
+    use serde_json::Value;
+
+    let mut events = Vec::new();
+    let payload = match data.strip_prefix("data:") {
+        Some(payload) => payload.trim(),
+        None => data.trim(),
+    };
+    if payload.is_empty() || payload == "[DONE]" {
+        return events;
+    }
+
+    let chunk: Value = match serde_json::from_str(payload) {
+        Ok(value) => value,
+        Err(_) => return events,
+    };
+
+    let index = chunk.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    match chunk.get("type").and_then(Value::as_str).unwrap_or("") {
+        "message_start" => {
+            if let Some(usage) = chunk.pointer("/message/usage") {
+                events.push(anthropic_usage_event(usage));
+            }
+        }
+        "content_block_start" => {
+            let block = chunk.get("content_block").cloned().unwrap_or(Value::Null);
+            match block.get("type").and_then(Value::as_str).unwrap_or("") {
+                "thinking" => {
+                    state.blocks.insert(index, AnthropicBlockState::Thinking);
+                    events.push(StreamEvent::ReasoningStart {
+                        id: format!("reasoning-{index}"),
+                    });
+                }
+                "text" => {
+                    state.blocks.insert(index, AnthropicBlockState::Text);
+                    events.push(StreamEvent::TextStart);
+                }
+                "tool_use" => {
+                    let id = block
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let name = block
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    state
+                        .blocks
+                        .insert(index, AnthropicBlockState::Tool { id: id.clone() });
+                    events.push(StreamEvent::ToolCallStart {
+                        id: id.clone(),
+                        name: name.clone(),
+                    });
+                    events.push(StreamEvent::ToolInputStart {
+                        id,
+                        tool_name: name,
+                    });
+                }
+                _ => {
+                    state.blocks.insert(index, AnthropicBlockState::Unknown);
+                }
+            }
+        }
+        "content_block_delta" => {
+            let delta = chunk.get("delta").cloned().unwrap_or(Value::Null);
+            match delta.get("type").and_then(Value::as_str).unwrap_or("") {
+                "thinking_delta" => {
+                    if let Some(text) = delta.get("thinking").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            events.push(StreamEvent::ReasoningDelta {
+                                id: format!("reasoning-{index}"),
+                                text: text.to_string(),
+                            });
+                        }
+                    }
+                }
+                "text_delta" => {
+                    if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            events.push(StreamEvent::TextDelta(text.to_string()));
+                        }
+                    }
+                }
+                "input_json_delta" => {
+                    if let Some(partial) = delta.get("partial_json").and_then(Value::as_str) {
+                        if !partial.is_empty() {
+                            let id = match state.blocks.get(&index) {
+                                Some(AnthropicBlockState::Tool { id }) => id.clone(),
+                                _ => format!("tool-{index}"),
+                            };
+                            events.push(StreamEvent::ToolCallDelta {
+                                id,
+                                input: partial.to_string(),
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        "content_block_stop" => match state.blocks.remove(&index) {
+            Some(AnthropicBlockState::Thinking) => {
+                events.push(StreamEvent::ReasoningEnd {
+                    id: format!("reasoning-{index}"),
+                });
+            }
+            Some(AnthropicBlockState::Text) => events.push(StreamEvent::TextEnd),
+            Some(AnthropicBlockState::Tool { id }) => {
+                events.push(StreamEvent::ToolInputEnd { id });
+            }
+            _ => {}
+        },
+        "message_delta" => {
+            if let Some(usage) = chunk.get("usage") {
+                events.push(anthropic_usage_event(usage));
+            }
+        }
+        "message_stop" => events.push(StreamEvent::Done),
+        "error" => {
+            let message = chunk
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Anthropic stream error")
+                .to_string();
+            events.push(StreamEvent::Error(message));
+            events.push(StreamEvent::Done);
+        }
+        _ => {}
+    }
+
+    events
+}
+
+/// SSE stream adapter for the stateful Anthropic parser.
+pub fn anthropic_compat_sse_stream<S, B>(chunks: S) -> StreamResult
+where
+    S: Stream<Item = Result<B, reqwest::Error>> + Unpin + Send + 'static,
+    B: AsRef<[u8]> + Send + 'static,
+{
+    use futures::StreamExt;
+    use std::collections::VecDeque;
+
+    let stream = futures::stream::try_unfold(
+        (
+            chunks,
+            String::new(),
+            VecDeque::<StreamEvent>::new(),
+            AnthropicCompatParserState::default(),
+            false,
+        ),
+        |(mut chunks, mut buffer, mut pending, mut state, mut exhausted)| async move {
+            loop {
+                if let Some(event) = pending.pop_front() {
+                    return Ok(Some((event, (chunks, buffer, pending, state, exhausted))));
+                }
+
+                if let Some(idx) = buffer.find('\n') {
+                    let mut line = buffer[..idx].to_string();
+                    buffer.drain(..=idx);
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    pending.extend(parse_anthropic_sse_stateful(&line, &mut state));
+                    continue;
+                }
+
+                if exhausted {
+                    let tail = std::mem::take(&mut buffer);
+                    if !tail.trim().is_empty() {
+                        pending.extend(parse_anthropic_sse_stateful(tail.trim(), &mut state));
+                    }
+                    if let Some(event) = pending.pop_front() {
+                        return Ok(Some((event, (chunks, buffer, pending, state, true))));
+                    }
+                    return Ok(None);
+                }
+
+                match chunks.next().await {
+                    Some(Ok(bytes)) => {
+                        buffer.push_str(&String::from_utf8_lossy(bytes.as_ref()));
+                    }
+                    Some(Err(e)) => {
+                        return Err(ProviderError::NetworkError(e.to_string()));
+                    }
+                    None => {
+                        exhausted = true;
+                    }
+                }
+            }
+        },
+    );
+
+    Box::pin(stream)
 }
 
 #[cfg(test)]
@@ -349,5 +1817,681 @@ mod tests {
             }
             other => panic!("unexpected event: {:?}", other),
         }
+    }
+
+    /// Helper: run a buffered `sse_event_stream` to completion and collect events.
+    fn collect_events<B>(chunks: Vec<Result<B, reqwest::Error>>) -> Vec<StreamEvent>
+    where
+        B: AsRef<[u8]> + Send + 'static,
+    {
+        use futures::StreamExt;
+        let stream = sse_event_stream(futures::stream::iter(chunks), openai_compat_line_events);
+        futures::executor::block_on(stream.map(Result::unwrap).collect())
+    }
+
+    #[test]
+    fn sse_event_stream_emits_every_event_when_one_chunk_has_many_frames() {
+        // One network chunk carries several SSE frames. The old per-chunk parser
+        // returned only the first frame and dropped the rest, garbling output.
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" \"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_events(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec!["Hello".to_string(), " ".to_string(), "world".to_string()]
+        );
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_reassembles_frames_split_across_chunks() {
+        // A single SSE frame split across two network chunks must be reassembled,
+        // not dropped as a partial parse failure.
+        let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Hel";
+        let chunk2 = concat!(
+            "lo\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_events(vec![
+            Ok(Vec::from(chunk1.as_bytes())),
+            Ok(Vec::from(chunk2.as_bytes())),
+        ]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["Hello".to_string(), "!".to_string()]);
+    }
+
+    #[test]
+    fn sse_event_stream_flushes_trailing_frame_without_newline() {
+        // The final frame may arrive without a trailing newline before EOF; the
+        // buffered parser must still emit it.
+        let chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: ";
+        let chunk2 = "[DONE]";
+        let events = collect_events(vec![
+            Ok(Vec::from(chunk1.as_bytes())),
+            Ok(Vec::from(chunk2.as_bytes())),
+        ]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["ok".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    // ------------------------------------------------------------------------
+    // Adversarial SSE integrity tests (QA-001)
+    //
+    // These guard the two BUG-003 failure classes deterministically:
+    //   1. frames must survive arbitrary HTTP chunking (split frames, coalesced
+    //      frames, CRLF line endings),
+    //   2. every content delta must be reassembled into the exact original text
+    //      (no drops, no reordering) regardless of parser used.
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn sse_event_stream_handles_crlf_line_endings() {
+        let chunk = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"alpha\"}}]}\r\n\r\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" beta\"}}]}\r\n\r\n",
+            "data: [DONE]\r\n\r\n",
+        );
+        let events = collect_events(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["alpha".to_string(), " beta".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_skips_keepalive_and_comment_lines() {
+        // SSE keepalive/comment lines (": ...") and blank separators between
+        // frames must not create spurious text or break reassembly.
+        let chunk = concat!(
+            ": keep-alive\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n",
+            "\n",
+            ": heartbeat\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" two\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let events = collect_events(vec![Ok(Vec::from(chunk.as_bytes()))]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["one".to_string(), " two".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_reassembles_utf8_split_across_chunk_boundary() {
+        // "héllo" contains é as a multi-byte UTF-8 sequence. Splitting exactly
+        // between its continuation bytes must not corrupt the reassembled text.
+        let frame = "data: {\"choices\":[{\"delta\":{\"content\":\"héllo\"}}]}\n\ndata: [DONE]\n\n";
+        let bytes = frame.as_bytes();
+        let split = bytes.len() / 2;
+        let events = collect_events(vec![
+            Ok(bytes[..split].to_vec()),
+            Ok(bytes[split..].to_vec()),
+        ]);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["héllo".to_string()]);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_preserves_long_text_exactly() {
+        // A long multi-frame payload must reassemble to byte-identical text with
+        // no dropped or reordered deltas (the original garble class).
+        let words = (0..200).map(|i| format!("tok{}", i)).collect::<Vec<_>>();
+        let mut raw = String::new();
+        for w in &words {
+            raw.push_str(&format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+                w
+            ));
+        }
+        raw.push_str("data: [DONE]\n\n");
+
+        let bytes = raw.as_bytes();
+        // Chop the stream into many tiny chunks to force pathological splitting.
+        let chunks: Vec<Result<Vec<u8>, _>> = bytes.chunks(7).map(|c| Ok(c.to_vec())).collect();
+        let events = collect_events(chunks);
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, words);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done)));
+    }
+
+    #[test]
+    fn sse_event_stream_delivers_done_only_once_with_trailing_partial_data() {
+        // [DONE] plus trailing bytes that are not a full frame (e.g. a stray
+        // keepalive fragment) must still terminate exactly once.
+        let chunk1 =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n: trail";
+        let events = collect_events(vec![Ok(Vec::from(chunk1.as_bytes()))]);
+        let done_count = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::Done))
+            .count();
+        assert_eq!(done_count, 1);
+    }
+
+    #[test]
+    fn anthropic_line_events_skips_non_data_lines() {
+        // Anthropic-style SSE interleaves `event:` metadata lines with `data:`
+        // frames; only the data payloads should be parsed.
+        use crate::stream::anthropic_line_events;
+        let frames = vec![
+            StreamEvent::TextDelta("hello".to_string()),
+            StreamEvent::Done,
+        ];
+        // event: line must yield nothing
+        assert!(anthropic_line_events("event: content_block_delta").is_empty());
+        // blank and comment lines must yield nothing
+        assert!(anthropic_line_events("").is_empty());
+        assert!(anthropic_line_events(": ping").is_empty());
+        let _ = frames; // (kept for clarity of intent)
+    }
+
+    #[test]
+    fn openai_compat_line_events_handles_done_and_ignores_garbage() {
+        use crate::stream::openai_compat_line_events;
+        // [DONE] becomes exactly one Done
+        let evs = openai_compat_line_events("data: [DONE]");
+        assert_eq!(evs.len(), 1);
+        assert!(matches!(evs[0], StreamEvent::Done));
+        // Non-data / garbage lines produce nothing and must not panic.
+        assert!(openai_compat_line_events("event: done").is_empty());
+        assert!(openai_compat_line_events("data: {not json").is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // DeepSeek native tool-call token normalization (BUG-060)
+    // ------------------------------------------------------------------------
+
+    fn native_call(name: &str, args: &str) -> String {
+        format!(
+            "{cb}{cbegin}function{sep}{name}\n```json\n{args}\n```{ce}{cs}",
+            cb = DS_TOOL_CALLS_BEGIN,
+            cbegin = DS_TOOL_CALL_BEGIN,
+            sep = DS_TOOL_SEP,
+            ce = DS_TOOL_CALL_END,
+            cs = DS_TOOL_CALLS_END,
+        )
+    }
+
+    fn native_call_fenceless(name: &str, args: &str) -> String {
+        format!(
+            "{cb}{cbegin}function{sep}{name}\n{args}{ce}{cs}",
+            cb = DS_TOOL_CALLS_BEGIN,
+            cbegin = DS_TOOL_CALL_BEGIN,
+            sep = DS_TOOL_SEP,
+            ce = DS_TOOL_CALL_END,
+            cs = DS_TOOL_CALLS_END,
+        )
+    }
+
+    fn native_call_segment(name: &str, args: &str) -> String {
+        format!(
+            "{cbegin}function{sep}{name}\n{args}{ce}",
+            cbegin = DS_TOOL_CALL_BEGIN,
+            sep = DS_TOOL_SEP,
+            ce = DS_TOOL_CALL_END,
+        )
+    }
+
+    fn collect_calls(events: &[StreamEvent]) -> Vec<(String, serde_json::Value)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ToolCallEnd { name, input, .. } => Some((name.clone(), input.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn collect_text(events: &[StreamEvent]) -> String {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn native_tool_tokens_become_a_tool_call_and_are_removed_from_text() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&format!(
+            "Here's the tool call:{}",
+            native_call("bash", "{\"command\": \"echo captured\"}")
+        ));
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        assert_eq!(collect_text(&events), "Here's the tool call:");
+        let calls = collect_calls(&events);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "bash");
+        assert_eq!(calls[0].1["command"], "echo captured");
+    }
+
+    #[test]
+    fn native_tool_tokens_split_across_deltas_still_parse() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let payload = format!(
+            "prefix {}",
+            native_call("bash", "{\"command\":\"echo hi\"}")
+        );
+        let mut events = Vec::new();
+        for ch in payload.chars() {
+            events.extend(ex.push(&ch.to_string()));
+        }
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        assert_eq!(collect_text(&events), "prefix ");
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "bash".to_string(),
+                serde_json::json!({"command": "echo hi"})
+            )]
+        );
+    }
+
+    #[test]
+    fn native_tool_tokens_without_code_fence_parse() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&native_call_fenceless("read", "{\"path\":\"a.rs\"}"));
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        assert_eq!(
+            collect_calls(&events),
+            vec![("read".to_string(), serde_json::json!({"path": "a.rs"}))]
+        );
+    }
+
+    #[test]
+    fn multiple_native_calls_in_one_block_parse() {
+        let block = format!(
+            "{}{}{}{}",
+            DS_TOOL_CALLS_BEGIN,
+            native_call_segment("bash", "{\"command\":\"a\"}"),
+            native_call_segment("read", "{\"path\":\"b\"}"),
+            DS_TOOL_CALLS_END,
+        );
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&block);
+        events.extend(ex.finish());
+        events.extend(ex.drain_pending(true));
+        let calls = collect_calls(&events);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "bash");
+        assert_eq!(calls[1].0, "read");
+        assert_eq!(calls[1].1["path"], "b");
+    }
+
+    #[test]
+    fn plain_text_without_native_tokens_passes_through_unchanged() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push("hello ");
+        events.extend(ex.push("< world & now"));
+        events.extend(ex.finish());
+        assert_eq!(collect_text(&events), "hello < world & now");
+        assert!(collect_calls(&events).is_empty());
+    }
+
+    #[test]
+    fn unterminated_native_block_is_dropped_and_reported() {
+        let mut ex = DeepSeekNativeToolCallExtractor::default();
+        let mut events = ex.push(&format!("{}partial", DS_TOOL_CALLS_BEGIN));
+        events.extend(ex.finish());
+        assert!(collect_calls(&events).is_empty());
+        assert_eq!(collect_text(&events), "");
+        assert!(
+            events.iter().any(
+                |e| matches!(e, StreamEvent::Error(msg) if msg.contains("native tool-call block"))
+            ),
+            "expected a visible error for the truncated block, got {events:?}"
+        );
+    }
+
+    #[test]
+    fn stateful_parser_extracts_native_tool_call_from_content() {
+        let payload = serde_json::json!({
+            "choices": [{"delta": {"content": native_call("bash", "{\"command\":\"echo hi\"}")}}]
+        })
+        .to_string();
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(&payload, &mut state);
+        events.extend(state.native.finish());
+        events.extend(state.native.drain_pending(true));
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "bash".to_string(),
+                serde_json::json!({"command": "echo hi"})
+            )]
+        );
+    }
+
+    #[test]
+    fn stateful_parser_still_streams_plain_content() {
+        let payload = serde_json::json!({
+            "choices": [{"delta": {"content": "normal text"}}]
+        })
+        .to_string();
+        let mut state = OpenAiCompatParserState::default();
+        let events = parse_openai_sse_stateful(&payload, &mut state);
+        assert_eq!(collect_text(&events), "normal text");
+        assert!(collect_calls(&events).is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // BUG-061: guard + kill switch
+    // ------------------------------------------------------------------------
+
+    fn finish_frame() -> &'static str {
+        r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#
+    }
+
+    #[test]
+    fn native_call_is_emitted_when_no_structured_tool_calls() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            &serde_json::json!({
+                "choices": [{"delta": {"content": native_call("bash", "{\"command\":\"echo hi\"}")}}]
+            })
+            .to_string(),
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "bash".to_string(),
+                serde_json::json!({"command": "echo hi"})
+            )]
+        );
+    }
+
+    #[test]
+    fn native_call_is_discarded_when_structured_tool_calls_present() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\"path\":\"a.rs\"}"}}]}}]}"#,
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(
+            &serde_json::json!({
+                "choices": [{"delta": {"content": native_call("bash", "{\"command\":\"echo hi\"}")}}]
+            })
+            .to_string(),
+            &mut state,
+        ));
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+
+        assert!(
+            collect_calls(&events)
+                .iter()
+                .all(|(name, _)| name != "bash"),
+            "leaked native call must be discarded when a structured tool call is present"
+        );
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "read")));
+    }
+
+    #[test]
+    fn normalization_disabled_passes_raw_tokens_through() {
+        let mut state = OpenAiCompatParserState::default();
+        state.native.set_enabled(false);
+        let content = native_call("bash", "{\"command\":\"echo hi\"}");
+        let mut events = parse_openai_sse_stateful(
+            &serde_json::json!({ "choices": [{"delta": {"content": content}}] }).to_string(),
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert!(collect_calls(&events).is_empty());
+        assert!(collect_text(&events).contains(DS_TOOL_CALLS_BEGIN));
+    }
+
+    // ------------------------------------------------------------------------
+    // Qwen `<tool_call>` native normalization (BUG-062)
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn qwen_native_tool_call_buffer_extracts_and_strips_markup() {
+        let mut buffer = NativeToolCallBuffer::default();
+        let mut text = String::new();
+        let mut calls = Vec::new();
+        for fragment in [
+            "pre ",
+            "<tool_call>",
+            "{\"name\": \"read\", \"arguments\": {\"file_path\": \"hello.txt\"}}",
+            "</tool_call>",
+            " post",
+        ] {
+            let out = buffer.push(fragment);
+            text.push_str(&out.text);
+            calls.extend(out.calls);
+        }
+        assert_eq!(text, "pre  post");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read");
+        assert_eq!(calls[0].arguments, "{\"file_path\":\"hello.txt\"}");
+    }
+
+    #[test]
+    fn qwen_open_tag_split_across_fragments_is_buffered() {
+        let mut buffer = NativeToolCallBuffer::default();
+        let a = buffer.push("hello <to");
+        assert_eq!(a.text, "hello ");
+        assert!(a.calls.is_empty());
+        let b = buffer
+            .push("ol_call>{\"name\":\"bash\",\"arguments\":{\"command\":\"ls\"}}</tool_call>");
+        assert_eq!(b.text, "");
+        assert_eq!(b.calls.len(), 1);
+        assert_eq!(b.calls[0].name, "bash");
+        assert_eq!(b.calls[0].arguments, "{\"command\":\"ls\"}");
+    }
+
+    #[test]
+    fn qwen_reasoning_field_becomes_structured_events() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = Vec::new();
+        for frame in [
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"<tool_call>\"}}]}",
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"{\\\"name\\\":\\\"read\\\",\\\"arguments\\\":{\\\"file_path\\\":\\\"hello.txt\\\"}}\"}}]}",
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"</tool_call>\"}}]}",
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"done\"}}]}",
+        ] {
+            events.extend(parse_openai_sse_stateful(frame, &mut state));
+        }
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "read".to_string(),
+                serde_json::json!({"file_path": "hello.txt"})
+            )]
+        );
+        let reasoning: String = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ReasoningDelta { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, "done");
+    }
+
+    #[test]
+    fn qwen_content_channel_call_is_extracted() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            "{\"choices\":[{\"delta\":{\"content\":\"<tool_call>{\\\"name\\\":\\\"bash\\\",\\\"arguments\\\":{\\\"command\\\":\\\"ls\\\"}}</tool_call>\"}}]}",
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert_eq!(
+            collect_calls(&events),
+            vec![("bash".to_string(), serde_json::json!({"command": "ls"}))]
+        );
+        assert!(!collect_text(&events).contains("tool_call"));
+    }
+
+    #[test]
+    fn qwen_native_call_is_discarded_when_structured_tool_calls_present() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = parse_openai_sse_stateful(
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\"path\":\"a.rs\"}"}}]}}]}"#,
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(
+            "{\"choices\":[{\"delta\":{\"reasoning\":\"<tool_call>{\\\"name\\\":\\\"bash\\\",\\\"arguments\\\":{\\\"command\\\":\\\"ls\\\"}}</tool_call>\"}}]}",
+            &mut state,
+        ));
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert!(collect_calls(&events)
+            .iter()
+            .all(|(name, _)| name != "bash"));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "read")));
+    }
+
+    #[test]
+    fn qwen_normalization_disabled_passes_raw_markup_through() {
+        let mut state = OpenAiCompatParserState::default();
+        state.qwen.set_enabled(false);
+        let content =
+            "<tool_call>{\"name\":\"bash\",\"arguments\":{\"command\":\"ls\"}}</tool_call>";
+        let mut events = parse_openai_sse_stateful(
+            &serde_json::json!({ "choices": [{"delta": {"content": content}}] }).to_string(),
+            &mut state,
+        );
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+        assert!(collect_calls(&events).is_empty());
+        assert!(collect_text(&events).contains("<tool_call>"));
+    }
+
+    #[test]
+    fn stateful_usage_exposes_deepseek_cache_counters() {
+        let mut state = OpenAiCompatParserState::default();
+        let events = parse_openai_sse_stateful(
+            r#"{"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}"#,
+            &mut state,
+        );
+
+        let usage = events
+            .iter()
+            .find_map(|event| match event {
+                StreamEvent::Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    cache_miss_tokens,
+                } => Some((
+                    *prompt_tokens,
+                    *completion_tokens,
+                    *cache_read_tokens,
+                    *cache_miss_tokens,
+                )),
+                _ => None,
+            })
+            .expect("usage event");
+
+        assert_eq!(usage, (100, 5, 80, 20));
+    }
+
+    #[test]
+    fn stateful_anthropic_parser_maps_thinking_text_tools_and_usage() {
+        let mut state = AnthropicCompatParserState::default();
+        let frames = [
+            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":4,"cache_creation_input_tokens":0,"output_tokens":0}}}"#,
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}"#,
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            r#"data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}"#,
+            r#"data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"call_1","name":"bash","input":{}}}"#,
+            r#"data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"ls\"}"}}"#,
+            r#"data: {"type":"content_block_stop","index":2}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":5}}"#,
+            r#"data: {"type":"message_stop"}"#,
+        ];
+        let mut events = Vec::new();
+        for frame in frames {
+            events.extend(parse_anthropic_sse_stateful(frame, &mut state));
+        }
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ReasoningDelta { id, text } if id == "reasoning-0" && text == "plan"
+        )));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::TextDelta(text) if text == "hi")));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ToolCallStart { id, name } if id == "call_1" && name == "bash"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ToolCallDelta { id, input } if id == "call_1" && input.contains("ls")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::Usage {
+                prompt_tokens: 14,
+                completion_tokens: 5,
+                cache_read_tokens: 4,
+                cache_miss_tokens: 10
+            }
+        )));
+        assert!(matches!(events.last(), Some(StreamEvent::Done)));
     }
 }

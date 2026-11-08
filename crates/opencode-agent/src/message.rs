@@ -64,15 +64,19 @@ impl AgentMessage {
     }
 
     pub fn tool_result(
-        _tool_call_id: impl Into<String>,
-        _name: impl Into<String>,
+        tool_call_id: impl Into<String>,
+        name: impl Into<String>,
         content: impl Into<String>,
         _is_error: bool,
     ) -> Self {
         Self {
             role: MessageRole::Tool,
             content: content.into(),
-            tool_calls: vec![],
+            tool_calls: vec![ToolCall {
+                id: tool_call_id.into(),
+                name: name.into(),
+                arguments: serde_json::Value::Null,
+            }],
         }
     }
 }
@@ -103,6 +107,15 @@ impl Conversation {
         self.messages.push(AgentMessage::assistant(content));
     }
 
+    pub fn add_assistant_message_with_tools(
+        &mut self,
+        content: impl Into<String>,
+        tool_calls: Vec<ToolCall>,
+    ) {
+        self.messages
+            .push(AgentMessage::assistant_with_tools(content, tool_calls));
+    }
+
     pub fn add_tool_result(
         &mut self,
         tool_call_id: impl Into<String>,
@@ -124,8 +137,56 @@ impl Conversation {
             .map(|m| match m.role {
                 MessageRole::System => opencode_provider::Message::system(&m.content),
                 MessageRole::User => opencode_provider::Message::user(&m.content),
-                MessageRole::Assistant => opencode_provider::Message::assistant(&m.content),
-                MessageRole::Tool => opencode_provider::Message::assistant(&m.content),
+                MessageRole::Assistant if m.tool_calls.is_empty() => {
+                    opencode_provider::Message::assistant(&m.content)
+                }
+                MessageRole::Assistant => opencode_provider::Message {
+                    role: opencode_provider::Role::Assistant,
+                    content: opencode_provider::Content::Parts({
+                        let mut parts = Vec::new();
+                        if !m.content.is_empty() {
+                            parts.push(opencode_provider::ContentPart {
+                                content_type: "text".to_string(),
+                                text: Some(m.content.clone()),
+                                ..Default::default()
+                            });
+                        }
+                        parts.extend(m.tool_calls.iter().map(|tool_call| {
+                            opencode_provider::ContentPart {
+                                content_type: "tool_use".to_string(),
+                                tool_use: Some(opencode_provider::ToolUse {
+                                    id: tool_call.id.clone(),
+                                    name: tool_call.name.clone(),
+                                    input: tool_call.arguments.clone(),
+                                }),
+                                ..Default::default()
+                            }
+                        }));
+                        parts
+                    }),
+                    cache_control: None,
+                    provider_options: None,
+                },
+                MessageRole::Tool => opencode_provider::Message {
+                    role: opencode_provider::Role::Tool,
+                    content: opencode_provider::Content::Parts(vec![
+                        opencode_provider::ContentPart {
+                            content_type: "tool_result".to_string(),
+                            tool_result: Some(opencode_provider::ToolResult {
+                                tool_use_id: m
+                                    .tool_calls
+                                    .first()
+                                    .map(|tool_call| tool_call.id.clone())
+                                    .unwrap_or_default(),
+                                content: m.content.clone(),
+                                is_error: None,
+                            }),
+                            ..Default::default()
+                        },
+                    ]),
+                    cache_control: None,
+                    provider_options: None,
+                },
             })
             .collect()
     }
@@ -134,5 +195,53 @@ impl Conversation {
 impl Default for Conversation {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opencode_provider::{Content, Role};
+
+    #[test]
+    fn conversation_preserves_tool_use_and_result_parts() {
+        let mut conversation = Conversation::new();
+        conversation.add_assistant_message_with_tools(
+            "I will read that file.",
+            vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "read".to_string(),
+                arguments: serde_json::json!({ "filePath": "README.md" }),
+            }],
+        );
+        conversation.add_tool_result("call_1", "read", "contents", false);
+
+        let messages = conversation.to_provider_messages();
+        assert!(matches!(messages[0].role, Role::Assistant));
+        assert!(matches!(messages[1].role, Role::Tool));
+
+        let Content::Parts(assistant_parts) = &messages[0].content else {
+            panic!("assistant tool call should use parts content");
+        };
+        assert_eq!(
+            assistant_parts[0].text.as_deref(),
+            Some("I will read that file.")
+        );
+        let tool_use = assistant_parts[1]
+            .tool_use
+            .as_ref()
+            .expect("missing tool_use part");
+        assert_eq!(tool_use.id, "call_1");
+        assert_eq!(tool_use.name, "read");
+
+        let Content::Parts(tool_parts) = &messages[1].content else {
+            panic!("tool result should use parts content");
+        };
+        let tool_result = tool_parts[0]
+            .tool_result
+            .as_ref()
+            .expect("missing tool_result part");
+        assert_eq!(tool_result.tool_use_id, "call_1");
+        assert_eq!(tool_result.content, "contents");
     }
 }

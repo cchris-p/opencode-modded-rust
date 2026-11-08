@@ -1,0 +1,262 @@
+# ScopeMux Integration Plan
+
+> **Future-proofing role:** `wiki/workspace-intelligence.md` defines the long-term
+> Workspace Intelligence Protocol (WIP), ScopeMux's placement in the context/data pillar,
+> capability profiles, and the keep/expand/retire decision. This document remains the
+> near-term integration and retrieval-boundary plan.
+
+## Purpose
+
+Define the minimum architecture boundary the Rust runtime should preserve so `ScopeMux` can improve retrieval and context quality later without expanding V1 scope now.
+
+## Current Position
+
+`ScopeMux` is not a V1 requirement. It is, however, part of the project substrate as the
+first implementation of the Workspace Intelligence Protocol (`wiki/workspace-intelligence.md`),
+and `opencode-modded-rust` is its main utilizer.
+
+V1 still needs to ship as a useful personal daily-driver with explicit task state, runtime-owned lifecycle stages, focused context construction, verification, and fresh-context review.
+
+The current Rust runtime already assembles context directly inside session and prompt code. That is acceptable for V1 as long as the system does not hard-code assumptions that prevent a later retrieval layer from being inserted cleanly.
+
+## Integration Scope
+
+Integration work includes the `scopemux` development it depends on. When this product takes on ScopeMux integration (the `SCOPE` program), the effort owns the required `scopemux-core` engine changes and the `scopemux-notes` planning and board work that gates them (`FIX-001`-`FIX-006`, `WI-018`, `WI-030`-`WI-036`), editing those artifacts in their own repository.
+
+Upstream items are therefore in-scope deliverables of the integration program, not external prerequisites that block it while another owner waits. This is recorded as a binding rule in `invariants/integration-scope.md` and does not change the V1 guardrails: `ScopeMux` stays optional, the generic provider remains the default and fallback, and runtime authority over task state, lifecycle, verification, and review is unchanged.
+
+## Planning Constraints
+
+- `ScopeMux` must remain optional for V1.
+- The runtime stays authoritative for task state, lifecycle transitions, verification, review, and completion.
+- Context construction must continue working with generic repository facts even when no structural graph is available.
+- Future `ScopeMux` support should improve retrieval quality, not become a hidden dependency for basic operation.
+
+## What Stays Generic In V1
+
+V1 should keep these responsibilities in the generic runtime layer:
+
+- selecting or accepting one bounded task
+- recording authoritative task objective, criteria, stage, and verification expectations
+- deciding which context role is being built, such as implementation or review
+- reading repository files, docs, and basic workspace facts
+- applying token budgets and stage-specific context limits
+- deciding when verification and review must run
+- recording verification and review outcomes in structured task state
+
+These behaviors are core runtime responsibilities whether retrieval is simple file-based discovery or a future structural system.
+
+## What Future ScopeMux Should Own
+
+Once mature enough, `ScopeMux` should own retrieval-quality improvements rather than core workflow control.
+
+Candidate `ScopeMux` responsibilities:
+
+- symbol and structure-aware repository retrieval
+- heuristic relationship discovery between files, symbols, and task-relevant subsystems
+- ranked retrieval candidates for a given task and stage
+- optional graph-backed expansion from one anchor file or symbol to nearby relevant context
+- confidence-scored structural links that the runtime can accept, trim, or ignore
+
+`ScopeMux` should not own:
+
+- task lifecycle stages
+- completion decisions
+- verification gates
+- review authority
+- session continuity
+
+## How ScopeMux Can Help This Project
+
+`ScopeMux` is not only a future idea: the concrete engine is `scopemux-core` (`$HOME/apps/scopemux-core`), a native Tree-sitter parsing and context-compression library. Its current API already covers most of the retrieval-quality responsibilities listed above, which is why preserving the boundary now is worthwhile.
+
+The mapping below grounds each ability in a real `scopemux-core` surface and the runtime need it can improve.
+
+| `scopemux-core` capability | What it can improve here | Where it plugs in |
+| --- | --- | --- |
+| `ParserContext` (Tree-sitter parse, AST/CST) | structured reads of files instead of raw text | retrieval provider request/response; tool-input enrichment |
+| `ProjectContext` multi-file parse and project-wide symbol table | repository-wide symbol awareness beyond single-file grep | retrieval provider for a task and stage |
+| Cross-file reference resolution (`reference_resolver.h`) | following calls, types, and imports/includes across files | relationship expansion from a seed file or symbol |
+| Project IR: symbols, resolved references, call graph, dependencies | discovering the task-relevant subsystem; sharper review context | ranked candidates plus provenance |
+| Canonical `InfoBlock` registry (tiers 0-4) | selecting cheap-to-expensive context instead of uniform file dumps | stage-specific context budgets |
+| Tiered context selection (focus, exclude, summary-only, tier range) | fitting context to a token budget without losing structure | prompt context assembly |
+| Search index over query text, anchor symbol, and relationships | ranked retrieval for a task objective or review | retrieval response ordering |
+| Prompt assembly API | a deterministic, token-aware context package | the boundary output consumed by prompt construction |
+| `ContextEngine` relevance metrics, compression levels, token budgets | trimming and compressing context under real limits | token-budget enforcement during assembly |
+
+Concretely, this can give the product:
+
+- better retrieval quality on multi-file and unfamiliar codebases
+- structure-aware review context rather than recency-only file selection
+- deterministic token budgeting on the same boundary the generic provider uses
+- an upgrade path where the runtime keeps lifecycle and verification authority while `ScopeMux` only improves inputs
+
+Honest limits to design around:
+
+- `scopemux-core` parses Rust as of `WI-030` (merged 2026-09-25; grammars C, C++, Python, JavaScript, TypeScript, Rust), so it can map this product's own repository and Rust workspaces. Rust resolution is not yet at C/C++ parity: trait-object dispatch, macro expansion, and generic binding remain gaps tracked upstream on `WI-030`, and unsupported constructs fall back to the generic provider.
+- the shipped Python extension exposes only `ParserContext` and `ContextEngine` (`scopemux-core/core/src/bindings/module.c`); `ProjectContext`, tiered context, search, and prompt assembly are C-only, so integration needs FFI or a compiled helper.
+- `scopemux-core` is development-oriented and not packaged for standard distribution, so it must be pinned and built reproducibly rather than assumed present.
+- its structural relationships are heuristic, so the confidence rules below still apply.
+
+This near-term integration is tracked by `SCOPE-002` ("Integrate scopemux-core behind the retrieval-provider boundary"). It stays non-blocking for V1: the generic provider remains the default, and the `ScopeMux` provider is added as one peer behind the boundary.
+
+Activation scope (2026-09-25): the native provider is compiled into the product binary but only activates for the local Qwen-via-Ollama model, so a small local model can be used to experiment with map-driven context compression. Every other model and any unsupported workspace keeps the generic provider as the default and fallback (`invariants/providers.md`).
+
+Language coverage is per file (C, C++, Python, JavaScript, TypeScript, and Rust; markdown/prose is generic search). The full coverage matrix, mixed-language behavior, and the `unsupported_language` / `no_matches` / `provider_unavailable` fallback provenance are defined in `wiki/workspace-intelligence.md`.
+
+### Known prerequisite: persistent node registration (2026-11-05, `SCOPE-006`)
+
+The Rust provider does **not** maintain a persistent whole-workspace node registry or a
+watcher today. `ScopemuxProvider::retrieve` creates a fresh `ProjectContext` per call, adds
+only the request's `seed_files`/`changed_files`, and drops the context when the call ends
+(`crates/opencode-scopemux/src/lib.rs`). `scopemux-core` has incremental IR/index
+primitives (`WI-018`, `project_update_file`, incremental rebuild counters), but the product
+provider does not use them across calls.
+
+Consequence: a map-backed tool that answers "where is X" for an arbitrary file without a
+filesystem walk is blocked until persistent registration/update lands. `SCOPE-006` therefore
+records this as a prerequisite and does not build on an unverified index. This is separate
+from the old `WI-030` note: the Rust grammar **is** present (`language_for_path("*.rs") ==
+Some(6)`), so the blocker is persistence, not language support.
+
+### Persistent map architecture decision (2026-11-06)
+
+Decision A is locked: build the persistent map rather than redefine or retire `SCOPE-006`.
+The program is tracked in `H-020` and `SCOPE-015`. The architecture is split so no single
+component owns lifecycle, policy, and presentation:
+
+- **Engine** (`opencode-scopemux`): safe wrapper over one `ProjectContext`; open/update/
+  remove, incremental rebuild, query. No watcher, no model/prompt policy.
+- **Supervisor/registry**: one map per canonical workspace root, lifecycle/eviction,
+  watcher subscription, dirty-set scheduling, freshness measurement. It is the only writer
+  of map state.
+- **Provider adapter**: translates retrieval requests into engine/supervisor queries and
+  returns evidence; it does not create contexts per call.
+- **Tool** (`opencode-tool`): user-facing search surface and formatting; receives a
+  `WorkspaceSearch` capability through `ToolContext`; never calls FFI or parses model
+  strings.
+- **Runtime** (`opencode-session`): owns activation, inclusion thresholds, prompt budget,
+  and the fresh/lagging/stale/unknown fallback policy.
+- **Watcher** (`opencode-watcher`): generic file events only; the supervisor subscribes.
+
+DRY applies to decisions and vocabulary, not to forcing grep and map search to share an
+algorithm: one ignore/exclusion policy, one code/prose predicate, one activation predicate,
+one evidence shape with `block_id`, one freshness/fallback vocabulary, one path
+normalization helper, and one token-budget/truncation utility. Task authority remains with
+the runtime; the map is evidence-only.
+
+Implementation note (`SCOPE-018`): those shared contracts live in
+`crates/opencode-types/src/workspace.rs`. The ignore policy, code/prose predicate,
+`RetrievalCandidate::block_id`, `MapFreshness`/`MapFreshnessReport`, path normalization,
+token budget, and the neutral `WorkspaceSearch` trait are defined once there. Grep and the
+watcher consume the ignore policy; `opencode-scopemux` maps `SourceLanguage` to the core
+language id; the runtime injects `WorkspaceSearch` into `ToolContext` on the map-backed
+path only.
+
+### Engine boundary (`SCOPE-016`)
+
+`crates/opencode-scopemux` is split into three modules:
+
+- `ffi`: `#[repr(C)]` mirrors and `extern "C"` declarations only.
+- `engine::WorkspaceEngine`: the only owner of a `ProjectContext`. It exposes open,
+  add/parse, `update_file`, `remove_file`, rebuild, counters, and owned query views
+  (`BlockView`, `SearchHitView`, ...). No raw pointer escapes this module.
+- `provider`: the `RetrievalProvider` adapter; it maps engine views to shared
+  `RetrievalCandidate` evidence and owns no pointer.
+
+Thread affinity: one engine is owned by one task/worker and is never held across an
+`await` or moved between workers. The provider opens, uses, and drops the engine before its
+exact-fact enrichment await, so persistent lifecycle (`SCOPE-017`) can move the owner
+without changing the provider contract. The engine contains no activation, prompt,
+task-state, or fallback policy.
+
+The larger idealized target is `SCOPE-001` ("Idealized scopemux map integration") and `wiki/scopemux-map-integration.md`, which extend this plan with current/target state, delta views, observability blocks, duplication detection, and incremental reconciliation. Those phases must not disturb the boundary or guardrails defined here.
+
+## Required Abstraction Boundary
+
+The runtime should preserve one explicit retrieval boundary between:
+
+- task and stage intent, which the runtime owns
+- retrieval results, which a generic file-based path or future `ScopeMux` path may produce
+
+The boundary should look conceptually like this:
+
+1. The runtime defines a retrieval request from task state.
+2. A retrieval provider returns ranked context candidates plus provenance.
+3. The runtime assembles the final stage-specific prompt context from those results.
+
+The key design rule is that prompt construction must consume retrieval outputs, not embed `ScopeMux`-specific logic directly throughout runtime orchestration.
+
+## Minimum Deferred Contract
+
+Future `ScopeMux` integration should be able to plug into a narrow contract that includes:
+
+- task objective
+- task stage
+- repository root or workspace target
+- optional seed files, symbols, or changed files
+- context role, such as implementing or reviewing
+- token or item budget
+
+The retrieval response should return:
+
+- ordered candidate files, symbols, or snippets
+- provenance for why each candidate was returned
+- confidence per candidate or relationship cluster
+- enough metadata for the runtime to decide what to include in final context
+
+This contract stays intentionally small so V1 can implement a simple generic provider first.
+
+## Confidence Model
+
+`ScopeMux` structural relationships will likely include heuristics, so the runtime should treat them as evidence rather than truth.
+
+Rules for confidence handling:
+
+- exact repository facts outrank heuristic relationships
+- directly referenced files and symbols outrank inferred neighbors
+- low-confidence structural links may enrich context, but should not override explicit task scope
+- review context should use a stricter inclusion threshold than implementation context
+- the runtime should retain provenance so bad retrieval can be diagnosed later
+
+This keeps retrieval mistakes from silently reshaping the task.
+
+## Phase Guidance
+
+### V1
+
+- keep retrieval generic and local
+- preserve the retrieval-provider boundary
+- do not block shipping on `ScopeMux`
+
+### V2
+
+- allow an early `ScopeMux` provider if it materially improves repository discovery and context quality
+- compare generic retrieval and `ScopeMux` retrieval using the evaluation strategy
+
+### V3+
+
+- expand `ScopeMux` use only if real usage shows better task outcomes, cleaner review context, or fewer retrieval-related failures
+
+## Follow-Up Work
+
+This plan requires explicit follow-up items:
+
+- `START-025` Add retrieval-provider boundary for task context assembly — introduce the narrow abstraction that lets V1 keep generic retrieval while leaving a clean insertion point for future `ScopeMux` support.
+- `SCOPE-002` Integrate scopemux-core behind the retrieval-provider boundary — connect the concrete `scopemux-core` engine as one provider behind that boundary (Phase 0, near-term). Integration work includes the `scopemux-core`/`scopemux-notes` development it depends on, per `invariants/integration-scope.md`.
+- `SCOPE-001` Idealized scopemux map integration — the target map model and phases (`SCOPE-003`, `SCOPE-004`) that extend this plan without changing its guardrails.
+
+## Non-Goals
+
+- shipping `ScopeMux` in V1
+- building a full repository graph now
+- replacing normal file reads for straightforward small tasks
+- making `ScopeMux` the owner of task state or runtime progression
+- replacing `opencode-lsp` or duplicating its point semantic queries; see
+  `wiki/scopemux-lsp-boundary.md`
+- becoming a second LSP client, or adding a type checker, inference engine, or compiler
+  frontend to `ScopeMux`
+
+## Bottom Line
+
+The Rust runtime should ship V1 without `ScopeMux`, but it should not hard-wire context construction so tightly that future structural retrieval becomes invasive. Preserve a small retrieval-provider boundary now, keep runtime authority over task flow, and let later `ScopeMux` adoption compete on retrieval quality rather than on architectural control.
