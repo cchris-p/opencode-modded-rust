@@ -5,9 +5,9 @@ priority: "P1"
 type: "bug"
 area: "INFRA"
 spec: "wiki/workspace-intelligence.md"
-status: "doing"
+status: "done"
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-08"
 ---
 
 # Embed ScopeMux Queries So The Published ort Binary Is Portable
@@ -195,3 +195,34 @@ Not covered here: the prebuilt C archive still embeds its CI `__FILE__` source
 paths in log strings. Those are not query paths and are pre-existing.
 
 Keep in `doing` until PR #160 merges, then move to `qa` for post-merge QA.
+
+## Post-Merge QA (2026-11-08)
+
+- PR #160 merged into `development` (`c9ac28d`). CI native job: `build
+  (ubuntu-22.04)` pass; `build (macos-14)` cancelled (pre-existing runner issue,
+  not a code failure; no test workflow exists yet, see `INFRA-009`).
+- Rebased the long-lived branch onto current `development` (the crate had been
+  split into `engine`/`provider`/`supervisor`; embedding moved to a new
+  `crates/opencode-scopemux/src/queries.rs`).
+- Post-merge QA on merged `development` found a regression: `WorkspaceEngine::open`
+  still read the removed compile-time `SCOPEMUX_QUERIES_DIR`, so engine-level
+  contexts parsed zero nodes (2 failing engine tests). Fixed in PR #171
+  (`a6d4e2b`, merged as `e113708`): the engine now calls
+  `ensure_queries_dir()` before creating a context.
+
+Verification on merged `development` (`e113708`), prebuilt native bundle:
+
+```text
+cargo fmt --all --check                                            PASS
+SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-scopemux --features native   PASS
+SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-cli          PASS
+cargo clippy -p opencode-scopemux -p opencode-cli --all-targets   PASS (pre-existing warnings only)
+cargo test -p opencode-scopemux --features native                 40 passed; 0 failed
+cargo build -p opencode-cli --bin opencode-modded-rust            PASS
+clean-host: HOME=<tmp> XDG_CACHE_HOME=<tmp> <binary> debug scopemux-queries
+  -> <tmp>/cache/opencode/scopemux/queries/73aa2ff86776cc85 (rust/docstrings.scm present)
+strings <binary> | grep <build/cache queries path>                -> no match
+```
+
+The two `SCOPE-013` failures noted above no longer reproduce on this base.
+
