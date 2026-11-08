@@ -522,3 +522,14 @@ Open a new session in `~/apps/opencode-modded-rust` and send the prompt in
 - `SCOPE-006` remains blocked in `doing` with `attention:` set; it is not promoted.
 - **H-018 is paused before step 8** until the persistent registration/watcher prerequisite
   is resolved or the owner changes scope.
+
+### Step 7 — SCOPE-006 resumed (2026-11-08)
+
+- The persistent-map prerequisite is complete (H-020). Re-verified node registration and
+  watcher-driven updates against the persistent map.
+- Branch `feature/SCOPE-006-scopemux-code-search`; PR
+  https://github.com/cchris-p/opencode-modded-rust/pull/168.
+- The map-backed `code_search` tool shipped in `SCOPE-019`; this step adds the end-to-end
+  native proof (map locate with block id, watcher-updated symbol, prose -> grep). Native
+  scopemux 36 passed; non-native scopemux 3, tool 75, grep 5; fmt/clippy clean.
+- **STOPPED for explicit review/merge approval.** `SCOPE-009` (step 8) has not started.

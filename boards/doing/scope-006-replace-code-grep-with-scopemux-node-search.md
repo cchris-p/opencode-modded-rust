@@ -121,3 +121,45 @@ promote this card on the evidence PR alone.
 - This card resumes only after `SCOPE-019` lands. At that point the code-search tool can
   meet the "without a filesystem walk" criterion; do not implement it before then.
 - `SCOPE-009` is the other consumer and is resumed after this card's tool path exists.
+
+## Implementation — 2026-11-08 (H-018 step 7, unblocked by SCOPE-019)
+
+Branch `feature/SCOPE-006-scopemux-code-search`; PR
+https://github.com/cchris-p/opencode-modded-rust/pull/168
+
+Re-verification (the 2026-11-06 blocker is resolved):
+
+- `SCOPE-019` wired the persistent whole-workspace map into `ScopemuxProvider` and the
+  `code_search` tool. The provider resolves one map per workspace; the tool receives the
+  neutral `WorkspaceSearch` capability and never walks the filesystem on the map path.
+- New native test `code_search_tool_answers_from_the_persistent_map` drives the real tool
+  through a live `WorkspaceMapRegistry`:
+  - finds `locate_me` in `a.rs` via the map (`backend=scopemux`) and returns a `sym:` block
+    id;
+  - edits `a.rs`, waits for the watcher-driven incremental revision, then finds the new
+    `added_after_watch` symbol without a per-call walk;
+  - `mode="prose"` falls back to grep (`backend=grep`, `fallbackReason=prose_mode`).
+
+Verification (exact):
+
+```bash
+$ SCOPEMUX_PREBUILT_DIR="$(scripts/ensure-native-artifacts.sh --check | tail -1)" \
+    cargo test -p opencode-scopemux --features native
+test result: ok. 36 passed; 0 failed; 0 ignored
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tool -p opencode-scopemux
+opencode-scopemux: 3 passed; 0 failed
+opencode-tool:    75 passed; 0 failed
+
+$ cargo test -p opencode-tool grep
+test result: ok. 5 passed; 0 failed; 0 ignored
+
+$ cargo fmt --all --check
+exit 0
+
+$ SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy -p opencode-scopemux --all-targets
+Finished; exit 0 (pre-existing warnings only)
+```
+
+Status: PR open; card stays in `doing` until explicit review and merge approval. `SCOPE-009`
+has not started.
