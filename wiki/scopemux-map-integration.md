@@ -161,6 +161,16 @@ The correctness criterion is strict: an incrementally updated map must be equiva
   not decide fallback; `SCOPE-009`/the runtime own that policy.
 - The map remains evidence-only: no task stage, verification, review, or completion writes.
 
+### Freshness SLOs (`SCOPE-009`)
+
+The supervisor records `MapFreshnessReport` (revision, dirty set, watcher lag, rebuild
+duration, re-anchor). `fresh` requires lag <= 1 s and rebuild <= 500 ms; slower successful
+batches are `lagging` (used with a warning); a failed update is `stale` and the runtime
+falls back to generic with `fallback_reason=stale_map`. `unknown` also falls back.
+Reconciliation marks divergent plan nodes `stale`/`conflict` and records the re-anchor
+result; nodes are never silently dropped. Full SLO table:
+`wiki/workspace-intelligence.md`.
+
 ## Runtime Integration
 
 All map use crosses the `START-025` retrieval-provider boundary. The runtime asks; the map answers; prompt construction consumes the answer. No `scopemux`-specific logic leaks into orchestration, lifecycle, verification, or review.

@@ -489,9 +489,10 @@ fn materialize_plan_nodes(map: &MapHandle, request: &RetrievalRequest) {
 /// Reconcile materialized plan nodes against parsed state and report evidence.
 /// The runtime decides whether to act; this never advances stage or completion.
 fn reconcile_plan_nodes(map: &MapHandle) -> Vec<opencode_types::PlanReconciliationSignal> {
-    use opencode_types::{PlanLifecycle, PlanReconciliationSignal};
+    use opencode_types::{PlanLifecycle, PlanReconciliationSignal, ReAnchorResult};
 
-    map.reconcile_plan_nodes()
+    let signals: Vec<PlanReconciliationSignal> = map
+        .reconcile_plan_nodes()
         .unwrap_or_default()
         .into_iter()
         .map(|entry| PlanReconciliationSignal {
@@ -499,7 +500,27 @@ fn reconcile_plan_nodes(map: &MapHandle) -> Vec<opencode_types::PlanReconciliati
             previous: PlanLifecycle::from_ffi(entry.previous_lifecycle),
             current: PlanLifecycle::from_ffi(entry.new_lifecycle),
         })
-        .collect()
+        .collect();
+
+    // Record the measurement only; the runtime decides whether to re-plan.
+    if !signals.is_empty() {
+        let result = if signals
+            .iter()
+            .any(|signal| signal.current == PlanLifecycle::Conflict)
+        {
+            ReAnchorResult::Shifted
+        } else if signals
+            .iter()
+            .any(|signal| signal.current == PlanLifecycle::Stale)
+        {
+            ReAnchorResult::Missing
+        } else {
+            ReAnchorResult::Anchored
+        };
+        map.record_re_anchor(result);
+    }
+
+    signals
 }
 
 #[cfg(test)]
@@ -710,6 +731,53 @@ mod tests {
             .find(|signal| signal.plan_node_id == "plan:task_plan:stale")
             .expect("vanished anchor should emit a divergence signal");
         assert!(stale.current.is_divergence());
+    }
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn native_plan_reconciliation_records_reanchor_measurement() {
+        use opencode_retrieval::RetrievalProvider;
+        use opencode_types::{PlanNodeDraft, PlanNodeKind};
+
+        let _guard = native_test_lock();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("add.c"),
+            "int add(int a, int b) {\n  return a + b;\n}\n",
+        )
+        .unwrap();
+
+        let mut req = request(&dir.path().to_string_lossy(), vec!["add.c"]);
+        req.objective = "add".to_string();
+        req.task_id = Some("task_reanchor".to_string());
+        req.plan_nodes = vec![PlanNodeDraft {
+            slug: "vanished".to_string(),
+            kind: PlanNodeKind::Remove,
+            title: "remove legacy".to_string(),
+            desired_shape: None,
+            rationale: None,
+            projected_symbol: None,
+            file_path: None,
+            anchors: vec!["sym:does_not_exist".to_string()],
+        }];
+
+        let response = ScopemuxProvider::new().retrieve(&req).await.unwrap();
+        assert!(
+            response
+                .plan_signals
+                .iter()
+                .any(|signal| signal.current.is_divergence()),
+            "vanished anchor should emit a divergence signal"
+        );
+
+        let map = crate::shared_registry()
+            .acquire(&req.workspace_root)
+            .unwrap();
+        assert!(
+            map.freshness().re_anchor.is_some(),
+            "reconciliation should record a re-anchor measurement"
+        );
     }
 
     #[cfg(feature = "native")]
