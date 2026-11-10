@@ -148,6 +148,7 @@ pub struct SessionPrompt {
     experimental_background_subagents: bool,
     resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
     session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
+    workspace_intelligence_policy: opencode_scopemux::WorkspaceIntelligencePolicy,
 }
 
 impl SessionPrompt {
@@ -165,6 +166,8 @@ impl SessionPrompt {
             experimental_background_subagents: false,
             resolve_subagent_callback: None,
             session_inspect_callback: None,
+            workspace_intelligence_policy:
+                opencode_scopemux::WorkspaceIntelligencePolicy::qwen_experiment(),
         }
     }
 
@@ -249,6 +252,17 @@ impl SessionPrompt {
         self
     }
 
+    /// Install the capability-profile policy that selects the
+    /// workspace-intelligence provider (`FUTURE-PROOFING-015`). The default is
+    /// the built-in Qwen experiment profile, preserving prior behavior.
+    pub fn with_workspace_intelligence_policy(
+        mut self,
+        policy: opencode_scopemux::WorkspaceIntelligencePolicy,
+    ) -> Self {
+        self.workspace_intelligence_policy = policy;
+        self
+    }
+
     pub async fn assert_not_busy(&self, session_id: &str) -> anyhow::Result<()> {
         let state = self.state.lock().await;
         if state.contains_key(session_id) {
@@ -296,6 +310,31 @@ impl SessionPrompt {
                 _ => None,
             })
             .collect();
+        // Capability-profile selection (FUTURE-PROOFING-015): record the active
+        // profile in the session so the activation policy is auditable. The
+        // policy is a hard bound; no profile match keeps the generic provider.
+        let wi_provider = input.model.as_ref().map(|m| m.provider_id.as_str());
+        let wi_model = input.model.as_ref().map(|m| m.model_id.as_str());
+        let active_profile = self
+            .workspace_intelligence_policy
+            .resolve(wi_provider, wi_model);
+        if let Some(profile) = active_profile {
+            session.metadata.insert(
+                "workspace_intelligence_profile".to_string(),
+                serde_json::json!({
+                    "name": &profile.name,
+                    "provider": profile.provider,
+                    "rungs": &profile.rungs,
+                    "languages": &profile.languages,
+                    "tokenBudget": profile.token_budget,
+                    "experiment": profile.experiment,
+                }),
+            );
+        }
+        let retrieval_budget = active_profile
+            .map(|profile| profile.token_budget)
+            .unwrap_or(crate::retrieval::RETRIEVAL_TOKEN_BUDGET);
+
         let retrieval_response = if seed_files.is_empty() {
             None
         } else {
@@ -318,7 +357,14 @@ impl SessionPrompt {
                 } else {
                     None
                 };
-            crate::retrieval::retrieve(session, seed_files, input.model.as_ref(), exact_facts).await
+            crate::retrieval::retrieve(
+                session,
+                seed_files,
+                input.model.as_ref(),
+                &self.workspace_intelligence_policy,
+                exact_facts,
+            )
+            .await
         };
 
         // Accept-time materialization: when the server has already persisted the
@@ -413,16 +459,17 @@ impl SessionPrompt {
             // representation slice selected for the task stage (SCOPE-004).
             tracing::info!(
                 provider = %response.provider,
+                profile = active_profile.map(|profile| profile.name.as_str()).unwrap_or("none"),
                 representation = ?response.representation,
                 candidates = response.candidates.len(),
+                budget = retrieval_budget,
                 "retrieval provider selected"
             );
             // SCOPE-004: inject the selected map slice as bounded evidence. The
             // runtime owns the budget; the generic provider path is unchanged.
-            if let Some(reminder) = crate::retrieval::retrieval_context_reminder(
-                &response,
-                crate::retrieval::RETRIEVAL_TOKEN_BUDGET,
-            ) {
+            if let Some(reminder) =
+                crate::retrieval::retrieval_context_reminder(&response, retrieval_budget)
+            {
                 push_synthetic_reminder(msg, reminder);
             }
             msg.metadata.insert(
@@ -1024,6 +1071,7 @@ impl SessionPrompt {
             provider,
             model_id,
             provider_id,
+            &self.workspace_intelligence_policy,
             session,
             input.agent.as_deref(),
             input.variant.clone(),
@@ -1120,6 +1168,7 @@ impl SessionPrompt {
             provider,
             model_id,
             provider_id,
+            &self.workspace_intelligence_policy,
             session,
             resume_agent.as_deref(),
             resume_variant,
@@ -1156,6 +1205,7 @@ impl SessionPrompt {
         provider: Arc<dyn Provider>,
         model_id: String,
         provider_id: String,
+        workspace_intelligence_policy: &opencode_scopemux::WorkspaceIntelligencePolicy,
         session: &mut Session,
         agent_name: Option<&str>,
         variant: Option<String>,
@@ -1616,9 +1666,11 @@ impl SessionPrompt {
 
                 // SCOPE-019: inject the map-backed search capability on the same
                 // model scope the provider uses; every other model gets grep only.
-                if let Some(workspace_search) =
-                    opencode_scopemux::workspace_search_for(Some(&provider_id), Some(&model_id))
-                {
+                if let Some(workspace_search) = opencode_scopemux::workspace_search_for_with_policy(
+                    Some(workspace_intelligence_policy),
+                    Some(&provider_id),
+                    Some(&model_id),
+                ) {
                     tool_context = tool_context.with_workspace_search(Some(workspace_search));
                 }
 

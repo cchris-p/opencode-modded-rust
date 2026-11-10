@@ -7,7 +7,10 @@
 //! default builds are unaffected.
 
 use opencode_retrieval::RetrievalProvider;
-use opencode_types::RetrievalRequest;
+use opencode_types::{
+    RetrievalRequest, WorkspaceIntelligenceProfile, WorkspaceIntelligenceProvider,
+    DEFAULT_WORKSPACE_INTELLIGENCE_TOKEN_BUDGET,
+};
 
 // Link the `tree-sitter` crate's bundled C runtime (its `cc` build emits
 // `rustc-link-lib=static=tree-sitter`). The Rust API is unused here; the import
@@ -60,32 +63,112 @@ pub fn default_provider() -> Box<dyn RetrievalProvider> {
     }
 }
 
-/// Provider id whose local models may use the scopemux provider.
-pub const SCOPEMUX_LOCAL_PROVIDER_ID: &str = "ollama";
+/// Name of the built-in local Qwen experiment profile.
+pub const QWEN_EXPERIMENT_PROFILE_NAME: &str = "qwen-ollama-experiment";
 
-/// Model id prefix that activates the scopemux provider on the local path.
-pub const SCOPEMUX_LOCAL_MODEL_PREFIX: &str = "qwen";
-
-/// Whether the active model is the local path scopemux is scoped to: the Ollama
-/// provider serving a Qwen model.
-pub fn model_scope_enabled(provider_id: Option<&str>, model_id: Option<&str>) -> bool {
-    let provider_matches =
-        provider_id.is_some_and(|id| id.eq_ignore_ascii_case(SCOPEMUX_LOCAL_PROVIDER_ID));
-    let model_matches = model_id.is_some_and(|model| {
-        model
-            .trim()
-            .to_ascii_lowercase()
-            .starts_with(SCOPEMUX_LOCAL_MODEL_PREFIX)
-    });
-    provider_matches && model_matches
+/// Capability profiles that govern workspace-intelligence activation.
+///
+/// The runtime resolves exactly one profile for the active model. No match, an
+/// invalid profile, or a profile that names the generic provider keeps the
+/// generic repository-local provider. Profiles are a hard bound: they only
+/// choose a provider and budget, and never widen runtime policy.
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceIntelligencePolicy {
+    profiles: Vec<WorkspaceIntelligenceProfile>,
+    rejected: Vec<(String, String)>,
 }
 
-/// Select the retrieval provider for the active model.
+impl WorkspaceIntelligencePolicy {
+    /// Build a policy from profiles, dropping invalid ones.
+    pub fn new(profiles: Vec<WorkspaceIntelligenceProfile>) -> Self {
+        let mut kept = Vec::new();
+        let mut rejected = Vec::new();
+        for profile in profiles {
+            match profile.validate() {
+                Ok(()) => kept.push(profile),
+                Err(error) => rejected.push((profile.name.clone(), error.to_string())),
+            }
+        }
+        Self {
+            profiles: kept,
+            rejected,
+        }
+    }
+
+    /// No profiles: every model uses the generic provider.
+    pub fn generic_only() -> Self {
+        Self::default()
+    }
+
+    /// The built-in experiment profile, preserving the historical Qwen path.
+    pub fn qwen_experiment() -> Self {
+        Self::new(vec![qwen_experiment_profile()])
+    }
+
+    /// Validated profiles, in match order.
+    pub fn profiles(&self) -> &[WorkspaceIntelligenceProfile] {
+        &self.profiles
+    }
+
+    /// Profiles dropped during validation with their reason.
+    pub fn rejected(&self) -> &[(String, String)] {
+        &self.rejected
+    }
+
+    /// First profile that matches the active model.
+    pub fn resolve(
+        &self,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Option<&WorkspaceIntelligenceProfile> {
+        self.profiles
+            .iter()
+            .find(|profile| profile.matches_model(provider_id, model_id))
+    }
+
+    /// Whether the active model selects the map-backed provider.
+    pub fn selects_scopemux(&self, provider_id: Option<&str>, model_id: Option<&str>) -> bool {
+        self.resolve(provider_id, model_id)
+            .is_some_and(|profile| profile.provider == WorkspaceIntelligenceProvider::Scopemux)
+    }
+
+    /// Token budget for the active model, when a profile matches.
+    pub fn token_budget_for(
+        &self,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Option<usize> {
+        self.resolve(provider_id, model_id)
+            .map(|profile| profile.token_budget)
+    }
+}
+
+/// The Qwen-via-Ollama experiment as a named capability profile.
+pub fn qwen_experiment_profile() -> WorkspaceIntelligenceProfile {
+    WorkspaceIntelligenceProfile {
+        name: QWEN_EXPERIMENT_PROFILE_NAME.to_string(),
+        provider: WorkspaceIntelligenceProvider::Scopemux,
+        enabled: true,
+        models: vec!["ollama/qwen*".to_string()],
+        rungs: opencode_types::WorkspaceIntelligenceRung::ALL.to_vec(),
+        languages: Vec::new(),
+        token_budget: DEFAULT_WORKSPACE_INTELLIGENCE_TOKEN_BUDGET,
+        fallback: WorkspaceIntelligenceProvider::Generic,
+        experiment: true,
+    }
+}
+
+/// Whether the active model is the built-in local Qwen experiment profile.
 ///
-/// The scopemux provider is scoped to the local Qwen-via-Ollama model so
-/// improvements can be experimented on a small local model; every other model
-/// keeps the generic repository-local provider as the default and fallback.
-/// Non-native builds always return the generic provider.
+/// Kept for the existing QA contract; it now implements the named profile
+/// rather than acting as the activation policy.
+pub fn model_scope_enabled(provider_id: Option<&str>, model_id: Option<&str>) -> bool {
+    WorkspaceIntelligencePolicy::qwen_experiment().selects_scopemux(provider_id, model_id)
+}
+
+/// Select the retrieval provider for the active model using the default
+/// Qwen experiment profile. New callers should pass an explicit policy with
+/// [`provider_for_with_policy`].
 pub fn provider_for(
     provider_id: Option<&str>,
     model_id: Option<&str>,
@@ -93,20 +176,33 @@ pub fn provider_for(
     provider_for_with_facts(provider_id, model_id, None)
 }
 
-/// Same selection as [`provider_for`], but optionally attaches an exact-fact source.
-/// LSP is never required: `None`, a missing server, or a failed query leaves the
-/// heuristic map behavior intact.
+/// [`provider_for`] with an optional exact-fact source.
 pub fn provider_for_with_facts(
     provider_id: Option<&str>,
     model_id: Option<&str>,
     exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>>,
 ) -> Box<dyn RetrievalProvider> {
+    let policy = WorkspaceIntelligencePolicy::qwen_experiment();
+    provider_for_with_policy(Some(&policy), provider_id, model_id, exact_facts)
+}
+
+/// Select the retrieval provider from an explicit capability-profile policy.
+///
+/// `None` or a policy with no matching profile keeps the generic
+/// repository-local provider. Non-native builds always return the generic
+/// provider. LSP exact facts remain optional enrichment.
+pub fn provider_for_with_policy(
+    policy: Option<&WorkspaceIntelligencePolicy>,
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+    exact_facts: Option<std::sync::Arc<dyn opencode_retrieval::ExactFactProvider>>,
+) -> Box<dyn RetrievalProvider> {
     // Only consulted by native builds; keep the parameters used either way.
-    let _ = (provider_id, model_id, &exact_facts);
+    let _ = (provider_id, model_id, &exact_facts, policy);
 
     #[cfg(feature = "native")]
     {
-        if model_scope_enabled(provider_id, model_id) {
+        if policy.is_some_and(|policy| policy.selects_scopemux(provider_id, model_id)) {
             return Box::new(ScopemuxProvider::with_exact_facts(exact_facts));
         }
     }
@@ -189,6 +285,62 @@ mod policy_tests {
         assert!(!model_scope_enabled(Some("ollama"), Some("llama3:8b")));
         assert!(!model_scope_enabled(None, None));
     }
+
+    fn profile(name: &str, models: Vec<&str>) -> WorkspaceIntelligenceProfile {
+        WorkspaceIntelligenceProfile {
+            name: name.to_string(),
+            provider: WorkspaceIntelligenceProvider::Scopemux,
+            enabled: true,
+            models: models.into_iter().map(str::to_string).collect(),
+            rungs: Vec::new(),
+            languages: Vec::new(),
+            token_budget: DEFAULT_WORKSPACE_INTELLIGENCE_TOKEN_BUDGET,
+            fallback: WorkspaceIntelligenceProvider::Generic,
+            experiment: true,
+        }
+    }
+
+    #[test]
+    fn generic_only_policy_never_activates() {
+        let policy = WorkspaceIntelligencePolicy::generic_only();
+        assert!(!policy.selects_scopemux(Some("deepseek"), Some("deepseek-flash")));
+        assert!(!policy.selects_scopemux(Some("ollama"), Some("qwen3:30b")));
+        assert!(policy
+            .token_budget_for(Some("deepseek"), Some("deepseek-flash"))
+            .is_none());
+    }
+
+    #[test]
+    fn a_deepseek_profile_can_enable_scopemux_without_a_code_branch() {
+        let policy = WorkspaceIntelligencePolicy::new(vec![profile(
+            "deepseek-experiment",
+            vec!["deepseek/deepseek-flash"],
+        )]);
+        assert!(policy.selects_scopemux(Some("deepseek"), Some("deepseek-flash")));
+        assert_eq!(
+            policy.token_budget_for(Some("deepseek"), Some("deepseek-flash")),
+            Some(DEFAULT_WORKSPACE_INTELLIGENCE_TOKEN_BUDGET)
+        );
+        assert!(!policy.selects_scopemux(Some("openai"), Some("gpt-5")));
+    }
+
+    #[test]
+    fn a_generic_profile_explicitly_keeps_the_default_provider() {
+        let mut disabled = profile("disabled", vec!["*"]);
+        disabled.provider = WorkspaceIntelligenceProvider::Generic;
+        let policy = WorkspaceIntelligencePolicy::new(vec![disabled]);
+        assert!(!policy.selects_scopemux(Some("deepseek"), Some("deepseek-flash")));
+    }
+
+    #[test]
+    fn invalid_profiles_are_rejected_and_fall_back_to_generic() {
+        let mut invalid = profile("broken", vec!["*"]);
+        invalid.token_budget = 0;
+        let policy = WorkspaceIntelligencePolicy::new(vec![invalid]);
+        assert!(policy.profiles().is_empty());
+        assert_eq!(policy.rejected().len(), 1);
+        assert!(!policy.selects_scopemux(Some("deepseek"), Some("deepseek-flash")));
+    }
 }
 
 /// Process-wide persistent map registry.
@@ -206,15 +358,25 @@ pub fn shared_registry() -> std::sync::Arc<WorkspaceMapRegistry> {
 
 /// Build the map-backed search capability when the active model is in scope.
 ///
-/// Activation is the same single `model_scope_enabled` predicate used by the
-/// provider. The tool only receives the neutral capability; it never parses model
-/// strings.
+/// Activation is the same profile policy used by the provider. The tool only
+/// receives the neutral capability; it never parses model strings.
 #[cfg(feature = "native")]
 pub fn workspace_search_for(
     provider_id: Option<&str>,
     model_id: Option<&str>,
 ) -> Option<std::sync::Arc<dyn opencode_types::WorkspaceSearch>> {
-    if model_scope_enabled(provider_id, model_id) {
+    let policy = WorkspaceIntelligencePolicy::qwen_experiment();
+    workspace_search_for_with_policy(Some(&policy), provider_id, model_id)
+}
+
+/// Build the map-backed search capability from an explicit profile policy.
+#[cfg(feature = "native")]
+pub fn workspace_search_for_with_policy(
+    policy: Option<&WorkspaceIntelligencePolicy>,
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+) -> Option<std::sync::Arc<dyn opencode_types::WorkspaceSearch>> {
+    if policy.is_some_and(|policy| policy.selects_scopemux(provider_id, model_id)) {
         Some(std::sync::Arc::new(RegistryWorkspaceSearch::new(
             shared_registry(),
         )))
@@ -227,6 +389,16 @@ pub fn workspace_search_for(
 /// injected and the tool keeps grep/generic behavior.
 #[cfg(not(feature = "native"))]
 pub fn workspace_search_for(
+    _provider_id: Option<&str>,
+    _model_id: Option<&str>,
+) -> Option<std::sync::Arc<dyn opencode_types::WorkspaceSearch>> {
+    None
+}
+
+/// Non-native build: no profile can inject a map capability.
+#[cfg(not(feature = "native"))]
+pub fn workspace_search_for_with_policy(
+    _policy: Option<&WorkspaceIntelligencePolicy>,
     _provider_id: Option<&str>,
     _model_id: Option<&str>,
 ) -> Option<std::sync::Arc<dyn opencode_types::WorkspaceSearch>> {

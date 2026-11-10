@@ -1,6 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
+use opencode_types::WorkspaceIntelligenceProfile;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
@@ -111,6 +113,15 @@ pub struct Config {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<ExperimentalConfig>,
+
+    /// Workspace-intelligence (ScopeMux) capability profiles. Activation is
+    /// policy data (`FUTURE-PROOFING-015`), not a model-id branch.
+    #[serde(
+        rename = "workspaceIntelligence",
+        alias = "workspace_intelligence",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub workspace_intelligence: Option<WorkspaceIntelligenceConfig>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
@@ -741,6 +752,16 @@ pub struct ExperimentalConfig {
     pub mcp_timeout: Option<u64>,
 }
 
+/// Workspace-intelligence capability profiles (`workspaceIntelligence`).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceIntelligenceConfig {
+    /// Profiles tried in order. The first validated profile that matches the
+    /// active model wins; an empty list disables workspace intelligence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<WorkspaceIntelligenceProfile>,
+}
+
 trait DeepMerge {
     fn deep_merge(&mut self, other: Self);
 }
@@ -1314,6 +1335,10 @@ impl Config {
         merge_option_deep(&mut self.enterprise, other.enterprise);
         merge_option_deep(&mut self.compaction, other.compaction);
         merge_option_deep(&mut self.experimental, other.experimental);
+        merge_option_replace(
+            &mut self.workspace_intelligence,
+            other.workspace_intelligence,
+        );
         merge_option_map_overwrite_values(&mut self.env, other.env);
 
         append_unique_keep_order(&mut self.plugin, other.plugin);
@@ -1331,6 +1356,34 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_workspace_intelligence_profiles() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "workspaceIntelligence": {
+                    "profiles": [{
+                        "name": "deepseek-experiment",
+                        "provider": "scopemux",
+                        "models": ["deepseek/deepseek-flash"],
+                        "rungs": ["W0", "W1"],
+                        "languages": ["rust"],
+                        "tokenBudget": 320,
+                        "fallback": "generic",
+                        "experiment": true
+                    }]
+                }
+            }"#,
+        )
+        .expect("config should parse");
+
+        let settings = config
+            .workspace_intelligence
+            .expect("workspaceIntelligence section present");
+        assert_eq!(settings.profiles.len(), 1);
+        assert!(settings.profiles[0].matches_model(Some("deepseek"), Some("deepseek-flash")));
+        assert_eq!(settings.profiles[0].token_budget, 320);
+    }
 
     #[test]
     fn merges_nested_structs_without_losing_existing_fields() {

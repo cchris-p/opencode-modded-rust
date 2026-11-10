@@ -3377,10 +3377,12 @@ async fn prompt_child_subagent(
         .insert("model_id".to_string(), serde_json::json!(&model_id));
 
     configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&child.directory)).await;
+    let child_config = load_config(FsPath::new(&child.directory)).ok();
     let runner = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
         opencode_session::SessionStateManager::new(),
     )))
-    .with_lsp_registry(state.lsp_registry.clone());
+    .with_lsp_registry(state.lsp_registry.clone())
+    .with_workspace_intelligence_policy(workspace_intelligence_policy(child_config.as_ref()));
     let input = opencode_session::PromptInput {
         session_id: child_id.clone(),
         message_id: None,
@@ -3943,6 +3945,33 @@ mod session_inspect_tests {
 /// `@agent-name` mentions in a prompt: subagent names route through the task
 /// path, other registered names are rejected with a clear error, and unknown
 /// tokens stay plain text.
+/// Resolve the workspace-intelligence capability-profile policy from config.
+///
+/// No `workspaceIntelligence` section keeps the built-in Qwen experiment
+/// profile (prior behavior). An explicit empty profile list disables workspace
+/// intelligence. Invalid profiles are dropped and logged; when none remain the
+/// generic provider is used.
+fn workspace_intelligence_policy(
+    config: Option<&opencode_config::Config>,
+) -> opencode_scopemux::WorkspaceIntelligencePolicy {
+    use opencode_scopemux::WorkspaceIntelligencePolicy;
+    match config.and_then(|config| config.workspace_intelligence.as_ref()) {
+        Some(settings) if !settings.profiles.is_empty() => {
+            let policy = WorkspaceIntelligencePolicy::new(settings.profiles.clone());
+            for (name, reason) in policy.rejected() {
+                tracing::warn!(
+                    profile = %name,
+                    reason = %reason,
+                    "rejected workspace-intelligence profile"
+                );
+            }
+            policy
+        }
+        Some(_) => WorkspaceIntelligencePolicy::generic_only(),
+        None => WorkspaceIntelligencePolicy::qwen_experiment(),
+    }
+}
+
 fn agent_mention_names(directory: &str) -> (Vec<String>, Vec<String>) {
     let config = load_config(FsPath::new(directory)).ok();
     let registry = AgentRegistry::from_optional_config(config.as_ref());
@@ -4450,9 +4479,12 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
     // FEAT-048: background subagents are experimental; default off. Enabled by
     // `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` or
     // `experimental.background_subagents` in config.
-    let experimental_background_subagents = load_config(FsPath::new(&session.directory))
+    let workspace_config = load_config(FsPath::new(&session.directory)).ok();
+    let experimental_background_subagents = workspace_config
+        .as_ref()
         .map(|config| config.experimental_background_subagents())
         .unwrap_or(false);
+    let wi_policy = workspace_intelligence_policy(workspace_config.as_ref());
 
     configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&session.directory)).await;
     let prompt_runner = Arc::new(
@@ -4467,6 +4499,7 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         .with_background_subsession_callback(background_subsession_callback)
         .with_experimental_background_subagents(experimental_background_subagents)
         .with_resolve_subagent_callback(resolve_subagent_callback)
+        .with_workspace_intelligence_policy(wi_policy)
         .with_session_inspect_callback(session_inspect_callback),
     );
     ACTIVE_PROMPTS

@@ -336,6 +336,36 @@ Activation is policy, not a model-ID branch in code.
 This replaces the permanent `ollama + qwen*` rule in `invariants/providers.md` with a
 profile-driven rule (`FUTURE-PROOFING-015`).
 
+Profiles live under `workspaceIntelligence.profiles` in `opencode.jsonc`, tried in order.
+The built-in Qwen-via-Ollama experiment is the default when the section is absent; an
+explicit empty list disables workspace intelligence. Enabling ScopeMux for DeepSeek is a
+config change:
+
+```jsonc
+{
+  "workspaceIntelligence": {
+    "profiles": [
+      {
+        "name": "deepseek-experiment",
+        "provider": "scopemux",
+        "models": ["deepseek/deepseek-flash"],
+        "rungs": ["W0", "W1", "W3"],
+        "languages": ["rust", "python"],
+        "tokenBudget": 400,
+        "fallback": "generic",
+        "experiment": true
+      }
+    ]
+  }
+}
+```
+
+`provider` is `generic` or `scopemux`; `models` selectors support `*` (`deepseek/*`,
+`*/deepseek-flash`, or a bare token); `rungs` and `languages` are optional bounds; the
+first validated matching profile wins. Invalid profiles are rejected and fall back to
+generic. The active profile, budget, and rungs are recorded on the session
+(`workspace_intelligence_profile`) and in the `retrieval provider selected` log line.
+
 ## System-1 runtime governance
 
 A static profile is the bound; a System-1 decision can choose within it. The decision

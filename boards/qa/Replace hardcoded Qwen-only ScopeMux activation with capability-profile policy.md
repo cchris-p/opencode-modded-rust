@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FUTURE-PROOFING"
 spec: "wiki/workspace-intelligence.md"
-status: "todo"
+status: "qa"
 created: "2026-10-24"
 ---
 
@@ -69,6 +69,36 @@ however, it is a future-proofing anti-pattern:
 - Enabling ScopeMux for frontier models by default.
 - Building a UI for profiles.
 - Removing the Qwen experiment before evaluation.
+
+## Dev Notes
+
+- Added `WorkspaceIntelligenceProfile` / `WorkspaceIntelligencePolicy` contracts in
+  `opencode-types` and `opencode-scopemux`. A profile records provider, model
+  selectors, rungs, languages, token budget, fallback, and experiment flag.
+- `workspaceIntelligence.profiles` is now parsed from `opencode.jsonc` and mapped to a
+  policy in the server for both the main prompt runner and the persisted child-session
+  runner. The first validated matching profile wins; invalid profiles are logged and
+  dropped; no match falls back to generic.
+- `SessionPrompt` accepts the policy via `with_workspace_intelligence_policy`, passes it
+  through retrieval, uses the profile token budget for the injected reminder, and
+  records the active profile in session metadata (`workspace_intelligence_profile`) and
+  the `retrieval provider selected` log line. The language bound is enforced before
+  parsing.
+- The built-in `ollama` + `qwen*` path is now the named `qwen-ollama-experiment`
+  profile. `model_scope_enabled` remains only as that profile's predicate.
+- Repo `opencode.jsonc` opts this checkout into a `deepseek-experiment` profile for
+  `deepseek/deepseek-flash`; this is config, not a core model-id branch.
+- Verification: `cargo check` for `opencode-types`, `opencode-config`,
+  `opencode-scopemux`, `opencode-session`, `opencode-server`; focused tests for
+  profile parsing, selection, rejection/fallback, budget, and language gating;
+  `cargo fmt --all -- --check`; clippy on touched crates showed no new warnings in the
+  changed code.
+- Not yet run: native `scopemux-core` QA (`scripts/scopemux-qa-check.sh`) because this
+  checkout has no `third_party/scopemux-core` or `SCOPEMUX_CORE_DIR`. The provider still
+  falls back to generic until a native build is present.
+- Follow-ups: record the profile in the decision log (not only session metadata), carry
+  the policy into in-memory `SubtaskExecutor` subsessions, and measure DeepSeek with and
+  without ScopeMux (`Measure ScopeMux against generic retrieval`).
 
 ## Related
 
