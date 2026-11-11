@@ -103,10 +103,18 @@ while still being able to check or change the model deliberately from the model/
 
 ## QA Verification
 
-- PR: https://github.com/cchris-p/opencode-modded-rust/pull/176 (open against `development`,
-  awaiting manual QA).
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/176 (merged into `development`
+  at `fb467f0`; awaiting manual QA).
 - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-tui`: clean, no warnings.
 - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tui`: 189 passed, 0 failed; the new
   `assistant_footer_hides_model_name` test passes.
 - `cargo fmt --all`: no further changes.
+
+## Merge Closeout
+
+- Merged PR #176 into `development` (`fb467f0`); remote and local branch
+  `feat/FEAT-071-hide-model-text` deleted.
+- Renumbered this card from `FEAT-071` to `FEAT-073` before merge to resolve the ID collision with
+  the Qwen/Hermes card already on `development`.
+- Remains in `qa` until a QA report is recorded or completion is explicitly directed.
 
