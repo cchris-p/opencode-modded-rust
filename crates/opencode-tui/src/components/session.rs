@@ -18,7 +18,7 @@ use super::message_palette;
 use super::sidebar::SidebarState;
 use crate::components::{Prompt, Sidebar};
 use crate::context::{AppContext, Message, MessagePart, MessageRole, SidebarMode};
-use crate::ui::workspace_location_label;
+use crate::ui::{workspace_location_label, CopyRow};
 
 const SIDEBAR_WIDTH: u16 = 42;
 const HEADER_NARROW_THRESHOLD: u16 = 80;
@@ -57,6 +57,7 @@ struct CachedMessageLayout {
 #[derive(Default)]
 struct RenderedBody {
     lines: Vec<Line<'static>>,
+    copy_rows: Vec<CopyRow>,
     thinking_hits: Vec<ThinkingToggleHit>,
     tool_hits: Vec<ToolToggleHit>,
 }
@@ -66,7 +67,6 @@ struct MessageRenderCtx<'a> {
     messages: &'a [Message],
     last_assistant_idx: Option<usize>,
     pending_assistant_idx: Option<usize>,
-    fallback_model: Option<&'a str>,
     theme: &'a crate::theme::Theme,
     user_bg: Color,
     assistant_bg: Color,
@@ -97,7 +97,11 @@ pub struct SessionView {
     expanded_tool_calls: HashSet<String>,
     tool_toggle_hits: Vec<ToolToggleHit>,
     last_messages_area: Option<Rect>,
+    /// When true, the transcript does not snap back to the newest line while a
+    /// selection drag is active (FEAT-072 auto-scroll).
+    follow_suspended: bool,
     line_to_message: Vec<Option<String>>,
+    copy_rows: HashMap<usize, CopyRow>,
     layout_cache: HashMap<String, CachedMessageLayout>,
     revert_layout: Option<(u64, usize)>,
     sidebar_state: SidebarState,
@@ -119,7 +123,9 @@ impl SessionView {
             expanded_tool_calls: HashSet::new(),
             tool_toggle_hits: Vec::new(),
             last_messages_area: None,
+            follow_suspended: false,
             line_to_message: Vec::new(),
+            copy_rows: HashMap::new(),
             layout_cache: HashMap::new(),
             revert_layout: None,
             sidebar_state: SidebarState::default(),
@@ -672,7 +678,7 @@ impl SessionView {
             return;
         }
 
-        let was_near_bottom = self.is_near_bottom(2);
+        let was_near_bottom = !self.follow_suspended && self.is_near_bottom(2);
         let theme = self.context.theme.read();
         let user_bg = message_palette::user_message_bg(&theme);
         let assistant_bg = message_palette::assistant_message_bg(&theme);
@@ -705,7 +711,6 @@ impl SessionView {
         let show_tool_calls = *self.context.show_tool_calls.read();
         let show_tool_details = *self.context.show_tool_details.read();
         let semantic_hl = *self.context.semantic_highlight.read();
-        let fallback_model = self.context.current_model.read().clone();
         let include_background_subagents = self.context.experimental_background_subagents();
         let keybind = self.context.keybind.read();
 
@@ -742,7 +747,6 @@ impl SessionView {
         show_tool_details.hash(&mut globals_hasher);
         semantic_hl.hash(&mut globals_hasher);
         include_background_subagents.hash(&mut globals_hasher);
-        fallback_model.hash(&mut globals_hasher);
         last_assistant_idx.hash(&mut globals_hasher);
         pending_assistant_idx.hash(&mut globals_hasher);
         revert_info.is_some().hash(&mut globals_hasher);
@@ -757,7 +761,6 @@ impl SessionView {
             messages,
             last_assistant_idx,
             pending_assistant_idx,
-            fallback_model: fallback_model.as_deref(),
             theme: &theme,
             user_bg,
             assistant_bg,
@@ -858,6 +861,7 @@ impl SessionView {
             .saturating_add(overscan);
 
         let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut copy_rows: Vec<CopyRow> = Vec::new();
         let mut line_to_message: Vec<Option<String>> = Vec::new();
         let mut thinking_hits: Vec<ThinkingToggleHit> = Vec::new();
         let mut tool_hits: Vec<ToolToggleHit> = Vec::new();
@@ -875,6 +879,7 @@ impl SessionView {
                 let painted =
                     paint_block_lines(card, theme.background_panel, theme.warning, content_width);
                 append_non_message_lines(&mut lines, &mut line_to_message, painted);
+                copy_rows.resize(lines.len(), CopyRow::Normal);
             }
             cursor += revert_height;
             if !messages.is_empty() {
@@ -884,6 +889,7 @@ impl SessionView {
                         started = true;
                     }
                     push_spacing_lines(&mut lines, &mut line_to_message, 1);
+                    copy_rows.resize(lines.len(), CopyRow::Normal);
                 }
                 cursor += 1;
             }
@@ -898,6 +904,7 @@ impl SessionView {
                         started = true;
                     }
                     push_spacing_lines(&mut lines, &mut line_to_message, spacing);
+                    copy_rows.resize(lines.len(), CopyRow::Normal);
                 }
                 cursor += spacing;
             }
@@ -907,7 +914,7 @@ impl SessionView {
                     window_start_line = cursor;
                     started = true;
                 }
-                let body = render_message_body(&ctx, msg, idx);
+                let mut body = render_message_body(&ctx, msg, idx);
                 let base = window_start_line + lines.len();
                 for hit in &body.thinking_hits {
                     thinking_hits.push(ThinkingToggleHit {
@@ -922,7 +929,19 @@ impl SessionView {
                         tool_id: hit.tool_id.clone(),
                     });
                 }
-                append_message_lines(&mut lines, &mut line_to_message, &msg.id, body.lines);
+                let body_start = lines.len();
+                let body_len = body.lines.len();
+                let body_copy_rows = std::mem::take(&mut body.copy_rows);
+                append_message_lines(
+                    &mut lines,
+                    &mut line_to_message,
+                    &msg.id,
+                    std::mem::take(&mut body.lines),
+                );
+                copy_rows.resize(lines.len(), CopyRow::Normal);
+                if body_copy_rows.len() == body_len {
+                    copy_rows[body_start..body_start + body_len].clone_from_slice(&body_copy_rows);
+                }
             }
             cursor = body_end;
         }
@@ -930,6 +949,13 @@ impl SessionView {
         self.line_to_message = line_to_message;
         self.thinking_toggle_hits = thinking_hits;
         self.tool_toggle_hits = tool_hits;
+        self.copy_rows.clear();
+        if !started {
+            window_start_line = self.scroll_offset;
+        }
+        for (idx, row) in copy_rows.into_iter().enumerate() {
+            self.copy_rows.insert(window_start_line + idx, row);
+        }
 
         let window_scroll = self
             .scroll_offset
@@ -1020,6 +1046,57 @@ impl SessionView {
 
     pub fn is_point_in_sidebar(&self, col: u16, row: u16) -> bool {
         self.sidebar_state.contains_sidebar_point(col, row)
+    }
+
+    /// Screen rect of the transcript message pane from the last paint.
+    pub fn messages_area(&self) -> Option<Rect> {
+        self.last_messages_area
+    }
+
+    /// Current transcript scroll offset (top visible content line).
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    /// Copy plan for an absolute transcript content line, if it was painted.
+    pub fn copy_row(&self, content_line: usize) -> Option<&CopyRow> {
+        self.copy_rows.get(&content_line)
+    }
+
+    /// True when a screen row is a code-fence frame row. Such rows stay visible
+    /// but are deliberately excluded from the selection highlight so the user
+    /// can see they will not be copied.
+    pub fn is_code_chrome_screen_row(&self, screen_row: u16) -> bool {
+        let Some(area) = self.last_messages_area else {
+            return false;
+        };
+        if screen_row < area.y || screen_row >= area.y.saturating_add(area.height) {
+            return false;
+        }
+        let content_line = self.scroll_offset + usize::from(screen_row - area.y);
+        self.copy_row(content_line).is_some_and(CopyRow::is_chrome)
+    }
+
+    /// Current scroll offset and maximum scroll offset, read-only.
+    pub fn scroll_limits(&self) -> (usize, usize) {
+        (self.scroll_offset, self.max_scroll_offset())
+    }
+
+    /// Suspend or resume snapping to the newest transcript line. Used while a
+    /// selection drag is active so edge auto-scroll is not undone.
+    pub fn set_follow_suspended(&mut self, suspended: bool) {
+        self.follow_suspended = suspended;
+    }
+
+    /// True when a screen point is inside the transcript message pane.
+    pub fn is_point_in_messages(&self, col: u16, row: u16) -> bool {
+        let Some(area) = self.last_messages_area else {
+            return false;
+        };
+        col >= area.x
+            && col < area.x.saturating_add(area.width)
+            && row >= area.y
+            && row < area.y.saturating_add(area.height)
     }
 
     pub fn scroll_sidebar_up_at(&mut self, col: u16, row: u16) -> bool {
@@ -1307,6 +1384,7 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
 
     let mut out = RenderedBody::default();
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut code_blocks: Vec<Vec<String>> = Vec::new();
     let mut line_to_message: Vec<Option<String>> = Vec::new();
     let mut visible_tool_ids: HashSet<String> = HashSet::new();
 
@@ -1317,13 +1395,15 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
             let is_queued = ctx
                 .pending_assistant_idx
                 .is_some_and(|pending| idx > pending);
-            let user_lines = super::session_message::render_user_message(
-                msg,
-                ctx.theme,
-                ctx.show_timestamps,
-                msg.agent.as_deref(),
-                is_queued,
-            );
+            let (user_lines, user_code_blocks) =
+                super::session_message::render_user_message_with_code(
+                    msg,
+                    ctx.theme,
+                    ctx.show_timestamps,
+                    msg.agent.as_deref(),
+                    is_queued,
+                );
+            code_blocks.extend(user_code_blocks);
             append_message_lines(
                 &mut lines,
                 &mut line_to_message,
@@ -1367,11 +1447,13 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
             };
 
             if msg.parts.is_empty() {
-                let mut text_lines = super::session_text::render_text_part(
+                let rendered = super::session_text::render_text_part_with_code(
                     &msg.content,
                     ctx.theme,
                     assistant_marker,
                 );
+                code_blocks.extend(rendered.code_blocks);
+                let mut text_lines = rendered.lines;
                 if ctx.semantic_hl {
                     text_lines = super::semantic_highlight::highlight_lines(text_lines, ctx.theme);
                 }
@@ -1397,11 +1479,13 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                                     vec![Line::from("")],
                                 );
                             }
-                            let mut text_lines = super::session_text::render_text_part(
+                            let rendered = super::session_text::render_text_part_with_code(
                                 text,
                                 ctx.theme,
                                 assistant_marker,
                             );
+                            code_blocks.extend(rendered.code_blocks);
+                            let mut text_lines = rendered.lines;
                             if ctx.semantic_hl {
                                 text_lines = super::semantic_highlight::highlight_lines(
                                     text_lines, ctx.theme,
@@ -1665,14 +1749,9 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                 }
             }
 
-            if let Some(footer) = assistant_footer(
-                ctx.messages,
-                idx,
-                ctx.last_assistant_idx,
-                msg,
-                ctx.fallback_model,
-                ctx.theme,
-            ) {
+            if let Some(footer) =
+                assistant_footer(ctx.messages, idx, ctx.last_assistant_idx, msg, ctx.theme)
+            {
                 append_message_lines(
                     &mut lines,
                     &mut line_to_message,
@@ -1719,8 +1798,103 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
         }
     }
 
+    out.copy_rows = copy_rows_for_message(&lines, &code_blocks);
     out.lines = lines;
     out
+}
+
+/// Classify rendered message rows for selection copy.
+///
+/// Fenced code blocks are rendered as `╭ <lang> ─…`, `│ <code>`, `╰─…` rows and
+/// soft-wrapped at the pane width. This walks those rows and pairs each body
+/// row with the raw source line from the same markdown text, so a copied
+/// selection can emit source text instead of screen text.
+fn copy_rows_for_message(lines: &[Line<'static>], code_blocks: &[Vec<String>]) -> Vec<CopyRow> {
+    let mut copy_rows = vec![CopyRow::Normal; lines.len()];
+    if code_blocks.is_empty() {
+        return copy_rows;
+    }
+
+    let mut block_index = 0usize;
+    let mut region: Option<CodeRegion> = None;
+    let mut blank_after_region: Option<usize> = None;
+
+    for (idx, line) in lines.iter().enumerate() {
+        let text = line_plain_text(line);
+        let trimmed = text.trim_start();
+
+        if region.is_some() {
+            if is_code_frame_footer(trimmed) {
+                copy_rows[idx] = CopyRow::CodeChrome;
+                region = None;
+                blank_after_region = Some(idx + 1);
+                continue;
+            }
+
+            let active = region.as_mut().expect("region checked above");
+            if is_code_body_start(trimmed) {
+                if let Some(block) = active.block.as_ref() {
+                    let raw = block.get(active.next).cloned().unwrap_or_default();
+                    copy_rows[idx] = CopyRow::CodeStart(raw);
+                }
+                active.next += 1;
+            } else {
+                copy_rows[idx] = CopyRow::CodeContinuation;
+            }
+            continue;
+        }
+
+        if trimmed.starts_with('╭') && trimmed.contains('─') {
+            // The renderer pads each block with a blank row above and below.
+            // Treat the pad row as chrome too so a full-block drag does not
+            // copy leading/trailing blank lines.
+            if idx > 0 && line_is_blank_text(&lines[idx - 1]) {
+                copy_rows[idx - 1] = CopyRow::CodeChrome;
+            }
+            copy_rows[idx] = CopyRow::CodeChrome;
+            let block = code_blocks.get(block_index).cloned();
+            block_index += 1;
+            region = Some(CodeRegion { block, next: 0 });
+            continue;
+        }
+
+        if let Some(pad) = blank_after_region.take() {
+            if idx == pad && line_is_blank_text(line) {
+                copy_rows[idx] = CopyRow::CodeChrome;
+            }
+        }
+    }
+
+    copy_rows
+}
+
+struct CodeRegion {
+    block: Option<Vec<String>>,
+    next: usize,
+}
+
+/// Renderer body rows always start with the `│ ` gutter (or just `│` for a
+/// blank source line). A wrapped continuation can also begin with `│` if the
+/// source text happens to, so require the gutter space where it exists.
+fn is_code_body_start(trimmed: &str) -> bool {
+    trimmed == "│" || trimmed.starts_with("│ ")
+}
+
+/// The block footer is `╰` followed only by `─` characters.
+fn is_code_frame_footer(trimmed: &str) -> bool {
+    let mut chars = trimmed.chars();
+    matches!(chars.next(), Some('╰')) && chars.all(|ch| ch == '─')
+}
+
+fn line_plain_text(line: &Line<'static>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
+fn line_is_blank_text(line: &Line<'static>) -> bool {
+    line_plain_text(line).trim().is_empty()
 }
 
 fn push_spacing_lines(
@@ -2157,7 +2331,6 @@ fn assistant_footer(
     idx: usize,
     last_assistant_idx: Option<usize>,
     message: &Message,
-    fallback_model: Option<&str>,
     theme: &crate::theme::Theme,
 ) -> Option<Line<'static>> {
     if !matches!(message.role, MessageRole::Assistant) {
@@ -2184,19 +2357,6 @@ fn assistant_footer(
         ),
         Span::styled(titlecase(mode), Style::default().fg(theme.text)),
     ];
-
-    if let Some(model) = message
-        .model
-        .as_deref()
-        .or(fallback_model)
-        .filter(|value| !value.trim().is_empty())
-    {
-        spans.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
-        spans.push(Span::styled(
-            model.to_string(),
-            Style::default().fg(theme.text_muted),
-        ));
-    }
 
     if let Some(duration) = assistant_duration(messages, idx, message, is_final) {
         spans.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
@@ -2372,6 +2532,31 @@ mod tests {
         assert_eq!(subagent_label("Do a thing (@general subagent)"), "General");
         assert_eq!(subagent_label("A normal session"), "Subagent");
         assert_eq!(subagent_label(""), "Subagent");
+    }
+
+    #[test]
+    fn assistant_footer_hides_model_name() {
+        let theme = crate::theme::Theme::dark();
+        let mut msg = message("m1", MessageRole::Assistant, "answer", true);
+        msg.mode = Some("build".to_string());
+        msg.model = Some("deepseek/deepseek-flash".to_string());
+        let messages = vec![msg.clone()];
+
+        let line = assistant_footer(&messages, 0, Some(0), &msg, &theme).expect("footer");
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(
+            text.contains("Build"),
+            "footer should keep the mode label: {text}"
+        );
+        assert!(
+            !text.contains("deepseek/deepseek-flash"),
+            "footer must not render the model name: {text}"
+        );
     }
 
     #[test]
@@ -3090,6 +3275,133 @@ mod tests {
             row_containing(&terminal, "[click to collapse]").len(),
             1,
             "block must expand again after clicking the header"
+        );
+    }
+
+    fn rendered_code_rows(text: &str, width: usize) -> Vec<CopyRow> {
+        let theme = crate::theme::Theme::dark();
+        let rendered = crate::components::session_text::render_text_part_with_code(
+            text,
+            &theme,
+            theme.primary,
+        );
+        let lines = paint_block_lines(rendered.lines, theme.background_panel, theme.primary, width);
+        copy_rows_for_message(&lines, &rendered.code_blocks)
+    }
+
+    fn code_starts(rows: &[CopyRow]) -> Vec<&str> {
+        rows.iter()
+            .filter_map(|row| match row {
+                CopyRow::CodeStart(raw) => Some(raw.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fenced_code_copy_rows_use_raw_source_with_indentation() {
+        let text = "```bash\nsudo sh -c \"zgrep -h 'pharos/add_funds'\" \\\n  | grep '\"request\": \"POST'\n```";
+        let rows = rendered_code_rows(text, 200);
+
+        assert_eq!(
+            code_starts(&rows),
+            vec![
+                "sudo sh -c \"zgrep -h 'pharos/add_funds'\" \\",
+                "  | grep '\"request\": \"POST'",
+            ],
+            "code rows must copy source lines, including authored indentation"
+        );
+        assert!(
+            rows.iter().any(CopyRow::is_chrome),
+            "frame rows must be classified as chrome"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|row| matches!(row, CopyRow::CodeStart(raw) if raw.contains('│'))),
+            "the gutter must never leak into copied source"
+        );
+    }
+
+    #[test]
+    fn wrapped_code_copy_row_yields_one_full_source_line() {
+        let text = "```bash\nsudo sh -c 'zgrep -h pharos/add_funds /var/log/nginx/api_external-access.log*'\n```";
+        let rows = rendered_code_rows(text, 40);
+
+        assert_eq!(
+            code_starts(&rows),
+            vec!["sudo sh -c 'zgrep -h pharos/add_funds /var/log/nginx/api_external-access.log*'"],
+            "a soft-wrapped source line must stay one copied line"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| matches!(row, CopyRow::CodeContinuation)),
+            "wrapped rows must be classified as continuations"
+        );
+    }
+
+    #[test]
+    fn prose_rows_are_not_reclassified_as_code() {
+        let text = "A short prose answer with `inline code`.";
+        let rows = rendered_code_rows(text, 120);
+        assert!(
+            rows.iter().all(|row| matches!(row, CopyRow::Normal)),
+            "prose must keep normal selection-copy behavior"
+        );
+    }
+
+    #[test]
+    fn painted_session_exposes_code_copy_rows_and_chrome() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "test-session".to_string();
+        let text = "```bash\nsudo sh -c \"x\" \\\n  | grep y\n```";
+        context.session.write().set_messages(
+            &session_id,
+            vec![
+                message("m1", MessageRole::User, "run this", true),
+                message("m2", MessageRole::Assistant, text, true),
+            ],
+        );
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id.clone());
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).expect("terminal");
+
+        for _ in 0..2 {
+            terminal
+                .draw(|frame| {
+                    session.render(frame, frame.size(), &prompt);
+                })
+                .expect("draw");
+        }
+
+        let header_rows = row_containing(&terminal, "╭ bash");
+        assert_eq!(header_rows.len(), 1, "code frame header must render");
+        assert!(
+            session.is_code_chrome_screen_row(header_rows[0] as u16),
+            "frame header must be marked as non-copyable chrome"
+        );
+
+        let code_line = session
+            .copy_rows
+            .iter()
+            .find_map(|(line, row)| match row {
+                CopyRow::CodeStart(raw) if raw == "  | grep y" => Some(*line),
+                _ => None,
+            })
+            .expect("source line copy row");
+        let area = session.messages_area().expect("messages area");
+        let row = area.y + (code_line - session.scroll_offset) as u16;
+        assert!(
+            !session.is_code_chrome_screen_row(row),
+            "code body rows must stay highlightable"
+        );
+        assert!(
+            matches!(session.copy_row(code_line), Some(CopyRow::CodeStart(raw)) if raw == "  | grep y"),
+            "window mapping must keep the raw source line"
         );
     }
 }

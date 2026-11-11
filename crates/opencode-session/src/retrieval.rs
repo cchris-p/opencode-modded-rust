@@ -13,9 +13,10 @@
 use std::sync::Arc;
 
 use opencode_retrieval::{ExactFactProvider, GenericRepositoryProvider, RetrievalProvider};
+use opencode_scopemux::WorkspaceIntelligencePolicy;
 use opencode_types::{
     stage_retrieval, MapFreshness, RetrievalConfidence, RetrievalFallbackReason,
-    RetrievalRepresentation, RetrievalRequest, RetrievalResponse, TaskStage,
+    RetrievalRepresentation, RetrievalRequest, RetrievalResponse, SourceLanguage, TaskStage,
 };
 
 use crate::prompt::ModelRef;
@@ -32,11 +33,23 @@ pub const RETRIEVAL_TOKEN_BUDGET: usize = 400;
 /// The role and representation are derived from the task stage; a session with
 /// no task uses the `Selected` stage mapping.
 pub fn build_request(session: &Session, seed_files: Vec<String>) -> RetrievalRequest {
+    build_request_with_budget(session, seed_files, RETRIEVAL_TOKEN_BUDGET)
+}
+
+/// Build the retrieval request with an explicit map token budget.
+///
+/// The budget comes from the active capability profile (or the default) but is
+/// still enforced by the runtime; providers never decide the budget.
+pub fn build_request_with_budget(
+    session: &Session,
+    seed_files: Vec<String>,
+    token_budget: usize,
+) -> RetrievalRequest {
     match &session.task {
         Some(task) => {
             let mut request = RetrievalRequest::from_task(task);
             request.seed_files = seed_files;
-            request.token_budget = Some(RETRIEVAL_TOKEN_BUDGET);
+            request.token_budget = Some(token_budget);
             request
         }
         None => {
@@ -50,7 +63,7 @@ pub fn build_request(session: &Session, seed_files: Vec<String>) -> RetrievalReq
                 changed_files: Vec::new(),
                 role: stage.role,
                 representation: stage.representation,
-                token_budget: Some(RETRIEVAL_TOKEN_BUDGET),
+                token_budget: Some(token_budget),
                 task_id: None,
                 reopen_reason: None,
                 plan_nodes: Vec::new(),
@@ -198,26 +211,64 @@ fn map_response_needs_generic_fallback(response: &RetrievalResponse) -> bool {
         )
 }
 
-/// Ask the provider selected for the active model for candidates.
+/// True when a matched profile cannot parse any referenced file.
 ///
-/// The scopemux provider is scoped to the local Qwen-via-Ollama model; every
-/// other model uses the generic repository-local provider. Returns `None` on
-/// provider failure so assembly continues with generic behavior; the provider
-/// is optional by design.
+/// A per-file fallback, not a workspace-wide failure: the generic provider
+/// still answers and the unsupported language is recorded as provenance.
+fn profile_rejects_request(
+    profile: &opencode_types::WorkspaceIntelligenceProfile,
+    request: &RetrievalRequest,
+) -> bool {
+    if profile.languages.is_empty() {
+        return false;
+    }
+    !request
+        .seed_files
+        .iter()
+        .chain(request.changed_files.iter())
+        .filter_map(|path| SourceLanguage::from_path(path))
+        .any(|language| profile.allows_language(language))
+}
+
+/// Ask the provider selected by the capability-profile policy for candidates.
+///
+/// No matching profile keeps the generic repository-local provider. The
+/// profile's token budget and language bound are enforced here; the provider
+/// only answers with evidence. Returns `None` on provider failure so assembly
+/// continues with generic behavior; the provider is optional by design.
 pub async fn retrieve(
     session: &Session,
     seed_files: Vec<String>,
     model: Option<&ModelRef>,
+    policy: &WorkspaceIntelligencePolicy,
     exact_facts: Option<Arc<dyn ExactFactProvider>>,
 ) -> Option<RetrievalResponse> {
-    let request = build_request(session, seed_files);
+    let provider_id = model.map(|m| m.provider_id.as_str());
+    let model_id = model.map(|m| m.model_id.as_str());
+    let active_profile = policy.resolve(provider_id, model_id);
+    let token_budget = active_profile
+        .map(|profile| profile.token_budget)
+        .unwrap_or(RETRIEVAL_TOKEN_BUDGET);
+    let request = build_request_with_budget(session, seed_files, token_budget);
 
-    // Select by the active model: scopemux only for local qwen, generic
-    // otherwise. Fall back to the generic provider when scopemux is unavailable.
+    // A profile that only allows other languages falls back before parsing.
+    if active_profile.is_some_and(|profile| profile_rejects_request(profile, &request)) {
+        let mut generic = GenericRepositoryProvider::new()
+            .retrieve(&request)
+            .await
+            .ok()?;
+        generic.fallback_reason = Some(RetrievalFallbackReason::UnsupportedLanguage);
+        generic
+            .provider_notes
+            .push("workspace-intelligence profile excludes the referenced languages".to_string());
+        return Some(apply_inclusion_threshold(generic));
+    }
+
     // Exact facts are optional enrichment; the provider works without them.
-    let provider = opencode_scopemux::provider_for_with_facts(
-        model.map(|m| m.provider_id.as_str()),
-        model.map(|m| m.model_id.as_str()),
+    let provider = opencode_scopemux::provider_for_with_policy(
+        Some(policy),
+        provider_id,
+        model_id,
         exact_facts,
     );
     let response = match provider.retrieve(&request).await {
@@ -388,13 +439,39 @@ mod tests {
         std::fs::write(dir.path().join("a.rs"), "fn main() {}").unwrap();
         let session = session_with_task(&dir.path().to_string_lossy());
 
-        let response = retrieve(&session, vec!["a.rs".to_string()], None, None)
-            .await
-            .expect("generic provider should succeed");
+        let response = retrieve(
+            &session,
+            vec!["a.rs".to_string()],
+            None,
+            &WorkspaceIntelligencePolicy::generic_only(),
+            None,
+        )
+        .await
+        .expect("generic provider should succeed");
 
         assert_eq!(response.provider, "generic");
         assert_eq!(response.candidates.len(), 1);
         assert!(response.candidates[0].path.ends_with("a.rs"));
+    }
+
+    #[test]
+    fn profile_budget_overrides_the_default_request_budget() {
+        let session = session_with_task("/tmp/ws");
+        let request = build_request_with_budget(&session, vec!["a.rs".to_string()], 123);
+        assert_eq!(request.token_budget, Some(123));
+    }
+
+    #[test]
+    fn profile_language_bound_excludes_other_languages() {
+        let session = session_with_task("/tmp/ws");
+        let mut profile = opencode_scopemux::qwen_experiment_profile();
+        profile.languages = vec![SourceLanguage::Rust];
+
+        let rust = build_request(&session, vec!["lib.rs".to_string()]);
+        assert!(!profile_rejects_request(&profile, &rust));
+
+        let python = build_request(&session, vec!["script.py".to_string()]);
+        assert!(profile_rejects_request(&profile, &python));
     }
 
     #[test]
@@ -570,9 +647,15 @@ mod tests {
             model_id: "deepseek-flash".to_string(),
         };
 
-        let response = retrieve(&session, vec!["a.rs".to_string()], Some(&model), None)
-            .await
-            .expect("generic provider should succeed");
+        let response = retrieve(
+            &session,
+            vec!["a.rs".to_string()],
+            Some(&model),
+            &WorkspaceIntelligencePolicy::qwen_experiment(),
+            None,
+        )
+        .await
+        .expect("generic provider should succeed");
 
         assert_eq!(response.provider, "generic");
     }

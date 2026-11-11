@@ -17,6 +17,14 @@ pub struct MarkdownRenderer {
     concealed: bool,
 }
 
+/// Rendered markdown plus the raw source lines of every fenced/indented code
+/// block, in document order. The lines are collected during the same parse
+/// pass used for rendering so selection copy never has to re-parse.
+pub struct RenderedMarkdown {
+    pub lines: Vec<Line<'static>>,
+    pub code_blocks: Vec<Vec<String>>,
+}
+
 #[derive(Clone, Copy)]
 struct ListState {
     ordered: bool,
@@ -143,6 +151,11 @@ impl MarkdownRenderer {
     }
 
     pub fn to_lines(&self, text: &str) -> Vec<Line<'static>> {
+        self.render_markdown(text).lines
+    }
+
+    /// Render markdown and return the raw source lines of every code block.
+    pub fn render_markdown(&self, text: &str) -> RenderedMarkdown {
         let mut options = Options::empty();
         options.insert(Options::ENABLE_STRIKETHROUGH);
         options.insert(Options::ENABLE_TABLES);
@@ -152,6 +165,7 @@ impl MarkdownRenderer {
         let parser = Parser::new_ext(text, options);
 
         let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut code_blocks: Vec<Vec<String>> = Vec::new();
         let mut current: Vec<Span<'static>> = Vec::new();
         let mut styles = vec![Style::default().fg(self.theme.text)];
         let mut list_stack: Vec<ListState> = Vec::new();
@@ -169,6 +183,7 @@ impl MarkdownRenderer {
                     Event::SoftBreak | Event::HardBreak => code.push('\n'),
                     Event::End(TagEnd::CodeBlock) => {
                         if let Some((language, content)) = code_block.take() {
+                            code_blocks.push(code_source_lines(&content));
                             self.render_code_block(language, &content, &mut lines);
                         }
                         push_blank_line(&mut lines);
@@ -453,7 +468,7 @@ impl MarkdownRenderer {
         while lines.last().is_some_and(line_is_blank) {
             lines.pop();
         }
-        lines
+        RenderedMarkdown { lines, code_blocks }
     }
 
     fn render_code_block(
@@ -486,7 +501,7 @@ impl MarkdownRenderer {
             ),
             Span::styled(
                 format!(" {} ", language.as_deref().unwrap_or("code")),
-                Style::default().fg(self.theme.markdown_code_block),
+                Style::default().fg(self.theme.text_muted),
             ),
             Span::styled(
                 "─".repeat(20),
@@ -508,6 +523,12 @@ impl MarkdownRenderer {
             Style::default().fg(self.theme.markdown_horizontal_rule),
         )));
     }
+}
+
+/// Raw source lines of a code block, matching the renderer's `code.lines()`
+/// body rows one-for-one.
+fn code_source_lines(code: &str) -> Vec<String> {
+    code.lines().map(|line| line.to_string()).collect()
 }
 
 fn table_border_line(

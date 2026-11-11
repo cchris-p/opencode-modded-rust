@@ -21,15 +21,26 @@ Implemented in `~/standards` (commit `d34ed93`):
 - `INFRA-012` `utilities/standards-deploy-ort` (canary, verify, rollback, inactive report,
   serialized) - card in `doing`.
 
+## Released And Deployed (2026-11-08)
+
+- The approval requirement was removed from the main ruleset (`required_approving_review_count:
+  0`); `main` still requires a PR + required checks + conversation resolution.
+- Release PR #175 merged (`eeb608f`); `v0.1.0` published
+  (https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.0) with Linux and
+  macOS CLI assets, native bundles, checksums, and `release-manifest.json`.
+- macOS asset was built on `j8rsxy` because the GitHub macOS runner is unavailable; the
+  automated `publish` job was skipped (see INFRA-011).
+- Fleet deploy via `standards-deploy-ort --rev eeb608f...`: 8 active machines verified at
+  `0.1.0` (canary `jasper` first), `webappssub2` skipped (`disabled`).
+- Report: `~/.local/share/ort/deploy-reports/standards-deploy-ort-20261108T121056Z.tsv`.
+
 ## Remaining
 
-1. Release PR `development -> main` for `v0.1.0`. The ruleset requires 1 approving review and
-   GitHub forbids self-approval: approve from `cchrispivy` (or record a reviewed exception).
-2. After the release publishes, run on `matrillobase1`:
-   `~/standards/utilities/standards-deploy-ort --rev v0.1.0` (dry-run first).
-3. Confirm every active machine passes `ort-verify`; `webappssub2` is `disabled` and is
-   reported/skipped.
-4. Wire a release-triggered control-plane job on `matrillobase1` (systemd unit/timer or a
+1. `moldavite` (offline ~18d) and `xp-farmer` (offline ~1h) could not be deployed; bring them
+   online and re-run the deploy, or mark them `pending`/`disabled`.
+2. Enable macOS Actions minutes or install a self-hosted macOS runner on `j8rsxy`, so future
+   releases do not require the manual macOS build.
+3. Wire a release-triggered control-plane job on `matrillobase1` (systemd unit/timer or a
    self-hosted runner). Hosted runners must never receive fleet credentials.
 
 ## Known Issues

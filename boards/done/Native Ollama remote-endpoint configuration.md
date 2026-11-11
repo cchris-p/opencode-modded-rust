@@ -101,15 +101,29 @@ to the default for a bare `ort`/run. That is removed:
   architecture-layer tests (`opencode-oco` uncategorized, pre-existing) and
   two `opencode-tui` prompt env-lock tests that pass when run serially.
 
+## QA
+
+- Owner QA pass recorded 2026-11-08 on the `v0.1.0` fleet build (`eeb608f`,
+  contains `c59ad7e`): bare `ort` keeps `deepseek/deepseek-flash`; explicit
+  `--model ollama/<tag>` still uses the configured host.
+- Automated evidence: regression test
+  `tests::ollama_config_model_is_not_a_bare_run_default` plus the
+  `opencode-cli`/`opencode-provider`/`opencode-server` suites listed above.
+
 ## Closeout
 
 - Delivered directly on `development` at `c59ad7e` (no PR branch; direct-commit
   closeout path). Branch cleanup is not applicable.
 - Owner explicitly directed completion on 2026-11-08 after reviewing the test
   and artifact evidence; promoted from `qa` to `done`.
-- Release promotion is handled separately in the `development` -> `main`
-  deploy PR, which includes this feature along with the rest of the pending
-  development range.
+- Released in `v0.1.0` (`eeb608fec7bc8cf3fdc1063736d01ed4054970ac`), which
+  contains `c59ad7e`. Fleet deploy verified every online active machine at
+  `eeb608f` (jasper, webapps, webappssub1, matrillobase1, matrillo,
+  matrillosub1, matrillosub2, j8rsxy); `webappssub2` is disabled and skipped.
+- Not deployed: `moldavite` (offline 18d) and `xp-farmer` (offline), owner
+  decision pending (bring online or mark pending/disabled).
+- Deploy report:
+  `~/.local/share/ort/deploy-reports/standards-deploy-ort-20261108T123502Z-feat070.tsv`.
 
 ## Related Items
 

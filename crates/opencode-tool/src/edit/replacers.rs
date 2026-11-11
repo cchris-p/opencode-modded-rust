@@ -93,7 +93,7 @@ impl Replacer for LineTrimmedReplacer {
         }
 
         let search_len = search_lines.len();
-        if search_len == 0 {
+        if search_len == 0 || search_len > original_lines.len() {
             return Box::new(results.into_iter());
         }
 
@@ -304,8 +304,8 @@ impl Replacer for WhitespaceNormalizedReplacer {
         }
 
         let find_lines: Vec<&str> = find.split('\n').collect();
-        if find_lines.len() > 1 {
-            for i in 0..=(lines.len().saturating_sub(find_lines.len())) {
+        if find_lines.len() > 1 && find_lines.len() <= lines.len() {
+            for i in 0..=(lines.len() - find_lines.len()) {
                 let block = lines[i..i + find_lines.len()].join("\n");
                 if normalize_whitespace(&block) == normalized_find {
                     results.push(block);
@@ -363,10 +363,12 @@ impl Replacer for IndentationFlexibleReplacer {
         let content_lines: Vec<&str> = content.split('\n').collect();
         let find_lines: Vec<&str> = find.split('\n').collect();
 
-        for i in 0..=(content_lines.len().saturating_sub(find_lines.len())) {
-            let block = content_lines[i..i + find_lines.len()].join("\n");
-            if remove_indentation(&block) == normalized_find {
-                results.push(block);
+        if find_lines.len() <= content_lines.len() {
+            for i in 0..=(content_lines.len() - find_lines.len()) {
+                let block = content_lines[i..i + find_lines.len()].join("\n");
+                if remove_indentation(&block) == normalized_find {
+                    results.push(block);
+                }
             }
         }
 
@@ -452,8 +454,8 @@ impl Replacer for EscapeNormalizedReplacer {
         let lines: Vec<&str> = content.split('\n').collect();
         let find_lines: Vec<&str> = unescaped_find.split('\n').collect();
 
-        if find_lines.len() > 1 {
-            for i in 0..=(lines.len().saturating_sub(find_lines.len())) {
+        if find_lines.len() > 1 && find_lines.len() <= lines.len() {
+            for i in 0..=(lines.len() - find_lines.len()) {
                 let block = lines[i..i + find_lines.len()].join("\n");
                 if unescape_string(&block) == unescaped_find {
                     results.push(block);
@@ -490,10 +492,12 @@ impl Replacer for TrimmedBoundaryReplacer {
         let lines: Vec<&str> = content.split('\n').collect();
         let find_lines: Vec<&str> = find.split('\n').collect();
 
-        for i in 0..=(lines.len().saturating_sub(find_lines.len())) {
-            let block = lines[i..i + find_lines.len()].join("\n");
-            if block.trim() == trimmed_find {
-                results.push(block);
+        if find_lines.len() <= lines.len() {
+            for i in 0..=(lines.len() - find_lines.len()) {
+                let block = lines[i..i + find_lines.len()].join("\n");
+                if block.trim() == trimmed_find {
+                    results.push(block);
+                }
             }
         }
 
@@ -808,5 +812,39 @@ mod tests {
             replacer.replace("foo bar foo", "foo", "baz", true),
             Ok("baz bar baz".to_string())
         );
+    }
+
+    #[test]
+    fn test_truncating_edit_returns_error_without_panic() {
+        let replacer = CompositeReplacer::new();
+        let content = "Raises ValueError if b is zero.";
+        let old_string = "# calc\n\n`calc` provides three small numeric helpers.\n\n## add(a, b)\n\nReturns the sum of `a` and `b`.\n\n## divide(a, b)\n\nReturns `a` divided by `b`.\n\n## mean(values)\n\nReturns the arithmetic mean of a sequence of numbers.";
+        let new_string = "Raises ValueError if b is zero.";
+
+        let result = replacer.replace(content, old_string, new_string, false);
+
+        assert!(result.is_err(), "truncating edit must be rejected");
+        assert_eq!(content, "Raises ValueError if b is zero.");
+    }
+
+    #[test]
+    fn test_line_based_replacers_tolerate_search_longer_than_content() {
+        let content = "single line";
+        let find = "first line\nsecond line\nthird line";
+
+        assert!(WhitespaceNormalizedReplacer
+            .find(content, find)
+            .next()
+            .is_none());
+        assert!(IndentationFlexibleReplacer
+            .find(content, find)
+            .next()
+            .is_none());
+        assert!(EscapeNormalizedReplacer
+            .find(content, find)
+            .next()
+            .is_none());
+        assert!(TrimmedBoundaryReplacer.find(content, find).next().is_none());
+        assert!(LineTrimmedReplacer.find(content, find).next().is_none());
     }
 }

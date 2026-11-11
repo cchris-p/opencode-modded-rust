@@ -2120,7 +2120,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2141,7 +2141,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -2180,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-command"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2195,12 +2195,13 @@ dependencies = [
 
 [[package]]
 name = "opencode-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dirs",
  "jsonc-parser",
  "opencode-core",
+ "opencode-types",
  "regex",
  "reqwest",
  "serde",
@@ -2214,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2231,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-grep"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "opencode-core",
@@ -2244,7 +2245,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-lsp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -2261,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2289,7 +2290,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-oco"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2305,7 +2306,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-permission"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2321,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2337,7 +2338,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-provider"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2365,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-retrieval"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "opencode-types",
@@ -2379,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-scopemux"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "dirs",
@@ -2398,7 +2399,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2416,6 +2417,7 @@ dependencies = [
  "opencode-permission",
  "opencode-plugin",
  "opencode-provider",
+ "opencode-scopemux",
  "opencode-session",
  "opencode-storage",
  "opencode-tool",
@@ -2435,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-session"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2470,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2489,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-tool"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-process",
@@ -2529,7 +2531,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2569,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2581,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-util"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2601,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "opencode-watcher"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dashmap",
  "glob",

@@ -1,6 +1,18 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "deepseek/deepseek-flash",
+  "workspaceIntelligence": {
+    "profiles": [
+      {
+        "name": "deepseek-experiment",
+        "provider": "scopemux",
+        "models": ["deepseek/deepseek-flash"],
+        "tokenBudget": 400,
+        "fallback": "generic",
+        "experiment": true
+      }
+    ]
+  },
   "provider": {
   }
 }

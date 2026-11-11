@@ -290,8 +290,6 @@ impl Prompt {
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let theme = self.context.theme.read();
         let agent = self.context.current_agent.read();
-        let model = self.context.current_model.read();
-        let variant = self.context.current_model_variant();
         let animations_enabled = *self.context.animations_enabled.read();
 
         let highlight_color = prompt_agent_color(&theme, agent.as_str());
@@ -425,37 +423,14 @@ impl Prompt {
             );
         }
 
-        let mut info_parts = vec![
-            Span::styled(
-                if matches!(self.mode, PromptMode::Shell) {
-                    "shell"
-                } else {
-                    agent.as_str()
-                },
-                Style::default().fg(active_color).bold(),
-            ),
-            Span::raw("  "),
-        ];
-
-        if let Some(m) = model.as_ref() {
-            let provider = self.context.current_provider.read();
-            if let Some(ref p) = *provider {
-                info_parts.push(Span::styled(m.clone(), Style::default().fg(theme.text)));
-                info_parts.push(Span::styled(
-                    format!(" {p}"),
-                    Style::default().fg(theme.text_muted),
-                ));
+        let info_parts = vec![Span::styled(
+            if matches!(self.mode, PromptMode::Shell) {
+                "shell"
             } else {
-                info_parts.push(Span::styled(m.clone(), Style::default().fg(theme.text)));
-            }
-            if let Some(ref v) = variant {
-                info_parts.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
-                info_parts.push(Span::styled(
-                    v.clone(),
-                    Style::default().fg(theme.warning).bold(),
-                ));
-            }
-        }
+                agent.as_str()
+            },
+            Style::default().fg(active_color).bold(),
+        )];
 
         render_prompt_continuation_row(frame, chunks[1], active_color, theme.background_element);
         let info_row = row_content_area(chunks[1], PROMPT_LINE_H_INSET);

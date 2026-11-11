@@ -112,3 +112,20 @@ Remaining QA gate before `done`: the first real `main` release run (the workflow
 until it is on `main`/the default branch), and a dry-run dispatch
 (`gh workflow run release.yml -f dry_run=true`) to confirm staging + manifest without
 publishing. Deployment is `INFRA-012`.
+
+## First Release: v0.1.0 (2026-11-08)
+
+- `development -> main` release PR #175 merged (`eeb608f`).
+- The `Release` workflow build matrix cancelled `build (macos-14)` at ~1s (no macOS
+  runner/minutes in this repo), so `publish` was skipped. Ubuntu built successfully and its
+  `release-ubuntu-22.04` artifact was downloaded.
+- To publish a complete release, the macOS CLI asset was built on `j8rsxy` (Darwin arm64,
+  Rust 1.98, prebuilt `macos-aarch64-2a642c10534f` bundle), the clean-host query smoke passed
+  (`73aa2ff86776cc85`), and the darwin CLI + native bundle were packaged. Both platform
+  assets and the manifest were attached and `v0.1.0` was created manually with the same
+  schema (`latest`, non-prerelease).
+- This is a **one-time recovery**: the automation is correct, but macOS asset production
+  needs a working macOS runner (enable Actions macOS minutes, or a self-hosted macOS runner
+  on `j8rsxy`). Until then every release must be completed the same way.
+
+Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.0

@@ -95,9 +95,25 @@ the format.
 - **Mitigation (implemented, `BUG-061`).** Synthesized native calls are deferred
   to end-of-stream and discarded when the turn already delivered a structured
   `tool_calls` array, so a leaked block cannot produce a duplicate/conflicting
-  call. `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` (truthy) is a kill switch
-  that restores pre-`BUG-060` behavior. The kill switch, not the guard, is what
-  covers the "model demonstrates the format" case.
+  call. `OPENCODE_DISABLE_NATIVE_TOOLCALLS` (truthy) is the neutral kill switch
+  for all native tool-call normalization; `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS`
+  remains a compatibility alias with the same truthy semantics. The kill switch,
+  not the guard, is what covers the "model demonstrates the format" case.
+
+## Qwen/Hermes `<tool_call>` normalization (`BUG-062`, `FEAT-071`)
+
+The shared OpenAI-compatible parsers also restore Qwen/Hermes-style inline
+markup: `<tool_call>{"name": "...", "arguments": {...}}</tool_call>`. Ollama can
+emit this in the `content` or `reasoning` channel with `finish_reason: "stop"`
+instead of an OpenAI `tool_calls` array. Extraction is chunk-boundary safe: open
+and close tags and the JSON body may be split across SSE frames. The 2507
+plain-JSON form is covered by provider tests in both channels.
+
+This is the same feature class as the DeepSeek token restoration and shares one
+operator switch, `OPENCODE_DISABLE_NATIVE_TOOLCALLS`, rather than a second
+provider-named variable. Structured `tool_calls` still take precedence. Server
+prompt turns consume the shared parser; there is no second parser in the server
+or session layer.
 
 ## Normative status
 

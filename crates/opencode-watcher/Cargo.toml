@@ -1,6 +1,6 @@
 [package]
 name = "opencode-watcher"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "File system watcher for opencode"
 

@@ -29,8 +29,6 @@ use crate::summary::{summarize_into_session, SummarizeInput};
 use crate::system::SystemPrompt;
 use crate::{MessageRole, PartType, Session, SessionMessage, SessionStateManager};
 
-const MAX_STEPS: u32 = 100;
-
 #[derive(Debug, Clone)]
 pub struct PromptInput {
     pub session_id: String,
@@ -131,6 +129,11 @@ pub struct AgentParams {
     pub max_tokens: Option<u64>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    /// Maximum model steps for a single turn. `None` means no step cap, matching
+    /// reference opencode; the wall-clock run budget remains the runaway
+    /// backstop. A configured finite limit ends the turn with a visible terminal
+    /// message instead of silently stopping.
+    pub max_steps: Option<u32>,
 }
 
 pub type SessionUpdateHook = Arc<dyn Fn(&Session) + Send + Sync + 'static>;
@@ -148,6 +151,7 @@ pub struct SessionPrompt {
     experimental_background_subagents: bool,
     resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
     session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
+    workspace_intelligence_policy: opencode_scopemux::WorkspaceIntelligencePolicy,
 }
 
 impl SessionPrompt {
@@ -165,6 +169,8 @@ impl SessionPrompt {
             experimental_background_subagents: false,
             resolve_subagent_callback: None,
             session_inspect_callback: None,
+            workspace_intelligence_policy:
+                opencode_scopemux::WorkspaceIntelligencePolicy::qwen_experiment(),
         }
     }
 
@@ -249,6 +255,17 @@ impl SessionPrompt {
         self
     }
 
+    /// Install the capability-profile policy that selects the
+    /// workspace-intelligence provider (`FUTURE-PROOFING-015`). The default is
+    /// the built-in Qwen experiment profile, preserving prior behavior.
+    pub fn with_workspace_intelligence_policy(
+        mut self,
+        policy: opencode_scopemux::WorkspaceIntelligencePolicy,
+    ) -> Self {
+        self.workspace_intelligence_policy = policy;
+        self
+    }
+
     pub async fn assert_not_busy(&self, session_id: &str) -> anyhow::Result<()> {
         let state = self.state.lock().await;
         if state.contains_key(session_id) {
@@ -296,6 +313,31 @@ impl SessionPrompt {
                 _ => None,
             })
             .collect();
+        // Capability-profile selection (FUTURE-PROOFING-015): record the active
+        // profile in the session so the activation policy is auditable. The
+        // policy is a hard bound; no profile match keeps the generic provider.
+        let wi_provider = input.model.as_ref().map(|m| m.provider_id.as_str());
+        let wi_model = input.model.as_ref().map(|m| m.model_id.as_str());
+        let active_profile = self
+            .workspace_intelligence_policy
+            .resolve(wi_provider, wi_model);
+        if let Some(profile) = active_profile {
+            session.metadata.insert(
+                "workspace_intelligence_profile".to_string(),
+                serde_json::json!({
+                    "name": &profile.name,
+                    "provider": profile.provider,
+                    "rungs": &profile.rungs,
+                    "languages": &profile.languages,
+                    "tokenBudget": profile.token_budget,
+                    "experiment": profile.experiment,
+                }),
+            );
+        }
+        let retrieval_budget = active_profile
+            .map(|profile| profile.token_budget)
+            .unwrap_or(crate::retrieval::RETRIEVAL_TOKEN_BUDGET);
+
         let retrieval_response = if seed_files.is_empty() {
             None
         } else {
@@ -318,7 +360,14 @@ impl SessionPrompt {
                 } else {
                     None
                 };
-            crate::retrieval::retrieve(session, seed_files, input.model.as_ref(), exact_facts).await
+            crate::retrieval::retrieve(
+                session,
+                seed_files,
+                input.model.as_ref(),
+                &self.workspace_intelligence_policy,
+                exact_facts,
+            )
+            .await
         };
 
         // Accept-time materialization: when the server has already persisted the
@@ -413,16 +462,17 @@ impl SessionPrompt {
             // representation slice selected for the task stage (SCOPE-004).
             tracing::info!(
                 provider = %response.provider,
+                profile = active_profile.map(|profile| profile.name.as_str()).unwrap_or("none"),
                 representation = ?response.representation,
                 candidates = response.candidates.len(),
+                budget = retrieval_budget,
                 "retrieval provider selected"
             );
             // SCOPE-004: inject the selected map slice as bounded evidence. The
             // runtime owns the budget; the generic provider path is unchanged.
-            if let Some(reminder) = crate::retrieval::retrieval_context_reminder(
-                &response,
-                crate::retrieval::RETRIEVAL_TOKEN_BUDGET,
-            ) {
+            if let Some(reminder) =
+                crate::retrieval::retrieval_context_reminder(&response, retrieval_budget)
+            {
                 push_synthetic_reminder(msg, reminder);
             }
             msg.metadata.insert(
@@ -1024,6 +1074,7 @@ impl SessionPrompt {
             provider,
             model_id,
             provider_id,
+            &self.workspace_intelligence_policy,
             session,
             input.agent.as_deref(),
             input.variant.clone(),
@@ -1120,6 +1171,7 @@ impl SessionPrompt {
             provider,
             model_id,
             provider_id,
+            &self.workspace_intelligence_policy,
             session,
             resume_agent.as_deref(),
             resume_variant,
@@ -1156,6 +1208,7 @@ impl SessionPrompt {
         provider: Arc<dyn Provider>,
         model_id: String,
         provider_id: String,
+        workspace_intelligence_policy: &opencode_scopemux::WorkspaceIntelligencePolicy,
         session: &mut Session,
         agent_name: Option<&str>,
         variant: Option<String>,
@@ -1245,11 +1298,30 @@ impl SessionPrompt {
                 }
             }
 
-            step += 1;
-            if step > MAX_STEPS {
-                tracing::warn!("Max steps reached for session {}", session_id);
-                break;
+            // A configured step budget must end the turn visibly. The previous
+            // behavior broke out with only a `tracing::warn!`, so the last
+            // persisted message was a tool result and the TUI looked like the
+            // assistant had silently stopped after tool calls (BUG-071).
+            // `None` means no step cap; the wall-clock run budget still bounds
+            // the turn.
+            if let Some(limit) = agent_params.max_steps {
+                if step >= limit {
+                    let error = format!(
+                        "step budget reached ({} steps); send a new prompt to continue",
+                        limit
+                    );
+                    tracing::warn!(
+                        session = %session_id,
+                        limit,
+                        "Prompt loop reached its step budget"
+                    );
+                    Self::finalize_incomplete_turn(session, "max-steps", &error);
+                    Self::emit_session_update(update_hook.as_ref(), session);
+                    break;
+                }
             }
+
+            step += 1;
 
             if Self::should_compact(
                 &filtered_messages,
@@ -1538,6 +1610,9 @@ impl SessionPrompt {
                 });
             }
 
+            let aggregated_usage = session.get_usage();
+            session.update_usage(aggregated_usage);
+
             let mut has_tool_calls = session
                 .messages
                 .get(assistant_index)
@@ -1616,9 +1691,11 @@ impl SessionPrompt {
 
                 // SCOPE-019: inject the map-backed search capability on the same
                 // model scope the provider uses; every other model gets grep only.
-                if let Some(workspace_search) =
-                    opencode_scopemux::workspace_search_for(Some(&provider_id), Some(&model_id))
-                {
+                if let Some(workspace_search) = opencode_scopemux::workspace_search_for_with_policy(
+                    Some(workspace_intelligence_policy),
+                    Some(&provider_id),
+                    Some(&model_id),
+                ) {
                     tool_context = tool_context.with_workspace_search(Some(workspace_search));
                 }
 
@@ -2156,6 +2233,9 @@ impl SessionPrompt {
             max_tokens: Some(2048),
             temperature: Some(0.2),
             top_p: None,
+            // Subtask execution goes through the agent executor, which already
+            // applies the agent's own `max_steps`.
+            max_steps: None,
         };
 
         executor
@@ -3778,10 +3858,6 @@ pub async fn resolve_tools_with_mcp_registry(
 
 pub async fn resolve_tools(tool_registry: &opencode_tool::ToolRegistry) -> Vec<ToolDefinition> {
     resolve_tools_with_mcp_registry(tool_registry, None).await
-}
-
-pub fn max_steps_for_agent(agent_steps: Option<u32>) -> u32 {
-    agent_steps.unwrap_or(MAX_STEPS)
 }
 
 pub fn generate_session_title(first_user_message: &str) -> String {
@@ -5660,6 +5736,89 @@ mod tests {
         }
     }
 
+    /// Always emits a tool call, so the prompt loop keeps taking steps until a
+    /// configured budget stops it. The tool name is intentionally unknown; the
+    /// resulting error tool result still lets the loop continue.
+    struct ToolCallLoopProvider {
+        model: ModelInfo,
+        calls: Arc<StdMutex<u32>>,
+    }
+
+    impl ToolCallLoopProvider {
+        fn new(model_id: &str) -> Self {
+            Self {
+                model: ModelInfo {
+                    id: model_id.to_string(),
+                    name: "Tool Loop Model".to_string(),
+                    provider: "mock".to_string(),
+                    context_window: 8192,
+                    max_output_tokens: 1024,
+                    supports_vision: false,
+                    supports_tools: true,
+                    cost_per_million_input: 0.0,
+                    cost_per_million_output: 0.0,
+                },
+                calls: Arc::new(StdMutex::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ToolCallLoopProvider {
+        fn id(&self) -> &str {
+            "mock"
+        }
+
+        fn name(&self) -> &str {
+            "Mock"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            vec![self.model.clone()]
+        }
+
+        fn get_model(&self, id: &str) -> Option<&ModelInfo> {
+            if self.model.id == id {
+                Some(&self.model)
+            } else {
+                None
+            }
+        }
+
+        async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest(
+                "chat() not used in this test".to_string(),
+            ))
+        }
+
+        async fn chat_stream(&self, _request: ChatRequest) -> Result<StreamResult, ProviderError> {
+            let call_id = {
+                let mut calls = self.calls.lock().expect("calls lock should not poison");
+                *calls += 1;
+                format!("call_{}", *calls)
+            };
+            let events = vec![
+                StreamEvent::Start,
+                StreamEvent::ToolCallEnd {
+                    id: call_id,
+                    name: "definitely_not_a_tool".to_string(),
+                    input: serde_json::json!({}),
+                },
+                StreamEvent::FinishStep {
+                    finish_reason: Some("tool-calls".to_string()),
+                    usage: StreamUsage::default(),
+                    provider_metadata: None,
+                },
+                StreamEvent::Done,
+            ];
+            Ok(Box::pin(stream::iter(
+                events
+                    .into_iter()
+                    .map(Result::<StreamEvent, ProviderError>::Ok),
+            )))
+        }
+    }
+
     fn test_prompt_input(session_id: &str, text: &str) -> PromptInput {
         PromptInput {
             session_id: session_id.to_string(),
@@ -5732,6 +5891,58 @@ mod tests {
                 i + 1
             );
         }
+    }
+
+    /// Regression for BUG-071: a configured step budget must end the turn with a
+    /// visible terminal message instead of silently stopping after a tool
+    /// result and requiring a manual "continue".
+    #[tokio::test]
+    async fn configured_max_steps_ends_turn_with_visible_terminal() {
+        let prompt = SessionPrompt::default();
+        let mut session = Session::new("proj", ".");
+        let provider = Arc::new(ToolCallLoopProvider::new("test-model"));
+
+        prompt
+            .prompt_with_update_hook(
+                test_prompt_input(&session.id, "loop forever"),
+                &mut session,
+                provider,
+                None,
+                None,
+                Vec::new(),
+                AgentParams {
+                    max_steps: Some(3),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("prompt should complete");
+
+        let tool_calls = session
+            .messages
+            .iter()
+            .flat_map(|message| message.parts.iter())
+            .filter(|part| matches!(part.part_type, PartType::ToolCall { .. }))
+            .count();
+        assert_eq!(tool_calls, 3, "the loop should stop exactly at the budget");
+
+        let last_assistant = session
+            .messages
+            .iter()
+            .rev()
+            .find(|message| matches!(message.role, MessageRole::Assistant))
+            .expect("assistant message");
+        assert_eq!(
+            last_assistant.metadata.get("finish_reason"),
+            Some(&serde_json::json!("max-steps")),
+            "the terminal finish reason should be recorded"
+        );
+        assert!(
+            last_assistant.get_text().contains("step budget reached"),
+            "the terminal message should be visible, got {:?}",
+            last_assistant.get_text()
+        );
     }
 
     #[test]

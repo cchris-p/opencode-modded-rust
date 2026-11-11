@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 opencode-core = { path = "../opencode-core" }
+opencode-types = { path = "../opencode-types" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

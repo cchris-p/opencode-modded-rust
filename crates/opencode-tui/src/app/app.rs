@@ -36,7 +36,7 @@ use crate::context::{
 use crate::event::{CustomEvent, Event, StateChange};
 use crate::router::Route;
 use crate::trace;
-use crate::ui::{Clipboard, Selection};
+use crate::ui::{next_scroll_offset, AutoScroll, Clipboard, ContentSelection, CopyRow, Selection};
 use crate::TuiExit;
 
 // TS parity: renderer targetFps is 60, ~16ms frame budget.
@@ -111,6 +111,17 @@ pub struct App {
     toast: Toast,
     /// Snapshot of rendered screen lines for text selection copy.
     screen_lines: Vec<String>,
+    /// Content-line anchored selection for the session transcript (FEAT-072).
+    transcript_selection: Option<ContentSelection>,
+    /// Rendered transcript lines keyed by absolute content line while a
+    /// transcript selection is active, so a copy can span multiple viewports.
+    transcript_lines: HashMap<usize, String>,
+    /// Copy plan for each rendered transcript line (code fences vs normal text).
+    transcript_copy_rows: HashMap<usize, CopyRow>,
+    /// Edge auto-scroll state for a held selection drag.
+    auto_scroll: AutoScroll,
+    /// Last pointer position from a drag event, reused while the pointer is held.
+    drag_pointer: Option<(u16, u16)>,
     available_models: HashSet<String>,
     model_variants: HashMap<String, Vec<String>>,
     model_variant_selection: HashMap<String, Option<String>>,
@@ -259,6 +270,11 @@ impl App {
             question_prompt: QuestionPrompt::new(),
             toast: Toast::new(),
             screen_lines: Vec::new(),
+            transcript_selection: None,
+            transcript_lines: HashMap::new(),
+            transcript_copy_rows: HashMap::new(),
+            auto_scroll: AutoScroll::new(),
+            drag_pointer: None,
             available_models: HashSet::new(),
             model_variants: HashMap::new(),
             model_variant_selection: HashMap::new(),
@@ -545,7 +561,7 @@ impl App {
 
                 if key.code == KeyCode::Esc {
                     if self.selection.is_active() {
-                        self.selection.clear();
+                        self.clear_selection();
                         return Ok(());
                     }
                 }
@@ -832,6 +848,13 @@ impl App {
                         }
 
                         if button == MouseButton::Left {
+                            let in_transcript =
+                                matches!(self.context.current_route(), Route::Session { .. })
+                                    && self
+                                        .session_view
+                                        .as_ref()
+                                        .is_some_and(|sv| sv.is_point_in_messages(col, row));
+
                             if let Route::Session { .. } = self.context.current_route() {
                                 if let Some(ref mut sv) = self.session_view {
                                     if sv.handle_sidebar_click(col, row) {
@@ -846,7 +869,17 @@ impl App {
                                 }
                             }
                             // Clear previous selection and start a new one
+                            self.clear_selection();
                             self.selection.start(row, col);
+                            if in_transcript {
+                                if let Some(line) = self.transcript_line_for_row(row) {
+                                    self.transcript_selection =
+                                        Some(ContentSelection::new(line, col));
+                                    if let Some(sv) = self.session_view.as_mut() {
+                                        sv.set_follow_suspended(true);
+                                    }
+                                }
+                            }
                         }
                     }
                     MouseEventKind::ScrollUp => {
@@ -873,6 +906,15 @@ impl App {
                         let col = mouse_event.column;
                         let row = mouse_event.row;
                         self.selection.update(row, col);
+                        self.drag_pointer = Some((col, row));
+                        if self.transcript_selection.is_some() {
+                            if let Some(line) = self.transcript_line_for_row(row) {
+                                if let Some(ts) = self.transcript_selection.as_mut() {
+                                    ts.update_cursor(line, col);
+                                }
+                            }
+                            self.update_auto_scroll_band(row);
+                        }
                     }
                     MouseEventKind::Moved => {
                         if self.handle_dialog_mouse(mouse_event)? {
@@ -882,6 +924,18 @@ impl App {
                     }
                     MouseEventKind::Up(_) => {
                         self.selection.finalize();
+                        // Pin the content-space endpoint to the release point so
+                        // transcript copy matches the visible selection even when
+                        // the final position arrived only on the Up event.
+                        let line = self.transcript_line_for_row(mouse_event.row);
+                        if let (Some(ts), Some(line)) = (self.transcript_selection.as_mut(), line) {
+                            ts.update_cursor(line, mouse_event.column);
+                        }
+                        self.auto_scroll.stop();
+                        self.drag_pointer = None;
+                        if let Some(sv) = self.session_view.as_mut() {
+                            sv.set_follow_suspended(false);
+                        }
                     }
                     _ => {}
                 }
@@ -945,6 +999,7 @@ impl App {
             },
             Event::Tick => {
                 let mut tick_changed = false;
+                tick_changed |= self.tick_auto_scroll();
                 tick_changed |= self.toast.tick(TICK_RATE_MS);
                 tick_changed |= self.prompt.tick_spinner(TICK_RATE_MS);
                 tick_changed |= self.sync_prompt_spinner_state();
@@ -2155,25 +2210,163 @@ impl App {
         if !self.selection.is_active() {
             return;
         }
-        let lines = self.screen_lines.clone();
-        let text = clean_selection_text(
-            self.selection
-                .get_selected_text(|row| lines.get(row as usize).cloned())
-                .as_str(),
-        );
-        if !text.is_empty() {
-            match Clipboard::write_text(&text) {
-                Ok(()) => {
-                    self.toast
-                        .show(ToastVariant::Info, "Copied to clipboard", 2000);
-                }
-                Err(err) => {
-                    self.toast
-                        .show(ToastVariant::Error, &format!("Copy failed: {}", err), 3000);
+
+        // Transcript selections use content coordinates, which lets copy span a
+        // session that auto-scrolled (FEAT-072) and lets fenced code blocks copy
+        // their raw source instead of the wrapped, gutter-prefixed screen text.
+        let text = if self.transcript_selection.is_some() {
+            self.transcript_selection_text()
+        } else {
+            let lines = self.screen_lines.clone();
+            clean_selection_text(
+                self.selection
+                    .get_selected_text(|row| lines.get(row as usize).cloned())
+                    .as_str(),
+            )
+        };
+        self.write_selection_to_clipboard(&text);
+        self.clear_selection();
+    }
+
+    /// Build clipboard text for a transcript selection.
+    ///
+    /// Normal rows keep the column-clipping/cleanup behavior. Fenced code rows
+    /// emit their source line verbatim; the frame and soft-wrap continuation
+    /// rows are skipped. If the selection starts inside a wrapped continuation,
+    /// the parent source line is included once.
+    fn transcript_selection_text(&self) -> String {
+        let Some(ts) = self.transcript_selection.as_ref() else {
+            return String::new();
+        };
+        compose_transcript_selection(ts, &self.transcript_lines, &self.transcript_copy_rows)
+    }
+
+    fn write_selection_to_clipboard(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        match Clipboard::write_text(text) {
+            Ok(()) => {
+                self.toast
+                    .show(ToastVariant::Info, "Copied to clipboard", 2000);
+            }
+            Err(err) => {
+                self.toast
+                    .show(ToastVariant::Error, &format!("Copy failed: {}", err), 3000);
+            }
+        }
+    }
+
+    /// Clear the visible selection and any transcript-selection auto-scroll
+    /// bookkeeping.
+    fn clear_selection(&mut self) {
+        self.selection.clear();
+        self.transcript_selection = None;
+        self.transcript_lines.clear();
+        self.transcript_copy_rows.clear();
+        self.auto_scroll.stop();
+        self.drag_pointer = None;
+        if let Some(sv) = self.session_view.as_mut() {
+            sv.set_follow_suspended(false);
+        }
+    }
+
+    /// Map a screen row in the transcript pane to an absolute content line.
+    /// Rows outside the pane are clamped to its first/last visible line so a
+    /// drag held at an edge keeps extending the selection.
+    fn transcript_line_for_row(&self, row: u16) -> Option<usize> {
+        let sv = self.session_view.as_ref()?;
+        let area = sv.messages_area()?;
+        if area.height == 0 {
+            return None;
+        }
+        let bottom = area.y.saturating_add(area.height - 1);
+        let clamped = row.clamp(area.y, bottom);
+        Some(sv.scroll_offset() + usize::from(clamped - area.y))
+    }
+
+    /// Recompute the auto-scroll edge band from the held pointer row.
+    fn update_auto_scroll_band(&mut self, row: u16) {
+        let area = self.session_view.as_ref().and_then(|sv| sv.messages_area());
+        match area {
+            Some(area) if self.transcript_selection.is_some() => {
+                self.auto_scroll.update_pointer(row, area.y, area.height);
+            }
+            _ => self.auto_scroll.stop(),
+        }
+    }
+
+    /// Advance edge auto-scroll by one tick. Returns true when the transcript
+    /// actually moved so the frame redraws with the new content and highlight.
+    fn tick_auto_scroll(&mut self) -> bool {
+        if !matches!(self.context.current_route(), Route::Session { .. })
+            || !self.selection.is_selecting()
+            || !self.auto_scroll.is_active()
+        {
+            return false;
+        }
+        let Some((pointer_col, pointer_row)) = self.drag_pointer else {
+            return false;
+        };
+        let (direction, lines) = self.auto_scroll.step(TICK_RATE_MS);
+        if direction == 0 {
+            return false;
+        }
+
+        let Some(sv) = self.session_view.as_mut() else {
+            self.auto_scroll.stop();
+            return false;
+        };
+        let offset = sv.scroll_offset();
+        let max_offset = sv.scroll_limits().1;
+        let Some(next_offset) = next_scroll_offset(direction, lines, offset, max_offset) else {
+            self.auto_scroll.stop();
+            return false;
+        };
+        if next_offset == offset {
+            return false;
+        }
+        if direction < 0 {
+            sv.scroll_up_by(offset - next_offset);
+        } else {
+            sv.scroll_down_by(next_offset - offset);
+        }
+
+        if let Some(area) = sv.messages_area() {
+            if area.height > 0 {
+                let bottom = area.y.saturating_add(area.height - 1);
+                let clamped = pointer_row.clamp(area.y, bottom);
+                let line = sv.scroll_offset() + usize::from(clamped - area.y);
+                if let Some(ts) = self.transcript_selection.as_mut() {
+                    ts.update_cursor(line, pointer_col);
+                    ts.mark_scrolled();
                 }
             }
         }
-        self.selection.clear();
+        true
+    }
+
+    /// Merge the freshly painted transcript viewport into the content-line
+    /// buffer so a copy can include lines that have scrolled out of view.
+    fn merge_transcript_lines(&mut self) {
+        let Some(sv) = self.session_view.as_ref() else {
+            return;
+        };
+        let Some(area) = sv.messages_area() else {
+            return;
+        };
+        let offset = sv.scroll_offset();
+        for row in area.y..area.y.saturating_add(area.height) {
+            let Some(line) = self.screen_lines.get(row as usize) else {
+                continue;
+            };
+            let content_line = offset.saturating_add(usize::from(row - area.y));
+            self.transcript_lines.insert(content_line, line.clone());
+            if let Some(copy_row) = sv.copy_row(content_line) {
+                self.transcript_copy_rows
+                    .insert(content_line, copy_row.clone());
+            }
+        }
     }
 
     fn current_session_id(&self) -> Option<String> {
@@ -2669,6 +2862,8 @@ impl App {
         if input.trim().is_empty() {
             return Ok(());
         }
+
+        self.context.hide_prompt();
 
         if shell_mode {
             return self.submit_shell_command(input);
@@ -3762,7 +3957,6 @@ impl App {
                 "Agent: {}",
                 self.context.current_agent.read().as_str()
             )),
-            StatusLine::normal(format!("Model: {}", self.current_model_label())),
             StatusLine::normal(format!(
                 "Theme: {}",
                 format_theme_option_label(&self.context.current_theme_name())
@@ -4051,18 +4245,6 @@ impl App {
         };
         self.model_variant_selection.insert(model_key, next.clone());
         self.context.set_model_variant(next);
-    }
-
-    fn current_model_label(&self) -> String {
-        let Some(model) = self.context.current_model.read().clone() else {
-            return "(not selected)".to_string();
-        };
-        let (base_model, _) =
-            parse_model_ref_selection(&model, &self.available_models, &self.model_variants);
-        if let Some(variant) = self.context.current_model_variant() {
-            return format!("{base_model} ({variant})");
-        }
-        base_model
     }
 
     fn selected_model_for_prompt(&self) -> Option<String> {
@@ -4401,7 +4583,7 @@ impl App {
         let show_modal_overlay = self.has_modal_dialog_layer()
             || self.permission_prompt.is_open
             || self.question_prompt.is_open;
-        let session_view = self.session_view.as_mut();
+        let mut session_view = self.session_view.as_mut();
         let theme = self.context.theme.read().clone();
         let command_palette = &self.command_palette;
         let model_select = &self.model_select;
@@ -4426,6 +4608,7 @@ impl App {
         let settings_view = &self.settings_view;
         let toast = &self.toast;
         let selection = &self.selection;
+        let transcript_selection = self.transcript_selection.as_ref();
 
         let mut captured_lines: Vec<String> = Vec::new();
 
@@ -4442,7 +4625,7 @@ impl App {
                     prompt_anchor = home.render_with_prompt(frame, area, prompt);
                 }
                 Route::Session { .. } => {
-                    if let Some(view) = session_view {
+                    if let Some(view) = session_view.as_mut() {
                         prompt_anchor = view.render(frame, area, prompt);
                     } else {
                         let home = HomeView::new(context.clone());
@@ -4457,6 +4640,12 @@ impl App {
                     prompt_anchor = home.render_with_prompt(frame, area, prompt);
                 }
             }
+
+            let transcript_area = session_view.as_ref().and_then(|view| view.messages_area());
+            let transcript_scroll_offset = session_view
+                .as_ref()
+                .map(|view| view.scroll_offset())
+                .unwrap_or(0);
 
             if show_modal_overlay {
                 let modal_backdrop = ratatui::widgets::Block::default()
@@ -4524,9 +4713,35 @@ impl App {
             // matching standard terminal selection behavior (like opentui).
             if selection.is_active() {
                 use ratatui::style::Color;
+                let content_select = transcript_selection.filter(|ts| ts.scrolled());
                 for y in area.y..area.y + area.height {
                     for x in area.x..area.x + area.width {
-                        if !selection.is_selected(y, x) {
+                        let selected = if let (Some(ts), Some(transcript_area)) =
+                            (content_select, transcript_area)
+                        {
+                            if y < transcript_area.y
+                                || y >= transcript_area.y.saturating_add(transcript_area.height)
+                            {
+                                false
+                            } else {
+                                let line = transcript_scroll_offset
+                                    .saturating_add(usize::from(y - transcript_area.y));
+                                ts.is_selected(line, x)
+                            }
+                        } else {
+                            selection.is_selected(y, x)
+                        };
+                        if !selected {
+                            continue;
+                        }
+                        // Code-fence frame rows stay visible but are not part of
+                        // the selection, so do not invert them. This makes it
+                        // obvious which rows will be copied.
+                        if transcript_selection.is_some()
+                            && session_view
+                                .as_ref()
+                                .is_some_and(|sv| sv.is_code_chrome_screen_row(y))
+                        {
                             continue;
                         }
                         let cell = buf.get(x, y);
@@ -4557,8 +4772,79 @@ impl App {
         })?;
 
         self.screen_lines = captured_lines;
+        if self.transcript_selection.is_some() {
+            self.merge_transcript_lines();
+        }
         Ok(())
     }
+}
+
+/// Build clipboard text for a transcript selection from accumulated content
+/// lines and their copy plan.
+///
+/// Normal rows keep column clipping and trailing-whitespace cleanup. Fenced
+/// code rows emit their raw source line; frame and soft-wrap continuation rows
+/// are skipped. A selection that starts inside a wrapped continuation includes
+/// the parent source line once.
+fn compose_transcript_selection(
+    ts: &ContentSelection,
+    lines: &HashMap<usize, String>,
+    copy_rows: &HashMap<usize, CopyRow>,
+) -> String {
+    let (r0, _, r1, _) = ts.bounds();
+    let mut emitted_code_starts: HashSet<usize> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+
+    for row in r0..=r1 {
+        match copy_rows.get(&row) {
+            Some(CopyRow::CodeChrome) => continue,
+            Some(CopyRow::CodeStart(raw)) => {
+                if emitted_code_starts.insert(row) {
+                    // Source code preserves authored indentation and spacing.
+                    out.push(raw.clone());
+                }
+                continue;
+            }
+            Some(CopyRow::CodeContinuation) => {
+                if let Some((start_row, raw)) = code_start_for_continuation(row, copy_rows) {
+                    if emitted_code_starts.insert(start_row) {
+                        out.push(raw);
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+
+        let Some(line) = lines.get(&row) else {
+            continue;
+        };
+        let Some(selected) = ts.selected_text_for_line(row, line) else {
+            continue;
+        };
+        let selected = selected.trim_end();
+        out.push(clean_selection_line(selected).to_string());
+    }
+
+    out.join("\n")
+}
+
+/// Walk backwards from a wrapped code continuation row to the source line that
+/// produced it. Stops at the block frame.
+fn code_start_for_continuation(
+    row: usize,
+    copy_rows: &HashMap<usize, CopyRow>,
+) -> Option<(usize, String)> {
+    let mut cursor = row;
+    while cursor > 0 {
+        cursor -= 1;
+        match copy_rows.get(&cursor) {
+            Some(CopyRow::CodeStart(raw)) => return Some((cursor, raw.clone())),
+            Some(CopyRow::CodeChrome) => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 fn clean_selection_text(text: &str) -> String {
@@ -5938,5 +6224,64 @@ mod tests {
             mapped.permission_type,
             crate::components::PermissionType::Glob
         );
+    }
+
+    #[test]
+    fn transcript_copy_emits_raw_code_and_skips_chrome() {
+        let mut copy_rows = HashMap::new();
+        copy_rows.insert(0, CopyRow::CodeChrome);
+        copy_rows.insert(1, CopyRow::CodeChrome);
+        copy_rows.insert(2, CopyRow::CodeStart("  first \\".to_string()));
+        copy_rows.insert(3, CopyRow::CodeContinuation);
+        copy_rows.insert(4, CopyRow::CodeStart("    second".to_string()));
+        copy_rows.insert(5, CopyRow::CodeChrome);
+        copy_rows.insert(6, CopyRow::CodeChrome);
+
+        let mut lines = HashMap::new();
+        lines.insert(0, String::new());
+        lines.insert(1, "  ╭ bash ────".to_string());
+        lines.insert(2, "  │ first".to_string());
+        lines.insert(3, "continuation".to_string());
+        lines.insert(4, "  │     second".to_string());
+        lines.insert(5, "  ╰───".to_string());
+        lines.insert(6, String::new());
+
+        let mut selection = ContentSelection::new(0, 0);
+        selection.update_cursor(6, 80);
+
+        let text = compose_transcript_selection(&selection, &lines, &copy_rows);
+        assert_eq!(text, "  first \\\n    second");
+    }
+
+    #[test]
+    fn transcript_copy_starting_in_wrapped_continuation_includes_source_line() {
+        let mut copy_rows = HashMap::new();
+        copy_rows.insert(2, CopyRow::CodeStart("one long source line".to_string()));
+        copy_rows.insert(3, CopyRow::CodeContinuation);
+        copy_rows.insert(4, CopyRow::CodeContinuation);
+
+        let mut lines = HashMap::new();
+        lines.insert(2, "  │ one long".to_string());
+        lines.insert(3, "source line".to_string());
+        lines.insert(4, "tail".to_string());
+
+        let mut selection = ContentSelection::new(3, 0);
+        selection.update_cursor(4, 10);
+
+        let text = compose_transcript_selection(&selection, &lines, &copy_rows);
+        assert_eq!(text, "one long source line");
+    }
+
+    #[test]
+    fn transcript_copy_keeps_column_clipping_for_prose() {
+        let mut lines = HashMap::new();
+        lines.insert(0, "hello world".to_string());
+        let copy_rows = HashMap::new();
+
+        let mut selection = ContentSelection::new(0, 0);
+        selection.update_cursor(0, 4);
+
+        let text = compose_transcript_selection(&selection, &lines, &copy_rows);
+        assert_eq!(text, "hello");
     }
 }

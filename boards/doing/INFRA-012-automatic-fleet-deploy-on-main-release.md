@@ -123,3 +123,21 @@ Implemented the deploy driver in `~/standards` (commit `d34ed93` on `development
 
 Remaining: the release-triggered control-plane hook (systemd unit on `matrillobase1`), and
 the first real deploy of `v0.1.0` with per-machine verification.
+
+## First Deployment: v0.1.0 (2026-11-08)
+
+Ran `standards-deploy-ort --rev eeb608f...` on `matrillobase1` (commit of `v0.1.0`).
+Report: `~/.local/share/ort/deploy-reports/standards-deploy-ort-20261108T121056Z.tsv`.
+
+Verified at `eeb608f` (`version 0.1.0`, queries `73aa2ff86776cc85`):
+
+- canary `jasper`, then `webapps`, `webappssub1`, `matrillobase1`, `matrillo`,
+  `matrillosub1`, `matrillosub2`, `j8rsxy` (macOS arm64).
+- `webappssub2` is `disabled` and was reported/skipped.
+- `moldavite` (offline ~18 days) and `xp-farmer` (offline ~1h) failed to accept the deploy
+  tools (Tailscale offline). The deploy is therefore **not fully complete** per the
+  invariant; these need to come online (or be marked `pending`/`disabled`) and be re-verified.
+
+Remaining: resolve the two offline active machines; wire the release-triggered control-plane
+job on `matrillobase1`; the macOS release asset still needs a working runner or the manual
+`j8rsxy` build path.

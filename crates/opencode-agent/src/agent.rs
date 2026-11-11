@@ -202,7 +202,9 @@ impl AgentInfo {
             temperature: None,
             top_p: None,
             max_tokens: Some(8192),
-            max_steps: Some(100),
+            // Reference opencode leaves the default agent unbounded (no `steps`);
+            // the wall-clock run budget is the runaway backstop (BUG-071).
+            max_steps: None,
             allowed_tools: Vec::new(),
             options: HashMap::new(),
             permission: build_agent_ruleset("build", &[]),
