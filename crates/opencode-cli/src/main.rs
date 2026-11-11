@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use opencode_agent::{AgentExecutor, AgentInfo, AgentRegistry};
 use opencode_command::{CommandContext, CommandRegistry};
@@ -1624,6 +1624,10 @@ struct RemoteMessageInfo {
     role: String,
     parts: Vec<RemoteMessagePart>,
     created_at: i64,
+    #[serde(default)]
+    completed_at: Option<i64>,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1631,6 +1635,13 @@ struct RemoteMessagePart {
     #[serde(rename = "type")]
     part_type: String,
     text: Option<String>,
+    #[serde(default)]
+    tool_call: Option<RemoteToolCall>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RemoteToolCall {
+    name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1655,16 +1666,6 @@ struct RemoteShareInfo {
     url: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct RemoteStreamEvent {
-    #[serde(rename = "type")]
-    event_type: Option<String>,
-    content: Option<String>,
-    error: Option<String>,
-    #[serde(default)]
-    tool_name: Option<String>,
-}
-
 async fn resolve_remote_session(
     client: &reqwest::Client,
     base_url: &str,
@@ -1676,7 +1677,7 @@ async fn resolve_remote_session(
     let base_id = if let Some(session_id) = session {
         Some(session_id)
     } else if continue_last {
-        let list_endpoint = server_url(base_url, "/session/?roots=true&limit=100");
+        let list_endpoint = server_url(base_url, "/session?roots=true&limit=100");
         let sessions: Vec<RemoteSessionInfo> =
             parse_http_json(client.get(list_endpoint).send().await?).await?;
         sessions
@@ -1703,7 +1704,7 @@ async fn resolve_remote_session(
         return Ok(base_id);
     }
 
-    let create_endpoint = server_url(base_url, "/session/");
+    let create_endpoint = server_url(base_url, "/session");
     let created: RemoteSessionInfo = parse_http_json(
         client
             .post(create_endpoint)
@@ -1743,124 +1744,71 @@ async fn maybe_share_remote_session(
     Ok(())
 }
 
-async fn consume_remote_sse(
-    response: reqwest::Response,
-    session_id: &str,
-    format: RunOutputFormat,
-) -> anyhow::Result<()> {
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-    let mut current_event: Option<String> = None;
-    let mut current_data: Vec<String> = Vec::new();
+fn attach_timeout() -> Option<Duration> {
+    let ms = std::env::var("OPENCODE_RUN_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(30 * 60 * 1000);
+    if ms == 0 {
+        None
+    } else {
+        Some(Duration::from_millis(ms))
+    }
+}
 
-    let dispatch_event = |event_name: Option<String>, data: String| -> anyhow::Result<()> {
-        if data.trim().is_empty() {
-            return Ok(());
-        }
+fn remote_replies_after<'a>(
+    messages: &'a [RemoteMessageInfo],
+    user_message_id: &str,
+) -> Vec<&'a RemoteMessageInfo> {
+    let mut seen = false;
+    messages
+        .iter()
+        .filter(|message| {
+            if message.id == user_message_id {
+                seen = true;
+                return false;
+            }
+            seen && message.role == "assistant"
+        })
+        .collect()
+}
 
-        let parsed: serde_json::Value =
-            serde_json::from_str(&data).unwrap_or_else(|_| serde_json::json!({ "raw": data }));
-        let event_type = event_name
-            .or_else(|| {
-                parsed
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| "message".to_string());
-
-        if matches!(format, RunOutputFormat::Json) {
-            let mut output = serde_json::Map::new();
-            output.insert(
-                "type".to_string(),
-                serde_json::Value::String(event_type.clone()),
-            );
-            output.insert(
-                "timestamp".to_string(),
-                serde_json::json!(chrono::Utc::now().timestamp_millis()),
-            );
-            output.insert(
-                "sessionID".to_string(),
-                serde_json::Value::String(session_id.to_string()),
-            );
-            match parsed {
-                serde_json::Value::Object(map) => {
-                    for (k, v) in map {
-                        output.insert(k, v);
-                    }
+fn print_remote_replies(replies: &[&RemoteMessageInfo], format: RunOutputFormat, input: &str) {
+    let mut output = String::new();
+    for message in replies {
+        for part in &message.parts {
+            if let Some(tool_call) = part.tool_call.as_ref() {
+                eprintln!("[tool] {}", tool_call.name);
+            }
+            if part.part_type == "text" {
+                if let Some(text) = part.text.as_deref() {
+                    output.push_str(text);
                 }
-                other => {
-                    output.insert("data".to_string(), other);
-                }
-            }
-            println!("{}", serde_json::Value::Object(output));
-            return Ok(());
-        }
-
-        let payload: RemoteStreamEvent =
-            serde_json::from_value(parsed).unwrap_or(RemoteStreamEvent {
-                event_type: Some(event_type.clone()),
-                content: None,
-                error: None,
-                tool_name: None,
-            });
-        let effective_type = payload.event_type.as_deref().unwrap_or(&event_type);
-
-        match effective_type {
-            "message_delta" => {
-                if let Some(content) = payload.content {
-                    print!("{}", content);
-                    io::stdout().flush()?;
-                }
-            }
-            "message_end" => {
-                println!();
-            }
-            "tool_call_start" => {
-                if let Some(name) = payload.tool_name {
-                    println!("\n[tool] {}", name);
-                }
-            }
-            "error" => {
-                let message = payload
-                    .error
-                    .unwrap_or_else(|| "unknown remote stream error".to_string());
-                eprintln!("\nError: {}", message);
-            }
-            _ => {}
-        }
-        Ok(())
-    };
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-        while let Some(pos) = buffer.find('\n') {
-            let mut line = buffer[..pos].to_string();
-            buffer = buffer[pos + 1..].to_string();
-            if line.ends_with('\r') {
-                line.pop();
-            }
-            if line.is_empty() {
-                let data = current_data.join("\n");
-                dispatch_event(current_event.take(), data)?;
-                current_data.clear();
-                continue;
-            }
-            if let Some(event) = line.strip_prefix("event:") {
-                current_event = Some(event.trim().to_string());
-            } else if let Some(data) = line.strip_prefix("data:") {
-                current_data.push(data.trim_start().to_string());
             }
         }
     }
 
-    if !current_data.is_empty() {
-        dispatch_event(current_event.take(), current_data.join("\n"))?;
+    match format {
+        RunOutputFormat::Default => {
+            if !output.is_empty() {
+                print!("{}", output);
+                if !output.ends_with('\n') {
+                    println!();
+                }
+            }
+        }
+        RunOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "type": "completed",
+                    "timestamp": chrono::Utc::now().timestamp_millis(),
+                    "input": input,
+                    "output": output,
+                })
+            );
+        }
     }
-
-    Ok(())
 }
 
 async fn run_non_interactive_attach(
@@ -1891,25 +1839,61 @@ async fn run_non_interactive_attach(
         input
     };
 
-    let endpoint = server_url(&base_url, &format!("/session/{}/stream", session_id));
-    let response = client
-        .post(endpoint)
-        .json(&serde_json::json!({
-            "content": content,
-            "model": model,
-            "variant": variant,
-            "stream": true
-        }))
-        .send()
-        .await?;
+    let accepted: TaskPromptResponse = parse_http_json(
+        client
+            .post(server_url(
+                &base_url,
+                &format!("/session/{}/prompt", session_id),
+            ))
+            .json(&serde_json::json!({
+                "message": content,
+                "model": model,
+                "variant": variant
+            }))
+            .send()
+            .await?,
+    )
+    .await?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Remote run failed ({}): {}", status, body);
+    if accepted.status != "started" && accepted.status != "queued" {
+        anyhow::bail!("Remote run was not accepted (status: {})", accepted.status);
     }
 
-    consume_remote_sse(response, &session_id, format).await
+    let deadline = attach_timeout().map(|timeout| Instant::now() + timeout);
+    loop {
+        if let Some(deadline) = deadline {
+            if Instant::now() >= deadline {
+                let _ = client
+                    .post(server_url(
+                        &base_url,
+                        &format!("/session/{}/abort", session_id),
+                    ))
+                    .send()
+                    .await;
+                anyhow::bail!("Remote run timed out; the session prompt was aborted");
+            }
+        }
+
+        let statuses = fetch_task_statuses(&client, &base_url).await?;
+        let idle = statuses
+            .get(&session_id)
+            .map(|status| status.idle)
+            .unwrap_or(false);
+
+        if idle {
+            let messages = fetch_task_messages(&client, &base_url, &session_id).await?;
+            let replies = remote_replies_after(&messages, &accepted.message_id);
+            if !replies.is_empty() {
+                if let Some(error) = replies.iter().find_map(|message| message.error.as_deref()) {
+                    anyhow::bail!("Remote run failed: {}", error);
+                }
+                print_remote_replies(&replies, format, &content);
+                return Ok(());
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 async fn run_non_interactive(
