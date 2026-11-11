@@ -5,8 +5,9 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "invariants/providers.md"
-status: "todo"
+status: "qa"
 created: "2026-11-11"
+updated: "2026-11-11"
 ---
 
 # Verify Qwen/Hermes tool-call coverage for 2507 and neutralize the kill-switch name
@@ -41,3 +42,27 @@ and stop naming the shared kill switch after DeepSeek only.
 - Provider tests cover the 2507 plain-JSON form and both env names.
 - `cargo test -p opencode-provider` passes.
 - The documentation names the shared switch and the Qwen signal.
+## Implementation 2026-11-11
+
+Branch: `feat/FEAT-071-hermes-2507-coverage`. Not merged; owner opens and merges the PR.
+
+Changes:
+- `OPENCODE_DISABLE_NATIVE_TOOLCALLS` is the neutral kill switch. It is resolved
+  before `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS`, which stays a
+  compatibility alias with identical truthy semantics (`1/true/on/yes`).
+- New tests cover the 2507 plain-JSON `<tool_call>{"name":...,"arguments":{...}}</tool_call>`
+  form split across SSE frames in both the `content` and `reasoning` channels,
+  plus truthy/neutral-vs-legacy env resolution.
+- `wiki/deepseek-native-tool-call-normalization.md` and
+  `invariants/providers.md` now name the shared switch and the Qwen/Hermes
+  signal, and state that the server prompt turn consumes the shared parser.
+- Path verification after BUG-068: the server prompt turn (`session_prompt` ->
+  `run_prompt_turn` -> `SessionPrompt`) uses the generic provider, so it
+  consumes the same OpenAI-compatible parser; no second parser was added in the
+  server or session layer.
+
+Verification:
+- `cargo fmt --all`
+- `cargo test -p opencode-provider` -> 152 + 9 + 4 + 2 + 7 passed, 0 failed
+  (including `qwen_2507_plain_json_{content,reasoning}_split_across_chunks` and
+  `neutral_and_legacy_kill_switches_share_truthy_semantics`).
