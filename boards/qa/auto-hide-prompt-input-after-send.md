@@ -113,8 +113,18 @@ Verification run:
 - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-tui` — clean.
 - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tui --lib` — 190 passed, 0 failed.
 
-QA: interactive `ort-build`/`ort` check (send hides the box; `Ctrl+T` reveals it) is pending on the
-PR branch.
+QA: interactive `ort-build`/`ort` check (send hides the box; `Ctrl+T` reveals it) is still pending.
+
+## Merge Closeout
+
+- Merged in PR #177 (merge commit `e23e497`) into `development`.
+- Remote and local `feat/FEAT-074-auto-hide-prompt-after-send` branches deleted; local `development`
+  fast-forwarded to the merge commit.
+- Code/task completeness reviewed against this card's scope and acceptance criteria. CI `fmt`,
+  `check`, `clippy`, and `test` jobs passed; the `native` matrix jobs failed for environmental
+  reasons (Launchpad DNS failure on Ubuntu, macOS job cancelled), not from this change.
+- Card remains in `qa` until an interactive QA report is recorded or the user explicitly completes
+  it.
 
 ## Related Items
 
