@@ -49,12 +49,14 @@ loop. This also makes the CLI unusable as a token/usage probe for real runs.
 
 ## Expected
 
-- Create sessions at `/session` (or make the server tolerate the trailing
-  slash).
-- Have `run --attach` execute the canonical queued prompt path
-  (`POST /session/{id}/prompt`) or make `/stream` run the agentic loop with the
-  session's tools/system prompt.
-- Do not silently downgrade to a tool-less chat stream.
+- Create sessions at `/session` (fix the trailing slash) or make the server
+  tolerate it.
+- Route `run --attach` through the canonical queued prompt path
+  (`POST /session/{id}/prompt`) and consume the session event stream/messages.
+- Do not use `/session/{id}/stream` for attach; it is a raw chat stream with
+  `tools: None` and `system: None`.
+- Add an integration test that proves a tool-requiring prompt executes at least
+  one tool and returns a report.
 
 ## Workaround
 

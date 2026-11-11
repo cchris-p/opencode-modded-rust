@@ -46,8 +46,11 @@ even though message-level usage is present.
 ## Expected
 
 - Aggregate per-message usage into the session usage on completion and persist
-  it, or compute `stats` from message records when session usage is absent.
-- `stats` should agree with the sum of message token records for the session.
+  it.
+- If session usage is absent or zero, compute `stats` from message records as a
+  fallback.
+- Add a test with two or more assistant messages and assert that `stats` equals
+  the summed message tokens.
 
 ## Related
 
