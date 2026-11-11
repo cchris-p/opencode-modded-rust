@@ -268,37 +268,35 @@ async fn persist_sessions_if_enabled(state: &Arc<ServerState>) {
     }
 }
 
-fn first_user_message_text(session: &opencode_session::Session) -> String {
-    session
-        .messages
-        .iter()
-        .find(|message| matches!(message.role, opencode_session::MessageRole::User))
-        .map(|message| message.get_text())
-        .unwrap_or_default()
-}
-
-/// Synchronously give a freshly created session its first durable, human-readable
-/// title as soon as the first user message is materialized. Uses the instant
-/// first-line fallback so the title survives aborts, tool-first turns, and server
-/// restarts. The prompt runner (or [`spawn_title_upgrade`] on the SSE path)
-/// replaces it with an LLM title later while the session stays auto-titled.
+/// Resolve the provider/model used for automatic session titles.
 ///
-/// Returns `true` when a new fallback title was applied.
-fn apply_initial_session_title(session: &mut opencode_session::Session) -> bool {
-    if !session.is_default_title() {
-        return false;
-    }
+/// Priority: a configured `title` agent model, then the explicit `small_model`
+/// config or the vanilla provider small-model family priority. `None` means the
+/// caller should fall back to the session's own provider/model.
+fn resolve_title_model(
+    state: &ServerState,
+    provider_id: &str,
+    directory: &str,
+    config_small_model: Option<&str>,
+) -> Option<(Arc<dyn opencode_provider::Provider>, String)> {
+    let providers = state.providers.read().unwrap();
 
-    let first_user_text = first_user_message_text(session);
-    if first_user_text.trim().is_empty() {
-        return false;
-    }
+    let agent_model = crate::agentic::build_agent_registry(directory)
+        .get("title")
+        .and_then(|agent| agent.model.clone());
 
-    session.set_auto_title(opencode_session::generate_session_title(&first_user_text));
-    true
+    let (title_provider_id, title_model_id) = if let Some(model) = agent_model {
+        (model.provider_id, model.model_id)
+    } else {
+        providers.get_small_model(provider_id, config_small_model)?
+    };
+
+    let provider = providers.get_provider(&title_provider_id).ok()?;
+    provider.get_model(&title_model_id)?;
+    Some((provider, title_model_id))
 }
 
-/// Upgrade a durable fallback title to an LLM-generated one on the non-agentic
+/// Upgrade the placeholder title to an LLM-generated one on the non-agentic
 /// `/stream` path, which has no prompt runner to do it. No-op once the title has
 /// been finalized or manually renamed.
 fn spawn_title_upgrade(
@@ -309,20 +307,18 @@ fn spawn_title_upgrade(
     first_user_text: String,
 ) {
     tokio::spawn(async move {
-        let fallback = opencode_session::generate_session_title(&first_user_text);
-        let generated =
+        let Some(generated) =
             opencode_session::generate_session_title_llm(&first_user_text, provider, &model_id)
-                .await;
+                .await
+        else {
+            return;
+        };
 
         let mut sessions = state.sessions.lock().await;
         let Some(session) = sessions.get_mut(&session_id) else {
             return;
         };
-        if !session.is_auto_title_pending() {
-            return;
-        }
-        if generated.trim().is_empty() || generated.trim() == fallback.trim() {
-            // Leave the durable fallback in place and keep it retryable.
+        if !session.should_generate_title() {
             return;
         }
         session.finalize_auto_title(generated);
@@ -2363,16 +2359,15 @@ async fn stream_message(
             .await?;
     drop(config);
 
-    let (history, msg_id, selected_variant, title_pending, title_text) = {
+    let (history, msg_id, selected_variant, title_source, session_directory) = {
         let mut sessions = state.sessions.lock().await;
         let session = sessions
             .get_mut(&session_id)
             .ok_or_else(|| ApiError::SessionNotFound(session_id.clone()))?;
 
         session.add_user_message(&req.content);
-        apply_initial_session_title(session);
-        let title_pending = session.is_auto_title_pending();
-        let title_text = first_user_message_text(session);
+        let title_source = opencode_session::session_title_source(session);
+        let session_directory = session.directory.clone();
         let history = session.messages.clone();
         let selected_variant = req.variant.clone().or_else(|| {
             session
@@ -2399,20 +2394,29 @@ async fn stream_message(
             history,
             assistant_msg.id.clone(),
             selected_variant,
-            title_pending,
-            title_text,
+            title_source,
+            session_directory,
         )
     };
 
-    // Make the first-message title durable before streaming begins so it survives
-    // an aborted or failed SSE turn, then upgrade it to an LLM title off-path.
-    if title_pending {
-        persist_sessions_if_enabled(&state).await;
+    // Generate the title off the streaming path. Use the small/utility model
+    // when one is available, otherwise the session's own model.
+    if let Some(title_text) = title_source {
+        let stream_config = load_config(FsPath::new(&session_directory)).ok();
+        let (title_provider, title_model_id) = resolve_title_model(
+            &state,
+            &provider_id,
+            &session_directory,
+            stream_config
+                .as_ref()
+                .and_then(|config| config.small_model.as_deref()),
+        )
+        .unwrap_or_else(|| (provider.clone(), model_id.clone()));
         spawn_title_upgrade(
             state.clone(),
             session_id.clone(),
-            provider.clone(),
-            model_id.clone(),
+            title_provider,
+            title_model_id,
             title_text,
         );
     }
@@ -2875,7 +2879,6 @@ async fn accept_prompt_with_parts(
             message
                 .metadata
                 .insert("admitted_seq".to_string(), serde_json::json!(seq));
-            apply_initial_session_title(session);
         }
 
         queue.pending.push_back(PendingPrompt {
@@ -3556,11 +3559,22 @@ async fn prompt_child_subagent(
 
     configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&child.directory)).await;
     let child_config = load_config(FsPath::new(&child.directory)).ok();
-    let runner = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
+    let mut runner_builder = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
         opencode_session::SessionStateManager::new(),
     )))
     .with_lsp_registry(state.lsp_registry.clone())
     .with_workspace_intelligence_policy(workspace_intelligence_policy(child_config.as_ref()));
+    if let Some((title_provider, title_model_id)) = resolve_title_model(
+        &state,
+        &provider_id,
+        &child.directory,
+        child_config
+            .as_ref()
+            .and_then(|config| config.small_model.as_deref()),
+    ) {
+        runner_builder = runner_builder.with_title_model(title_provider, title_model_id);
+    }
+    let runner = runner_builder;
     let input = opencode_session::PromptInput {
         session_id: child_id.clone(),
         message_id: None,
@@ -4665,21 +4679,31 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
     let wi_policy = workspace_intelligence_policy(workspace_config.as_ref());
 
     configure_lsp_for_directory(&state.lsp_registry, FsPath::new(&session.directory)).await;
-    let prompt_runner = Arc::new(
-        opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
-            opencode_session::SessionStateManager::new(),
-        )))
-        .with_lsp_registry(state.lsp_registry.clone())
-        .with_ask_callback(permission_callback)
-        .with_ask_question_callback(question_callback)
-        .with_create_subsession_callback(create_subsession_callback)
-        .with_prompt_subsession_callback(prompt_subsession_callback)
-        .with_background_subsession_callback(background_subsession_callback)
-        .with_experimental_background_subagents(experimental_background_subagents)
-        .with_resolve_subagent_callback(resolve_subagent_callback)
-        .with_workspace_intelligence_policy(wi_policy)
-        .with_session_inspect_callback(session_inspect_callback),
-    );
+    let mut prompt_runner_builder = opencode_session::SessionPrompt::new(Arc::new(RwLock::new(
+        opencode_session::SessionStateManager::new(),
+    )))
+    .with_lsp_registry(state.lsp_registry.clone())
+    .with_ask_callback(permission_callback)
+    .with_ask_question_callback(question_callback)
+    .with_create_subsession_callback(create_subsession_callback)
+    .with_prompt_subsession_callback(prompt_subsession_callback)
+    .with_background_subsession_callback(background_subsession_callback)
+    .with_experimental_background_subagents(experimental_background_subagents)
+    .with_resolve_subagent_callback(resolve_subagent_callback)
+    .with_workspace_intelligence_policy(wi_policy)
+    .with_session_inspect_callback(session_inspect_callback);
+    if let Some((title_provider, title_model_id)) = resolve_title_model(
+        &state,
+        provider.id(),
+        &session.directory,
+        workspace_config
+            .as_ref()
+            .and_then(|config| config.small_model.as_deref()),
+    ) {
+        prompt_runner_builder =
+            prompt_runner_builder.with_title_model(title_provider, title_model_id);
+    }
+    let prompt_runner = Arc::new(prompt_runner_builder);
     ACTIVE_PROMPTS
         .write()
         .await
@@ -9068,7 +9092,7 @@ mod session_title_tests {
     }
 
     #[tokio::test]
-    async fn accepted_prompt_persists_fallback_title_without_completing_the_turn() {
+    async fn accepted_prompt_keeps_default_title_until_generation() {
         let (state, session_repo) = state_with_repos().await;
         let session_id = {
             let mut manager = state.sessions.lock().await;
@@ -9092,12 +9116,9 @@ mod session_title_tests {
         {
             let manager = state.sessions.lock().await;
             let session = manager.get(&session_id).expect("session should exist");
-            assert!(!session.is_default_title());
-            assert_eq!(session.title, "Investigate the flaky test");
-            assert!(
-                session.is_auto_title_pending(),
-                "fallback title must stay upgradeable after a tool-first/aborted turn"
-            );
+            assert!(session.is_default_title());
+            assert!(!session.title.contains("Investigate the flaky test"));
+            assert!(!session.is_auto_title_pending());
         }
 
         let stored = session_repo
@@ -9105,8 +9126,8 @@ mod session_title_tests {
             .await
             .expect("get stored session")
             .expect("stored session should exist");
-        assert_eq!(stored.title, "Investigate the flaky test");
-        assert!(!stored.title.starts_with("New session"));
+        assert!(stored.title.starts_with("New session"));
+        assert!(!stored.title.contains("Investigate the flaky test"));
     }
 
     #[tokio::test]
