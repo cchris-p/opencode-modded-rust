@@ -1588,6 +1588,9 @@ impl SessionPrompt {
                 });
             }
 
+            let aggregated_usage = session.get_usage();
+            session.update_usage(aggregated_usage);
+
             let mut has_tool_calls = session
                 .messages
                 .get(assistant_index)

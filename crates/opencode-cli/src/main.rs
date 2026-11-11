@@ -28,7 +28,9 @@ use opencode_session::system::{EnvironmentContext, SystemPrompt};
 use opencode_storage::{Database, MessageRepository, SessionRepository};
 use opencode_tool::skill::list_available_skills;
 use opencode_tool::{registry::create_default_registry, ToolContext};
-use opencode_types::{MessagePart, MessageRole, PartType, Session, SessionMessage, SessionStatus};
+use opencode_types::{
+    MessagePart, MessageRole, PartType, Session, SessionMessage, SessionStatus, SessionUsage,
+};
 
 #[derive(Parser)]
 #[command(name = "opencode-modded-rust")]
@@ -3769,6 +3771,76 @@ async fn handle_db_command(
     Ok(())
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct UsageTotals {
+    input: u64,
+    output: u64,
+    reasoning: u64,
+    cache_read: u64,
+    cache_write: u64,
+}
+
+impl UsageTotals {
+    fn is_zero(&self) -> bool {
+        self.input == 0
+            && self.output == 0
+            && self.reasoning == 0
+            && self.cache_read == 0
+            && self.cache_write == 0
+    }
+
+    fn from_session_usage(usage: &SessionUsage) -> Self {
+        Self {
+            input: usage.input_tokens,
+            output: usage.output_tokens,
+            reasoning: usage.reasoning_tokens,
+            cache_read: usage.cache_read_tokens,
+            cache_write: usage.cache_write_tokens,
+        }
+    }
+}
+
+/// Sum the per-message usage metadata (written by the prompt runner) so token
+/// accounting still works when a persisted session row has zero usage totals.
+fn message_usage_totals(messages: &[SessionMessage]) -> UsageTotals {
+    let mut totals = UsageTotals::default();
+    for message in messages {
+        if message.role != MessageRole::Assistant {
+            continue;
+        }
+        let Some(usage) = message.metadata.get("usage") else {
+            continue;
+        };
+        let field = |name: &str| {
+            usage
+                .get(name)
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0)
+        };
+        totals.input += field("prompt_tokens");
+        totals.output += field("completion_tokens");
+        totals.reasoning += field("reasoning_tokens");
+        totals.cache_read += field("cache_read_tokens");
+        totals.cache_write += field("cache_write_tokens");
+    }
+    totals
+}
+
+/// Resolve a session's token totals, falling back to per-message usage when the
+/// persisted session row has no (or zero) usage. Returns the totals and cost.
+fn effective_usage_totals(session: &Session, messages: &[SessionMessage]) -> (UsageTotals, f64) {
+    let mut totals = UsageTotals::default();
+    let mut cost = 0.0;
+    if let Some(usage) = &session.usage {
+        cost = usage.total_cost;
+        totals = UsageTotals::from_session_usage(usage);
+    }
+    if totals.is_zero() {
+        totals = message_usage_totals(messages);
+    }
+    (totals, cost)
+}
+
 async fn handle_stats_command(
     days: Option<i64>,
     tools_limit: Option<usize>,
@@ -3815,17 +3887,15 @@ async fn handle_stats_command(
     let mut model_usage: BTreeMap<String, usize> = BTreeMap::new();
 
     for session in &sessions {
-        if let Some(usage) = &session.usage {
-            total_cost += usage.total_cost;
-            total_input += usage.input_tokens;
-            total_output += usage.output_tokens;
-            total_reasoning += usage.reasoning_tokens;
-            total_cache_read += usage.cache_read_tokens;
-            total_cache_write += usage.cache_write_tokens;
-        }
-
         let messages = message_repo.list_for_session(&session.id).await?;
         total_messages += messages.len();
+        let (totals, cost) = effective_usage_totals(session, &messages);
+        total_cost += cost;
+        total_input += totals.input;
+        total_output += totals.output;
+        total_reasoning += totals.reasoning;
+        total_cache_read += totals.cache_read;
+        total_cache_write += totals.cache_write;
 
         for message in messages {
             if let Some(provider) = message.metadata.get("provider_id").and_then(|v| v.as_str()) {
@@ -8023,5 +8093,71 @@ mod tests {
         let _ = std::fs::remove_dir(&dir);
 
         assert!(result.is_err(), "remote directory attach must fail");
+    }
+
+    #[test]
+    fn stats_falls_back_to_summed_message_usage_when_session_usage_is_zero() {
+        let zero_usage = SessionUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            cache_write_tokens: 0,
+            cache_read_tokens: 0,
+            total_cost: 0.0,
+        };
+        let session = Session {
+            id: "ses_stats".to_string(),
+            slug: "stats".to_string(),
+            project_id: "proj".to_string(),
+            directory: "/tmp".to_string(),
+            workspace_identity: None,
+            parent_id: None,
+            title: "stats".to_string(),
+            version: "1".to_string(),
+            time: Default::default(),
+            messages: Vec::new(),
+            summary: None,
+            share: None,
+            revert: None,
+            permission: None,
+            usage: Some(zero_usage),
+            status: SessionStatus::default(),
+            task: None,
+            metadata: HashMap::new(),
+            created_at: Default::default(),
+            updated_at: Default::default(),
+        };
+        let message = |id: &str, role: MessageRole, input: Option<(u64, u64)>| SessionMessage {
+            id: id.to_string(),
+            session_id: "ses_stats".to_string(),
+            role,
+            parts: Vec::new(),
+            created_at: chrono::Utc::now(),
+            metadata: input
+                .map(|(prompt, completion)| {
+                    let mut metadata = HashMap::new();
+                    metadata.insert(
+                        "usage".to_string(),
+                        serde_json::json!({
+                            "prompt_tokens": prompt,
+                            "completion_tokens": completion,
+                        }),
+                    );
+                    metadata
+                })
+                .unwrap_or_default(),
+        };
+        let messages = vec![
+            message("msg_user", MessageRole::User, None),
+            message("msg_a1", MessageRole::Assistant, Some((5333, 650))),
+            message("msg_a2", MessageRole::Assistant, Some((5441, 439))),
+        ];
+
+        let (totals, cost) = effective_usage_totals(&session, &messages);
+
+        assert_eq!(totals.input, 5333 + 5441);
+        assert_eq!(totals.output, 650 + 439);
+        assert_eq!(cost, 0.0);
+        assert_eq!(totals, message_usage_totals(&messages));
     }
 }
