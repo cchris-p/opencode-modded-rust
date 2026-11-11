@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-11-10"
 updated: "2026-11-11"
 ---
@@ -93,3 +93,13 @@ Tokens: input=13085 output=57 reasoning=0 cache_read=0 cache_write=0
 
 `input = 6514 + 6571` and `output = 41 + 16`, so the message fallback produces
 the summed tokens the card requires.
+
+## Self-QA 2026-11-11 (rebased branch)
+
+Branch `bug/BUG-069-stats-usage` (`8449985`), binary built from the branch.
+Ran `stats` against the SQLite database produced by the BUG-068 attach QA run
+(two assistant messages with usage 6514/41 and 6571/16).
+
+Observed: `Tokens: input=13085 output=57`, exactly the summed message tokens;
+tool usage still lists `bash 1`.
+Result: **PASS**.

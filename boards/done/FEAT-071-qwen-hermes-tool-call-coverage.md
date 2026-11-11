@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "invariants/providers.md"
-status: "qa"
+status: "done"
 created: "2026-11-11"
 updated: "2026-11-11"
 ---
@@ -66,3 +66,16 @@ Verification:
 - `cargo test -p opencode-provider` -> 152 + 9 + 4 + 2 + 7 passed, 0 failed
   (including `qwen_2507_plain_json_{content,reasoning}_split_across_chunks` and
   `neutral_and_legacy_kill_switches_share_truthy_semantics`).
+
+## Self-QA 2026-11-11 (rebased branch)
+
+Branch `feat/FEAT-071-hermes-2507-coverage` (`0d70c64`), binary built from the
+branch. Drove the real server prompt path with a mock provider streaming the
+2507 plain-JSON `<tool_call>{"name":"read","arguments":{...}}</tool_call>` form
+split across chunks.
+
+- Normalization on: `read` tool executed, fixture content appeared in the tool
+  result, final assistant report returned, raw markup not visible.
+- `OPENCODE_DISABLE_NATIVE_TOOLCALLS=1`: no tool call, raw markup passed through
+  as text, server healthy.
+Result: **PASS**.

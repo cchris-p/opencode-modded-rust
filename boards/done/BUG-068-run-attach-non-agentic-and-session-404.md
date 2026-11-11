@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-11-10"
 updated: "2026-11-11"
 ---
@@ -108,3 +108,13 @@ Result: exit 0; stdout reported `attach-tool-ok`; stderr showed `[tool] bash`;
 the session (`ses_f81c...`) contained a `bash` tool call and the final report.
 Session creation at `/session` succeeded, so both the 404 and the non-agentic
 stream are fixed on the real path.
+
+## Self-QA 2026-11-11 (rebased branch)
+
+Branch `bug/BUG-068-attach-agentic` (`8591802`), binary built from the branch.
+Ran a real local `serve` plus `run --attach` against `ollama/qwen3-coder:30b`
+with a prompt requiring a shell command.
+
+Observed: attach exit 0; stderr `[tool] bash`; stdout reported
+`attach-tool-ok`; session contained a `bash` tool call and the final report.
+Result: **PASS**.

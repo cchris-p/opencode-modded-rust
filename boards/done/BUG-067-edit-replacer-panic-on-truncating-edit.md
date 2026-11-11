@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "qa"
+status: "done"
 created: "2026-11-08"
 updated: "2026-11-11"
 ---
@@ -103,3 +103,16 @@ Regression tests added in `crates/opencode-tool/src/edit/replacers.rs`:
 Verification:
 - `cargo fmt --all`
 - `cargo test -p opencode-tool` -> 77 passed, 0 failed.
+
+## Self-QA 2026-11-11
+
+Branch `bug/BUG-067-edit-replacer-panic` (`981e721`), binary built from the
+branch. Drove the real agent/server path with a deterministic OpenAI-compatible
+mock provider that streams a Qwen-style `<tool_call>` edit call split across
+chunks, against a workspace whose `docs/guide.md` is already reduced to one line
+(the original panic shape: multi-line `old_string`, single-line content).
+
+Observed: `edit` tool executed; tool result was the structured error
+`Could not find oldString in the file...`; no `panicked at` in the server log;
+server stayed healthy; final assistant turn returned normally.
+Result: **PASS**.
