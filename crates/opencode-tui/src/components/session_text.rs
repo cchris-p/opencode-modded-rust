@@ -6,16 +6,25 @@ use ratatui::{
 use super::markdown::MarkdownRenderer;
 use crate::theme::Theme;
 
-/// Render a text part using markdown rendering
-pub fn render_text_part(text: &str, theme: &Theme, marker_color: Color) -> Vec<Line<'static>> {
+/// Render a text part and return the raw source lines of its code blocks.
+pub fn render_text_part_with_code(text: &str, theme: &Theme, marker_color: Color) -> RenderedText {
     let renderer = MarkdownRenderer::new(theme.clone());
+    let rendered = renderer.render_markdown(text);
     let mut with_marker = Vec::new();
-    for line in renderer.to_lines(text) {
+    for line in rendered.lines {
         let mut spans = vec![Span::styled("  ", Style::default().fg(marker_color))];
         spans.extend(line.spans);
         with_marker.push(Line::from(spans));
     }
-    with_marker
+    RenderedText {
+        lines: with_marker,
+        code_blocks: rendered.code_blocks,
+    }
+}
+
+pub struct RenderedText {
+    pub lines: Vec<Line<'static>>,
+    pub code_blocks: Vec<Vec<String>>,
 }
 
 /// Render a reasoning/thinking part with muted styling and collapsible header.
@@ -26,7 +35,7 @@ pub struct ReasoningRender {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_reasoning_part, render_text_part};
+    use super::{render_reasoning_part, render_text_part_with_code};
     use crate::theme::Theme;
 
     fn text_of(lines: &[ratatui::text::Line<'static>]) -> String {
@@ -46,7 +55,7 @@ mod tests {
     fn text_part_uses_padding_without_selectable_marker() {
         let theme = Theme::default();
 
-        let lines = render_text_part("I have enough", &theme, theme.primary);
+        let lines = render_text_part_with_code("I have enough", &theme, theme.primary).lines;
 
         let first_span = lines
             .first()

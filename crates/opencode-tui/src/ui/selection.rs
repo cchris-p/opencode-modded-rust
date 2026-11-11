@@ -287,6 +287,34 @@ impl ContentSelection {
         }
     }
 
+    /// Normalized content-line/column bounds in reading order:
+    /// `(first_line, first_col, last_line, last_col)`.
+    pub fn bounds(&self) -> (usize, u16, usize, u16) {
+        let ((r0, c0), (r1, c1)) = self.range();
+        (r0, c0, r1, c1)
+    }
+
+    /// Column-clipped text for one content line, or `None` when the line is
+    /// outside the selection.
+    pub fn selected_text_for_line(&self, row: usize, line: &str) -> Option<String> {
+        let ((r0, c0), (r1, c1)) = self.range();
+        if row < r0 || row > r1 {
+            return None;
+        }
+
+        let selected = if r0 == r1 {
+            slice_by_columns(line, c0 as usize, c1.saturating_add(1) as usize)
+        } else if row == r0 {
+            slice_from_column(line, c0 as usize)
+        } else if row == r1 {
+            slice_to_column(line, c1.saturating_add(1) as usize)
+        } else {
+            line.to_string()
+        };
+
+        Some(selected)
+    }
+
     fn range(&self) -> ((usize, u16), (usize, u16)) {
         let a = (self.anchor_line, self.anchor_col);
         let b = (self.cursor_line, self.cursor_col);
@@ -352,6 +380,30 @@ impl ContentSelection {
         }
 
         result
+    }
+}
+
+/// How a rendered transcript row participates in selection copy.
+///
+/// Fenced code blocks are rendered with a frame and soft-wrapped to the pane
+/// width, so the screen text is not the source text. The renderer records one
+/// `CopyRow` per screen row so copy can emit the fenced source verbatim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CopyRow {
+    /// Copy the selected screen text with the normal column clipping.
+    Normal,
+    /// Code-fence frame row (`╭ …`, `╰ …`); never copied.
+    CodeChrome,
+    /// First screen row of a fenced source line; carries the exact source line.
+    CodeStart(String),
+    /// Soft-wrapped continuation of the previous `CodeStart`; never copied
+    /// separately because the source line is already emitted whole.
+    CodeContinuation,
+}
+
+impl CopyRow {
+    pub fn is_chrome(&self) -> bool {
+        matches!(self, Self::CodeChrome)
     }
 }
 
