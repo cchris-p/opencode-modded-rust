@@ -1955,6 +1955,184 @@ mod session_queue_tests {
     }
 }
 
+#[cfg(test)]
+mod attach_tool_tests {
+    use super::*;
+    use futures::stream;
+    use opencode_provider::{
+        ChatRequest, ChatResponse, ModelInfo, ProviderError, StreamEvent, StreamResult,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// First turn emits a `read` tool call, every later turn returns final text.
+    /// This exercises the same queued prompt path that `run --attach` uses.
+    struct ToolThenTextProvider {
+        model: ModelInfo,
+        file_path: String,
+        calls: AtomicUsize,
+    }
+
+    impl ToolThenTextProvider {
+        fn new(file_path: String) -> Self {
+            Self {
+                model: ModelInfo {
+                    id: "tool-model".to_string(),
+                    name: "Tool Model".to_string(),
+                    provider: "test".to_string(),
+                    context_window: 8192,
+                    max_output_tokens: 1024,
+                    supports_vision: false,
+                    supports_tools: true,
+                    cost_per_million_input: 0.0,
+                    cost_per_million_output: 0.0,
+                },
+                file_path,
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl opencode_provider::Provider for ToolThenTextProvider {
+        fn id(&self) -> &str {
+            "test"
+        }
+
+        fn name(&self) -> &str {
+            "Test"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            vec![self.model.clone()]
+        }
+
+        fn get_model(&self, id: &str) -> Option<&ModelInfo> {
+            (self.model.id == id).then_some(&self.model)
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest("chat() not used".to_string()))
+        }
+
+        async fn chat_stream(
+            &self,
+            _request: ChatRequest,
+        ) -> std::result::Result<StreamResult, ProviderError> {
+            let turn = self.calls.fetch_add(1, Ordering::SeqCst);
+            let events = if turn == 0 {
+                vec![
+                    Ok(StreamEvent::ToolCallStart {
+                        id: "call_read".to_string(),
+                        name: "read".to_string(),
+                    }),
+                    Ok(StreamEvent::ToolCallEnd {
+                        id: "call_read".to_string(),
+                        name: "read".to_string(),
+                        input: serde_json::json!({ "file_path": self.file_path }),
+                    }),
+                    Ok(StreamEvent::Finish),
+                ]
+            } else {
+                vec![
+                    Ok(StreamEvent::TextDelta(
+                        "The file contains: hello attach.".to_string(),
+                    )),
+                    Ok(StreamEvent::Finish),
+                ]
+            };
+            Ok(Box::pin(stream::iter(events)))
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_path_executes_tool_and_returns_final_text() {
+        let dir = std::env::temp_dir().join(format!("bug068-attach-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp workspace");
+        let file = dir.join("note.txt");
+        std::fs::write(&file, "hello attach").expect("fixture file");
+
+        let state = Arc::new(ServerState::new());
+        state
+            .providers
+            .write()
+            .unwrap()
+            .register_arc(Arc::new(ToolThenTextProvider::new(
+                file.to_string_lossy().into_owned(),
+            )));
+        let directory = dir.to_string_lossy().into_owned();
+        let session_id = state.sessions.lock().await.create("default", &directory).id;
+
+        let accepted = session_prompt(
+            State(state.clone()),
+            Path(session_id.clone()),
+            Json(SessionPromptRequest {
+                message: Some("Read note.txt and report its contents".to_string()),
+                model: Some("test/tool-model".to_string()),
+                variant: None,
+                agent: Some("build".to_string()),
+                command: None,
+                arguments: None,
+                parts: None,
+            }),
+        )
+        .await
+        .expect("prompt accepted");
+        assert_eq!(accepted.0["status"], "started");
+
+        let mut finished = false;
+        for _ in 0..2000 {
+            if SESSION_RUN_STATUS.read().await.get(&session_id).is_none() {
+                finished = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(finished, "prompt run should reach idle");
+
+        let sessions = state.sessions.lock().await;
+        let session = sessions.get(&session_id).expect("session exists");
+        let mut saw_tool_call = false;
+        let mut saw_tool_result = false;
+        let mut final_text = String::new();
+        for message in &session.messages {
+            if message.role != opencode_session::MessageRole::Assistant {
+                continue;
+            }
+            for part in &message.parts {
+                match &part.part_type {
+                    opencode_session::PartType::ToolCall { name, .. } if name == "read" => {
+                        saw_tool_call = true;
+                    }
+                    opencode_session::PartType::ToolResult {
+                        content, is_error, ..
+                    } if !*is_error => {
+                        saw_tool_result = content.contains("hello attach");
+                    }
+                    opencode_session::PartType::Text { text, .. } => {
+                        final_text.push_str(text);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(saw_tool_call, "the agentic loop must execute the read tool");
+        assert!(
+            saw_tool_result,
+            "the tool result must contain the file contents"
+        );
+        assert!(
+            final_text.contains("hello attach"),
+            "the final assistant report must be returned"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 async fn send_message(
     State(state): State<Arc<ServerState>>,
     Path(session_id): Path<String>,
