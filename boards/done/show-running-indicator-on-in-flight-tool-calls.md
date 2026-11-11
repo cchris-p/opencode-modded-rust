@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-11-11"
 ---
 
@@ -157,3 +157,13 @@ spinner far from the call.
   `completed_tool_row_is_not_labelled_running`, and
   `running_tool_run_summary_animates_and_labels_running`.
 - Result: **PASS**.
+
+### Merge Closeout - 2026-11-11
+
+- Merged into `development` via PR #184 (merge commit `17b18cf`).
+- QA report above (209 TUI tests + deterministic `TestBackend` render evidence) is recorded, so the
+  card moves to `done` rather than staying in `qa`.
+- Remote branch `feat/FEAT-075-tool-call-running-indicator` deleted.
+- The local feature branch was left in the shared checkout because another session has unrelated
+  uncommitted work in the same checkout (`session.rs` and other files); switching branches would
+  overwrite that work. It can be deleted once that checkout is free.
