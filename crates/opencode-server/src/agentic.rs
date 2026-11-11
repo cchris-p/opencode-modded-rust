@@ -84,6 +84,7 @@ pub async fn resolve_agentic_context(
         max_tokens: agent.max_tokens,
         temperature: agent.temperature,
         top_p: agent.top_p,
+        max_steps: agent.max_steps,
     };
 
     ResolvedAgenticContext {
