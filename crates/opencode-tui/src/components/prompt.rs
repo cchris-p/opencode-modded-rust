@@ -489,6 +489,12 @@ impl Prompt {
         self.spinner.task_kind()
     }
 
+    /// Current activity frame, shared with transcript loading indicators so all
+    /// visible spinners advance in step.
+    pub fn activity_frame(&self) -> usize {
+        self.spinner.frame_index()
+    }
+
     pub fn set_spinner_color(&mut self, color: Color) {
         self.spinner.set_color(color);
     }

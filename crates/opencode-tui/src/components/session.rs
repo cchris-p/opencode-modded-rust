@@ -17,7 +17,7 @@ use ratatui::{
 use super::message_palette;
 use super::sidebar::SidebarState;
 use crate::components::{Prompt, Sidebar};
-use crate::context::{AppContext, Message, MessagePart, MessageRole, SidebarMode};
+use crate::context::{AppContext, Message, MessagePart, MessageRole, SessionStatus, SidebarMode};
 use crate::ui::{workspace_location_label, CopyRow};
 
 const SIDEBAR_WIDTH: u16 = 42;
@@ -83,6 +83,9 @@ struct MessageRenderCtx<'a> {
     keybind: &'a crate::context::KeybindRegistry,
     include_background_subagents: bool,
     content_width: usize,
+    activity_frame: usize,
+    animations_enabled: bool,
+    session_active: bool,
 }
 
 pub struct SessionView {
@@ -281,7 +284,7 @@ impl SessionView {
         // the viewport consistent within one frame. `rendered_line_count` is
         // still updated by the paint pass so follow/scroll behavior is
         // unchanged.
-        self.render_messages(frame, area, true);
+        self.render_messages(frame, area, true, prompt.activity_frame());
         let viewport_height = if self.messages_viewport_height == 0 {
             usize::from(available_after_header_footer)
         } else {
@@ -342,7 +345,7 @@ impl SessionView {
         if show_header && layout[0].height > 0 {
             self.render_header(frame, layout[0]);
         }
-        self.render_messages(frame, layout[1], false);
+        self.render_messages(frame, layout[1], false, prompt.activity_frame());
         if layout[2].height > 0 {
             self.render_session_footer(frame, layout[2]);
         }
@@ -666,7 +669,13 @@ impl SessionView {
     /// viewport/scroll state is left untouched. `render` calls this once in
     /// measure-only mode so the pane can be sized from the current transcript
     /// instead of the previous frame's total (BUG-054).
-    fn render_messages(&mut self, frame: &mut Frame, area: Rect, measure_only: bool) {
+    fn render_messages(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        measure_only: bool,
+        activity_frame: usize,
+    ) {
         if area.height == 0 || area.width == 0 {
             self.last_messages_area = None;
             self.rendered_line_count = 0;
@@ -712,9 +721,11 @@ impl SessionView {
         let show_tool_details = *self.context.show_tool_details.read();
         let semantic_hl = *self.context.semantic_highlight.read();
         let include_background_subagents = self.context.experimental_background_subagents();
+        let animations_enabled = *self.context.animations_enabled.read();
         let keybind = self.context.keybind.read();
 
         let session_ctx = self.context.session.read();
+        let session_active = !matches!(session_ctx.status(&self.session_id), SessionStatus::Idle);
         let empty_messages: Vec<Message> = Vec::new();
         let messages = session_ctx
             .messages
@@ -777,6 +788,9 @@ impl SessionView {
             keybind: &keybind,
             include_background_subagents,
             content_width,
+            activity_frame,
+            animations_enabled,
+            session_active,
         };
 
         // Revert card: rendered only when its inputs change, otherwise reused.
@@ -1378,6 +1392,16 @@ fn hash_revert(revert: &crate::context::RevertInfo, content_width: usize) -> u64
     h.finish()
 }
 
+/// A tool-call step is finalized with `finish_reason` set before its tools run,
+/// so the old `finish.is_none()` check hid the in-flight state. Treat the
+/// tool-call finish variants as live; other terminal finishes are not.
+fn finish_allows_running_tool(finish: Option<&str>) -> bool {
+    match finish {
+        None => true,
+        Some(reason) => reason.replace('-', "_").eq_ignore_ascii_case("tool_calls"),
+    }
+}
+
 fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> RenderedBody {
     #[cfg(test)]
     LAYOUT_RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1427,8 +1451,10 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                     tool_results.insert(id.clone(), (result.clone(), *is_error));
                 }
             }
-            let is_active_assistant =
-                ctx.last_assistant_idx == Some(idx) && msg.finish.is_none() && msg.error.is_none();
+            let is_active_assistant = ctx.last_assistant_idx == Some(idx)
+                && ctx.session_active
+                && msg.error.is_none()
+                && finish_allows_running_tool(msg.finish.as_deref());
             let assistant_marker = assistant_marker_color(msg.agent.as_deref(), ctx.theme);
             let unresolved_tool_calls = msg
                 .parts
@@ -1621,6 +1647,8 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                                         summary.state,
                                         summary.denied,
                                         expanded_run,
+                                        ctx.activity_frame,
+                                        ctx.animations_enabled,
                                         ctx.theme,
                                     )],
                                 );
@@ -1648,6 +1676,8 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                                                 ctx.expanded_tool_calls.contains(id),
                                                 ctx.show_tool_details,
                                                 ctx.content_width,
+                                                ctx.activity_frame,
+                                                ctx.animations_enabled,
                                                 ctx.theme,
                                             );
                                             append_rendered_tool_call(
@@ -1679,6 +1709,8 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                                     ctx.expanded_tool_calls.contains(id),
                                     ctx.show_tool_details,
                                     ctx.content_width,
+                                    ctx.activity_frame,
+                                    ctx.animations_enabled,
                                     ctx.theme,
                                 );
                                 append_rendered_tool_call(
@@ -2015,6 +2047,8 @@ fn render_tool_call_part(
     expanded: bool,
     show_tool_details: bool,
     width: usize,
+    activity_frame: usize,
+    animations_enabled: bool,
     theme: &crate::theme::Theme,
 ) -> super::session_tool::ToolCallRender {
     super::session_tool::render_tool_call(
@@ -2026,6 +2060,8 @@ fn render_tool_call_part(
         show_tool_details,
         expanded,
         width,
+        activity_frame,
+        animations_enabled,
         theme,
     )
 }
@@ -2623,6 +2659,8 @@ mod tests {
             super::super::session_tool::ToolState::Completed,
             false,
             false,
+            0,
+            true,
             &theme,
         );
         let plural = super::super::session_tool::render_tool_run_summary(
@@ -2630,6 +2668,8 @@ mod tests {
             super::super::session_tool::ToolState::Completed,
             false,
             false,
+            0,
+            true,
             &theme,
         );
 
@@ -2646,6 +2686,76 @@ mod tests {
 
         assert!(singular_text.contains("1 tool call"));
         assert!(plural_text.contains("2 tool calls"));
+    }
+
+    #[test]
+    fn tool_call_finish_reasons_keep_running_state_live() {
+        assert!(finish_allows_running_tool(None));
+        assert!(finish_allows_running_tool(Some("tool-calls")));
+        assert!(finish_allows_running_tool(Some("tool_calls")));
+        assert!(!finish_allows_running_tool(Some("stop")));
+        assert!(!finish_allows_running_tool(Some("abort")));
+        assert!(!finish_allows_running_tool(Some("length")));
+    }
+
+    #[test]
+    fn in_flight_tool_call_with_tool_calls_finish_renders_running_indicator() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        *context.show_tool_calls.write() = true;
+        let session_id = "test-session".to_string();
+        {
+            let mut session_ctx = context.session.write();
+            session_ctx.set_status(&session_id, SessionStatus::Running);
+            session_ctx.set_messages(
+                &session_id,
+                vec![Message {
+                    id: "m1".to_string(),
+                    role: MessageRole::Assistant,
+                    content: String::new(),
+                    created_at: chrono::Utc::now(),
+                    agent: None,
+                    model: None,
+                    mode: None,
+                    // A tool-call step is finalized before its tools execute.
+                    finish: Some("tool-calls".to_string()),
+                    error: None,
+                    completed_at: Some(chrono::Utc::now()),
+                    queued: false,
+                    cost: 0.0,
+                    tokens: Default::default(),
+                    parts: vec![MessagePart::ToolCall {
+                        id: "call-1".to_string(),
+                        name: "grep".to_string(),
+                        arguments: r#"{"pattern":"TODO","path":"src"}"#.to_string(),
+                    }],
+                }],
+            );
+        }
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+
+        assert!(
+            !row_containing(&terminal, "⠋").is_empty(),
+            "in-flight tool row must show an animated glyph"
+        );
+        assert!(
+            !row_containing(&terminal, "running…").is_empty(),
+            "in-flight tool row must say running…"
+        );
+        assert!(
+            !row_containing(&terminal, "grep").is_empty(),
+            "the tool call itself must be visible"
+        );
     }
 
     fn joined(lines: &[Vec<Span<'static>>]) -> Vec<String> {
@@ -2730,6 +2840,7 @@ mod tests {
             finish: None,
             error: None,
             completed_at: completed.then(chrono::Utc::now),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Text {
@@ -3149,6 +3260,7 @@ mod tests {
             finish: Some("stop".to_string()),
             error: None,
             completed_at: Some(chrono::Utc::now()),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![
@@ -3200,6 +3312,7 @@ mod tests {
             finish: None,
             error: None,
             completed_at: Some(chrono::Utc::now()),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Reasoning {
