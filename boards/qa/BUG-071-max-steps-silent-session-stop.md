@@ -209,6 +209,13 @@ Implemented the visible-terminal + configurable-limit approach.
   `ChatRequest` has no `tool_choice` field. That is an optional follow-up if a summary-on-budget is
   wanted instead of a plain terminal message.
 
+## Merge Closeout - 2026-11-11
+
+- PR #181 merged into `development` as merge commit `24f94da`.
+- Branch `bug/BUG-071-max-steps-visible-stop` deleted remotely and locally.
+- Local checkout returned to synced `development`.
+- Card remains in `qa` pending a QA report or explicit completion.
+
 ## Notes
 
 - This is a distinct cause from BUG-043: the run returns `Ok(())`, so the terminal-state finalizer
