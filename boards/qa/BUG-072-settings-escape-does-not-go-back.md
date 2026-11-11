@@ -12,6 +12,8 @@ updated: "2026-11-11"
 
 # Esc cannot leave Settings/Provider; it is swallowed by the session interrupt keybind
 
+PR: #182 (merged to `development` at `0e8edbe`).
+
 ## Summary
 
 After opening Settings (including via `/settings`, `/provider`, or `/connect`), pressing `Esc`
