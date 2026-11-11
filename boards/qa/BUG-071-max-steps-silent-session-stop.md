@@ -168,6 +168,8 @@ already removes the silent stop.
 
 Implemented the visible-terminal + configurable-limit approach.
 
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/181 (branch
+  `bug/BUG-071-max-steps-visible-stop`, base `development`).
 - `AgentParams` (`crates/opencode-session/src/prompt.rs`) now carries `max_steps: Option<u32>`.
   `None` means no step cap; a finite value bounds the turn.
 - `loop_inner` replaced the hard-coded `MAX_STEPS = 100` break with the configured limit. When a
