@@ -5,8 +5,9 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-11-08"
+updated: "2026-11-11"
 ---
 
 # Edit replacer panics on a truncating model edit (range end index out of range)
@@ -78,3 +79,27 @@ captured.
 - Related evaluation work: `qwen30-eval` `Q30-005`.
 - Do not copy the sandbox workspace or private user data into this repository;
   reference the paths above.
+## Implementation 2026-11-11
+
+Branch: `bug/BUG-067-edit-replacer-panic`. Not merged; owner opens and merges the PR.
+
+Root cause: the line-based replacers looped `0..=(lines.len().saturating_sub(find_lines.len()))`
+and then sliced `lines[i..i + find_lines.len()]`. When the model `oldString` has more
+lines than the current content (the truncating edit in the evidence), the range start is
+forced to 0 and the end index still exceeds the slice length, so the slice panics.
+
+Fix: guard every line-span search on `find_lines.len() <= lines.len()` (and the
+`LineTrimmedReplacer` line scan on `search_len <= original_lines.len()`), so an
+out-of-range search yields no candidates and `CompositeReplacer::replace` returns the
+existing structured "Could not find oldString" error. No partial write occurs because the
+tool only writes after `replace` returns `Ok`.
+
+Regression tests added in `crates/opencode-tool/src/edit/replacers.rs`:
+- `test_truncating_edit_returns_error_without_panic` uses the failing shape
+  (single-line truncated guide vs. the full multi-line guide) and asserts an error, no panic.
+- `test_line_based_replacers_tolerate_search_longer_than_content` covers all five
+  line-based replacers.
+
+Verification:
+- `cargo fmt --all`
+- `cargo test -p opencode-tool` -> 77 passed, 0 failed.
