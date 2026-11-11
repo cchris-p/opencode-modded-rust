@@ -36,7 +36,7 @@ use crate::context::{
 use crate::event::{CustomEvent, Event, StateChange};
 use crate::router::Route;
 use crate::trace;
-use crate::ui::{next_scroll_offset, AutoScroll, Clipboard, ContentSelection, Selection};
+use crate::ui::{next_scroll_offset, AutoScroll, Clipboard, ContentSelection, CopyRow, Selection};
 use crate::TuiExit;
 
 // TS parity: renderer targetFps is 60, ~16ms frame budget.
@@ -116,6 +116,8 @@ pub struct App {
     /// Rendered transcript lines keyed by absolute content line while a
     /// transcript selection is active, so a copy can span multiple viewports.
     transcript_lines: HashMap<usize, String>,
+    /// Copy plan for each rendered transcript line (code fences vs normal text).
+    transcript_copy_rows: HashMap<usize, CopyRow>,
     /// Edge auto-scroll state for a held selection drag.
     auto_scroll: AutoScroll,
     /// Last pointer position from a drag event, reused while the pointer is held.
@@ -270,6 +272,7 @@ impl App {
             screen_lines: Vec::new(),
             transcript_selection: None,
             transcript_lines: HashMap::new(),
+            transcript_copy_rows: HashMap::new(),
             auto_scroll: AutoScroll::new(),
             drag_pointer: None,
             available_models: HashSet::new(),
@@ -921,6 +924,13 @@ impl App {
                     }
                     MouseEventKind::Up(_) => {
                         self.selection.finalize();
+                        // Pin the content-space endpoint to the release point so
+                        // transcript copy matches the visible selection even when
+                        // the final position arrived only on the Up event.
+                        let line = self.transcript_line_for_row(mouse_event.row);
+                        if let (Some(ts), Some(line)) = (self.transcript_selection.as_mut(), line) {
+                            ts.update_cursor(line, mouse_event.column);
+                        }
                         self.auto_scroll.stop();
                         self.drag_pointer = None;
                         if let Some(sv) = self.session_view.as_mut() {
@@ -2201,35 +2211,34 @@ impl App {
             return;
         }
 
-        // FEAT-072: a transcript selection that auto-scrolled can span content
-        // lines captured across several viewports, so copy from the content
-        // buffer instead of the current-screen snapshot.
-        if self
-            .transcript_selection
-            .as_ref()
-            .is_some_and(|ts| ts.scrolled())
-        {
-            let raw = {
-                let lines = &self.transcript_lines;
-                self.transcript_selection
-                    .as_ref()
-                    .map(|ts| ts.get_selected_text(|line| lines.get(&line).cloned()))
-                    .unwrap_or_default()
-            };
-            let text = clean_selection_text(&raw);
-            self.write_selection_to_clipboard(&text);
-            self.clear_selection();
-            return;
-        }
-
-        let lines = self.screen_lines.clone();
-        let text = clean_selection_text(
-            self.selection
-                .get_selected_text(|row| lines.get(row as usize).cloned())
-                .as_str(),
-        );
+        // Transcript selections use content coordinates, which lets copy span a
+        // session that auto-scrolled (FEAT-072) and lets fenced code blocks copy
+        // their raw source instead of the wrapped, gutter-prefixed screen text.
+        let text = if self.transcript_selection.is_some() {
+            self.transcript_selection_text()
+        } else {
+            let lines = self.screen_lines.clone();
+            clean_selection_text(
+                self.selection
+                    .get_selected_text(|row| lines.get(row as usize).cloned())
+                    .as_str(),
+            )
+        };
         self.write_selection_to_clipboard(&text);
         self.clear_selection();
+    }
+
+    /// Build clipboard text for a transcript selection.
+    ///
+    /// Normal rows keep the column-clipping/cleanup behavior. Fenced code rows
+    /// emit their source line verbatim; the frame and soft-wrap continuation
+    /// rows are skipped. If the selection starts inside a wrapped continuation,
+    /// the parent source line is included once.
+    fn transcript_selection_text(&self) -> String {
+        let Some(ts) = self.transcript_selection.as_ref() else {
+            return String::new();
+        };
+        compose_transcript_selection(ts, &self.transcript_lines, &self.transcript_copy_rows)
     }
 
     fn write_selection_to_clipboard(&mut self, text: &str) {
@@ -2254,6 +2263,7 @@ impl App {
         self.selection.clear();
         self.transcript_selection = None;
         self.transcript_lines.clear();
+        self.transcript_copy_rows.clear();
         self.auto_scroll.stop();
         self.drag_pointer = None;
         if let Some(sv) = self.session_view.as_mut() {
@@ -2352,6 +2362,10 @@ impl App {
             };
             let content_line = offset.saturating_add(usize::from(row - area.y));
             self.transcript_lines.insert(content_line, line.clone());
+            if let Some(copy_row) = sv.copy_row(content_line) {
+                self.transcript_copy_rows
+                    .insert(content_line, copy_row.clone());
+            }
         }
     }
 
@@ -4720,6 +4734,16 @@ impl App {
                         if !selected {
                             continue;
                         }
+                        // Code-fence frame rows stay visible but are not part of
+                        // the selection, so do not invert them. This makes it
+                        // obvious which rows will be copied.
+                        if transcript_selection.is_some()
+                            && session_view
+                                .as_ref()
+                                .is_some_and(|sv| sv.is_code_chrome_screen_row(y))
+                        {
+                            continue;
+                        }
                         let cell = buf.get(x, y);
                         let sym = cell.symbol();
                         // Only highlight cells with visible text content
@@ -4753,6 +4777,74 @@ impl App {
         }
         Ok(())
     }
+}
+
+/// Build clipboard text for a transcript selection from accumulated content
+/// lines and their copy plan.
+///
+/// Normal rows keep column clipping and trailing-whitespace cleanup. Fenced
+/// code rows emit their raw source line; frame and soft-wrap continuation rows
+/// are skipped. A selection that starts inside a wrapped continuation includes
+/// the parent source line once.
+fn compose_transcript_selection(
+    ts: &ContentSelection,
+    lines: &HashMap<usize, String>,
+    copy_rows: &HashMap<usize, CopyRow>,
+) -> String {
+    let (r0, _, r1, _) = ts.bounds();
+    let mut emitted_code_starts: HashSet<usize> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+
+    for row in r0..=r1 {
+        match copy_rows.get(&row) {
+            Some(CopyRow::CodeChrome) => continue,
+            Some(CopyRow::CodeStart(raw)) => {
+                if emitted_code_starts.insert(row) {
+                    // Source code preserves authored indentation and spacing.
+                    out.push(raw.clone());
+                }
+                continue;
+            }
+            Some(CopyRow::CodeContinuation) => {
+                if let Some((start_row, raw)) = code_start_for_continuation(row, copy_rows) {
+                    if emitted_code_starts.insert(start_row) {
+                        out.push(raw);
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+
+        let Some(line) = lines.get(&row) else {
+            continue;
+        };
+        let Some(selected) = ts.selected_text_for_line(row, line) else {
+            continue;
+        };
+        let selected = selected.trim_end();
+        out.push(clean_selection_line(selected).to_string());
+    }
+
+    out.join("\n")
+}
+
+/// Walk backwards from a wrapped code continuation row to the source line that
+/// produced it. Stops at the block frame.
+fn code_start_for_continuation(
+    row: usize,
+    copy_rows: &HashMap<usize, CopyRow>,
+) -> Option<(usize, String)> {
+    let mut cursor = row;
+    while cursor > 0 {
+        cursor -= 1;
+        match copy_rows.get(&cursor) {
+            Some(CopyRow::CodeStart(raw)) => return Some((cursor, raw.clone())),
+            Some(CopyRow::CodeChrome) => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 fn clean_selection_text(text: &str) -> String {
@@ -6132,5 +6224,64 @@ mod tests {
             mapped.permission_type,
             crate::components::PermissionType::Glob
         );
+    }
+
+    #[test]
+    fn transcript_copy_emits_raw_code_and_skips_chrome() {
+        let mut copy_rows = HashMap::new();
+        copy_rows.insert(0, CopyRow::CodeChrome);
+        copy_rows.insert(1, CopyRow::CodeChrome);
+        copy_rows.insert(2, CopyRow::CodeStart("  first \\".to_string()));
+        copy_rows.insert(3, CopyRow::CodeContinuation);
+        copy_rows.insert(4, CopyRow::CodeStart("    second".to_string()));
+        copy_rows.insert(5, CopyRow::CodeChrome);
+        copy_rows.insert(6, CopyRow::CodeChrome);
+
+        let mut lines = HashMap::new();
+        lines.insert(0, String::new());
+        lines.insert(1, "  ╭ bash ────".to_string());
+        lines.insert(2, "  │ first".to_string());
+        lines.insert(3, "continuation".to_string());
+        lines.insert(4, "  │     second".to_string());
+        lines.insert(5, "  ╰───".to_string());
+        lines.insert(6, String::new());
+
+        let mut selection = ContentSelection::new(0, 0);
+        selection.update_cursor(6, 80);
+
+        let text = compose_transcript_selection(&selection, &lines, &copy_rows);
+        assert_eq!(text, "  first \\\n    second");
+    }
+
+    #[test]
+    fn transcript_copy_starting_in_wrapped_continuation_includes_source_line() {
+        let mut copy_rows = HashMap::new();
+        copy_rows.insert(2, CopyRow::CodeStart("one long source line".to_string()));
+        copy_rows.insert(3, CopyRow::CodeContinuation);
+        copy_rows.insert(4, CopyRow::CodeContinuation);
+
+        let mut lines = HashMap::new();
+        lines.insert(2, "  │ one long".to_string());
+        lines.insert(3, "source line".to_string());
+        lines.insert(4, "tail".to_string());
+
+        let mut selection = ContentSelection::new(3, 0);
+        selection.update_cursor(4, 10);
+
+        let text = compose_transcript_selection(&selection, &lines, &copy_rows);
+        assert_eq!(text, "one long source line");
+    }
+
+    #[test]
+    fn transcript_copy_keeps_column_clipping_for_prose() {
+        let mut lines = HashMap::new();
+        lines.insert(0, "hello world".to_string());
+        let copy_rows = HashMap::new();
+
+        let mut selection = ContentSelection::new(0, 0);
+        selection.update_cursor(0, 4);
+
+        let text = compose_transcript_selection(&selection, &lines, &copy_rows);
+        assert_eq!(text, "hello");
     }
 }

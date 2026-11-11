@@ -11,15 +11,16 @@ use super::markdown::MarkdownRenderer;
 use crate::context::{Message, MessagePart};
 use crate::theme::Theme;
 
-/// Render a user message with shared left gutter shape.
-pub fn render_user_message(
+/// Render a user message and return the raw source lines of its code blocks.
+pub fn render_user_message_with_code(
     msg: &Message,
     theme: &Theme,
     show_timestamps: bool,
     agent: Option<&str>,
     queued: bool,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, Vec<Vec<String>>) {
     let mut lines = Vec::new();
+    let mut code_blocks = Vec::new();
     let border_char = "  ";
     let border_style = Style::default().fg(user_border_color_for_agent(agent, theme));
 
@@ -35,8 +36,9 @@ pub fn render_user_message(
             match part {
                 MessagePart::Text { text } => {
                     let md_renderer = MarkdownRenderer::new(theme.clone());
-                    let md_lines = md_renderer.to_lines(text);
-                    for md_line in md_lines {
+                    let rendered = md_renderer.render_markdown(text);
+                    code_blocks.extend(rendered.code_blocks);
+                    for md_line in rendered.lines {
                         let mut spans = vec![Span::styled(border_char, border_style)];
                         spans.extend(md_line.spans);
                         lines.push(Line::from(spans));
@@ -89,7 +91,7 @@ pub fn render_user_message(
         }
     }
 
-    lines
+    (lines, code_blocks)
 }
 
 #[cfg(test)]
@@ -97,7 +99,7 @@ mod tests {
     use chrono::Utc;
     use ratatui::style::Modifier;
 
-    use super::render_user_message;
+    use super::render_user_message_with_code;
     use crate::context::{Message, MessageRole, TokenUsage};
     use crate::theme::Theme;
 
@@ -120,7 +122,7 @@ mod tests {
             parts: Vec::new(),
         };
 
-        let lines = render_user_message(&message, &theme, false, None, false);
+        let lines = render_user_message_with_code(&message, &theme, false, None, false).0;
 
         let first_span = lines
             .first()
@@ -149,7 +151,7 @@ mod tests {
             parts: Vec::new(),
         };
 
-        let lines = render_user_message(&message, &theme, true, None, true);
+        let lines = render_user_message_with_code(&message, &theme, true, None, true).0;
         let badge = lines
             .iter()
             .flat_map(|line| line.spans.iter())
@@ -190,7 +192,7 @@ mod tests {
             parts: Vec::new(),
         };
 
-        let lines = render_user_message(&message, &theme, false, None, true);
+        let lines = render_user_message_with_code(&message, &theme, false, None, true).0;
         assert!(lines
             .iter()
             .flat_map(|line| line.spans.iter())
