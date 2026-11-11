@@ -4411,6 +4411,7 @@ impl App {
             completed_at: None,
             cost: 0.0,
             tokens: TokenUsage::default(),
+            queued: false,
             parts: vec![ContextMessagePart::Text {
                 text: content.to_string(),
             }],
@@ -5193,6 +5194,7 @@ fn map_api_message(message: &MessageInfo) -> Message {
             cache_read: message.tokens.cache_read,
             cache_write: message.tokens.cache_write,
         },
+        queued: false,
         parts,
     }
 }
@@ -5962,6 +5964,7 @@ mod tests {
             completed_at: Utc.timestamp_millis_opt(1_700_000_001_500).single(),
             cost: 0.0,
             tokens: TokenUsage::default(),
+            queued: false,
             parts,
         }
     }
@@ -5983,6 +5986,7 @@ mod tests {
             completed_at: None,
             cost: 0.0,
             tokens: TokenUsage::default(),
+            queued: false,
             parts: Vec::new(),
         }
     }

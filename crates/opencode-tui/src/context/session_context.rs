@@ -32,6 +32,11 @@ pub struct Message {
     pub cost: f64,
     pub tokens: TokenUsage,
     pub parts: Vec<MessagePart>,
+    /// Set when the server marks a user message as accepted but not yet consumed
+    /// by a run. Defaults to false; ordering falls back to the in-flight
+    /// assistant position when this marker is unavailable.
+    #[serde(default)]
+    pub queued: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
