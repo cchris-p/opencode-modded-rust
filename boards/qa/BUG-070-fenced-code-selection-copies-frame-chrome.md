@@ -197,6 +197,7 @@ deferred follow-up.
 ## Follow-up Fix - 2026-11-11
 
 - Branch: `bug/BUG-070-fence-footer-padding`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/188
 - Change: classify with `text.trim()` in `copy_rows_for_message` so a padded footer is recognized
   and each fence opens and closes its own region.
 - Tests: `fenced_code_copy_plan_handles_multiple_blocks_in_one_message` covers two fences at 200
