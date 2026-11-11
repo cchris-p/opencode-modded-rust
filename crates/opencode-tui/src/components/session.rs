@@ -66,7 +66,6 @@ struct MessageRenderCtx<'a> {
     messages: &'a [Message],
     last_assistant_idx: Option<usize>,
     pending_assistant_idx: Option<usize>,
-    fallback_model: Option<&'a str>,
     theme: &'a crate::theme::Theme,
     user_bg: Color,
     assistant_bg: Color,
@@ -705,7 +704,6 @@ impl SessionView {
         let show_tool_calls = *self.context.show_tool_calls.read();
         let show_tool_details = *self.context.show_tool_details.read();
         let semantic_hl = *self.context.semantic_highlight.read();
-        let fallback_model = self.context.current_model.read().clone();
         let include_background_subagents = self.context.experimental_background_subagents();
         let keybind = self.context.keybind.read();
 
@@ -742,7 +740,6 @@ impl SessionView {
         show_tool_details.hash(&mut globals_hasher);
         semantic_hl.hash(&mut globals_hasher);
         include_background_subagents.hash(&mut globals_hasher);
-        fallback_model.hash(&mut globals_hasher);
         last_assistant_idx.hash(&mut globals_hasher);
         pending_assistant_idx.hash(&mut globals_hasher);
         revert_info.is_some().hash(&mut globals_hasher);
@@ -757,7 +754,6 @@ impl SessionView {
             messages,
             last_assistant_idx,
             pending_assistant_idx,
-            fallback_model: fallback_model.as_deref(),
             theme: &theme,
             user_bg,
             assistant_bg,
@@ -1665,14 +1661,9 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                 }
             }
 
-            if let Some(footer) = assistant_footer(
-                ctx.messages,
-                idx,
-                ctx.last_assistant_idx,
-                msg,
-                ctx.fallback_model,
-                ctx.theme,
-            ) {
+            if let Some(footer) =
+                assistant_footer(ctx.messages, idx, ctx.last_assistant_idx, msg, ctx.theme)
+            {
                 append_message_lines(
                     &mut lines,
                     &mut line_to_message,
@@ -2157,7 +2148,6 @@ fn assistant_footer(
     idx: usize,
     last_assistant_idx: Option<usize>,
     message: &Message,
-    fallback_model: Option<&str>,
     theme: &crate::theme::Theme,
 ) -> Option<Line<'static>> {
     if !matches!(message.role, MessageRole::Assistant) {
@@ -2184,19 +2174,6 @@ fn assistant_footer(
         ),
         Span::styled(titlecase(mode), Style::default().fg(theme.text)),
     ];
-
-    if let Some(model) = message
-        .model
-        .as_deref()
-        .or(fallback_model)
-        .filter(|value| !value.trim().is_empty())
-    {
-        spans.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
-        spans.push(Span::styled(
-            model.to_string(),
-            Style::default().fg(theme.text_muted),
-        ));
-    }
 
     if let Some(duration) = assistant_duration(messages, idx, message, is_final) {
         spans.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
@@ -2372,6 +2349,31 @@ mod tests {
         assert_eq!(subagent_label("Do a thing (@general subagent)"), "General");
         assert_eq!(subagent_label("A normal session"), "Subagent");
         assert_eq!(subagent_label(""), "Subagent");
+    }
+
+    #[test]
+    fn assistant_footer_hides_model_name() {
+        let theme = crate::theme::Theme::dark();
+        let mut msg = message("m1", MessageRole::Assistant, "answer", true);
+        msg.mode = Some("build".to_string());
+        msg.model = Some("deepseek/deepseek-flash".to_string());
+        let messages = vec![msg.clone()];
+
+        let line = assistant_footer(&messages, 0, Some(0), &msg, &theme).expect("footer");
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(
+            text.contains("Build"),
+            "footer should keep the mode label: {text}"
+        );
+        assert!(
+            !text.contains("deepseek/deepseek-flash"),
+            "footer must not render the model name: {text}"
+        );
     }
 
     #[test]
