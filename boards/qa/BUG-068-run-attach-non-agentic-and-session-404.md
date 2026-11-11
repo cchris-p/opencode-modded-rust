@@ -93,3 +93,18 @@ Verification:
 - New integration test `routes::attach_tool_tests::prompt_path_executes_tool_and_returns_final_text`
   drives `session_prompt` with a scripted provider that emits a `read` tool
   call and asserts the tool call, its result content, and the final text.
+
+### End-to-end attach verification 2026-11-11
+
+Built the branch binary and ran a real local `serve` + `run --attach` against
+`ollama/qwen3-coder:30b`:
+
+```
+run --attach http://127.0.0.1:<port> -m ollama/qwen3-coder:30b \
+  "Use the bash tool to run: echo attach-tool-ok; then report the exact output."
+```
+
+Result: exit 0; stdout reported `attach-tool-ok`; stderr showed `[tool] bash`;
+the session (`ses_f81c...`) contained a `bash` tool call and the final report.
+Session creation at `/session` succeeded, so both the 404 and the non-agentic
+stream are fixed on the real path.

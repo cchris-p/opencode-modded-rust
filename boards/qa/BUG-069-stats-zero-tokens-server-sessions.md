@@ -77,3 +77,19 @@ Verification:
 - `cargo fmt --all`
 - `SCOPEMUX_PREBUILT_DIR=... cargo test -p opencode-storage -p opencode-server -p opencode-cli`
   -> all suites passed (23 + 75 + 3 + 5 + 2, 0 failed).
+
+### End-to-end stats verification 2026-11-11
+
+Ran `stats` with the BUG-069 branch binary against the database produced by the
+BUG-068 attach run (two assistant messages, usage metadata 6514/41 and
+6571/16 tokens):
+
+```
+Sessions: 1
+Messages: 4
+Total Cost: $0.0000
+Tokens: input=13085 output=57 reasoning=0 cache_read=0 cache_write=0
+```
+
+`input = 6514 + 6571` and `output = 41 + 16`, so the message fallback produces
+the summed tokens the card requires.
