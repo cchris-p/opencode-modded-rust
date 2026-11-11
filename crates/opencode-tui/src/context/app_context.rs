@@ -266,6 +266,12 @@ impl AppContext {
         self.ui_kv.write().set_bool("prompt_hidden", *hidden);
     }
 
+    pub fn hide_prompt(&self) {
+        let mut hidden = self.prompt_hidden.write();
+        *hidden = true;
+        self.ui_kv.write().set_bool("prompt_hidden", true);
+    }
+
     pub fn set_model(&self, model: String, provider: String) {
         self.set_model_selection(model, Some(provider));
     }
@@ -663,6 +669,29 @@ mod tests {
             context.ui_kv.read().get_bool_opt("prompt_hidden"),
             Some(false)
         );
+    }
+
+    #[test]
+    fn hide_prompt_hides_and_persists_to_ui_kv() {
+        let context = AppContext::from_ui_kv(UiKv::default(), None);
+        assert!(!*context.prompt_hidden.read());
+
+        context.hide_prompt();
+        assert!(*context.prompt_hidden.read());
+        assert_eq!(
+            context.ui_kv.read().get_bool_opt("prompt_hidden"),
+            Some(true)
+        );
+
+        context.hide_prompt();
+        assert!(*context.prompt_hidden.read());
+        assert_eq!(
+            context.ui_kv.read().get_bool_opt("prompt_hidden"),
+            Some(true)
+        );
+
+        context.toggle_prompt_hidden();
+        assert!(!*context.prompt_hidden.read());
     }
 
     #[test]

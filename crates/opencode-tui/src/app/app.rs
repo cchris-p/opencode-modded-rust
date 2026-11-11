@@ -2670,6 +2670,8 @@ impl App {
             return Ok(());
         }
 
+        self.context.hide_prompt();
+
         if shell_mode {
             return self.submit_shell_command(input);
         }
