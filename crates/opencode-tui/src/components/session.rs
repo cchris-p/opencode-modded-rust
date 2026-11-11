@@ -1170,7 +1170,9 @@ impl SessionView {
         let messages = session_ctx.messages.get(&self.session_id)?;
         let pending_assistant_idx = compute_pending_assistant_idx(messages);
         let order = render_order(messages, pending_assistant_idx);
-        let pos = order.iter().position(|&idx| messages[idx].id == message_id)?;
+        let pos = order
+            .iter()
+            .position(|&idx| messages[idx].id == message_id)?;
 
         let mut total = 0usize;
         if session_ctx.revert.contains_key(&self.session_id) {
@@ -1223,11 +1225,7 @@ fn compute_pending_assistant_idx(messages: &[Message]) -> Option<usize> {
 /// A user message that is accepted into the session queue but not yet consumed
 /// by a run. Prefer the server's explicit `queued` marker; fall back to the
 /// legacy position relative to the in-flight assistant for older snapshots.
-fn is_queue_message(
-    msg: &Message,
-    idx: usize,
-    pending_assistant_idx: Option<usize>,
-) -> bool {
+fn is_queue_message(msg: &Message, idx: usize, pending_assistant_idx: Option<usize>) -> bool {
     matches!(msg.role, MessageRole::User)
         && (msg.queued || pending_assistant_idx.is_some_and(|pending| idx > pending))
 }
