@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-11-11"
 updated: "2026-11-11"
 ---
@@ -177,3 +177,20 @@ Verification run in a worktree branched from `origin/development` (PR #176 merge
   speed bands and interior/outside stop conditions, fractional accumulation, and top/bottom limit
   clamping.
 - Manual `ort` verification under tmux is still pending; the card is in `qa` for that pass.
+
+## QA Verification
+
+- PR #178 merged into `development` (`8a5d05d`).
+- `cargo check -p opencode-tui`: clean.
+- `cargo test -p opencode-tui`: 195 passed, 0 failed.
+- CI: `fmt`, `clippy`, `check`, and `test` pass. The two `native` jobs failed on runner
+  infrastructure only (macOS runner label `macos-14-arm64-us-default` unsupported; Ubuntu
+  `add-apt-repository` DNS failure to `api.launchpad.net`), not on this change.
+- Manual mouse-drag QA (holding the pointer at each transcript edge under tmux) was not run in
+  this agent session; the card was completed on explicit user direction.
+
+## Merge Closeout
+
+- Merged PR #178 into `development` (`8a5d05d`); remote and local branch
+  `feat/FEAT-072-auto-scroll-selection` deleted.
+- Temporary worktree `opencode-modded-rust-feat072` removed and the parked duplicate stash dropped.

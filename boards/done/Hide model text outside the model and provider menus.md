@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "qa"
+status: "done"
 created: "2026-11-11"
 updated: "2026-11-11"
 ---
@@ -117,4 +117,5 @@ while still being able to check or change the model deliberately from the model/
 - Renumbered this card from `FEAT-071` to `FEAT-073` before merge to resolve the ID collision with
   the Qwen/Hermes card already on `development`.
 - Remains in `qa` until a QA report is recorded or completion is explicitly directed.
-
+- Moved to `done` on explicit user completion direction: the change is merged in `development`
+  and the automated `check`/`test` verification above passes. No separate manual UI QA was recorded.
