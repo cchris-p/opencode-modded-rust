@@ -736,7 +736,19 @@ impl SessionView {
         let last_assistant_idx = messages
             .iter()
             .rposition(|m| matches!(m.role, MessageRole::Assistant));
-        let pending_assistant_idx = compute_pending_assistant_idx(messages);
+        let completed_assistant_idx = messages
+            .iter()
+            .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
+        let pending_assistant_idx = messages
+            .iter()
+            .enumerate()
+            .filter(|(idx, m)| {
+                matches!(m.role, MessageRole::Assistant)
+                    && m.completed_at.is_none()
+                    && completed_assistant_idx.map_or(true, |completed| *idx > completed)
+            })
+            .map(|(idx, _)| idx)
+            .last();
 
         let mut globals_hasher = DefaultHasher::new();
         content_width.hash(&mut globals_hasher);
@@ -780,9 +792,6 @@ impl SessionView {
             animations_enabled,
             session_active,
         };
-        // Pending queue rows render above the live assistant turn; ingested
-        // messages keep their normal transcript order.
-        let order = render_order(messages, pending_assistant_idx);
 
         // Revert card: rendered only when its inputs change, otherwise reused.
         if revert_info.is_none() {
@@ -840,8 +849,8 @@ impl SessionView {
                 total_lines += 1;
             }
         }
-        for (pos, &idx) in order.iter().enumerate() {
-            total_lines += ordered_spacing(messages, &order, pos) + heights[idx];
+        for (idx, _msg) in messages.iter().enumerate() {
+            total_lines += leading_spacing(messages, idx) + heights[idx];
         }
         if measure_only {
             self.measured_line_count = total_lines;
@@ -900,9 +909,8 @@ impl SessionView {
             }
         }
 
-        for (pos, &idx) in order.iter().enumerate() {
-            let msg = &messages[idx];
-            let spacing = ordered_spacing(messages, &order, pos);
+        for (idx, msg) in messages.iter().enumerate() {
+            let spacing = leading_spacing(messages, idx);
             if spacing > 0 {
                 if cursor < window_end && cursor + spacing > window_start {
                     if !started {
@@ -1168,28 +1176,22 @@ impl SessionView {
     fn message_first_line(&self, message_id: &str) -> Option<usize> {
         let session_ctx = self.context.session.read();
         let messages = session_ctx.messages.get(&self.session_id)?;
-        let pending_assistant_idx = compute_pending_assistant_idx(messages);
-        let order = render_order(messages, pending_assistant_idx);
-        let pos = order
-            .iter()
-            .position(|&idx| messages[idx].id == message_id)?;
+        let idx = messages.iter().position(|m| m.id == message_id)?;
 
         let mut total = 0usize;
         if session_ctx.revert.contains_key(&self.session_id) {
             total += self.revert_layout.map(|(_, height)| height).unwrap_or(0);
             total += 1;
         }
-        for prev_pos in 0..pos {
-            let idx = order[prev_pos];
-            let msg = &messages[idx];
-            total += ordered_spacing(messages, &order, prev_pos);
+        for (j, msg) in messages.iter().enumerate().take(idx) {
+            total += leading_spacing(messages, j);
             total += self
                 .layout_cache
                 .get(&msg.id)
                 .map(|cached| cached.height)
                 .unwrap_or(0);
         }
-        Some(total + ordered_spacing(messages, &order, pos))
+        Some(total + leading_spacing(messages, idx))
     }
 
     fn max_scroll_offset(&self) -> usize {
@@ -1202,73 +1204,12 @@ impl SessionView {
     }
 }
 
-/// The in-flight assistant turn: the last assistant message that has not
-/// completed and follows every completed assistant. A tool-call step is
-/// finalized with a `tool-calls` finish reason before its tools run, so callers
-/// that need the live turn must also consider the session status.
-fn compute_pending_assistant_idx(messages: &[Message]) -> Option<usize> {
-    let completed_assistant_idx = messages
-        .iter()
-        .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
-    messages
-        .iter()
-        .enumerate()
-        .filter(|(idx, m)| {
-            matches!(m.role, MessageRole::Assistant)
-                && m.completed_at.is_none()
-                && completed_assistant_idx.map_or(true, |completed| *idx > completed)
-        })
-        .map(|(idx, _)| idx)
-        .last()
-}
-
-/// A user message that is accepted into the session queue but not yet consumed
-/// by a run. Prefer the server's explicit `queued` marker; fall back to the
-/// legacy position relative to the in-flight assistant for older snapshots.
-fn is_queue_message(msg: &Message, idx: usize, pending_assistant_idx: Option<usize>) -> bool {
-    matches!(msg.role, MessageRole::User)
-        && (msg.queued || pending_assistant_idx.is_some_and(|pending| idx > pending))
-}
-
-/// Render order for the transcript. Queued user messages are lifted above the
-/// live assistant turn (the "build text") so the pending queue is visibly not
-/// part of the conversation, then the live assistant renders last. Once the
-/// server consumes a queued prompt it clears `queued`, and ordering returns to
-/// the normal transcript order automatically.
-fn render_order(messages: &[Message], pending_assistant_idx: Option<usize>) -> Vec<usize> {
-    let queued: Vec<usize> = messages
-        .iter()
-        .enumerate()
-        .filter(|(idx, msg)| is_queue_message(msg, *idx, pending_assistant_idx))
-        .map(|(idx, _)| idx)
-        .collect();
-    if queued.is_empty() {
-        return (0..messages.len()).collect();
-    }
-
-    let anchor = messages
-        .iter()
-        .rposition(|m| matches!(m.role, MessageRole::Assistant));
-    let mut order = Vec::with_capacity(messages.len());
-    for idx in 0..messages.len() {
-        if Some(idx) == anchor || queued.contains(&idx) {
-            continue;
-        }
-        order.push(idx);
-    }
-    order.extend(queued);
-    if let Some(anchor) = anchor {
-        order.push(anchor);
-    }
-    order
-}
-
-fn ordered_spacing(messages: &[Message], order: &[usize], pos: usize) -> usize {
-    if pos == 0 {
+fn leading_spacing(messages: &[Message], idx: usize) -> usize {
+    if idx == 0 {
         return 0;
     }
-    let prev_role = &messages[order[pos - 1]].role;
-    let role = &messages[order[pos]].role;
+    let prev_role = &messages[idx - 1].role;
+    let role = &messages[idx].role;
     if *prev_role != *role || matches!(role, MessageRole::User) {
         1
     } else {
@@ -1405,7 +1346,10 @@ fn message_sig(ctx: &MessageRenderCtx, msg: &Message, idx: usize, globals_hash: 
     };
     prev_role.hash(&mut h);
 
-    let is_queued = is_queue_message(msg, idx, ctx.pending_assistant_idx);
+    let is_queued = matches!(msg.role, MessageRole::User)
+        && ctx
+            .pending_assistant_idx
+            .is_some_and(|pending| idx > pending);
     is_queued.hash(&mut h);
 
     let is_active = matches!(msg.role, MessageRole::Assistant)
@@ -1472,7 +1416,9 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
         MessageRole::User => {
             let message_bg = ctx.user_bg;
             let message_border = user_border_color_for_agent(msg.agent.as_deref(), ctx.theme);
-            let is_queued = is_queue_message(msg, idx, ctx.pending_assistant_idx);
+            let is_queued = ctx
+                .pending_assistant_idx
+                .is_some_and(|pending| idx > pending);
             let (user_lines, user_code_blocks) =
                 super::session_message::render_user_message_with_code(
                     msg,
@@ -2777,7 +2723,6 @@ mod tests {
                     finish: Some("tool-calls".to_string()),
                     error: None,
                     completed_at: Some(chrono::Utc::now()),
-                    queued: false,
                     cost: 0.0,
                     tokens: Default::default(),
                     parts: vec![MessagePart::ToolCall {
@@ -2894,7 +2839,6 @@ mod tests {
             finish: None,
             error: None,
             completed_at: completed.then(chrono::Utc::now),
-            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Text {
@@ -3314,7 +3258,6 @@ mod tests {
             finish: Some("stop".to_string()),
             error: None,
             completed_at: Some(chrono::Utc::now()),
-            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![
@@ -3366,7 +3309,6 @@ mod tests {
             finish: None,
             error: None,
             completed_at: Some(chrono::Utc::now()),
-            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Reasoning {
