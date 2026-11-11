@@ -168,3 +168,14 @@ deferred follow-up.
   `/Users/cchrisleepyles/apps/ivy-notes`.
 - Board repo rules apply: this repository is the product repo, so implementation uses a feature
   branch and a PR into `development`.
+
+## Merge Closeout - 2026-11-11
+
+- Merged PR #179 into `development` as merge commit `4ba3ac2`.
+- Deleted the merged remote branch `bug/BUG-070-raw-code-fence-copy` and the local branch.
+- Local checkout is on `development` and current with `origin/development`.
+- CI note: `fmt`, `check`, `clippy`, and `test` passed on the PR. Both `native` jobs failed in
+  dependency install before compiling anything (Ubuntu: `add-apt-repository` network timeout to
+  `api.launchpad.net`; macOS job also failed during native setup), so no code/test failure was
+  involved.
+- Card remains in `qa`; no QA report has been recorded yet.
