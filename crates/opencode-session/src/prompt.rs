@@ -152,6 +152,8 @@ pub struct SessionPrompt {
     resolve_subagent_callback: Option<opencode_tool::ResolveSubagentCallback>,
     session_inspect_callback: Option<opencode_tool::SessionInspectCallback>,
     workspace_intelligence_policy: opencode_scopemux::WorkspaceIntelligencePolicy,
+    title_provider: Option<Arc<dyn Provider>>,
+    title_model_id: Option<String>,
 }
 
 impl SessionPrompt {
@@ -171,7 +173,22 @@ impl SessionPrompt {
             session_inspect_callback: None,
             workspace_intelligence_policy:
                 opencode_scopemux::WorkspaceIntelligencePolicy::qwen_experiment(),
+            title_provider: None,
+            title_model_id: None,
         }
+    }
+
+    /// Override the provider/model used for automatic title generation. Callers
+    /// resolve the small/utility model from config or the provider registry;
+    /// when unset, title generation falls back to the session's model.
+    pub fn with_title_model(
+        mut self,
+        provider: Arc<dyn Provider>,
+        model_id: impl Into<String>,
+    ) -> Self {
+        self.title_provider = Some(provider);
+        self.title_model_id = Some(model_id.into());
+        self
     }
 
     pub fn with_mcp_clients(mut self, clients: Arc<opencode_mcp::McpClientRegistry>) -> Self {
@@ -1074,6 +1091,8 @@ impl SessionPrompt {
             provider,
             model_id,
             provider_id,
+            self.title_provider.clone(),
+            self.title_model_id.clone(),
             &self.workspace_intelligence_policy,
             session,
             input.agent.as_deref(),
@@ -1171,6 +1190,8 @@ impl SessionPrompt {
             provider,
             model_id,
             provider_id,
+            self.title_provider.clone(),
+            self.title_model_id.clone(),
             &self.workspace_intelligence_policy,
             session,
             resume_agent.as_deref(),
@@ -1208,6 +1229,8 @@ impl SessionPrompt {
         provider: Arc<dyn Provider>,
         model_id: String,
         provider_id: String,
+        title_provider: Option<Arc<dyn Provider>>,
+        title_model_id: Option<String>,
         workspace_intelligence_policy: &opencode_scopemux::WorkspaceIntelligencePolicy,
         session: &mut Session,
         agent_name: Option<&str>,
@@ -1238,7 +1261,10 @@ impl SessionPrompt {
         // prompt, which lets a failed LLM upgrade retry later while a manual
         // rename (which clears the pending marker) is never overwritten.
         if session.should_generate_title() {
-            Self::ensure_title(session, provider.clone(), &model_id).await;
+            let selected_title_provider =
+                title_provider.clone().unwrap_or_else(|| provider.clone());
+            let selected_title_model = title_model_id.as_deref().unwrap_or(model_id.as_str());
+            Self::ensure_title(session, selected_title_provider, selected_title_model).await;
             Self::emit_session_update(update_hook.as_ref(), session);
         }
 
@@ -2763,34 +2789,26 @@ impl SessionPrompt {
     }
 
     async fn ensure_title(session: &mut Session, provider: Arc<dyn Provider>, model_id: &str) {
+        let Some(first_user_text) = session_title_source(session) else {
+            return;
+        };
+
+        let Some(title) = generate_session_title_llm(&first_user_text, provider, model_id).await
+        else {
+            return;
+        };
+
+        // A manual rename may have landed while the title model was running.
         if !session.should_generate_title() {
             return;
         }
 
-        let first_user_text = session
-            .messages
-            .iter()
-            .find(|m| matches!(m.role, MessageRole::User))
-            .map(|m| m.get_text())
-            .unwrap_or_default();
-
-        if first_user_text.trim().is_empty() {
+        let title = title.trim();
+        if title.is_empty() {
             return;
         }
 
-        let fallback = generate_session_title(&first_user_text);
-        let title = generate_session_title_llm(&first_user_text, provider, model_id).await;
-        if title.trim().is_empty() {
-            return;
-        }
-
-        if title.trim() == fallback.trim() {
-            // The LLM failed (or echoed the fallback). Keep the durable fallback
-            // and leave it pending so a later prompt can retry the upgrade.
-            session.set_auto_title(fallback);
-        } else {
-            session.finalize_auto_title(title);
-        }
+        session.finalize_auto_title(title);
     }
 
     fn to_message_with_parts(
@@ -3860,89 +3878,143 @@ pub async fn resolve_tools(tool_registry: &opencode_tool::ToolRegistry) -> Vec<T
     resolve_tools_with_mcp_registry(tool_registry, None).await
 }
 
+/// Returns the user text a session should be titled from, or `None` when the
+/// session is not eligible.
+///
+/// Parity rules (vanilla `SessionPrompt.ensureTitle`): only root sessions whose
+/// title is still the default/auto placeholder, and only while exactly one real
+/// user message exists.
+pub fn session_title_source(session: &Session) -> Option<String> {
+    if session.parent_id.is_some() || !session.should_generate_title() {
+        return None;
+    }
+
+    let mut user_texts = session
+        .messages
+        .iter()
+        .filter(|message| matches!(message.role, MessageRole::User))
+        .map(|message| message.get_text())
+        .filter(|text| !text.trim().is_empty());
+
+    let first = user_texts.next()?;
+    if user_texts.next().is_some() {
+        return None;
+    }
+    Some(first)
+}
+
+/// First-line fallback derived from user input.
+///
+/// This is kept for compatibility and echo detection only. Generated titles
+/// must never be sourced from this value; a failed generation leaves the
+/// session's default title in place so a later prompt can retry.
 pub fn generate_session_title(first_user_message: &str) -> String {
     let first_line = first_user_message.lines().next().unwrap_or("").trim();
 
-    if first_line.len() > 100 {
-        format!("{}...", &first_line[..97])
-    } else if first_line.is_empty() {
+    if first_line.is_empty() {
         "New Session".to_string()
     } else {
-        first_line.to_string()
+        truncate_session_title(first_line)
     }
 }
 
-/// Generate a session title using an LLM (matching TS `ensureTitle`).
-/// Falls back to `generate_session_title` on any failure.
+fn truncate_session_title(title: &str) -> String {
+    if title.chars().count() > 100 {
+        let truncated: String = title.chars().take(97).collect();
+        format!("{truncated}...")
+    } else {
+        title.to_string()
+    }
+}
+
+fn clean_session_title(text: &str) -> Option<String> {
+    let think = regex::Regex::new(r"(?is)<think>.*?</think>\s*").ok()?;
+    let without_thinking = think.replace_all(text, "");
+    let title = without_thinking
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    Some(truncate_session_title(title))
+}
+
+/// Generate a session title with the vanilla title-agent prompt and model
+/// priority (agent/utility model when the caller supplied one, otherwise the
+/// session model). Returns `None` on failure or when the model only echoes the
+/// user's own text, so callers keep the placeholder and may retry later.
 pub async fn generate_session_title_llm(
     first_user_message: &str,
     provider: Arc<dyn Provider>,
     model_id: &str,
-) -> String {
-    let fallback = generate_session_title(first_user_message);
-
+) -> Option<String> {
     let request = ChatRequest {
         model: model_id.to_string(),
-        messages: vec![Message {
-            role: Role::User,
-            content: Content::Text(format!(
-                "Generate a short title (under 80 chars) for this conversation. \
-                     Reply with ONLY the title, no quotes or explanation.\n\n{}",
-                first_user_message
-            )),
-            cache_control: None,
-            provider_options: None,
-        }],
+        messages: vec![
+            Message {
+                role: Role::User,
+                content: Content::Text("Generate a title for this conversation:\n".to_string()),
+                cache_control: None,
+                provider_options: None,
+            },
+            Message {
+                role: Role::User,
+                content: Content::Text(first_user_message.to_string()),
+                cache_control: None,
+                provider_options: None,
+            },
+        ],
         tools: None,
-        system: Some(
-            "You generate concise conversation titles. Reply with only the title.".to_string(),
-        ),
+        system: Some(opencode_core::SESSION_TITLE_PROMPT.to_string()),
         max_tokens: Some(100),
-        temperature: Some(0.0),
+        temperature: Some(0.5),
         top_p: None,
         stream: None,
         provider_options: None,
         variant: None,
     };
 
-    match provider.chat(request).await {
-        Ok(response) => {
-            // Extract text from the first choice
-            let text = response
-                .choices
-                .first()
-                .map(|c| match &c.message.content {
-                    Content::Text(t) => t.clone(),
-                    Content::Parts(parts) => parts
-                        .iter()
-                        .filter_map(|p| p.text.clone())
-                        .collect::<Vec<_>>()
-                        .join(""),
-                })
-                .unwrap_or_default();
+    let retry_config = opencode_provider::RetryConfig {
+        max_attempts: 3,
+        initial_delay: 250,
+        backoff_factor: 2,
+        ..Default::default()
+    };
+    let response = opencode_provider::with_retry(&retry_config, || {
+        let provider = provider.clone();
+        let request = request.clone();
+        async move { provider.chat(request).await }
+    })
+    .await;
 
-            // Clean up: remove thinking tags, take first non-empty line
-            let cleaned = text
-                .replace(|c: char| c == '"' || c == '\'', "")
-                .lines()
-                .map(|l| l.trim())
-                .find(|l| !l.is_empty() && !l.starts_with("<think>"))
-                .unwrap_or("")
-                .to_string();
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(error = %error, "Failed to generate title via LLM; keeping default title");
+            return None;
+        }
+    };
 
-            if cleaned.is_empty() {
-                fallback
-            } else if cleaned.len() > 100 {
-                format!("{}...", &cleaned[..97])
-            } else {
-                cleaned
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to generate title via LLM, using fallback");
-            fallback
-        }
+    let text = response
+        .choices
+        .first()
+        .map(|choice| match &choice.message.content {
+            Content::Text(text) => text.clone(),
+            Content::Parts(parts) => parts
+                .iter()
+                .filter_map(|part| part.text.clone())
+                .collect::<Vec<_>>()
+                .join(""),
+        })
+        .unwrap_or_default();
+
+    let cleaned = clean_session_title(&text)?;
+
+    // Never persist the user's own text as the generated title.
+    let verbatim = generate_session_title(first_user_message);
+    if cleaned.trim().eq_ignore_ascii_case(verbatim.trim()) {
+        return None;
     }
+
+    Some(cleaned)
 }
 
 /// Input for the `shell()` function.
@@ -4225,6 +4297,7 @@ mod tests {
     struct ScriptedStreamProvider {
         model: ModelInfo,
         events: Vec<StreamEvent>,
+        chat_text: Option<String>,
     }
 
     #[async_trait]
@@ -4250,9 +4323,26 @@ mod tests {
         }
 
         async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-            Err(ProviderError::InvalidRequest(
-                "chat() not used in this test".to_string(),
-            ))
+            match &self.chat_text {
+                Some(text) => Ok(ChatResponse {
+                    id: "chat_mock".to_string(),
+                    model: self.model.id.clone(),
+                    choices: vec![opencode_provider::Choice {
+                        index: 0,
+                        message: Message {
+                            role: Role::Assistant,
+                            content: Content::Text(text.clone()),
+                            cache_control: None,
+                            provider_options: None,
+                        },
+                        finish_reason: Some("stop".to_string()),
+                    }],
+                    usage: None,
+                }),
+                None => Err(ProviderError::InvalidRequest(
+                    "chat() not used in this test".to_string(),
+                )),
+            }
         }
 
         async fn chat_stream(&self, _request: ChatRequest) -> Result<StreamResult, ProviderError> {
@@ -4278,19 +4368,24 @@ mod tests {
         ));
     }
 
+    fn title_test_provider_model() -> ModelInfo {
+        ModelInfo {
+            id: "test-model".to_string(),
+            name: "Test Model".to_string(),
+            provider: "mock".to_string(),
+            context_window: 8192,
+            max_output_tokens: 1024,
+            supports_vision: false,
+            supports_tools: false,
+            cost_per_million_input: 0.0,
+            cost_per_million_output: 0.0,
+        }
+    }
+
     fn title_test_provider() -> Arc<dyn Provider> {
         Arc::new(ScriptedStreamProvider {
-            model: ModelInfo {
-                id: "test-model".to_string(),
-                name: "Test Model".to_string(),
-                provider: "mock".to_string(),
-                context_window: 8192,
-                max_output_tokens: 1024,
-                supports_vision: false,
-                supports_tools: false,
-                cost_per_million_input: 0.0,
-                cost_per_million_output: 0.0,
-            },
+            chat_text: Some("Flaky test investigation".to_string()),
+            model: title_test_provider_model(),
             events: Vec::new(),
         })
     }
@@ -4300,8 +4395,7 @@ mod tests {
         let mut session = Session::new("proj", ".");
         session.add_user_message("Investigate the flaky test");
         // Simulate a first assistant turn that only called tools. Title generation
-        // must not depend on `should_run_first_step_postprocessing`, so the
-        // fallback title is still applied even though the turn was tool-first.
+        // must not depend on `should_run_first_step_postprocessing`.
         let assistant = session.add_assistant_message();
         assistant.add_tool_call(
             "call_1",
@@ -4312,7 +4406,8 @@ mod tests {
         SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
 
         assert!(!session.is_default_title());
-        assert_eq!(session.title, "Investigate the flaky test");
+        assert_eq!(session.title, "Flaky test investigation");
+        assert!(!session.is_auto_title_pending());
     }
 
     #[tokio::test]
@@ -4329,17 +4424,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_title_retries_pending_fallback_without_clobbering_it() {
+    async fn ensure_title_upgrades_pending_fallback_to_generated_title() {
         let mut session = Session::new("proj", ".");
         session.add_user_message("Investigate the flaky test");
         session.set_auto_title("Investigate the flaky test");
 
-        // The failing provider returns the fallback, so the title stays pending
-        // for a later retry instead of being finalized with the fallback text.
         SessionPrompt::ensure_title(&mut session, title_test_provider(), "test-model").await;
 
-        assert_eq!(session.title, "Investigate the flaky test");
-        assert!(session.is_auto_title_pending());
+        assert_eq!(session.title, "Flaky test investigation");
+        assert!(!session.is_auto_title_pending());
+    }
+
+    #[tokio::test]
+    async fn ensure_title_keeps_default_title_when_generation_fails() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+
+        let failing = Arc::new(ScriptedStreamProvider {
+            chat_text: None,
+            model: title_test_provider_model(),
+            events: Vec::new(),
+        });
+        SessionPrompt::ensure_title(&mut session, failing, "test-model").await;
+
+        assert!(session.is_default_title());
+        assert!(!session.title.contains("Investigate the flaky test"));
+    }
+
+    #[tokio::test]
+    async fn ensure_title_rejects_verbatim_echo() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("Investigate the flaky test");
+
+        let echoing = Arc::new(ScriptedStreamProvider {
+            chat_text: Some("Investigate the flaky test".to_string()),
+            model: title_test_provider_model(),
+            events: Vec::new(),
+        });
+        SessionPrompt::ensure_title(&mut session, echoing, "test-model").await;
+
+        assert!(session.is_default_title());
+        assert!(!session.title.contains("Investigate the flaky test"));
+    }
+
+    #[tokio::test]
+    async fn ensure_title_skips_sessions_with_multiple_user_messages() {
+        let mut session = Session::new("proj", ".");
+        session.add_user_message("first request");
+        session.add_assistant_message();
+        session.add_user_message("second request");
+
+        assert!(session_title_source(&session).is_none());
+    }
+
+    #[test]
+    fn clean_session_title_strips_think_blocks_and_caps_length() {
+        let cleaned =
+            clean_session_title("<think>planning</think>\n  Flaky test investigation  \n")
+                .expect("title should parse");
+        assert_eq!(cleaned, "Flaky test investigation");
+
+        let long = "a".repeat(120);
+        let capped = clean_session_title(&long).expect("long title should parse");
+        assert_eq!(capped.chars().count(), 100);
+        assert!(capped.ends_with("..."));
     }
 
     #[test]
@@ -4432,6 +4580,7 @@ mod tests {
         let prompt = SessionPrompt::default();
         let mut session = Session::new("proj", ".");
         let provider = Arc::new(ScriptedStreamProvider {
+            chat_text: None,
             model: ModelInfo {
                 id: "test-model".to_string(),
                 name: "Test Model".to_string(),
@@ -4531,6 +4680,7 @@ mod tests {
         let prompt = SessionPrompt::default();
         let mut session = Session::new("proj", ".");
         let provider = Arc::new(ScriptedStreamProvider {
+            chat_text: None,
             model: ModelInfo {
                 id: "test-model".to_string(),
                 name: "Test Model".to_string(),
