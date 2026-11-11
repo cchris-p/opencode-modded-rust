@@ -96,6 +96,9 @@ pub struct SessionView {
     expanded_tool_calls: HashSet<String>,
     tool_toggle_hits: Vec<ToolToggleHit>,
     last_messages_area: Option<Rect>,
+    /// When true, the transcript does not snap back to the newest line while a
+    /// selection drag is active (FEAT-072 auto-scroll).
+    follow_suspended: bool,
     line_to_message: Vec<Option<String>>,
     layout_cache: HashMap<String, CachedMessageLayout>,
     revert_layout: Option<(u64, usize)>,
@@ -118,6 +121,7 @@ impl SessionView {
             expanded_tool_calls: HashSet::new(),
             tool_toggle_hits: Vec::new(),
             last_messages_area: None,
+            follow_suspended: false,
             line_to_message: Vec::new(),
             layout_cache: HashMap::new(),
             revert_layout: None,
@@ -671,7 +675,7 @@ impl SessionView {
             return;
         }
 
-        let was_near_bottom = self.is_near_bottom(2);
+        let was_near_bottom = !self.follow_suspended && self.is_near_bottom(2);
         let theme = self.context.theme.read();
         let user_bg = message_palette::user_message_bg(&theme);
         let assistant_bg = message_palette::assistant_message_bg(&theme);
@@ -1016,6 +1020,38 @@ impl SessionView {
 
     pub fn is_point_in_sidebar(&self, col: u16, row: u16) -> bool {
         self.sidebar_state.contains_sidebar_point(col, row)
+    }
+
+    /// Screen rect of the transcript message pane from the last paint.
+    pub fn messages_area(&self) -> Option<Rect> {
+        self.last_messages_area
+    }
+
+    /// Current transcript scroll offset (top visible content line).
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    /// Current scroll offset and maximum scroll offset, read-only.
+    pub fn scroll_limits(&self) -> (usize, usize) {
+        (self.scroll_offset, self.max_scroll_offset())
+    }
+
+    /// Suspend or resume snapping to the newest transcript line. Used while a
+    /// selection drag is active so edge auto-scroll is not undone.
+    pub fn set_follow_suspended(&mut self, suspended: bool) {
+        self.follow_suspended = suspended;
+    }
+
+    /// True when a screen point is inside the transcript message pane.
+    pub fn is_point_in_messages(&self, col: u16, row: u16) -> bool {
+        let Some(area) = self.last_messages_area else {
+            return false;
+        };
+        col >= area.x
+            && col < area.x.saturating_add(area.width)
+            && row >= area.y
+            && row < area.y.saturating_add(area.height)
     }
 
     pub fn scroll_sidebar_up_at(&mut self, col: u16, row: u16) -> bool {
