@@ -128,6 +128,11 @@ Verification:
 - `cargo clippy -p opencode-core -p opencode-provider -p opencode-agent -p opencode-session -p opencode-server --all-targets`: no new errors; only pre-existing warnings.
 - Known pre-existing failures unrelated to this change: `opencode-session` `instruction::tests::test_find_up_stops_at_stop_dir` and `test_find_up_walks_parents` (macOS path/UTF-8, also documented in `BUG-026`).
 
+Merge:
+
+- Merged via PR https://github.com/cchris-p/opencode-modded-rust/pull/187 (merge commit `d5bd1e8`) into `development`; the branch was deleted locally and remotely. Card remains in `qa` until a QA report is recorded or the owner explicitly completes it.
+- CI passed for `check`, `clippy`, `fmt`, `test`, and `native (ubuntu-22.04)`. `native (macos-14)` did not start because the runner configuration `macos-14-arm64-us-default` is unsupported; this is infrastructure-only and unrelated to this change.
+
 ## Related Items
 
 - `BUG-026` Save session title after new session creation (superseded fallback decision; keep its durability work)
