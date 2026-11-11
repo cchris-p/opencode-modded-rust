@@ -130,6 +130,7 @@ deferred follow-up.
 ## Dev Notes
 
 - Branch: `bug/BUG-070-raw-code-fence-copy`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/179 (targets `development`).
 - `MarkdownRenderer::render_markdown` now returns `RenderedMarkdown { lines, code_blocks }` so fence
   source is captured in the existing parse pass; existing `to_lines` callers are unchanged.
 - `render_text_part_with_code` and `render_user_message_with_code` expose the captured fence lines;
