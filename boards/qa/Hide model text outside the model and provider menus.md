@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-11-11"
 updated: "2026-11-11"
 ---
@@ -103,6 +103,8 @@ while still being able to check or change the model deliberately from the model/
 
 ## QA Verification
 
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/176 (open against `development`,
+  awaiting manual QA).
 - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check -p opencode-tui`: clean, no warnings.
 - `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test -p opencode-tui`: 189 passed, 0 failed; the new
   `assistant_footer_hides_model_name` test passes.
