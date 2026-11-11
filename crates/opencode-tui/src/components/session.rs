@@ -2723,6 +2723,7 @@ mod tests {
                     finish: Some("tool-calls".to_string()),
                     error: None,
                     completed_at: Some(chrono::Utc::now()),
+                    queued: false,
                     cost: 0.0,
                     tokens: Default::default(),
                     parts: vec![MessagePart::ToolCall {
@@ -2839,6 +2840,7 @@ mod tests {
             finish: None,
             error: None,
             completed_at: completed.then(chrono::Utc::now),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Text {
@@ -3258,6 +3260,7 @@ mod tests {
             finish: Some("stop".to_string()),
             error: None,
             completed_at: Some(chrono::Utc::now()),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![
@@ -3309,6 +3312,7 @@ mod tests {
             finish: None,
             error: None,
             completed_at: Some(chrono::Utc::now()),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Reasoning {
