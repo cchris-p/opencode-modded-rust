@@ -585,7 +585,9 @@ impl App {
                     return Ok(());
                 }
 
-                if self.matches_keybind("session_interrupt", *key) {
+                if route_handles_session_interrupt(&self.context.current_route())
+                    && self.matches_keybind("session_interrupt", *key)
+                {
                     if self.prompt.is_shell_mode() {
                         self.prompt.exit_shell_mode();
                         self.prompt.clear_interrupt_confirmation();
@@ -5349,6 +5351,15 @@ fn interrupt_ignores_cached_status(_status: &SessionStatus) -> bool {
     true
 }
 
+/// Whether the current route owns Esc for interrupting a run.
+///
+/// Esc is bound to `session_interrupt`, but interrupting only makes sense on the
+/// transcript routes. Settings and Help must receive Esc so they can navigate
+/// back instead of having it silently consumed by the interrupt no-op.
+fn route_handles_session_interrupt(route: &Route) -> bool {
+    matches!(route, Route::Home | Route::Session { .. })
+}
+
 /// How the TUI should react to a server abort response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InterruptOutcome {
@@ -5881,6 +5892,19 @@ mod tests {
         // the interrupt while the server is still running the turn.
         assert!(interrupt_ignores_cached_status(&SessionStatus::Idle));
         assert!(interrupt_ignores_cached_status(&SessionStatus::Running));
+    }
+
+    #[test]
+    fn session_interrupt_only_owns_escape_on_transcript_routes() {
+        // Esc is the interrupt key, but on Settings/Help it must fall through so
+        // those screens can navigate back. Otherwise Esc is silently swallowed
+        // and the user cannot leave Settings without quitting.
+        assert!(route_handles_session_interrupt(&Route::Home));
+        assert!(route_handles_session_interrupt(&Route::Session {
+            session_id: "ses_test".to_string(),
+        }));
+        assert!(!route_handles_session_interrupt(&Route::Settings));
+        assert!(!route_handles_session_interrupt(&Route::Help));
     }
 
     #[test]
