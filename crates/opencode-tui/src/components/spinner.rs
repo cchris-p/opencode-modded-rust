@@ -14,6 +14,12 @@ const KNIGHT_RIDER_FRAME_INTERVAL_MS: u64 = 40;
 const BRAILLE_FRAME_INTERVAL_MS: u64 = 80;
 const BRAILLE_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// Shared braille frame for any caller that needs to animate in step with the
+/// prompt spinner (for example an in-flight tool-call row).
+pub fn braille_frame(index: usize) -> &'static str {
+    BRAILLE_FRAMES[index % BRAILLE_FRAMES.len()]
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TaskKind {
     #[default]
@@ -163,6 +169,10 @@ impl KnightRiderSpinner {
         };
         self.frame_index = (self.frame_index + 1) % total.max(1);
         self.frame_index != prev
+    }
+
+    pub fn frame_index(&self) -> usize {
+        self.frame_index
     }
 
     pub fn advance(&mut self, delta_ms: u64) -> bool {
