@@ -3762,7 +3762,6 @@ impl App {
                 "Agent: {}",
                 self.context.current_agent.read().as_str()
             )),
-            StatusLine::normal(format!("Model: {}", self.current_model_label())),
             StatusLine::normal(format!(
                 "Theme: {}",
                 format_theme_option_label(&self.context.current_theme_name())
@@ -4051,18 +4050,6 @@ impl App {
         };
         self.model_variant_selection.insert(model_key, next.clone());
         self.context.set_model_variant(next);
-    }
-
-    fn current_model_label(&self) -> String {
-        let Some(model) = self.context.current_model.read().clone() else {
-            return "(not selected)".to_string();
-        };
-        let (base_model, _) =
-            parse_model_ref_selection(&model, &self.available_models, &self.model_variants);
-        if let Some(variant) = self.context.current_model_variant() {
-            return format!("{base_model} ({variant})");
-        }
-        base_model
     }
 
     fn selected_model_for_prompt(&self) -> Option<String> {
