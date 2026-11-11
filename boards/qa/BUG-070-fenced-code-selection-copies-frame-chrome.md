@@ -179,3 +179,31 @@ deferred follow-up.
   `api.launchpad.net`; macOS job also failed during native setup), so no code/test failure was
   involved.
 - Card remains in `qa`; no QA report has been recorded yet.
+
+## QA Failure - 2026-11-11
+
+- Reported after merge: copying a fenced code block with Ctrl+C pasted only empty lines.
+- Reproduced with the live ORT binary (`3bceef8...`, which includes PR #179) against session
+  `ses_84126346ec064c1a9db3ce7e1074bf98` in `cass`: the assistant message has two bash fences
+  (single-line `python manage.py export_appointments_csv`, then the multi-line
+  `--start/--end/--output` command). Copying the second block yielded blank lines.
+- Root cause: `copy_rows_for_message` classified rendered rows with `text.trim_start()`. Every
+  rendered row is right-padded to the pane width, so `is_code_frame_footer` never matched `╰───`
+  plus trailing padding. The code region never closed; the second `╭` header was treated as a
+  continuation and its body rows were paired past the end of the first block's source, producing
+  `CodeStart("")`.
+- Existing copy-plan tests only covered single-block messages, so this slipped through.
+
+## Follow-up Fix - 2026-11-11
+
+- Branch: `bug/BUG-070-fence-footer-padding`.
+- Change: classify with `text.trim()` in `copy_rows_for_message` so a padded footer is recognized
+  and each fence opens and closes its own region.
+- Tests: `fenced_code_copy_plan_handles_multiple_blocks_in_one_message` covers two fences at 200
+  and 60 columns; `prose_after_a_fenced_block_stays_normal` proves the region closes before
+  following prose.
+- Verification: `cargo fmt -p opencode-tui -- --check`, `cargo check -p opencode-tui`, and both new
+  tests pass. Full suite: 210 passed, 2 pre-existing prompt failures
+  (`tab_autocomplete_uses_first_candidate` and the poisoned-env
+  `utf8_backspace_delete_and_cursor_are_char_safe`) unchanged from clean `development`.
+- Card returned to `qa`; no post-fix QA report yet.

@@ -1853,7 +1853,10 @@ fn copy_rows_for_message(lines: &[Line<'static>], code_blocks: &[Vec<String>]) -
 
     for (idx, line) in lines.iter().enumerate() {
         let text = line_plain_text(line);
-        let trimmed = text.trim_start();
+        // `paint_block_line` right-pads every row to the pane width, so the
+        // trailing spaces must be trimmed too or the `╰───` footer never
+        // matches and the region leaks into following prose/blocks.
+        let trimmed = text.trim();
 
         if region.is_some() {
             if is_code_frame_footer(trimmed) {
@@ -3411,6 +3414,18 @@ mod tests {
             .collect()
     }
 
+    fn rendered_rows_with_text(text: &str, width: usize) -> Vec<(String, CopyRow)> {
+        let theme = crate::theme::Theme::dark();
+        let rendered = crate::components::session_text::render_text_part_with_code(
+            text,
+            &theme,
+            theme.primary,
+        );
+        let lines = paint_block_lines(rendered.lines, theme.background_panel, theme.primary, width);
+        let rows = copy_rows_for_message(&lines, &rendered.code_blocks);
+        lines.iter().map(line_plain_text).zip(rows).collect()
+    }
+
     #[test]
     fn fenced_code_copy_rows_use_raw_source_with_indentation() {
         let text = "```bash\nsudo sh -c \"zgrep -h 'pharos/add_funds'\" \\\n  | grep '\"request\": \"POST'\n```";
@@ -3450,6 +3465,56 @@ mod tests {
             rows.iter()
                 .any(|row| matches!(row, CopyRow::CodeContinuation)),
             "wrapped rows must be classified as continuations"
+        );
+    }
+
+    #[test]
+    fn fenced_code_copy_plan_handles_multiple_blocks_in_one_message() {
+        let text = "Run it with the project's Python 2.7 environment:\n\n```bash\npython manage.py export_appointments_csv\n```\n\nOr specify dates/output:\n\n```bash\npython manage.py export_appointments_csv \\\n  --start 2025-01-01 \\\n  --end 2026-06-30 \\\n  --output ~/exports/appointments_2025-01-01_to_2026-06-30.csv\n```";
+        let expected = vec![
+            "python manage.py export_appointments_csv",
+            "python manage.py export_appointments_csv \\",
+            "  --start 2025-01-01 \\",
+            "  --end 2026-06-30 \\",
+            "  --output ~/exports/appointments_2025-01-01_to_2026-06-30.csv",
+        ];
+
+        for width in [200usize, 60] {
+            let rows_with_text = rendered_rows_with_text(text, width);
+            let rows: Vec<CopyRow> = rows_with_text.iter().map(|(_, row)| row.clone()).collect();
+            assert_eq!(
+                code_starts(&rows),
+                expected,
+                "width {width}: every block must pair with its own source lines"
+            );
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| matches!(row, CopyRow::CodeStart(raw) if raw.is_empty())),
+                "width {width}: the second block must not emit empty source rows"
+            );
+            for (text, row) in &rows_with_text {
+                if text.contains('╭') || text.contains('╰') {
+                    assert!(
+                        row.is_chrome(),
+                        "width {width}: fence row must be chrome, got {row:?} for {text:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prose_after_a_fenced_block_stays_normal() {
+        let rows = rendered_rows_with_text("```bash\necho hi\n```\n\nAfter the block.", 120);
+        let after = rows
+            .iter()
+            .find(|(text, _)| text.contains("After the block"))
+            .expect("prose row");
+        assert_eq!(
+            after.1,
+            CopyRow::Normal,
+            "a closing fence must end the code region before following prose"
         );
     }
 
