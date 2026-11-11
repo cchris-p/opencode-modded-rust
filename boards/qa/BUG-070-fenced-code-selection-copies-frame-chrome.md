@@ -207,4 +207,21 @@ deferred follow-up.
   tests pass. Full suite: 210 passed, 2 pre-existing prompt failures
   (`tab_autocomplete_uses_first_candidate` and the poisoned-env
   `utf8_backspace_delete_and_cursor_are_char_safe`) unchanged from clean `development`.
-- Card returned to `qa`; no post-fix QA report yet.
+- Card returned to `qa`; post-fix QA report recorded below.
+
+## QA Report - 2026-11-11
+
+- Fixed binary: branch `bug/BUG-070-fence-footer-padding` at `4eafe18`, built with
+  `cargo build -p opencode-cli --no-default-features` (the native scopemux sources are not present
+  in this checkout).
+- Fixture: isolated server on `127.0.0.1:3299` with `OPENCODE_DATA_DIR=/tmp/qa070`, session
+  `ses_924dbe3f078e4b09aa5baf84b9bf6c69`, seeded with one assistant message containing two bash
+  fences.
+- A/B in the real TUI via tmux, selecting the second block and pressing Ctrl+C:
+  - pre-fix binary (`3bceef8...`): clipboard was exactly `\n\n\n` (the reported empty lines).
+  - fixed binary: clipboard was the four raw source lines, preserving `\` continuations and the
+    two-space continuation indentation.
+- First block still copies correctly; `cargo fmt -p opencode-tui -- --check`, `cargo check -p
+  opencode-tui`, both new regression tests, and the full suite pass (210 passed, 2 pre-existing
+  prompt failures unchanged from clean `development`).
+- QA passes for the reported failure; card remains in `qa` awaiting merge closeout.
