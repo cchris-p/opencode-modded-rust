@@ -564,23 +564,42 @@ fn parse_native_args(raw: &str) -> serde_json::Value {
     serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
 }
 
-/// Whether DeepSeek native-token normalization is active. Enabled by default;
-/// `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` (truthy) is the kill switch.
-///
-/// The same switch also gates the Qwen `<tool_call>` normalization below: both
-/// are "native tool-call normalization" restorations of the same kind, so the
-/// operator kill switch covers the whole feature.
+/// Whether native-token normalization is active. Enabled by default;
+/// `OPENCODE_DISABLE_NATIVE_TOOLCALLS` (truthy) is the neutral kill switch, and
+/// `OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS` remains a compatibility alias
+/// with the same truthy semantics. The switch gates both the DeepSeek native
+/// tokens and the Qwen/Hermes `<tool_call>` normalization below: both are
+/// restorations of native tool calls, so one operator switch covers the
+/// feature.
 fn native_normalization_enabled() -> bool {
     static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(
-        || match std::env::var("OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS") {
-            Ok(value) => !matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "on" | "yes"
-            ),
-            Err(_) => true,
-        },
+    *CACHED.get_or_init(|| {
+        resolve_native_normalization(
+            std::env::var("OPENCODE_DISABLE_NATIVE_TOOLCALLS")
+                .ok()
+                .as_deref(),
+            std::env::var("OPENCODE_DISABLE_DEEPSEEK_NATIVE_TOOLCALLS")
+                .ok()
+                .as_deref(),
+        )
+    })
+}
+
+fn truthy_switch(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "on" | "yes"
     )
+}
+
+/// Resolve the normalization switch from the neutral variable and the legacy
+/// DeepSeek alias. The neutral name wins when both are set; absent means on.
+fn resolve_native_normalization(neutral: Option<&str>, legacy: Option<&str>) -> bool {
+    match (neutral, legacy) {
+        (Some(value), _) => !truthy_switch(value),
+        (None, Some(value)) => !truthy_switch(value),
+        (None, None) => true,
+    }
 }
 
 /// A tool call decoded from Qwen/Hermes-style inline `<tool_call>` markup
@@ -2381,6 +2400,86 @@ mod tests {
             vec![("bash".to_string(), serde_json::json!({"command": "ls"}))]
         );
         assert!(!collect_text(&events).contains("tool_call"));
+    }
+
+    #[test]
+    fn qwen_2507_plain_json_content_split_across_chunks() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = Vec::new();
+        for fragment in [
+            "<tool_call>{\"na",
+            "me\": \"read\", \"argum",
+            "ents\": {\"file_path\": \"hello.txt\"}}",
+            "</tool_call>",
+            "done",
+        ] {
+            let frame = serde_json::json!({
+                "choices": [{"delta": {"content": fragment}}]
+            })
+            .to_string();
+            events.extend(parse_openai_sse_stateful(&frame, &mut state));
+        }
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+
+        assert_eq!(
+            collect_calls(&events),
+            vec![(
+                "read".to_string(),
+                serde_json::json!({"file_path": "hello.txt"})
+            )]
+        );
+        assert_eq!(collect_text(&events), "done");
+    }
+
+    #[test]
+    fn qwen_2507_plain_json_reasoning_split_across_chunks() {
+        let mut state = OpenAiCompatParserState::default();
+        let mut events = Vec::new();
+        for fragment in [
+            "<tool_call>{\"na",
+            "me\": \"bash\", \"arguments\": ",
+            "{\"command\": \"ls\"}}",
+            "</tool_call>",
+            "finish",
+        ] {
+            let frame = serde_json::json!({
+                "choices": [{"delta": {"reasoning": fragment}}]
+            })
+            .to_string();
+            events.extend(parse_openai_sse_stateful(&frame, &mut state));
+        }
+        events.extend(parse_openai_sse_stateful(finish_frame(), &mut state));
+
+        assert_eq!(
+            collect_calls(&events),
+            vec![("bash".to_string(), serde_json::json!({"command": "ls"}))]
+        );
+        let visible: String = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ReasoningDelta { text, .. } => Some(text.clone()),
+                StreamEvent::TextDelta(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(visible, "finish");
+    }
+
+    #[test]
+    fn neutral_and_legacy_kill_switches_share_truthy_semantics() {
+        assert!(resolve_native_normalization(None, None));
+        for value in ["1", "true", "on", "yes", " TRUE "] {
+            assert!(!resolve_native_normalization(Some(value), None));
+            assert!(!resolve_native_normalization(None, Some(value)));
+        }
+        for value in ["0", "false", "off", "no", ""] {
+            assert!(resolve_native_normalization(Some(value), None));
+            assert!(resolve_native_normalization(None, Some(value)));
+        }
+        assert!(
+            !resolve_native_normalization(Some("1"), Some("0")),
+            "the neutral switch wins when both are set"
+        );
     }
 
     #[test]
