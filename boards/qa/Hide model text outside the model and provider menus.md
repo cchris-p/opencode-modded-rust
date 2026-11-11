@@ -1,5 +1,5 @@
 ---
-id: "FEAT-071"
+id: "FEAT-073"
 title: "Hide model text outside the model and provider menus"
 priority: "P2"
 type: "feature"
