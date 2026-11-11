@@ -17,7 +17,7 @@ use ratatui::{
 use super::message_palette;
 use super::sidebar::SidebarState;
 use crate::components::{Prompt, Sidebar};
-use crate::context::{AppContext, Message, MessagePart, MessageRole, SidebarMode};
+use crate::context::{AppContext, Message, MessagePart, MessageRole, SessionStatus, SidebarMode};
 use crate::ui::{workspace_location_label, CopyRow};
 
 const SIDEBAR_WIDTH: u16 = 42;
@@ -83,6 +83,9 @@ struct MessageRenderCtx<'a> {
     keybind: &'a crate::context::KeybindRegistry,
     include_background_subagents: bool,
     content_width: usize,
+    activity_frame: usize,
+    animations_enabled: bool,
+    session_active: bool,
 }
 
 pub struct SessionView {
@@ -281,7 +284,7 @@ impl SessionView {
         // the viewport consistent within one frame. `rendered_line_count` is
         // still updated by the paint pass so follow/scroll behavior is
         // unchanged.
-        self.render_messages(frame, area, true);
+        self.render_messages(frame, area, true, prompt.activity_frame());
         let viewport_height = if self.messages_viewport_height == 0 {
             usize::from(available_after_header_footer)
         } else {
@@ -342,7 +345,7 @@ impl SessionView {
         if show_header && layout[0].height > 0 {
             self.render_header(frame, layout[0]);
         }
-        self.render_messages(frame, layout[1], false);
+        self.render_messages(frame, layout[1], false, prompt.activity_frame());
         if layout[2].height > 0 {
             self.render_session_footer(frame, layout[2]);
         }
@@ -666,7 +669,13 @@ impl SessionView {
     /// viewport/scroll state is left untouched. `render` calls this once in
     /// measure-only mode so the pane can be sized from the current transcript
     /// instead of the previous frame's total (BUG-054).
-    fn render_messages(&mut self, frame: &mut Frame, area: Rect, measure_only: bool) {
+    fn render_messages(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        measure_only: bool,
+        activity_frame: usize,
+    ) {
         if area.height == 0 || area.width == 0 {
             self.last_messages_area = None;
             self.rendered_line_count = 0;
@@ -712,9 +721,11 @@ impl SessionView {
         let show_tool_details = *self.context.show_tool_details.read();
         let semantic_hl = *self.context.semantic_highlight.read();
         let include_background_subagents = self.context.experimental_background_subagents();
+        let animations_enabled = *self.context.animations_enabled.read();
         let keybind = self.context.keybind.read();
 
         let session_ctx = self.context.session.read();
+        let session_active = !matches!(session_ctx.status(&self.session_id), SessionStatus::Idle);
         let empty_messages: Vec<Message> = Vec::new();
         let messages = session_ctx
             .messages
@@ -725,19 +736,7 @@ impl SessionView {
         let last_assistant_idx = messages
             .iter()
             .rposition(|m| matches!(m.role, MessageRole::Assistant));
-        let completed_assistant_idx = messages
-            .iter()
-            .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
-        let pending_assistant_idx = messages
-            .iter()
-            .enumerate()
-            .filter(|(idx, m)| {
-                matches!(m.role, MessageRole::Assistant)
-                    && m.completed_at.is_none()
-                    && completed_assistant_idx.map_or(true, |completed| *idx > completed)
-            })
-            .map(|(idx, _)| idx)
-            .last();
+        let pending_assistant_idx = compute_pending_assistant_idx(messages);
 
         let mut globals_hasher = DefaultHasher::new();
         content_width.hash(&mut globals_hasher);
@@ -777,7 +776,13 @@ impl SessionView {
             keybind: &keybind,
             include_background_subagents,
             content_width,
+            activity_frame,
+            animations_enabled,
+            session_active,
         };
+        // Pending queue rows render above the live assistant turn; ingested
+        // messages keep their normal transcript order.
+        let order = render_order(messages, pending_assistant_idx);
 
         // Revert card: rendered only when its inputs change, otherwise reused.
         if revert_info.is_none() {
@@ -835,8 +840,8 @@ impl SessionView {
                 total_lines += 1;
             }
         }
-        for (idx, _msg) in messages.iter().enumerate() {
-            total_lines += leading_spacing(messages, idx) + heights[idx];
+        for (pos, &idx) in order.iter().enumerate() {
+            total_lines += ordered_spacing(messages, &order, pos) + heights[idx];
         }
         if measure_only {
             self.measured_line_count = total_lines;
@@ -895,8 +900,9 @@ impl SessionView {
             }
         }
 
-        for (idx, msg) in messages.iter().enumerate() {
-            let spacing = leading_spacing(messages, idx);
+        for (pos, &idx) in order.iter().enumerate() {
+            let msg = &messages[idx];
+            let spacing = ordered_spacing(messages, &order, pos);
             if spacing > 0 {
                 if cursor < window_end && cursor + spacing > window_start {
                     if !started {
@@ -1162,22 +1168,26 @@ impl SessionView {
     fn message_first_line(&self, message_id: &str) -> Option<usize> {
         let session_ctx = self.context.session.read();
         let messages = session_ctx.messages.get(&self.session_id)?;
-        let idx = messages.iter().position(|m| m.id == message_id)?;
+        let pending_assistant_idx = compute_pending_assistant_idx(messages);
+        let order = render_order(messages, pending_assistant_idx);
+        let pos = order.iter().position(|&idx| messages[idx].id == message_id)?;
 
         let mut total = 0usize;
         if session_ctx.revert.contains_key(&self.session_id) {
             total += self.revert_layout.map(|(_, height)| height).unwrap_or(0);
             total += 1;
         }
-        for (j, msg) in messages.iter().enumerate().take(idx) {
-            total += leading_spacing(messages, j);
+        for prev_pos in 0..pos {
+            let idx = order[prev_pos];
+            let msg = &messages[idx];
+            total += ordered_spacing(messages, &order, prev_pos);
             total += self
                 .layout_cache
                 .get(&msg.id)
                 .map(|cached| cached.height)
                 .unwrap_or(0);
         }
-        Some(total + leading_spacing(messages, idx))
+        Some(total + ordered_spacing(messages, &order, pos))
     }
 
     fn max_scroll_offset(&self) -> usize {
@@ -1190,12 +1200,77 @@ impl SessionView {
     }
 }
 
-fn leading_spacing(messages: &[Message], idx: usize) -> usize {
-    if idx == 0 {
+/// The in-flight assistant turn: the last assistant message that has not
+/// completed and follows every completed assistant. A tool-call step is
+/// finalized with a `tool-calls` finish reason before its tools run, so callers
+/// that need the live turn must also consider the session status.
+fn compute_pending_assistant_idx(messages: &[Message]) -> Option<usize> {
+    let completed_assistant_idx = messages
+        .iter()
+        .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
+    messages
+        .iter()
+        .enumerate()
+        .filter(|(idx, m)| {
+            matches!(m.role, MessageRole::Assistant)
+                && m.completed_at.is_none()
+                && completed_assistant_idx.map_or(true, |completed| *idx > completed)
+        })
+        .map(|(idx, _)| idx)
+        .last()
+}
+
+/// A user message that is accepted into the session queue but not yet consumed
+/// by a run. Prefer the server's explicit `queued` marker; fall back to the
+/// legacy position relative to the in-flight assistant for older snapshots.
+fn is_queue_message(
+    msg: &Message,
+    idx: usize,
+    pending_assistant_idx: Option<usize>,
+) -> bool {
+    matches!(msg.role, MessageRole::User)
+        && (msg.queued || pending_assistant_idx.is_some_and(|pending| idx > pending))
+}
+
+/// Render order for the transcript. Queued user messages are lifted above the
+/// live assistant turn (the "build text") so the pending queue is visibly not
+/// part of the conversation, then the live assistant renders last. Once the
+/// server consumes a queued prompt it clears `queued`, and ordering returns to
+/// the normal transcript order automatically.
+fn render_order(messages: &[Message], pending_assistant_idx: Option<usize>) -> Vec<usize> {
+    let queued: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(idx, msg)| is_queue_message(msg, *idx, pending_assistant_idx))
+        .map(|(idx, _)| idx)
+        .collect();
+    if queued.is_empty() {
+        return (0..messages.len()).collect();
+    }
+
+    let anchor = messages
+        .iter()
+        .rposition(|m| matches!(m.role, MessageRole::Assistant));
+    let mut order = Vec::with_capacity(messages.len());
+    for idx in 0..messages.len() {
+        if Some(idx) == anchor || queued.contains(&idx) {
+            continue;
+        }
+        order.push(idx);
+    }
+    order.extend(queued);
+    if let Some(anchor) = anchor {
+        order.push(anchor);
+    }
+    order
+}
+
+fn ordered_spacing(messages: &[Message], order: &[usize], pos: usize) -> usize {
+    if pos == 0 {
         return 0;
     }
-    let prev_role = &messages[idx - 1].role;
-    let role = &messages[idx].role;
+    let prev_role = &messages[order[pos - 1]].role;
+    let role = &messages[order[pos]].role;
     if *prev_role != *role || matches!(role, MessageRole::User) {
         1
     } else {
@@ -1332,10 +1407,7 @@ fn message_sig(ctx: &MessageRenderCtx, msg: &Message, idx: usize, globals_hash: 
     };
     prev_role.hash(&mut h);
 
-    let is_queued = matches!(msg.role, MessageRole::User)
-        && ctx
-            .pending_assistant_idx
-            .is_some_and(|pending| idx > pending);
+    let is_queued = is_queue_message(msg, idx, ctx.pending_assistant_idx);
     is_queued.hash(&mut h);
 
     let is_active = matches!(msg.role, MessageRole::Assistant)
@@ -1378,6 +1450,16 @@ fn hash_revert(revert: &crate::context::RevertInfo, content_width: usize) -> u64
     h.finish()
 }
 
+/// A tool-call step is finalized with `finish_reason` set before its tools run,
+/// so the old `finish.is_none()` check hid the in-flight state. Treat the
+/// tool-call finish variants as live; other terminal finishes are not.
+fn finish_allows_running_tool(finish: Option<&str>) -> bool {
+    match finish {
+        None => true,
+        Some(reason) => reason.replace('-', "_").eq_ignore_ascii_case("tool_calls"),
+    }
+}
+
 fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> RenderedBody {
     #[cfg(test)]
     LAYOUT_RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1392,9 +1474,7 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
         MessageRole::User => {
             let message_bg = ctx.user_bg;
             let message_border = user_border_color_for_agent(msg.agent.as_deref(), ctx.theme);
-            let is_queued = ctx
-                .pending_assistant_idx
-                .is_some_and(|pending| idx > pending);
+            let is_queued = is_queue_message(msg, idx, ctx.pending_assistant_idx);
             let (user_lines, user_code_blocks) =
                 super::session_message::render_user_message_with_code(
                     msg,
@@ -1427,8 +1507,10 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                     tool_results.insert(id.clone(), (result.clone(), *is_error));
                 }
             }
-            let is_active_assistant =
-                ctx.last_assistant_idx == Some(idx) && msg.finish.is_none() && msg.error.is_none();
+            let is_active_assistant = ctx.last_assistant_idx == Some(idx)
+                && ctx.session_active
+                && msg.error.is_none()
+                && finish_allows_running_tool(msg.finish.as_deref());
             let assistant_marker = assistant_marker_color(msg.agent.as_deref(), ctx.theme);
             let unresolved_tool_calls = msg
                 .parts
@@ -1621,6 +1703,8 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                                         summary.state,
                                         summary.denied,
                                         expanded_run,
+                                        ctx.activity_frame,
+                                        ctx.animations_enabled,
                                         ctx.theme,
                                     )],
                                 );
@@ -1648,6 +1732,8 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                                                 ctx.expanded_tool_calls.contains(id),
                                                 ctx.show_tool_details,
                                                 ctx.content_width,
+                                                ctx.activity_frame,
+                                                ctx.animations_enabled,
                                                 ctx.theme,
                                             );
                                             append_rendered_tool_call(
@@ -1679,6 +1765,8 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
                                     ctx.expanded_tool_calls.contains(id),
                                     ctx.show_tool_details,
                                     ctx.content_width,
+                                    ctx.activity_frame,
+                                    ctx.animations_enabled,
                                     ctx.theme,
                                 );
                                 append_rendered_tool_call(
@@ -2015,6 +2103,8 @@ fn render_tool_call_part(
     expanded: bool,
     show_tool_details: bool,
     width: usize,
+    activity_frame: usize,
+    animations_enabled: bool,
     theme: &crate::theme::Theme,
 ) -> super::session_tool::ToolCallRender {
     super::session_tool::render_tool_call(
@@ -2026,6 +2116,8 @@ fn render_tool_call_part(
         show_tool_details,
         expanded,
         width,
+        activity_frame,
+        animations_enabled,
         theme,
     )
 }
@@ -2623,6 +2715,8 @@ mod tests {
             super::super::session_tool::ToolState::Completed,
             false,
             false,
+            0,
+            true,
             &theme,
         );
         let plural = super::super::session_tool::render_tool_run_summary(
@@ -2630,6 +2724,8 @@ mod tests {
             super::super::session_tool::ToolState::Completed,
             false,
             false,
+            0,
+            true,
             &theme,
         );
 
@@ -2646,6 +2742,76 @@ mod tests {
 
         assert!(singular_text.contains("1 tool call"));
         assert!(plural_text.contains("2 tool calls"));
+    }
+
+    #[test]
+    fn tool_call_finish_reasons_keep_running_state_live() {
+        assert!(finish_allows_running_tool(None));
+        assert!(finish_allows_running_tool(Some("tool-calls")));
+        assert!(finish_allows_running_tool(Some("tool_calls")));
+        assert!(!finish_allows_running_tool(Some("stop")));
+        assert!(!finish_allows_running_tool(Some("abort")));
+        assert!(!finish_allows_running_tool(Some("length")));
+    }
+
+    #[test]
+    fn in_flight_tool_call_with_tool_calls_finish_renders_running_indicator() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        *context.show_tool_calls.write() = true;
+        let session_id = "test-session".to_string();
+        {
+            let mut session_ctx = context.session.write();
+            session_ctx.set_status(&session_id, SessionStatus::Running);
+            session_ctx.set_messages(
+                &session_id,
+                vec![Message {
+                    id: "m1".to_string(),
+                    role: MessageRole::Assistant,
+                    content: String::new(),
+                    created_at: chrono::Utc::now(),
+                    agent: None,
+                    model: None,
+                    mode: None,
+                    // A tool-call step is finalized before its tools execute.
+                    finish: Some("tool-calls".to_string()),
+                    error: None,
+                    completed_at: Some(chrono::Utc::now()),
+                    queued: false,
+                    cost: 0.0,
+                    tokens: Default::default(),
+                    parts: vec![MessagePart::ToolCall {
+                        id: "call-1".to_string(),
+                        name: "grep".to_string(),
+                        arguments: r#"{"pattern":"TODO","path":"src"}"#.to_string(),
+                    }],
+                }],
+            );
+        }
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+
+        assert!(
+            !row_containing(&terminal, "⠋").is_empty(),
+            "in-flight tool row must show an animated glyph"
+        );
+        assert!(
+            !row_containing(&terminal, "running…").is_empty(),
+            "in-flight tool row must say running…"
+        );
+        assert!(
+            !row_containing(&terminal, "grep").is_empty(),
+            "the tool call itself must be visible"
+        );
     }
 
     fn joined(lines: &[Vec<Span<'static>>]) -> Vec<String> {
@@ -2730,6 +2896,7 @@ mod tests {
             finish: None,
             error: None,
             completed_at: completed.then(chrono::Utc::now),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Text {
@@ -3149,6 +3316,7 @@ mod tests {
             finish: Some("stop".to_string()),
             error: None,
             completed_at: Some(chrono::Utc::now()),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![
@@ -3200,6 +3368,7 @@ mod tests {
             finish: None,
             error: None,
             completed_at: Some(chrono::Utc::now()),
+            queued: false,
             cost: 0.0,
             tokens: Default::default(),
             parts: vec![MessagePart::Reasoning {

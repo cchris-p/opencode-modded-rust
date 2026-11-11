@@ -9,6 +9,8 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::theme::Theme;
 
+use super::spinner::braille_frame;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolState {
     Pending,
@@ -17,15 +19,41 @@ pub enum ToolState {
     Failed,
 }
 
+/// Animated glyph for an in-flight tool call. Falls back to the previous static
+/// half-circle when the user has disabled animations.
+pub fn running_glyph(activity_frame: usize, animations_enabled: bool) -> &'static str {
+    if animations_enabled {
+        braille_frame(activity_frame)
+    } else {
+        "◐"
+    }
+}
+
+fn state_icon(
+    state: ToolState,
+    fallback: &'static str,
+    activity_frame: usize,
+    animations_enabled: bool,
+) -> &'static str {
+    if matches!(state, ToolState::Running) {
+        running_glyph(activity_frame, animations_enabled)
+    } else {
+        fallback
+    }
+}
+
 pub fn render_tool_run_summary(
     count: usize,
     state: ToolState,
     is_denied: bool,
     expanded: bool,
+    activity_frame: usize,
+    animations_enabled: bool,
     theme: &Theme,
 ) -> Line<'static> {
     let bg = theme.background_panel;
-    let (state_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let (fallback_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let state_icon = state_icon(state, fallback_icon, activity_frame, animations_enabled);
     let label = if count == 1 {
         "1 tool call".to_string()
     } else {
@@ -37,6 +65,15 @@ pub fn render_tool_run_summary(
         Span::styled("● ", icon_style.bg(bg)),
         Span::styled(label, name_style.bg(bg)),
     ];
+    if matches!(state, ToolState::Running) {
+        spans.push(Span::styled(
+            "  running…",
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD)
+                .bg(bg),
+        ));
+    }
     if is_denied {
         spans.push(Span::styled(
             "  denied",
@@ -118,6 +155,8 @@ pub fn render_tool_call(
     show_tool_details: bool,
     expanded: bool,
     width: usize,
+    activity_frame: usize,
+    animations_enabled: bool,
     theme: &Theme,
 ) -> ToolCallRender {
     if matches!(state, ToolState::Completed) && !show_tool_details {
@@ -151,6 +190,8 @@ pub fn render_tool_call(
             show_tool_details,
             expanded,
             width,
+            activity_frame,
+            animations_enabled,
             theme,
         );
     }
@@ -159,7 +200,8 @@ pub fn render_tool_call(
     let is_denied =
         result.is_some_and(|(result_text, is_error)| *is_error && is_denied_result(result_text));
 
-    let (state_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let (fallback_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let state_icon = state_icon(state, fallback_icon, activity_frame, animations_enabled);
 
     let mut lines = Vec::new();
 
@@ -227,6 +269,16 @@ pub fn render_tool_call(
                     ));
                 }
             }
+        }
+
+        if matches!(state, ToolState::Running) && normalized != "bash" && normalized != "shell" {
+            main_spans.push(Span::styled(
+                "  running…",
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD)
+                    .bg(bg),
+            ));
         }
 
         if is_denied {
@@ -366,6 +418,15 @@ pub fn render_tool_call(
         }
     }
 
+    if matches!(state, ToolState::Running) {
+        main_spans.push(Span::styled(
+            "  running…",
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
     lines.push(Line::from(main_spans));
 
     if show_tool_details {
@@ -410,12 +471,15 @@ fn render_bash_block(
     show_tool_details: bool,
     expanded: bool,
     width: usize,
+    activity_frame: usize,
+    animations_enabled: bool,
     theme: &Theme,
 ) -> ToolCallRender {
     let bg = theme.background_panel;
     let is_denied =
         result.is_some_and(|(result_text, is_error)| *is_error && is_denied_result(result_text));
-    let (state_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let (fallback_icon, icon_style, name_style) = styles_for_state(state, is_denied, theme);
+    let state_icon = state_icon(state, fallback_icon, activity_frame, animations_enabled);
     let command = shell_command_text(arguments).unwrap_or_default();
 
     let mut lines = Vec::new();
@@ -1058,6 +1122,8 @@ mod tests {
             show_tool_details,
             expanded,
             120,
+            0,
+            true,
             &Theme::default(),
         )
     }
@@ -1128,6 +1194,8 @@ mod tests {
             true,
             false,
             120,
+            0,
+            true,
             &Theme::default(),
         );
         assert!(collapsed.collapsible);
@@ -1144,6 +1212,8 @@ mod tests {
             true,
             true,
             120,
+            0,
+            true,
             &Theme::default(),
         );
         assert!(body(&expanded).contains("error 6"));
@@ -1161,6 +1231,8 @@ mod tests {
             true,
             false,
             120,
+            0,
+            true,
             &Theme::default(),
         );
         let body = body(&render);
@@ -1183,6 +1255,8 @@ mod tests {
             true,
             false,
             120,
+            0,
+            true,
             &Theme::default(),
         );
         let body = body(&render);
@@ -1203,6 +1277,8 @@ mod tests {
             true,
             false,
             120,
+            0,
+            true,
             &Theme::default(),
         );
         let body = body(&render);
@@ -1224,6 +1300,8 @@ mod tests {
             true,
             true,
             120,
+            0,
+            true,
             &Theme::default(),
         );
         assert!(body(&render).contains(&long));
@@ -1241,6 +1319,8 @@ mod tests {
             true,
             false,
             20,
+            0,
+            true,
             &Theme::default(),
         );
         let prompt_lines = render
@@ -1267,10 +1347,108 @@ mod tests {
             true,
             false,
             120,
+            0,
+            true,
             &Theme::default(),
         );
         let body = body(&render);
         assert!(body.contains("exit 3"));
         assert!(!body.contains("Command exited with code:"));
+    }
+
+    #[test]
+    fn running_grep_row_animates_and_labels_running() {
+        let render = render_tool_call(
+            "call-running-grep",
+            "grep",
+            r#"{"pattern":"TODO","path":"src"}"#,
+            ToolState::Running,
+            &HashMap::new(),
+            true,
+            false,
+            120,
+            0,
+            true,
+            &Theme::default(),
+        );
+        let body = body(&render);
+        assert!(
+            body.contains("⠋"),
+            "expected an animated loading glyph: {body}"
+        );
+        assert!(
+            body.contains("running…"),
+            "expected a running label: {body}"
+        );
+        assert!(
+            body.contains("TODO in src"),
+            "expected the argument preview: {body}"
+        );
+    }
+
+    #[test]
+    fn running_tool_row_uses_static_glyph_when_animations_disabled() {
+        let render = render_tool_call(
+            "call-static-grep",
+            "grep",
+            r#"{"pattern":"TODO"}"#,
+            ToolState::Running,
+            &HashMap::new(),
+            true,
+            false,
+            120,
+            0,
+            false,
+            &Theme::default(),
+        );
+        let body = body(&render);
+        assert!(body.contains('◐'), "expected static running glyph: {body}");
+        assert!(!body.contains("⠋"), "must not animate: {body}");
+        assert!(body.contains("running…"));
+    }
+
+    #[test]
+    fn completed_tool_row_is_not_labelled_running() {
+        let results = result_map("call-done-grep", "a.rs\nb.rs", false);
+        let render = render_tool_call(
+            "call-done-grep",
+            "grep",
+            r#"{"pattern":"TODO"}"#,
+            ToolState::Completed,
+            &results,
+            true,
+            false,
+            120,
+            0,
+            true,
+            &Theme::default(),
+        );
+        let body = body(&render);
+        assert!(!body.contains("running…"));
+        assert!(body.contains("(2 matches)"));
+    }
+
+    #[test]
+    fn running_tool_run_summary_animates_and_labels_running() {
+        let line = render_tool_run_summary(
+            3,
+            ToolState::Running,
+            false,
+            false,
+            1,
+            true,
+            &Theme::default(),
+        );
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(
+            text.contains('⠙'),
+            "expected the second animated frame: {text}"
+        );
+        assert!(text.contains("running…"));
+        assert!(text.contains("3 tool calls"));
     }
 }
