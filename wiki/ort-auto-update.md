@@ -35,7 +35,7 @@ Each run attaches, per platform:
 - `opencode-modded-rust-<os>-<arch>.tar.gz.rev` - the source commit SHA.
 
 Platforms: `linux-x86_64` built on `ubuntu-22.04` (glibc 2.35, the oldest fleet
-baseline) and `darwin-aarch64` built on `macos-14`. Assets are clobbered in place
+baseline) and `darwin-aarch64` built on `macos-15`. Assets are clobbered in place
 under the rolling `native-artifacts` tag; the `.rev` is what makes change
 detection cheap.
 
@@ -123,7 +123,7 @@ assets and refreshes `.rev`. For an immediate Linux publish without waiting for
 CI, run `scripts/publish-cli-artifact.sh` on the builder; it emits the tarball,
 checksum, and `.rev` and uploads them to the rolling release.
 
-The macOS asset is always CI-built (`macos-14`); do not cross-compile it from
+The macOS asset is always CI-built (`macos-15`); do not cross-compile it from
 Linux.
 
 ## Rollout And Verification

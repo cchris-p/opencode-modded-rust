@@ -106,15 +106,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # PR/push CI verifies the native provider on Linux only. Hosted macOS
+          # runners are not reliably available (macos-14 was retired 2026-11-02
+          # and macos-15 is intermittently unacquirable); macOS native builds
+          # remain covered by native-artifacts.yml and release.yml.
           - os: ubuntu-22.04
             deps: |
-              sudo add-apt-repository -y ppa:deadsnakes/ppa
               sudo apt-get update
-              sudo apt-get install -y cmake python3.11-dev
-          - os: macos-14
-            deps: |
-              brew install cmake python@3.11
-              echo "$(brew --prefix python@3.11)/bin" >> "$GITHUB_PATH"
+              sudo apt-get install -y cmake
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
