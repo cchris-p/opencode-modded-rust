@@ -111,6 +111,15 @@ a state change that did not happen.
   `components::prompt::tests::tab_autocomplete_uses_first_candidate` test (frecency
   ordering flake); it reproduces on clean `development` without this change.
 
+## Next Agent Instructions
+
+**Current state:** Fix merged to `development` as `3b8dfcf`; card in `qa` awaiting a QA report.
+**Start here:** `boards/qa/assistant-mode-label-falls-back-to-default.md`.
+**Verify:** `cargo test -p opencode-tui assistant_footer` (3 tests), then in the TUI scroll past an errored/in-flight assistant turn; the footer must stay on the agent (`Build`), never `Default`.
+**Gates:** Record a QA report, then move the card to `done`.
+**Do not:** Change agent selection or scroll behavior for this card.
+**Follow-up (separate scope):** populate `agent`/`mode` on every assistant message-creation path.
+
 ## Related Items
 
 - `BUG-051` Continuation prompt flashes / unordered (adjacent session-footer rendering
