@@ -45,6 +45,11 @@ jobs:
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    # macOS hosted runners are intermittently unacquirable; do not let a macOS
+    # outage block the rolling Linux artifacts. macOS assets publish when the
+    # runner is available.
+    continue-on-error: ${{ matrix.os != 'ubuntu-22.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,9 +59,8 @@ jobs:
           # fails on the 22.04 hosts that consume the artifact.
           - os: ubuntu-22.04
             deps: |
-              sudo add-apt-repository -y ppa:deadsnakes/ppa
               sudo apt-get update
-              sudo apt-get install -y cmake python3.11-dev
+              sudo apt-get install -y cmake
           # macOS bundle re-enabled once the pin advanced past scopemux-core#36
           # (label-followed-by-declaration, a C23 extension that the runner's
           # older AppleClang rejected).
