@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "doing"
 created: "2026-09-27"
 ---
 
@@ -88,6 +88,25 @@ a state change that did not happen.
 - Add a unit test around `assistant_footer` for `mode: None` and `mode: Some("build")`.
 - Manual: `ort-build` then `ort`; run a normal prompt, a `/name` skill invocation, and a
   `!` shell command, and confirm the footer stays on `Build` in each case.
+
+## Dev Notes
+
+- Implemented the card's allowed TUI-side fallback in
+  `crates/opencode-tui/src/components/session.rs` (`footer_mode_label`): the footer
+  resolves `message.mode`, then `message.agent`, then the nearest assistant turn's
+  mode/agent, and only falls back to `default` when no turn carries either. Previously
+  every metadata-less turn rendered `Default` (for example the provider-error turn in
+  the live session), which read as the mode switching while scrolling.
+- This does not change agent selection, the `/agents` picker, or scroll behavior; the
+  mouse wheel was never cycling agents.
+- Added `assistant_footer_falls_back_to_agent_when_mode_metadata_missing` and
+  `assistant_footer_inherits_mode_from_nearest_turn`. `cargo test -p opencode-tui`
+  passes (214 tests) and `cargo fmt --check` is clean.
+- Still open from the original scope: populate `agent`/`mode` on every assistant
+  message-creation path so the footer reads real metadata instead of a fallback.
+- Note: `cargo test -p opencode-tui` intermittently fails the unrelated
+  `components::prompt::tests::tab_autocomplete_uses_first_candidate` test (frecency
+  ordering flake); it reproduces on clean `development` without this change.
 
 ## Related Items
 
