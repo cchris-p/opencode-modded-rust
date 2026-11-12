@@ -946,6 +946,9 @@ pub struct MessageInfo {
     pub mode: Option<String>,
     pub finish: Option<String>,
     pub error: Option<String>,
+    /// True while this user message is accepted into the session queue but has
+    /// not yet been consumed by a run.
+    pub queued: bool,
     pub cost: f64,
     pub tokens: MessageTokensInfo,
 }
@@ -1138,6 +1141,7 @@ fn message_to_info(session_id: &str, message: &opencode_session::SessionMessage)
             .get("error")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        queued: is_queued_pending(message),
         cost,
         tokens: MessageTokensInfo {
             input: usage.input_tokens,
@@ -1718,6 +1722,19 @@ mod session_queue_tests {
             Some("msg_queued"),
             "queued prompt stays after the in-flight assistant"
         );
+    }
+
+    #[test]
+    fn message_info_marks_accepted_prompts_as_queued() {
+        let mut session = opencode_session::Session::new("proj", ".");
+        let queued = session.add_user_message_with_id("msg_queued", "queued while busy");
+        queued
+            .metadata
+            .insert("queued_pending".to_string(), serde_json::json!(true));
+        session.add_user_message_with_id("msg_ingested", "already ingested");
+
+        assert!(message_to_info(&session.id, &session.messages[0]).queued);
+        assert!(!message_to_info(&session.id, &session.messages[1]).queued);
     }
 
     #[test]

@@ -2889,6 +2889,7 @@ impl App {
                     agent.clone(),
                     model.clone(),
                     variant.clone(),
+                    false,
                 );
                 self.context.navigate(Route::Session {
                     session_id: optimistic_session_id.clone(),
@@ -2942,13 +2943,20 @@ impl App {
                 self.prompt.set_spinner_active(true);
             }
             Route::Session { session_id } => {
-                // Optimistic: show user message immediately before network call
+                // Optimistic: show user message immediately before network call.
+                // If a turn is already running, the server accepts this as a
+                // queued prompt, so mark it pending until it is ingested.
+                let queued = !matches!(
+                    self.context.session.read().status(&session_id),
+                    SessionStatus::Idle
+                );
                 let opt_id = self.append_optimistic_user_message(
                     &session_id,
                     &input,
                     agent.clone(),
                     model.clone(),
                     variant.clone(),
+                    queued,
                 );
                 self.set_session_status(&session_id, SessionStatus::Running);
                 self.prompt.set_spinner_task_kind(TaskKind::LlmRequest);
@@ -3003,6 +3011,7 @@ impl App {
                     agent.clone(),
                     model.clone(),
                     variant.clone(),
+                    false,
                 );
                 self.context.navigate(Route::Session {
                     session_id: optimistic_session_id.clone(),
@@ -3046,6 +3055,7 @@ impl App {
                     agent.clone(),
                     model.clone(),
                     variant.clone(),
+                    false,
                 );
                 self.ensure_session_view(&session_id);
                 let _ = self.draw();
@@ -4395,6 +4405,7 @@ impl App {
         agent: Option<String>,
         model: Option<String>,
         variant: Option<String>,
+        queued: bool,
     ) -> String {
         let now = Utc::now();
         let id = format!("local_user_{}", now.timestamp_millis());
@@ -4411,7 +4422,7 @@ impl App {
             completed_at: None,
             cost: 0.0,
             tokens: TokenUsage::default(),
-            queued: false,
+            queued,
             parts: vec![ContextMessagePart::Text {
                 text: content.to_string(),
             }],
@@ -5194,7 +5205,7 @@ fn map_api_message(message: &MessageInfo) -> Message {
             cache_read: message.tokens.cache_read,
             cache_write: message.tokens.cache_write,
         },
-        queued: false,
+        queued: message.queued,
         parts,
     }
 }

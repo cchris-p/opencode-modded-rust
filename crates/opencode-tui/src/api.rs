@@ -122,6 +122,9 @@ pub struct MessageInfo {
     pub finish: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// Accepted into the session queue but not yet consumed by a run.
+    #[serde(default)]
+    pub queued: bool,
     #[serde(default)]
     pub cost: f64,
     #[serde(default)]

@@ -150,8 +150,11 @@ lifecycle changes).
 
 7. **Shared observable state.** Queued prompts and their results are visible to every client
    through normal session state (`session.updated` / transcript). A queued user message
-   appears immediately and is marked pending until it becomes active. TUI and CLI observe
-   the same ordering and results.
+   appears immediately and is marked pending until it becomes active. In the TUI, pending
+   queued messages render as a queue above the live assistant turn (not as ingested
+   transcript text); when the server consumes a prompt it clears the pending marker and the
+   message returns to normal transcript order. TUI and CLI observe the same ordering and
+   results.
 
 8. **Abort and cancel are complete.** The runtime can cancel the active run and can
    explicitly remove queued prompts. Cancelled items are represented as cancelled turns and
@@ -229,7 +232,9 @@ The TUI and CLI behavior below is implemented; the API item is implemented throu
 4. **Cancelled-turn representation:** an explicit cancel removes the queued prompt and its materialized user message; no cancelled turn is retained.
 5. **Restart policy:** the queue is in-memory; accepted-but-unstarted messages persist in the transcript and are never auto-executed or silently deleted. No resume in V1.
 6. **Queue bound and overflow:** per-session default 32 with an explicit `queue is full` rejection.
-7. **TUI queued-message rendering:** pending `QUEUED` badge plus explicit cancel; no reorder in V1.
+7. **TUI queued-message rendering:** pending `QUEUED` badge plus explicit cancel; pending
+   messages render above the live assistant turn until consumed, then return to transcript
+   order (updated 2026-11-11 from the original "no reorder in V1").
 8. **`--stream` while queued:** return queued immediately (session, message id, position); `--stream` follows once active. Implemented in `CLI-001` (`done`).
 9. **Status vocabulary:** `idle | busy | queued` with position/depth; `retry` retained.
 
