@@ -225,3 +225,32 @@ deferred follow-up.
   opencode-tui`, both new regression tests, and the full suite pass (210 passed, 2 pre-existing
   prompt failures unchanged from clean `development`).
 - QA passes for the reported failure; card remains in `qa` awaiting merge closeout.
+
+## Next Agent Instructions
+
+**Current state:** PR #188 is open on `bug/BUG-070-fence-footer-padding` with commits `4eafe18`
+(fix), `c317ef5` (PR link), and `8747b9e` (QA report). The branch is pushed and checked out; the
+card is in `qa`.
+
+**Start here:** review PR #188 and the QA Report above.
+
+**Verify:**
+- `cargo test -p opencode-tui --lib fenced_code_copy_plan_handles_multiple_blocks_in_one_message`
+- `cargo test -p opencode-tui --lib prose_after_a_fenced_block_stays_normal`
+- Rebuild and run the real TUI, open a message with two fenced blocks, select the second block, press
+  Ctrl+C, and confirm the clipboard has the raw source lines instead of blank lines.
+
+**Known issues:** native scopemux sources are absent in this checkout, so a plain
+`cargo build -p opencode-cli` panics in `crates/opencode-scopemux/build.rs`. Use
+`cargo build -p opencode-cli --no-default-features` for local QA, or `ort-build` for a full native
+build. The full `opencode-tui` suite still has two pre-existing prompt failures unrelated to this
+card.
+
+**Gates:** PR #188 checks and the owner's merge decision. The card stays in `qa` until merge
+closeout; do not promote it to `done` without QA/owner direction.
+
+**Do not:** push or merge into `main`; do not merge PR #188 without the owner explicitly asking for
+closeout; do not delete the branch before merge.
+
+**References:** PR #188, `boards/qa/BUG-070-fenced-code-selection-copies-frame-chrome.md`, commits
+`4eafe18` / `c317ef5` / `8747b9e`.
