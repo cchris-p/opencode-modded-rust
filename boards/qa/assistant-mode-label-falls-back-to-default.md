@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "doing"
+status: "qa"
 created: "2026-09-27"
 ---
 
@@ -91,6 +91,7 @@ a state change that did not happen.
 
 ## Dev Notes
 
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/193
 - Implemented the card's allowed TUI-side fallback in
   `crates/opencode-tui/src/components/session.rs` (`footer_mode_label`): the footer
   resolves `message.mode`, then `message.agent`, then the nearest assistant turn's
