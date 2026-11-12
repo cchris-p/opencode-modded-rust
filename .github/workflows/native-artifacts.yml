@@ -60,7 +60,7 @@ jobs:
           # macOS bundle re-enabled once the pin advanced past scopemux-core#36
           # (label-followed-by-declaration, a C23 extension that the runner's
           # older AppleClang rejected).
-          - os: macos-14
+          - os: macos-15
             deps: |
               brew install cmake python@3.11
               echo "$(brew --prefix python@3.11)/bin" >> "$GITHUB_PATH"
