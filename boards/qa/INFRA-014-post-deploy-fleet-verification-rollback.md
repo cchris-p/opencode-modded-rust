@@ -99,3 +99,12 @@ with the embedded query set is deployed.
 
 Remaining QA gate: run the verifier against the fleet after the first v0.1.0 deploy and
 confirm every active machine passes.
+
+## Verification: v0.1.3 (2026-11-12)
+
+- `ort-verify --rev e2334a35e2262a48ac1050b623ce7ba759dd59d7` passed on 8/10 active machines
+  after install: version and `debug scopemux-queries` resolve `rust/docstrings.scm`.
+- `moldavite` and `xp-farmer` were unreachable (Tailscale offline), so install/verify could not run;
+  these are connectivity failures, not verification regressions.
+- `j8rsxy` (macOS arm64) passed with the manually assembled Darwin `.rev=e2334a3` asset, confirming
+  the tree-identical macOS fallback is valid.

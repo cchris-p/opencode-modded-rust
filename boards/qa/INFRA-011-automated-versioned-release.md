@@ -138,3 +138,18 @@ Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.0
 - The immutable `release.yml` still requires both Linux and macOS assets, per
   `invariants/release-deployment.md`. A hosted macOS runner outage can still block a `main`
   release by design; resolving that needs reliable macOS runners or an explicit invariant change.
+
+## Update - 2026-11-12 (v0.1.3)
+
+- Automated release attempted twice (`43249125655`, `43252958582`): Linux `build` succeeded, but
+  `build (macos-15)` was cancelled after ~15 minutes queued with an empty `runner_name` and zero
+  steps; `publish` was skipped. The rolling preview build had queued ~20 minutes and succeeded, so
+  this is hosted macOS capacity, not a bad label.
+- Recovered manually: Linux asset from Release run `43252958582` (`e2334a3`); macOS CLI/native from
+  the tree-identical preview run `43247378454` (PR merge ref `4ae1556`). All three commits share
+  tree `6d7d516d4ec17bbaf3ac314c406672151a34d09f`. Verified SHA256s, wrote the manifest
+  (`commit=e2334a3`, `version=0.1.3`, pin/query key), tagged and published `v0.1.3` with 12 assets.
+- Recommendation: add an automatic retry/fallback for macOS release jobs (or a self-hosted macOS
+  runner). A 15-minute queue cancellation currently requires manual recovery.
+
+Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.3
