@@ -71,7 +71,7 @@ Enum at `crates/opencode-agent/src/agent.rs:30-63`; constructors are `AgentInfo:
 | `general` | Subagent | yes | yes | General-purpose multi-step research; defaults plus `todowrite` deny; no dedicated prompt (uses the model default) |
 | `explore` | Subagent | yes | yes | Read/search/bash allowlist |
 | `compaction` | Subagent | yes | yes | Internal |
-| `title` | Subagent | yes | yes | Internal title generator |
+| `title` | Primary | yes | yes | Hidden internal title generator; matches vanilla `title` agent mode and prompt |
 | `summary` | — | yes | yes | Registered separately from `BuiltinAgent::all()` (`agent.rs:468`) |
 
 ## Default-agent resolution

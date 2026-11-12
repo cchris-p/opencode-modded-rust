@@ -45,7 +45,5 @@ Implemented in `~/standards` (commit `d34ed93`):
 
 ## Known Issues
 
-- `native (macos-14)` CI fails at ~0s: the macOS runner is unavailable in this repo
-  (pre-existing `native-artifacts` failure). Linux is authoritative for now.
 - `git push --dry-run` does not evaluate the main ruleset, so the live direct-push rejection
   is verified during the next release attempt (or by a ruleset test).

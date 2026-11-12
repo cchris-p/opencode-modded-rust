@@ -129,3 +129,12 @@ publishing. Deployment is `INFRA-012`.
   on `j8rsxy`). Until then every release must be completed the same way.
 
 Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.0
+
+## Update - 2026-11-12
+
+- The release matrix now uses `macos-15` (GitHub retired `macos-14` on 2026-11-02).
+- The rolling `native-artifacts` macOS leg is `continue-on-error`, so a hosted macOS runner outage
+  cannot block Linux artifact publishing.
+- The immutable `release.yml` still requires both Linux and macOS assets, per
+  `invariants/release-deployment.md`. A hosted macOS runner outage can still block a `main`
+  release by design; resolving that needs reliable macOS runners or an explicit invariant change.

@@ -736,19 +736,7 @@ impl SessionView {
         let last_assistant_idx = messages
             .iter()
             .rposition(|m| matches!(m.role, MessageRole::Assistant));
-        let completed_assistant_idx = messages
-            .iter()
-            .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
-        let pending_assistant_idx = messages
-            .iter()
-            .enumerate()
-            .filter(|(idx, m)| {
-                matches!(m.role, MessageRole::Assistant)
-                    && m.completed_at.is_none()
-                    && completed_assistant_idx.map_or(true, |completed| *idx > completed)
-            })
-            .map(|(idx, _)| idx)
-            .last();
+        let pending_assistant_idx = compute_pending_assistant_idx(messages);
 
         let mut globals_hasher = DefaultHasher::new();
         content_width.hash(&mut globals_hasher);
@@ -792,6 +780,9 @@ impl SessionView {
             animations_enabled,
             session_active,
         };
+        // Pending queue rows render above the live assistant turn; ingested
+        // messages keep their normal transcript order.
+        let order = render_order(messages, pending_assistant_idx);
 
         // Revert card: rendered only when its inputs change, otherwise reused.
         if revert_info.is_none() {
@@ -849,8 +840,8 @@ impl SessionView {
                 total_lines += 1;
             }
         }
-        for (idx, _msg) in messages.iter().enumerate() {
-            total_lines += leading_spacing(messages, idx) + heights[idx];
+        for (pos, &idx) in order.iter().enumerate() {
+            total_lines += ordered_spacing(messages, &order, pos) + heights[idx];
         }
         if measure_only {
             self.measured_line_count = total_lines;
@@ -909,8 +900,9 @@ impl SessionView {
             }
         }
 
-        for (idx, msg) in messages.iter().enumerate() {
-            let spacing = leading_spacing(messages, idx);
+        for (pos, &idx) in order.iter().enumerate() {
+            let msg = &messages[idx];
+            let spacing = ordered_spacing(messages, &order, pos);
             if spacing > 0 {
                 if cursor < window_end && cursor + spacing > window_start {
                     if !started {
@@ -1176,22 +1168,28 @@ impl SessionView {
     fn message_first_line(&self, message_id: &str) -> Option<usize> {
         let session_ctx = self.context.session.read();
         let messages = session_ctx.messages.get(&self.session_id)?;
-        let idx = messages.iter().position(|m| m.id == message_id)?;
+        let pending_assistant_idx = compute_pending_assistant_idx(messages);
+        let order = render_order(messages, pending_assistant_idx);
+        let pos = order
+            .iter()
+            .position(|&idx| messages[idx].id == message_id)?;
 
         let mut total = 0usize;
         if session_ctx.revert.contains_key(&self.session_id) {
             total += self.revert_layout.map(|(_, height)| height).unwrap_or(0);
             total += 1;
         }
-        for (j, msg) in messages.iter().enumerate().take(idx) {
-            total += leading_spacing(messages, j);
+        for prev_pos in 0..pos {
+            let idx = order[prev_pos];
+            let msg = &messages[idx];
+            total += ordered_spacing(messages, &order, prev_pos);
             total += self
                 .layout_cache
                 .get(&msg.id)
                 .map(|cached| cached.height)
                 .unwrap_or(0);
         }
-        Some(total + leading_spacing(messages, idx))
+        Some(total + ordered_spacing(messages, &order, pos))
     }
 
     fn max_scroll_offset(&self) -> usize {
@@ -1204,12 +1202,73 @@ impl SessionView {
     }
 }
 
-fn leading_spacing(messages: &[Message], idx: usize) -> usize {
-    if idx == 0 {
+/// The in-flight assistant turn: the last assistant message that has not
+/// completed and follows every completed assistant. A tool-call step is
+/// finalized with a `tool-calls` finish reason before its tools run, so callers
+/// that need the live turn must also consider the session status.
+fn compute_pending_assistant_idx(messages: &[Message]) -> Option<usize> {
+    let completed_assistant_idx = messages
+        .iter()
+        .rposition(|m| matches!(m.role, MessageRole::Assistant) && m.completed_at.is_some());
+    messages
+        .iter()
+        .enumerate()
+        .filter(|(idx, m)| {
+            matches!(m.role, MessageRole::Assistant)
+                && m.completed_at.is_none()
+                && completed_assistant_idx.map_or(true, |completed| *idx > completed)
+        })
+        .map(|(idx, _)| idx)
+        .last()
+}
+
+/// A user message that is accepted into the session queue but not yet consumed
+/// by a run. Prefer the server's explicit `queued` marker; fall back to the
+/// legacy position relative to the in-flight assistant for older snapshots.
+fn is_queue_message(msg: &Message, idx: usize, pending_assistant_idx: Option<usize>) -> bool {
+    matches!(msg.role, MessageRole::User)
+        && (msg.queued || pending_assistant_idx.is_some_and(|pending| idx > pending))
+}
+
+/// Render order for the transcript. Queued user messages are lifted above the
+/// live assistant turn (the "build text") so the pending queue is visibly not
+/// part of the conversation, then the live assistant renders last. Once the
+/// server consumes a queued prompt it clears `queued`, and ordering returns to
+/// the normal transcript order automatically.
+fn render_order(messages: &[Message], pending_assistant_idx: Option<usize>) -> Vec<usize> {
+    let queued: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(idx, msg)| is_queue_message(msg, *idx, pending_assistant_idx))
+        .map(|(idx, _)| idx)
+        .collect();
+    if queued.is_empty() {
+        return (0..messages.len()).collect();
+    }
+
+    let anchor = messages
+        .iter()
+        .rposition(|m| matches!(m.role, MessageRole::Assistant));
+    let mut order = Vec::with_capacity(messages.len());
+    for idx in 0..messages.len() {
+        if Some(idx) == anchor || queued.contains(&idx) {
+            continue;
+        }
+        order.push(idx);
+    }
+    order.extend(queued);
+    if let Some(anchor) = anchor {
+        order.push(anchor);
+    }
+    order
+}
+
+fn ordered_spacing(messages: &[Message], order: &[usize], pos: usize) -> usize {
+    if pos == 0 {
         return 0;
     }
-    let prev_role = &messages[idx - 1].role;
-    let role = &messages[idx].role;
+    let prev_role = &messages[order[pos - 1]].role;
+    let role = &messages[order[pos]].role;
     if *prev_role != *role || matches!(role, MessageRole::User) {
         1
     } else {
@@ -1346,10 +1405,7 @@ fn message_sig(ctx: &MessageRenderCtx, msg: &Message, idx: usize, globals_hash: 
     };
     prev_role.hash(&mut h);
 
-    let is_queued = matches!(msg.role, MessageRole::User)
-        && ctx
-            .pending_assistant_idx
-            .is_some_and(|pending| idx > pending);
+    let is_queued = is_queue_message(msg, idx, ctx.pending_assistant_idx);
     is_queued.hash(&mut h);
 
     let is_active = matches!(msg.role, MessageRole::Assistant)
@@ -1416,9 +1472,7 @@ fn render_message_body(ctx: &MessageRenderCtx, msg: &Message, idx: usize) -> Ren
         MessageRole::User => {
             let message_bg = ctx.user_bg;
             let message_border = user_border_color_for_agent(msg.agent.as_deref(), ctx.theme);
-            let is_queued = ctx
-                .pending_assistant_idx
-                .is_some_and(|pending| idx > pending);
+            let is_queued = is_queue_message(msg, idx, ctx.pending_assistant_idx);
             let (user_lines, user_code_blocks) =
                 super::session_message::render_user_message_with_code(
                     msg,
@@ -3010,6 +3064,167 @@ mod tests {
         assert_eq!(
             session.scroll_offset, 0,
             "an unclamped transcript must not scroll"
+        );
+    }
+
+    #[test]
+    fn queued_messages_render_above_the_live_assistant_turn() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "queued-order".to_string();
+        let mut q1 = message("q1", MessageRole::User, "QUEUE-ONE", true);
+        q1.queued = true;
+        let mut q2 = message("q2", MessageRole::User, "QUEUE-TWO", true);
+        q2.queued = true;
+        context
+            .session
+            .write()
+            .set_status(&session_id, SessionStatus::Running);
+        context.session.write().set_messages(
+            &session_id,
+            vec![
+                message("u1", MessageRole::User, "start prompt", true),
+                message("a1", MessageRole::Assistant, "first answer", true),
+                message("a2", MessageRole::Assistant, "LIVE-BUILD-TEXT", false),
+                q1,
+                q2,
+            ],
+        );
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id);
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+
+        let queue_one = row_containing(&terminal, "QUEUE-ONE");
+        let queue_two = row_containing(&terminal, "QUEUE-TWO");
+        let build = row_containing(&terminal, "LIVE-BUILD-TEXT");
+        assert!(!queue_one.is_empty(), "queued message must be visible");
+        assert!(!queue_two.is_empty(), "queued message must be visible");
+        assert!(!build.is_empty(), "live assistant turn must be visible");
+        assert!(
+            queue_one.iter().all(|row| *row < build[0]),
+            "queue row {queue_one:?} must render above the live turn {build:?}"
+        );
+        assert!(
+            queue_two.iter().all(|row| *row < build[0]),
+            "queue row {queue_two:?} must render above the live turn {build:?}"
+        );
+        assert!(
+            !row_containing(&terminal, "QUEUED").is_empty(),
+            "pending queue rows must keep the QUEUED badge"
+        );
+    }
+
+    #[test]
+    fn queued_message_stays_above_a_finalized_tool_call_turn() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "queued-tool-phase".to_string();
+        let mut queued = message("q1", MessageRole::User, "QUEUE-DURING-TOOL", true);
+        queued.queued = true;
+
+        // A tool-call step is finalized before its tools execute, so the
+        // pending-assistant index is None while the tool row is still live.
+        let mut assistant = message("a1", MessageRole::Assistant, "BUILD-STEP", true);
+        assistant.finish = Some("tool-calls".to_string());
+        assistant.completed_at = Some(chrono::Utc::now());
+        assistant.parts = vec![
+            MessagePart::Text {
+                text: "BUILD-STEP".to_string(),
+            },
+            MessagePart::ToolCall {
+                id: "call-1".to_string(),
+                name: "grep".to_string(),
+                arguments: r#"{"pattern":"TODO"}"#.to_string(),
+            },
+        ];
+
+        context
+            .session
+            .write()
+            .set_status(&session_id, SessionStatus::Running);
+        context.session.write().set_messages(
+            &session_id,
+            vec![
+                message("u1", MessageRole::User, "start prompt", true),
+                assistant,
+                queued,
+            ],
+        );
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id);
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+
+        let queue_rows = row_containing(&terminal, "QUEUE-DURING-TOOL");
+        let build_rows = row_containing(&terminal, "BUILD-STEP");
+        assert!(!queue_rows.is_empty() && !build_rows.is_empty());
+        assert!(
+            queue_rows[0] < build_rows[0],
+            "queue row {queue_rows:?} must render above the live tool-call turn {build_rows:?}"
+        );
+        assert!(
+            !row_containing(&terminal, "QUEUED").is_empty(),
+            "a queued message during a tool call must keep the QUEUED badge"
+        );
+    }
+
+    #[test]
+    fn ingested_message_returns_to_transcript_order_and_drops_the_badge() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let context = Arc::new(AppContext::new());
+        let session_id = "queued-ingested".to_string();
+        // The server consumed the queued prompt: the marker is gone, the prior
+        // turn completed, and the next assistant turn is streaming.
+        context
+            .session
+            .write()
+            .set_status(&session_id, SessionStatus::Running);
+        context.session.write().set_messages(
+            &session_id,
+            vec![
+                message("u1", MessageRole::User, "start prompt", true),
+                message("a1", MessageRole::Assistant, "first answer", true),
+                message("q1", MessageRole::User, "INGESTED-PROMPT", true),
+                message("a2", MessageRole::Assistant, "NEXT-BUILD-TEXT", false),
+            ],
+        );
+
+        let prompt = Prompt::new(context.clone());
+        let mut session = SessionView::new(context.clone(), session_id);
+        let mut terminal = Terminal::new(TestBackend::new(80, 40)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                session.render(frame, frame.size(), &prompt);
+            })
+            .expect("draw");
+
+        let ingested = row_containing(&terminal, "INGESTED-PROMPT");
+        let next_build = row_containing(&terminal, "NEXT-BUILD-TEXT");
+        assert!(!ingested.is_empty() && !next_build.is_empty());
+        assert!(
+            ingested[0] < next_build[0],
+            "ingested prompt must sit above the assistant turn it started"
+        );
+        assert!(
+            row_containing(&terminal, "QUEUED").is_empty(),
+            "an ingested prompt must not keep the QUEUED badge"
         );
     }
 

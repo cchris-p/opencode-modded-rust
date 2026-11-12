@@ -404,6 +404,58 @@ impl ProviderRegistry {
                 .map(|(provider_id, _)| (provider_id, model_string.to_string()))
         }
     }
+
+    /// Resolve the small/utility model used for background work such as session
+    /// title generation.
+    ///
+    /// An explicit `small_model` config value wins. Otherwise this mirrors the
+    /// vanilla small-model family priority for the session's provider.
+    pub fn get_small_model(
+        &self,
+        provider_id: &str,
+        config_small_model: Option<&str>,
+    ) -> Option<(String, String)> {
+        if let Some(model_str) = config_small_model {
+            let (provider_id, model_id) = self.parse_model_string(model_str)?;
+            let provider = self.providers.get(&provider_id)?;
+            provider.get_model(&model_id)?;
+            return Some((provider_id, model_id));
+        }
+
+        let provider = self.providers.get(provider_id)?;
+        let mut priority: Vec<&str> = vec![
+            "claude-haiku-4-5",
+            "claude-haiku-4.5",
+            "3-5-haiku",
+            "3.5-haiku",
+            "gemini-3-flash",
+            "gemini-2.5-flash",
+            "gpt-5-nano",
+        ];
+
+        if provider_id.starts_with("opencode") {
+            priority = vec!["gpt-5-nano"];
+        } else if provider_id.starts_with("github-copilot") {
+            priority = vec!["gpt-5-mini", "claude-haiku-4.5"];
+            priority.extend_from_slice(&[
+                "claude-haiku-4-5",
+                "3-5-haiku",
+                "3.5-haiku",
+                "gemini-3-flash",
+                "gemini-2.5-flash",
+                "gpt-5-nano",
+            ]);
+        }
+
+        let mut models = provider.models();
+        models.sort_by(|a, b| b.id.cmp(&a.id));
+        for needle in priority {
+            if let Some(model) = models.iter().find(|model| model.id.contains(needle)) {
+                return Some((provider_id.to_string(), model.id.clone()));
+            }
+        }
+        None
+    }
 }
 
 impl Default for ProviderRegistry {
@@ -498,5 +550,73 @@ mod tests {
     fn test_parse_stream_error_non_error() {
         let data = r#"{"type":"message","content":"hello"}"#;
         assert!(parse_stream_error(data).is_none());
+    }
+
+    struct SmallModelTestProvider {
+        models: Vec<ModelInfo>,
+    }
+
+    #[async_trait]
+    impl Provider for SmallModelTestProvider {
+        fn id(&self) -> &str {
+            "test"
+        }
+
+        fn name(&self) -> &str {
+            "Test"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            self.models.clone()
+        }
+
+        fn get_model(&self, id: &str) -> Option<&ModelInfo> {
+            self.models.iter().find(|model| model.id == id)
+        }
+
+        async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            Err(ProviderError::InvalidRequest("not used".to_string()))
+        }
+
+        async fn chat_stream(&self, _request: ChatRequest) -> Result<StreamResult, ProviderError> {
+            Err(ProviderError::InvalidRequest("not used".to_string()))
+        }
+    }
+
+    fn test_model(id: &str) -> ModelInfo {
+        ModelInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            provider: "test".to_string(),
+            context_window: 8192,
+            max_output_tokens: 1024,
+            supports_vision: false,
+            supports_tools: false,
+            cost_per_million_input: 0.0,
+            cost_per_million_output: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_get_small_model_priority_and_config() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(SmallModelTestProvider {
+            models: vec![
+                test_model("gpt-5"),
+                test_model("gemini-2.5-flash"),
+                test_model("claude-haiku-4-5"),
+            ],
+        });
+
+        assert_eq!(
+            registry.get_small_model("test", None),
+            Some(("test".to_string(), "claude-haiku-4-5".to_string()))
+        );
+        assert_eq!(
+            registry.get_small_model("test", Some("test/gemini-2.5-flash")),
+            Some(("test".to_string(), "gemini-2.5-flash".to_string()))
+        );
+        assert_eq!(registry.get_small_model("test", Some("test/missing")), None);
+        assert_eq!(registry.get_small_model("missing", None), None);
     }
 }
