@@ -92,6 +92,8 @@ a state change that did not happen.
 ## Dev Notes
 
 - PR: https://github.com/cchris-p/opencode-modded-rust/pull/193
+- Merged to `development` as `3b8dfcf`; remote and local branches deleted. Remains in
+  `qa` awaiting a QA report or explicit completion.
 - Implemented the card's allowed TUI-side fallback in
   `crates/opencode-tui/src/components/session.rs` (`footer_mode_label`): the footer
   resolves `message.mode`, then `message.agent`, then the nearest assistant turn's
