@@ -3175,6 +3175,8 @@ impl App {
         }
 
         self.settings_view.sync_from_context(&self.context);
+        let current_model = self.context.current_model.read().clone();
+        self.model_select.set_current_model(current_model);
     }
 
     fn open_provider_settings(&mut self) {
