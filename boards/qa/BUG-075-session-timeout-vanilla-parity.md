@@ -104,3 +104,11 @@ unchanged, so a run still cannot leave a session silently `busy`.
 - Card moved `doing -> qa`.
 - Follow-up needed: `development -> main` release + fleet `ort-install` for the
   fix to reach all machines.
+
+## Release v0.1.4 - 2026-11-13
+
+- Released in **`v0.1.4`** (`main` `cc9befa`, release PR #194) and deployed to
+  7/10 active machines: `webapps`, `webappssub1`, `matrillobase1`, `matrillo`,
+  `matrillosub1`, `matrillosub2`, `j8rsxy`.
+- `jasper`, `moldavite`, and `xp-farmer` were Tailscale-offline and still need
+  `ort-install --rev cc9befa...` when reachable. `webappssub2` is disabled.

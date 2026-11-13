@@ -108,3 +108,14 @@ confirm every active machine passes.
   these are connectivity failures, not verification regressions.
 - `j8rsxy` (macOS arm64) passed with the manually assembled Darwin `.rev=e2334a3` asset, confirming
   the tree-identical macOS fallback is valid.
+
+## Verification: v0.1.4 (2026-11-13)
+
+- `ort-verify --rev cc9befa1b581676a9e6614add9fdf9aa989cae4c` passed on 7/10 active
+  machines after install: `webapps`, `webappssub1`, `matrillobase1`, `matrillo`,
+  `matrillosub1`, `matrillosub2`, `j8rsxy`.
+- `jasper`, `moldavite`, and `xp-farmer` were unreachable (Tailscale offline), so
+  install/verify could not run; these are connectivity failures, not verification
+  regressions. `webappssub2` is disabled/skipped.
+- Canary: `webapps` passed before fan-out. Report:
+  `/tmp/standards-deploy-ort-20261113T190453Z.tsv`.
