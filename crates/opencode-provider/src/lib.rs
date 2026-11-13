@@ -13,6 +13,7 @@ pub mod github_copilot;
 pub mod gitlab;
 pub mod google;
 pub mod groq;
+pub mod headers;
 pub mod message;
 pub mod mistral;
 pub mod models;
@@ -41,6 +42,7 @@ pub use bootstrap::{
     filter_models_by_status, BootstrapConfig, ConfigModel, ConfigProvider, CustomLoaderResult,
 };
 pub use custom_fetch::*;
+pub use headers::{inject_session_headers, is_opencode_provider, session_headers};
 pub use message::*;
 pub use provider::*;
 pub use retry::{with_retry, with_retry_and_hook, IsRetryable, RetryConfig};

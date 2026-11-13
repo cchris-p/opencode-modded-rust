@@ -2001,6 +2001,16 @@ async fn run_chat_session(
     let current_dir = std::env::current_dir()?;
     let config = load_config(&current_dir)?;
 
+    // A bare run (no `--model`) still honors the product/workspace default
+    // resolved by the config loader.
+    let (provider, model) = match model {
+        Some(model) => (provider, Some(model)),
+        None => {
+            let (config_provider, config_model) = parse_model_and_provider(config.model.clone());
+            (provider.or(config_provider), config_model)
+        }
+    };
+
     let provider_registry = Arc::new(setup_providers(&config).await?);
 
     if provider_registry.list().is_empty() {
@@ -7714,12 +7724,15 @@ mod tests {
         assert_eq!(run_model_selection(None, &resolution), None);
         assert_eq!(
             opencode_config::DEFAULT_MODEL,
-            "deepseek/deepseek-flash",
+            "opencode-go/deepseek-v4.1-flash",
             "a bare run must keep the product default model"
         );
         assert_eq!(
-            run_model_selection(Some("deepseek/deepseek-flash".to_string()), &resolution),
-            Some("deepseek/deepseek-flash".to_string())
+            run_model_selection(
+                Some("opencode-go/deepseek-v4.1-flash".to_string()),
+                &resolution
+            ),
+            Some("opencode-go/deepseek-v4.1-flash".to_string())
         );
     }
 

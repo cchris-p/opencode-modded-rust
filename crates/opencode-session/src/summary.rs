@@ -303,10 +303,14 @@ async fn generate_message_title_llm(
     text: &str,
     provider: &dyn Provider,
     model_id: &str,
+    session_id: &str,
 ) -> Option<String> {
     if text.trim().is_empty() {
         return None;
     }
+
+    let mut provider_options = std::collections::HashMap::new();
+    opencode_provider::inject_session_headers(&mut provider_options, provider.id(), session_id);
 
     let fallback = fallback_message_title(text);
     let request = ChatRequest {
@@ -328,7 +332,11 @@ async fn generate_message_title_llm(
         ),
         tools: None,
         stream: Some(false),
-        provider_options: None,
+        provider_options: if provider_options.is_empty() {
+            None
+        } else {
+            Some(provider_options)
+        },
         variant: None,
     };
 
@@ -396,7 +404,7 @@ pub async fn summarize_message_for_session(
             if !has_title {
                 if let Some(text) = first_user_text_for_message(session, message_id) {
                     let generated = if let (Some(provider), Some(model_id)) = (provider, model_id) {
-                        generate_message_title_llm(&text, provider, model_id)
+                        generate_message_title_llm(&text, provider, model_id, &session.id)
                             .await
                             .or_else(|| Some(fallback_message_title(&text)))
                     } else {
