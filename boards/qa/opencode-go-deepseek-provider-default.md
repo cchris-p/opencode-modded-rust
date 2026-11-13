@@ -5,7 +5,7 @@ priority: "P1"
 type: "feature"
 area: "FEAT"
 spec: "invariants/providers.md"
-status: "doing"
+status: "qa"
 created: "2026-11-13"
 updated: "2026-11-13"
 ---
@@ -57,7 +57,8 @@ product default model.
 
 ## Remaining
 
-- Work is uncommitted in worktree
-  `~/worktrees/opencode-modded-rust/opencode-go`
-  (branch `feature/opencode-go-session-header`).
-- Needs normal review, PR into `development`, and post-merge QA.
+- Merged into `development` on 2026-11-13 (owner-directed local merge; no PR
+  created by the agent).
+- Awaiting owner post-merge QA on `development` (owner will test later).
+- Production release still requires the `development -> main` release PR, green
+  required checks, and an explicit owner merge decision.
