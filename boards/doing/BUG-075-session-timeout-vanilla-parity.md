@@ -88,6 +88,9 @@ unchanged, so a run still cannot leave a session silently `busy`.
 
 ## Remaining
 
+- Branch `bug/BUG-075-session-timeout-vanilla-parity`, commit `1360b2a`;
+  pushed to origin. Owner must open the PR into `development` (agents do not
+  create PRs) and merge after review.
 - Production deploy is a separate release step (`development -> main`) and needs
   explicit owner confirmation.
 - If a specific wedge persists with the caps disabled, capture a fresh
