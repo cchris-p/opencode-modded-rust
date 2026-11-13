@@ -2435,7 +2435,7 @@ fn assistant_footer(
         return None;
     }
 
-    let mode = message.mode.as_deref().unwrap_or("default");
+    let mode = footer_mode_label(messages, idx, message);
     let mut spans = vec![
         Span::styled(
             "▣ ",
@@ -2464,6 +2464,38 @@ fn assistant_footer(
     }
 
     Some(Line::from(spans))
+}
+
+/// Resolve the mode label shown in the assistant footer.
+///
+/// The `mode` metadata is normally the agent name, but some message-creation
+/// paths omit it (interrupted/errored turns and in-flight streaming steps).
+/// Falling back to the synthetic `default` made the footer appear to switch
+/// mode as a user scrolled past such a turn (BUG-053). Prefer the message's
+/// own agent, then the nearest assistant turn's mode/agent, so the footer
+/// stays on the agent that actually ran the turn.
+fn footer_mode_label<'a>(messages: &'a [Message], idx: usize, message: &'a Message) -> &'a str {
+    fn turn_label(message: &Message) -> Option<&str> {
+        message.mode.as_deref().or(message.agent.as_deref())
+    }
+
+    turn_label(message)
+        .or_else(|| {
+            messages
+                .get(..idx)
+                .unwrap_or(&[])
+                .iter()
+                .rev()
+                .find_map(turn_label)
+        })
+        .or_else(|| {
+            messages
+                .get(idx + 1..)
+                .unwrap_or(&[])
+                .iter()
+                .find_map(turn_label)
+        })
+        .unwrap_or("default")
 }
 
 fn assistant_duration(
@@ -2646,6 +2678,57 @@ mod tests {
         assert!(
             !text.contains("deepseek/deepseek-flash"),
             "footer must not render the model name: {text}"
+        );
+    }
+
+    #[test]
+    fn assistant_footer_falls_back_to_agent_when_mode_metadata_missing() {
+        let theme = crate::theme::Theme::dark();
+        let mut msg = message("m1", MessageRole::Assistant, "provider error", true);
+        msg.agent = Some("build".to_string());
+        msg.finish = Some("error".to_string());
+        let messages = vec![msg.clone()];
+
+        let line = assistant_footer(&messages, 0, Some(0), &msg, &theme).expect("footer");
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(
+            text.contains("Build"),
+            "footer should use the turn agent when mode is missing: {text}"
+        );
+        assert!(
+            !text.contains("Default"),
+            "footer must not fall back to the synthetic Default: {text}"
+        );
+    }
+
+    #[test]
+    fn assistant_footer_inherits_mode_from_nearest_turn() {
+        let theme = crate::theme::Theme::dark();
+        let mut prior = message("m1", MessageRole::Assistant, "done", true);
+        prior.mode = Some("build".to_string());
+        prior.finish = Some("stop".to_string());
+        let pending = message("m2", MessageRole::Assistant, "streaming", false);
+        let messages = vec![prior, pending.clone()];
+
+        let line = assistant_footer(&messages, 1, Some(1), &pending, &theme).expect("footer");
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(
+            text.contains("Build"),
+            "in-flight turn should inherit the nearest mode: {text}"
+        );
+        assert!(
+            !text.contains("Default"),
+            "footer must not fall back to the synthetic Default: {text}"
         );
     }
 

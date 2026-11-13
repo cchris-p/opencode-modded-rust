@@ -44,6 +44,7 @@ pub struct AgentExecutor {
     subsessions: Arc<Mutex<HashMap<String, SubsessionState>>>,
     max_steps: u32,
     ask_callback: opencode_tool::AskCallback,
+    session_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +81,15 @@ impl AgentExecutor {
             subsessions: Arc::new(Mutex::new(HashMap::new())),
             max_steps,
             ask_callback,
+            session_id: uuid::Uuid::new_v4().to_string(),
         }
+    }
+
+    /// Use the owning session id for provider request headers. OpenCode Go
+    /// requires a stable conversation id and rejects requests without it.
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = session_id.into();
+        self
     }
 
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
@@ -365,6 +374,22 @@ impl AgentExecutor {
             if !tools.is_empty() {
                 request = request.with_tools(tools);
             }
+        }
+
+        let provider_id = self
+            .agent
+            .model
+            .as_ref()
+            .map(|model| model.provider_id.as_str())
+            .unwrap_or_default();
+        let mut provider_options = HashMap::new();
+        opencode_provider::inject_session_headers(
+            &mut provider_options,
+            provider_id,
+            &self.session_id,
+        );
+        if !provider_options.is_empty() {
+            request.provider_options = Some(provider_options);
         }
 
         request

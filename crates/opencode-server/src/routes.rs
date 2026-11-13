@@ -307,9 +307,13 @@ fn spawn_title_upgrade(
     first_user_text: String,
 ) {
     tokio::spawn(async move {
-        let Some(generated) =
-            opencode_session::generate_session_title_llm(&first_user_text, provider, &model_id)
-                .await
+        let Some(generated) = opencode_session::generate_session_title_llm(
+            &first_user_text,
+            provider,
+            &model_id,
+            &session_id,
+        )
+        .await
         else {
             return;
         };
@@ -2443,6 +2447,8 @@ async fn stream_message(
     let temperature = temperature_for_model(&model_id).or(Some(0.7));
     let top_p = top_p_for_model(&model_id);
     let max_tokens = max_tokens_for_variant(4096, variant.as_deref());
+    let mut provider_options = std::collections::HashMap::new();
+    opencode_provider::inject_session_headers(&mut provider_options, &provider_id, &session_id);
     let request = opencode_provider::ChatRequest {
         model: model_id.clone(),
         messages: provider_messages,
@@ -2453,7 +2459,11 @@ async fn stream_message(
         tools: None,
         stream: Some(true),
         variant,
-        provider_options: None,
+        provider_options: if provider_options.is_empty() {
+            None
+        } else {
+            Some(provider_options)
+        },
     };
 
     let (tx, rx) = mpsc::channel::<std::result::Result<Event, Infallible>>(128);
@@ -2950,10 +2960,12 @@ async fn accept_prompt_with_parts(
 
 /// Serial per-session drain loop: runs exactly one turn at a time in FIFO order
 /// until the queue is empty, then marks the session idle.
-/// Default hard wall-clock budget for a single queued run, used as a backstop
-/// when a run neither finishes nor reacts to abort. `OPENCODE_RUN_TIMEOUT_MS`
-/// overrides it; `0` disables the watchdog.
-const DEFAULT_RUN_TIMEOUT_MS: u64 = 30 * 60 * 1000;
+///
+/// A whole run has **no wall-clock budget by default**, matching opencode
+/// vanilla: a run continues until the model stops, the provider fails, or the
+/// user aborts it. `OPENCODE_RUN_TIMEOUT_MS` opts into a hard backstop for
+/// unattended/autonomous runs; `0` (the default) leaves the run unbounded.
+const DEFAULT_RUN_TIMEOUT_MS: u64 = 0;
 
 fn run_timeout_budget() -> Option<Duration> {
     let ms = std::env::var("OPENCODE_RUN_TIMEOUT_MS")

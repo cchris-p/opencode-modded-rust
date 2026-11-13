@@ -76,7 +76,7 @@
 - Linux: `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode/opencode.db`).
 - This is the Rust product's database only. Do not confuse it with vanilla OpenCode, whose `xdg-basedir` storage resolves to `~/.local/share/opencode/opencode.db` even on macOS.
 - The TUI-spawned local server writes stdout/stderr (including panic message, location, and backtrace) to `dirs::data_local_dir()/opencode/traces/server.log`; locate it with `opencode-modded-rust debug paths` (`server-log`) or `opencode-modded-rust session inspect <id>` (`Server log:`). Set `OPENCODE_SERVER_LOG` to override the path or to `0`/`false`/`off` to disable it.
-- Runtime bounds: `OPENCODE_RUN_TIMEOUT_MS` (default 30 minutes) and `OPENCODE_STREAM_BUDGET_MS` (default 15 minutes) are documented under "Runtime bounds and server logs" in `README.md`; both use `0` to disable.
+- Runtime bounds: `OPENCODE_RUN_TIMEOUT_MS` and `OPENCODE_STREAM_BUDGET_MS` are **disabled by default** (vanilla parity; `0` disables), and `OPENCODE_STREAM_IDLE_TIMEOUT_MS` defaults to 5 minutes to match vanilla's provider chunk timeout. All three are documented under "Runtime bounds and server logs" in `README.md`.
 
 ## Local Launchers
 
@@ -87,7 +87,7 @@
 - `ort` runs the TUI in the directory it was activated from, so that directory is the workspace (config search root and displayed working directory).
 - `ort` always starts a fresh local TUI server for that workspace. It never reuses, rotates, or attaches to a previously recorded server, so a stale or other-workspace server can never serve the TUI. Use `opencode-modded-rust attach <url>` for intentional re-attachment.
 - When stopping Rust `ort` runtimes, target only confirmed PIDs whose command is `$OPENCODE_RUST_REPO/target/debug/opencode-modded-rust tui` or `$OPENCODE_RUST_REPO/target/debug/opencode-modded-rust serve` for the specific port/workspace under test. Do not kill `$HOME/.opencode/bin/opencode`, plugin-host processes, vanilla/reference OpenCode, or broad `opencode` process patterns.
-- The Rust product owns its default model (`deepseek/deepseek-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
+- The Rust product owns its default model (`opencode-go/deepseek-v4.1-flash`); the shared vanilla `~/.config/opencode/opencode.json` model does not dictate this product's default, and a workspace `opencode.json{,c}` still overrides it.
 - When testing code changes, run `ort-build` before `ort` so the freshly started server runs the latest binary.
 - Worktree builds share one Cargo target directory. `scripts/setup-worktree-build-cache.sh` writes a managed `.cargo/config.toml` at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.cargo/config.toml` that points every git worktree beneath it at `$OPENCODE_WORKTREE_ROOT/opencode-modded-rust/.shared-target`, so worktrees no longer each duplicate a full `target/`. The main checkout (the `$OPENCODE_RUST_REPO` checkout, currently `$HOME/apps/opencode-modded-rust`) keeps its own `target/`.
 - Reclaim disk with `scripts/clean-build-caches.sh` (dry run by default; add `--yes` to delete). It removes duplicated per-worktree `target/` dirs; `--shared` also clears the shared cache and `--include-main` also clears the main checkout's `target/`.

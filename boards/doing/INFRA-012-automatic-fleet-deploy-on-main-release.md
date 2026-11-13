@@ -141,3 +141,14 @@ Verified at `eeb608f` (`version 0.1.0`, queries `73aa2ff86776cc85`):
 Remaining: resolve the two offline active machines; wire the release-triggered control-plane
 job on `matrillobase1`; the macOS release asset still needs a working runner or the manual
 `j8rsxy` build path.
+
+## Deployment: v0.1.3 (2026-11-12)
+
+- Ran `standards-deploy-ort --rev e2334a35e2262a48ac1050b623ce7ba759dd59d7 --tag v0.1.3` on
+  `matrillobase1`. Report archived under `~/.local/share/ort/deploy-reports/`.
+- Verified at `e2334a3` (8/10 active): `jasper` (canary), `webapps`, `webappssub1`,
+  `matrillobase1`, `matrillo`, `matrillosub1`, `matrillosub2`, `j8rsxy` (macOS arm64).
+- `webappssub2` is `disabled` and was reported/skipped.
+- `moldavite` (Tailscale offline 22d) and `xp-farmer` (offline 1h) failed at "could not push
+  deploy tools" (SSH connect timeout). They remain on their previous revision; the deploy is
+  **not fully complete** per the invariant until they are online and re-verified.
