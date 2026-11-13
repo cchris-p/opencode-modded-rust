@@ -11,9 +11,9 @@ use futures::StreamExt;
 use opencode_plugin::{HookContext, HookEvent};
 use opencode_provider::transform::{apply_caching, ProviderType};
 use opencode_provider::{
-    get_model_context_limit, stream_budget_from_env, with_idle_timeout, with_stream_budget,
-    ChatRequest, ChatResponse, Content, ContentPart, Message, Provider, Role, StreamEvent,
-    ToolDefinition, DEFAULT_STREAM_IDLE_TIMEOUT,
+    get_model_context_limit, stream_budget_from_env, stream_idle_timeout_from_env,
+    with_idle_timeout, with_stream_budget, ChatRequest, ChatResponse, Content, ContentPart,
+    Message, Provider, Role, StreamEvent, ToolDefinition,
 };
 
 use crate::compaction::{
@@ -1433,10 +1433,10 @@ impl SessionPrompt {
             // sending without closing the connection cannot wedge the turn
             // forever. Without this, a mid-turn stall never reaches a terminal
             // state and the session stays `active` indefinitely (BUG-038).
-            let stream = with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT);
-            // Also bound the whole step: an idle timeout resets on every event,
-            // so a provider that keeps streaming (endless reasoning) would never
-            // trip it (BUG-046).
+            // The default matches vanilla's provider timeout; `0` disables it.
+            let stream = with_idle_timeout(stream, stream_idle_timeout_from_env());
+            // Opt-in whole-step budget for endless reasoning loops (BUG-046).
+            // Disabled by default to match vanilla, which has no step budget.
             let mut stream = with_stream_budget(stream, stream_budget_from_env());
 
             // Create assistant message placeholder before consuming the stream so

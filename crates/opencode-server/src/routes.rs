@@ -2950,10 +2950,12 @@ async fn accept_prompt_with_parts(
 
 /// Serial per-session drain loop: runs exactly one turn at a time in FIFO order
 /// until the queue is empty, then marks the session idle.
-/// Default hard wall-clock budget for a single queued run, used as a backstop
-/// when a run neither finishes nor reacts to abort. `OPENCODE_RUN_TIMEOUT_MS`
-/// overrides it; `0` disables the watchdog.
-const DEFAULT_RUN_TIMEOUT_MS: u64 = 30 * 60 * 1000;
+///
+/// A whole run has **no wall-clock budget by default**, matching opencode
+/// vanilla: a run continues until the model stops, the provider fails, or the
+/// user aborts it. `OPENCODE_RUN_TIMEOUT_MS` opts into a hard backstop for
+/// unattended/autonomous runs; `0` (the default) leaves the run unbounded.
+const DEFAULT_RUN_TIMEOUT_MS: u64 = 0;
 
 fn run_timeout_budget() -> Option<Duration> {
     let ms = std::env::var("OPENCODE_RUN_TIMEOUT_MS")

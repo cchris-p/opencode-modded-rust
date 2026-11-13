@@ -266,15 +266,25 @@ points at rendering.
 
 ### Runtime bounds and server logs
 
-Every run is bounded and must always reach a terminal state:
+Runtime bounds match opencode vanilla: a normal turn is not cut off by a
+wall-clock cap. A run continues until the model stops, the provider fails, or
+the user aborts it. Optional opt-in backstops remain available:
 
-- `OPENCODE_RUN_TIMEOUT_MS` - hard wall-clock budget for one queued run
-  (default `1800000`, 30 minutes; `0` disables). On expiry the run is cancelled
-  and the session is finalized with a durable error instead of staying `busy`.
-- `OPENCODE_STREAM_BUDGET_MS` - wall-clock budget for a single provider step
-  (default `900000`, 15 minutes; `0` disables). It complements the 90s stream
-  idle timeout, which only fires when the stream goes silent; the step budget
-  also stops a stream that keeps emitting forever.
+- `OPENCODE_RUN_TIMEOUT_MS` - optional hard wall-clock budget for one queued
+  run. Default is `0` (disabled), matching vanilla; set a positive value to opt
+  into a backstop for unattended runs. On expiry the run is cancelled and the
+  session is finalized with a durable error instead of staying `busy`.
+- `OPENCODE_STREAM_IDLE_TIMEOUT_MS` - idle gap tolerated between provider
+  stream events before the step is treated as stalled and fails loudly
+  (default `300000`, 5 minutes, matching vanilla's provider chunk timeout; `0`
+  disables).
+- `OPENCODE_STREAM_BUDGET_MS` - optional wall-clock budget for a single
+  provider step, used to bound an endless reasoning loop that keeps emitting
+  events. Default is `0` (disabled), matching vanilla; set a positive value to
+  opt in.
+
+Neither `OPENCODE_RUN_TIMEOUT_MS` nor `OPENCODE_STREAM_BUDGET_MS` is set by
+default, so long agentic runs are allowed to finish just like vanilla.
 
 Aborting a run (`Esc`) cancels it even when it is parked on an await that does
 not observe the prompt token, so the session returns to idle instead of wedging.

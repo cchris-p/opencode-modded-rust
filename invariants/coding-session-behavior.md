@@ -15,5 +15,5 @@
 - Every run must reach a terminal state: a run may never leave a session indefinitely `busy`/`active` without a durable terminal record. This holds for normal completion, provider error, abort, wall-clock timeout, and a panicking run.
 - Abort must interrupt the in-flight run even when it is parked on an await that does not observe the prompt token; the run is cancelled and finalized rather than left wedged.
 - A run that ends abnormally must resolve every tool call that never produced a result into a durable error result, so the transcript stays provider-valid and resumable.
-- A single provider step and a whole run must each be bounded in wall-clock time, so a stream that never goes idle cannot run without limit.
+- A single provider step must be bounded against a silent stall by a provider-level idle timeout matching opencode vanilla's default. Whole-run and whole-step wall-clock caps are **opt-in** (`OPENCODE_RUN_TIMEOUT_MS`, `OPENCODE_STREAM_BUDGET_MS`): opencode vanilla has no such caps, so ORT must not impose one by default. When a cap is configured and fires, the run must still finalize with a durable terminal record.
 - Bash permission parsing must be total: parsing any command, including malformed or very short command nodes, must never panic.

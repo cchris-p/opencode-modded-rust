@@ -1750,7 +1750,7 @@ fn attach_timeout() -> Option<Duration> {
     let ms = std::env::var("OPENCODE_RUN_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(30 * 60 * 1000);
+        .unwrap_or(0);
     if ms == 0 {
         None
     } else {
