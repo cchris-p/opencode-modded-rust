@@ -5,7 +5,7 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "doing"
+status: "qa"
 created: "2026-11-13"
 updated: "2026-11-13"
 ---
@@ -88,11 +88,19 @@ unchanged, so a run still cannot leave a session silently `busy`.
 
 ## Remaining
 
-- Branch `bug/BUG-075-session-timeout-vanilla-parity`, commit `1360b2a`;
-  pushed to origin. Owner must open the PR into `development` (agents do not
-  create PRs) and merge after review.
+- Merged into `development` (see Merge Closeout). Remains in `qa` until a live
+  post-merge QA pass is recorded.
 - Production deploy is a separate release step (`development -> main`) and needs
-  explicit owner confirmation.
+  explicit owner confirmation. Until then the fleet still runs v0.1.3 with the
+  30-minute cap.
 - If a specific wedge persists with the caps disabled, capture a fresh
   reproduction; the current server log shows only the budget firing, not a
   provider leak on the installed build.
+
+## Merge Closeout - 2026-11-13
+
+- Branch `bug/BUG-075-session-timeout-vanilla-parity` (commits `1360b2a`,
+  `1387c5d`, `ecc24c6`) merged into `development` at the owner's request.
+- Card moved `doing -> qa`.
+- Follow-up needed: `development -> main` release + fleet `ort-install` for the
+  fix to reach all machines.
