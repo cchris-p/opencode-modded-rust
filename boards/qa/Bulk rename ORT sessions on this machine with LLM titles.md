@@ -71,6 +71,10 @@ Restart ORT to see the new titles in the session list/header.
 - Re-queried the DB: all 10 new titles persisted.
 - `python3 -m py_compile scripts/rename-ort-sessions.py` passes.
 
+## PR
+
+- https://github.com/cchris-p/opencode-modded-rust/pull/197
+
 ## Known limitations
 
 - Titles generated for sessions with no user input fall back to `Empty session <date>`.
