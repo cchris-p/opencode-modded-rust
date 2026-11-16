@@ -54,6 +54,8 @@ submits.
 - `cargo fmt --all -- --check` clean.
 - Implemented in PR https://github.com/cchris-p/opencode-modded-rust/pull/196 (same branch as
   FEAT-080).
+- **Merged into `development` 2026-11-16 (PR #196, merge commit `29857cb`); in `qa`, awaiting
+  owner QA.**
 
 ## Related Items
 

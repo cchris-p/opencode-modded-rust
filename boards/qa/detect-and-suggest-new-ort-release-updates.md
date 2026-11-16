@@ -156,6 +156,10 @@ install suggestion with a hotkey.
 - Fleet `ort --version` identity comes from CLI-017 (already merged); notice carries the rev
   that `ort-verify` reports.
 
+**Merged into `development` 2026-11-16 (PR #196, merge commit `29857cb`); in `qa`, awaiting
+owner QA.** Remaining gate: confirm the notice and install flow on an artifact host, and decide
+the standards-side launcher default (`OPENCODE_RUST_AUTO_UPDATE`) so notices are observable.
+
 ## Related Items
 
 - `CLI-017` Show the ORT version for `ort --version` and `omr --version` (identity/visibility).
