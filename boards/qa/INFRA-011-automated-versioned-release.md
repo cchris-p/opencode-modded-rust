@@ -180,4 +180,21 @@ Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.4
   and aborted with `read ...: is a directory`.
 - Fix: the publish step now expands `dist/` to regular files only (`find dist -maxdepth 1
   -type f`) and fails when no assets are found, so directories can never be treated as release
-  assets. Re-release pending from the corrected `development` tip.
+  assets. Fix merged via PR #199.
+- Retry release PR #200 merged; `main` at `4292f41`. `Release` run `43904691286`: Linux `build`
+  succeeded, but `build (macos-15)` was cancelled again after 15 minutes queued with no runner,
+  so `publish` was skipped. The GitHub token available to the agent lacks `actions:write`, so the
+  failed job could not be re-run from the CLI.
+- Recovered manually using tree-identical builds (`c03cd52` vs `4292f41` differ only in
+  `.github/workflows/release.yml` and board docs): macOS assets from the successful macOS build in
+  run `43896647003` (`c03cd52`), Linux assets from run `43904691286` (`4292f41`). Rewrote the
+  macOS `.rev` to `4292f41`, verified all SHA256s, regenerated `release-manifest.json`
+  (commit `4292f41`, version `0.1.5`, pin `2a642c10...`, query key `73aa2ff86776cc85`), and
+  published `v0.1.5` with 12 assets. Installed on `matrillobase1` via `ort-install`; `ort-verify`
+  reports `rev=4292f41c2c4b8bc67c819a21ae98e02cbf17e31d version=0.1.5`.
+- Still recommended: automatic macOS retry/fallback or a self-hosted macOS runner. Hosted macOS
+  availability has now required manual recovery for v0.1.0, v0.1.3, v0.1.4, and v0.1.5. Also give
+  the release automation a token with `actions:write` so a failed macOS job can be re-run without
+  a new release PR.
+
+Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.5
