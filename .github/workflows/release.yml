@@ -223,7 +223,15 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.meta.outputs.tag }}"
-          gh release create "$tag" dist/* \
+          assets=()
+          while IFS= read -r -d '' file; do
+            assets+=("$file")
+          done < <(find dist -maxdepth 1 -type f -print0)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "no release assets found under dist/" >&2
+            exit 1
+          fi
+          gh release create "$tag" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "opencode-modded-rust ${tag}" \
