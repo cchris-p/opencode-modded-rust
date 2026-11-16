@@ -34,6 +34,7 @@ use opencode_types::{
 
 #[derive(Parser)]
 #[command(name = "opencode-modded-rust")]
+#[command(version)]
 #[command(about = "opencode-modded-rust - Rust-native AI coding agent", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -7703,6 +7704,26 @@ async fn handle_github_command(action: GithubCommands) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_flags_print_the_package_version() {
+        for flag in ["--version", "-V"] {
+            let err = match Cli::try_parse_from(["opencode-modded-rust", flag]) {
+                Ok(_) => panic!("{flag} should exit with the version display"),
+                Err(err) => err,
+            };
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+            let rendered = err.to_string();
+            assert!(rendered.contains("opencode-modded-rust"));
+            assert!(rendered.contains(env!("CARGO_PKG_VERSION")));
+        }
+    }
+
+    #[test]
+    fn version_subcommand_still_parses() {
+        let cli = Cli::try_parse_from(["opencode-modded-rust", "version"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Version)));
+    }
 
     #[test]
     fn ollama_config_model_is_not_a_bare_run_default() {
