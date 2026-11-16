@@ -108,6 +108,13 @@ Verification:
 
 Standards-side commit: `54abb1c` in `~/standards` on `development` (pushed).
 
+## Merge
+
+- Merged via PR https://github.com/cchris-p/opencode-modded-rust/pull/195 (merge commit
+  `6212a99`) into `development` on 2026-11-16; branch deleted locally and remotely.
+- Remains in `qa` until a QA report is recorded on this card or the owner explicitly completes
+  it. The standards launcher change is already on `~/standards` `development` (`54abb1c`).
+
 ## Related Items
 
 - `CLI-013` Reach the Rust CLI subcommands through the launcher (established `omr`).
