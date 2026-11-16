@@ -101,6 +101,13 @@ Restart ORT to see the new titles in the session list/header.
 - Verified on Linux with `OPENCODE_API_KEY`/`DEEPSEEK_API_KEY` unset in the parent shell; the
   script still generated titles by loading the managed env file.
 
+## CI note (2026-11-16)
+
+- The required `test` job can hit the repository-wide pre-existing
+  `components::prompt::tests::tab_autocomplete_uses_first_candidate` flake, which also poisons
+  the shared prompt test env lock and cascades into other prompt tests. Re-run the job when this
+  happens; it is unrelated to this script.
+
 ## Known limitations
 
 - Titles generated for sessions with no user input fall back to `Empty session <date>`.
