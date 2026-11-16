@@ -326,7 +326,7 @@ impl App {
         }
         app.sync_prompt_spinner_style();
         app.sync_prompt_spinner_state();
-        app.start_update_check(false);
+        let _ = app.start_update_check(false);
 
         Ok(app)
     }
@@ -1107,7 +1107,7 @@ impl App {
                     && !self.update_check_in_flight
                     && self.last_update_check.elapsed() >= self.update_config.interval
                 {
-                    self.start_update_check(false);
+                    let _ = self.start_update_check(false);
                 }
 
                 if self.pending_initial_submit && !self.prompt.get_input().trim().is_empty() {
@@ -1427,8 +1427,13 @@ impl App {
                     if !key.modifiers.contains(KeyModifiers::CONTROL)
                         && !key.modifiers.contains(KeyModifiers::ALT) =>
                 {
-                    self.start_update_check(true);
-                    self.update_dialog.set_checking(true);
+                    if self.start_update_check(true) {
+                        self.update_dialog.set_checking(true);
+                    } else if !self.update_config.enabled {
+                        self.update_dialog.set_status(Some(
+                            "Update checks are disabled by OPENCODE_RUST_UPDATE_CHECK.".to_string(),
+                        ));
+                    }
                 }
                 KeyCode::Char('d') | KeyCode::Char('D')
                     if !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2650,9 +2655,9 @@ impl App {
         self.event_caused_change = true;
     }
 
-    fn start_update_check(&mut self, force: bool) {
+    fn start_update_check(&mut self, force: bool) -> bool {
         if !self.update_config.enabled || self.update_check_in_flight {
-            return;
+            return false;
         }
         self.update_check_in_flight = true;
         self.last_update_check = Instant::now();
@@ -2666,6 +2671,7 @@ impl App {
             };
             let _ = event_tx.send(Event::Custom(CustomEvent::UpdateChecked(outcome)));
         });
+        true
     }
 
     fn open_update_dialog(&mut self) {
@@ -2677,8 +2683,13 @@ impl App {
             self.update_check_in_flight,
         );
         if self.pending_update.is_none() && !self.update_check_in_flight {
-            self.start_update_check(true);
-            self.update_dialog.set_checking(true);
+            if self.start_update_check(true) {
+                self.update_dialog.set_checking(true);
+            } else if !self.update_config.enabled {
+                self.update_dialog.set_status(Some(
+                    "Update checks are disabled by OPENCODE_RUST_UPDATE_CHECK.".to_string(),
+                ));
+            }
         }
     }
 
