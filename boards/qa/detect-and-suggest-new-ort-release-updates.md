@@ -5,7 +5,7 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "docs/release-deployment.md"
-status: "todo"
+status: "qa"
 created: "2026-11-16"
 updated: "2026-11-16"
 ---
@@ -110,6 +110,51 @@ install suggestion with a hotkey.
 - Tests cover the rev comparison, notice gating, and check throttling/opt-out; README/docs are
   updated.
 - The chosen behavior relative to the existing silent auto-update is recorded on this card.
+
+## Decisions (resolved 2026-11-16)
+
+- **Silent auto-update vs notify:** the product defaults to **notify + explicit consent**. The
+  launcher's pre-launch silent update stays a separate standards-side control
+  (`OPENCODE_RUST_AUTO_UPDATE`); making it opt-in so fleet machines visibly show the new notice
+  is a follow-up in `~/standards`, not this repo. Interim: set
+  `OPENCODE_RUST_AUTO_UPDATE=0` to let the in-product notice drive updates.
+- **Where the check runs:** in the TUI, on a background thread at startup and on a throttled
+  tick, backed by a shared `opencode-util::update` module. It needs no server feature and adds
+  no startup network latency.
+- **Install contract:** shell out to `~/standards/utilities/ort-install` with the active
+  channel and `ORT_BIN_ROOT`. `ort-install` remains the source of truth for channel
+  resolution, checksum verification, and the `bin/<rev>` layout. Restart applies the update;
+  the running process is never hot-swapped.
+
+## Implementation notes
+
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/196
+  (`feature/FEAT-080-update-notice`, worktree).
+- `crates/opencode-util/src/update.rs`: revision-layout detection, channel/tag/`.rev`
+  resolution, rev comparison (semver used only to suppress downgrades), on-disk cache +
+  dismissal, throttling, and `ort-install` invocation. GitHub token comes from `GH_TOKEN` /
+  `GITHUB_TOKEN` or the managed `~/.config/opencode/.env`.
+- TUI: Ctrl+G default keybind, `/update` command, `UpdateDialog`, status-line notice and toast,
+  `CustomEvent::UpdateChecked` / `UpdateInstallFinished`, startup + periodic background checks.
+  Development/`target/debug` builds are treated as "not artifact-installed" and stay silent.
+- CLI: `upgrade --check` and artifact-aware `upgrade` (blocking work runs on
+  `spawn_blocking`; the vanilla upgrade path is unchanged for non-artifact installs).
+- README documents notice behavior, hotkey, channel interaction, throttling, and
+  `OPENCODE_RUST_UPDATE_CHECK=0` / `OPENCODE_RUST_UPDATE_INTERVAL`.
+
+## Verification (2026-11-16)
+
+- `cargo test -p opencode-util` — 18 passed.
+- `cargo test -p opencode-cli` — 25 passed.
+- New TUI tests pass: status-line notice text, update dialog install gating, `/update`
+  command alias, Ctrl+G keybind. Full `cargo test -p opencode-tui` still hits the pre-existing
+  `tab_autocomplete_uses_first_candidate` flake (documented on several QA cards).
+- `cargo fmt --all -- --check` clean; clippy only pre-existing warnings.
+- Temp-root smoke: older rev -> `Available: v0.1.4 (cc9befa)`; current rev -> `Already up to
+  date.`; dev build -> `not managed by ort-install`; offline proxy -> silent in TUI path;
+  `upgrade` installed the checksum-verified artifact and flipped the temp `current` symlink.
+- Fleet `ort --version` identity comes from CLI-017 (already merged); notice carries the rev
+  that `ort-verify` reports.
 
 ## Related Items
 

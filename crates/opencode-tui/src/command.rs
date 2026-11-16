@@ -108,6 +108,7 @@ pub enum CommandAction {
     // Skills
     InsertSkill(String),
     // System
+    CheckForUpdates,
     Exit,
     Detach,
 }
@@ -360,6 +361,17 @@ impl CommandRegistry {
             keybind: None,
             suggested: false,
             action: CommandAction::ExternalEditor,
+        });
+
+        self.register(SlashCommand {
+            name: "/update".to_string(),
+            aliases: vec!["/upgrade".to_string()],
+            title: "Check for Updates".to_string(),
+            description: "Check for and install a newer ORT release".to_string(),
+            category: CommandCategory::System,
+            keybind: Some("ctrl_g".to_string()),
+            suggested: false,
+            action: CommandAction::CheckForUpdates,
         });
 
         self.register(SlashCommand {
@@ -637,6 +649,19 @@ mod tests {
         assert!(new_session.keybind.is_none());
         assert_eq!(switch_session.title, "Switch Session");
         assert!(switch_session.keybind.is_none());
+    }
+
+    #[test]
+    fn update_command_resolves_to_update_check() {
+        let registry = CommandRegistry::new();
+
+        let primary = registry.get("/update").expect("/update should exist");
+        let alias = registry
+            .get("/upgrade")
+            .expect("/upgrade alias should exist");
+
+        assert!(matches!(primary.action, CommandAction::CheckForUpdates));
+        assert!(matches!(alias.action, CommandAction::CheckForUpdates));
     }
 
     #[test]

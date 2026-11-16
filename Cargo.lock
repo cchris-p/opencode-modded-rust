@@ -2587,10 +2587,12 @@ version = "0.1.4"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs",
  "glob",
  "notify",
  "opencode-core",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

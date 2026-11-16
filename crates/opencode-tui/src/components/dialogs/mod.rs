@@ -18,6 +18,7 @@ mod tag;
 mod text_input;
 mod theme_list;
 mod timeline;
+mod update;
 
 const DIALOG_VIEWPORT_MARGIN_X: u16 = 2;
 const DIALOG_VIEWPORT_MARGIN_Y: u16 = 1;
@@ -82,3 +83,4 @@ pub use tag::{Tag, TagDialog};
 pub use text_input::DialogTextInput;
 pub use theme_list::{ThemeListDialog, ThemeOption};
 pub use timeline::{TimelineDialog, TimelineEntry};
+pub use update::UpdateDialog;
