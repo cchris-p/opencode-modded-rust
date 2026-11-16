@@ -89,6 +89,18 @@ Restart ORT to see the new titles in the session list/header.
 - `--db <path>` remains the explicit override; the macOS ORT launcher path is
   `~/Library/Application Support/opencode-ort/opencode.db`.
 
+## Fix - 2026-11-16 (provider environment)
+
+- Running from a plain shell on macOS failed with `Provider 'opencode-go' is not available for
+  model 'deepseek-v4.1-flash'`: the script's `run` subprocess did not inherit the managed
+  provider keys that `opencode-config` normally exports.
+- `call_llm` now loads `$OPENCODE_CONFIG_DIR/.env` (default `~/.config/opencode/.env`) into the
+  subprocess environment, setting only missing keys and never printing values. If
+  `OPENCODE_API_KEY` is absent but `DEEPSEEK_API_KEY` is present, it falls back to
+  `deepseek/deepseek-flash`; `--model` still overrides.
+- Verified on Linux with `OPENCODE_API_KEY`/`DEEPSEEK_API_KEY` unset in the parent shell; the
+  script still generated titles by loading the managed env file.
+
 ## Known limitations
 
 - Titles generated for sessions with no user input fall back to `Empty session <date>`.
