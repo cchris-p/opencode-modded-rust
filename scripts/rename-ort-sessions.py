@@ -103,6 +103,38 @@ def default_cli_path() -> str:
     return "opencode-modded-rust"
 
 
+def config_env_path() -> Path:
+    config_dir = os.environ.get("OPENCODE_CONFIG_DIR")
+    base = Path(config_dir).expanduser() if config_dir else Path.home() / ".config" / "opencode"
+    return base / ".env"
+
+
+def load_shared_env(target: dict[str, str]) -> None:
+    try:
+        lines = config_env_path().read_text().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not all(char.isalnum() or char == "_" for char in key):
+            continue
+        if value and key not in target:
+            target[key] = value
+
+
+def fallback_model(env: dict[str, str]) -> str | None:
+    if env.get("OPENCODE_API_KEY"):
+        return None
+    if env.get("DEEPSEEK_API_KEY"):
+        return "deepseek/deepseek-flash"
+    return None
+
+
 def running_ort_processes() -> list[str]:
     try:
         output = subprocess.run(
@@ -239,6 +271,7 @@ def call_llm(cli: str, model: str | None, prompt: str, timeout: int) -> str:
         prefix="ort-title-work-"
     ) as work_dir:
         env = os.environ.copy()
+        load_shared_env(env)
         env["OPENCODE_DATA_DIR"] = data_dir
         env.setdefault("OPENCODE_SERVER_LOG", "0")
         command = [cli, "run", "--dir", work_dir, "--format", "default", "--agent", "build"]
@@ -395,7 +428,12 @@ def main() -> int:
         titles = load_proposals(args.proposals_in)
     else:
         cli = args.cli or default_cli_path()
-        titles = generate_titles(sessions, cli, args.model, args.batch_size, args.timeout)
+        model = args.model
+        if model is None:
+            env = os.environ.copy()
+            load_shared_env(env)
+            model = fallback_model(env)
+        titles = generate_titles(sessions, cli, model, args.batch_size, args.timeout)
 
     for session in sessions:
         titles.setdefault(session["id"], fallback_title(session))
