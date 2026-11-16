@@ -170,3 +170,14 @@ Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.3
   v0.1.3, and v0.1.4.
 
 Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.4
+
+## Update - 2026-11-16 (v0.1.5)
+
+- Release PR #198 merged; `main` at `c03cd52`, version `0.1.5`.
+- `Release` run `43896647003`: both `build (ubuntu-22.04)` and `build (macos-15)` succeeded.
+  `publish` failed after creating no tag/release: `gh release create "$tag" dist/*` tried to
+  upload the staged native-bundle **directory** (`opencode-native-linux-x86_64-...`) as an asset
+  and aborted with `read ...: is a directory`.
+- Fix: the publish step now expands `dist/` to regular files only (`find dist -maxdepth 1
+  -type f`) and fails when no assets are found, so directories can never be treated as release
+  assets. Re-release pending from the corrected `development` tip.
