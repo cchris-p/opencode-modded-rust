@@ -190,6 +190,7 @@ impl KeybindRegistry {
         self.register("session_child_cycle", Keybind::key(KeyCode::Right));
         self.register("session_child_cycle_reverse", Keybind::key(KeyCode::Left));
         self.register("session_rename", Keybind::ctrl(KeyCode::Char('r')));
+        self.register("update_check", Keybind::ctrl(KeyCode::Char('g')));
         self.register("session_delete", Keybind::ctrl(KeyCode::Char('d')));
         self.register("session_interrupt", Keybind::key(KeyCode::Esc));
         // FEAT-048: background a running foreground subagent (reference ctrl+b).
@@ -276,6 +277,14 @@ mod tests {
 
         assert!(registry.match_key("session_rename", KeyCode::Char('r'), KeyModifiers::CONTROL,));
         assert!(!registry.match_key("session_rename", KeyCode::Char('r'), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn update_check_defaults_to_ctrl_g() {
+        let registry = KeybindRegistry::new();
+
+        assert!(registry.match_key("update_check", KeyCode::Char('g'), KeyModifiers::CONTROL,));
+        assert!(!registry.match_key("update_check", KeyCode::Char('g'), KeyModifiers::NONE));
     }
 
     #[test]

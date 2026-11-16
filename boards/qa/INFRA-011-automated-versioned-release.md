@@ -153,3 +153,20 @@ Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.0
   runner). A 15-minute queue cancellation currently requires manual recovery.
 
 Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.3
+
+## Update - 2026-11-13 (v0.1.4)
+
+- Release PR #194 merged; `main` at `cc9befa`, version `0.1.4`.
+- `Release` run `43443998888`: Linux `build` succeeded, but `build (macos-15)` again
+  queued ~15 minutes with `runner_id: 0` and zero steps before cancellation;
+  `publish` was skipped. Hosted macOS capacity/minutes remain the blocker.
+- Recovered manually: Linux assets from run `43443998888`; macOS CLI built on
+  `j8rsxy` from `cc9befa` with the prebuilt `macos-aarch64-2a642c10534f` bundle
+  (query smoke key `73aa2ff86776cc85`, matching the Linux key). Repackaged with
+  `.rev=cc9befa`, generated `release-manifest.json`, and published `v0.1.4` with
+  12 assets.
+- Still recommended: automatic macOS retry/fallback or a self-hosted macOS
+  runner; hosted macOS availability caused the same manual recovery for v0.1.0,
+  v0.1.3, and v0.1.4.
+
+Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.4

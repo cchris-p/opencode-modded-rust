@@ -90,6 +90,24 @@ impl MessageDensity {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateNotice {
+    pub version: String,
+    pub rev: String,
+    pub hotkey: String,
+}
+
+impl UpdateNotice {
+    pub fn label(&self) -> String {
+        format!(
+            "Update available: {} ({}) - press {}",
+            self.version,
+            crate::context::short_rev(&self.rev),
+            self.hotkey
+        )
+    }
+}
+
 pub struct AppContext {
     pub theme: RwLock<Theme>,
     pub theme_name: RwLock<String>,
@@ -115,6 +133,7 @@ pub struct AppContext {
     pub sidebar_mode: RwLock<SidebarMode>,
     pub animations_enabled: RwLock<bool>,
     pub pending_permissions: RwLock<usize>,
+    pub update_notice: RwLock<Option<UpdateNotice>>,
     pub show_timestamps: RwLock<bool>,
     pub show_thinking: RwLock<bool>,
     pub show_tool_calls: RwLock<bool>,
@@ -196,6 +215,7 @@ impl AppContext {
             sidebar_mode: RwLock::new(SidebarMode::Auto),
             animations_enabled: RwLock::new(true),
             pending_permissions: RwLock::new(0),
+            update_notice: RwLock::new(None),
             show_timestamps: RwLock::new(seed_timestamps(&ui_kv, tui.and_then(|t| t.timestamps))),
             show_thinking: RwLock::new(seed_bool(
                 &ui_kv,
@@ -300,6 +320,14 @@ impl AppContext {
 
     pub fn set_pending_permissions(&self, count: usize) {
         *self.pending_permissions.write() = count;
+    }
+
+    pub fn set_update_notice(&self, notice: Option<UpdateNotice>) {
+        *self.update_notice.write() = notice;
+    }
+
+    pub fn update_notice(&self) -> Option<UpdateNotice> {
+        self.update_notice.read().clone()
     }
 
     pub fn set_has_connected_provider(&self, connected: bool) {

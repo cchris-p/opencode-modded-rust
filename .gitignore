@@ -28,3 +28,7 @@
 # Vendored native dependency (scopemux-core), fetched via scripts/fetch-scopemux-core.sh
 /third_party/
 /dist/
+
+# Python bytecode
+__pycache__/
+*.pyc

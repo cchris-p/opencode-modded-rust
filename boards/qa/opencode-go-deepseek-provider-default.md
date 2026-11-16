@@ -62,7 +62,11 @@ product default model.
 - CI on `development` is green (fmt, check, clippy, test, native).
 - Workspace version bumped to `0.1.4`; the main checkout built and answered a
   live request on the Go default.
+- Released as **`v0.1.4`** (`main` merge `cc9befa`, release PR #194); release
+  assets published manually because the hosted macOS job never acquired a
+  runner. See `INFRA-011` for the recovery record.
+- Fleet deploy: 7/10 active machines verified at `cc9befa` (`webapps`,
+  `webappssub1`, `matrillobase1`, `matrillo`, `matrillosub1`, `matrillosub2`,
+  `j8rsxy`). `jasper`, `moldavite`, and `xp-farmer` were offline; redeploy them
+  when reachable. `webappssub2` is disabled/skipped.
 - Awaiting owner post-merge QA on `development` (owner will test later).
-- Production release still requires the owner to open and merge the
-  `development -> main` release PR (`v0.1.4`) after required checks and review.
-  Fleet deploy follows the `INFRA-012` release automation.

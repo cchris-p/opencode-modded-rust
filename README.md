@@ -101,7 +101,8 @@ From the repo root use `./target/debug/opencode-modded-rust` or `cargo run -p op
 - `mcp` – MCP management
 - `export` / `import` – Export/import sessions
 - `github` / `pr` – GitHub-related features
-- `upgrade` / `uninstall` – Upgrade and uninstall
+- `upgrade` / `uninstall` – Upgrade and uninstall (`upgrade --check` reports an available
+  artifact revision without installing)
 - `generate` – Generate OpenAPI spec
 - `version` – Show version
 
@@ -202,6 +203,37 @@ without cloning this repo or installing a Rust toolchain.
   the affected machines. Inactive machines are reported and skipped.
 - Policy: `invariants/release-deployment.md`. Runbook:
   `docs/release-deployment.md`.
+
+### Update notices and artifact updates
+
+- An artifact-installed binary compares its installed revision with the
+  revision published for the active channel at startup and then on a throttled
+  interval. The running revision is read from the
+  `~/.local/share/ort/bin/<rev>/opencode-modded-rust` layout, so a
+  `cargo run`/`target/debug` build is treated as a development build and never
+  shows a notice.
+- When a different published revision exists, the prompt status line shows
+  `Update available: <version> (<short rev>) - press ctrl+g`, and the same
+  notice is shown once as a toast. It never steals focus or blocks a turn.
+- `ctrl+g`, typing a bare `/update` (or `/upgrade`) in the prompt and pressing Enter, or
+  `/update` in the command palette opens the Update dialog. It
+  shows current vs available version/rev/channel; `Enter` installs, `r`
+  re-checks, `d` dismisses the notice, and `Esc` closes. `upgrade --check`
+  prints the same state from the CLI.
+- Installation is delegated to `~/standards/utilities/ort-install` (checksum
+  verified, channel-aware). The running process is never hot-swapped; restart
+  the session to apply the new revision. A successful install suppresses the
+  notice for the rest of that session.
+- Checks use a short timeout, cache their result in
+  `${XDG_CACHE_HOME:-~/.cache}/opencode/update-check.json`, and are silent on
+  offline, rate-limited, or unknown responses. They never block startup or a
+  model request.
+- `OPENCODE_RUST_UPDATE_CHECK=0` disables notices and checks for this feature
+  (use it to opt out); `OPENCODE_RUST_UPDATE_INTERVAL=<seconds>` sets the
+  periodic interval and `0` disables periodic re-checks after the startup
+  check. `OPENCODE_RUST_CHANNEL=stable|preview` chooses the channel and is
+  unchanged by this feature. The launcher's silent auto-update remains a
+  separate `OPENCODE_RUST_AUTO_UPDATE` control before the product starts.
 
 ## Development and validation
 
