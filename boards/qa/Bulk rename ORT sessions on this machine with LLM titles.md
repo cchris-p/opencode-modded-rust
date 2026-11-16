@@ -74,6 +74,9 @@ Restart ORT to see the new titles in the session list/header.
 ## PR
 
 - https://github.com/cchris-p/opencode-modded-rust/pull/197
+- Release distribution follow-up: every release now also attaches
+  `rename-ort-sessions.py` and its `.sha256`, so binary-only machines can run it without a repo
+  checkout (`gh release download v0.1.5 --pattern 'rename-ort-sessions.py*'`).
 
 ## Known limitations
 

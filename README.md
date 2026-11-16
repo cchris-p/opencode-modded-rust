@@ -235,6 +235,19 @@ without cloning this repo or installing a Rust toolchain.
   unchanged by this feature. The launcher's silent auto-update remains a
   separate `OPENCODE_RUST_AUTO_UPDATE` control before the product starts.
 
+### Bulk session rename utility
+
+`scripts/rename-ort-sessions.py` is also attached to every release as
+`rename-ort-sessions.py` (with a `.sha256`), so a machine that only installed the
+binary can run it without cloning this repo:
+
+```bash
+gh release download v0.1.5 --pattern 'rename-ort-sessions.py*'
+sha256sum -c rename-ort-sessions.py.sha256
+python3 rename-ort-sessions.py          # dry run
+python3 rename-ort-sessions.py --apply  # write titles (quit ORT first)
+```
+
 ## Development and validation
 
 ```bash
