@@ -215,7 +215,8 @@ without cloning this repo or installing a Rust toolchain.
 - When a different published revision exists, the prompt status line shows
   `Update available: <version> (<short rev>) - press ctrl+g`, and the same
   notice is shown once as a toast. It never steals focus or blocks a turn.
-- `ctrl+g` (or `/update` in the command palette) opens the Update dialog. It
+- `ctrl+g`, typing a bare `/update` (or `/upgrade`) in the prompt and pressing Enter, or
+  `/update` in the command palette opens the Update dialog. It
   shows current vs available version/rev/channel; `Enter` installs, `r`
   re-checks, `d` dismisses the notice, and `Esc` closes. `upgrade --check`
   prints the same state from the CLI.

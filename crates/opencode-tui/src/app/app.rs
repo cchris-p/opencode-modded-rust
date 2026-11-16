@@ -18,7 +18,7 @@ use crate::api::{
 };
 use crate::app::state::AppState;
 use crate::app::terminal;
-use crate::command::CommandAction;
+use crate::command::{CommandAction, CommandRegistry};
 use crate::components::{
     Agent, AgentSelectDialog, AlertDialog, CommandPalette, ForkDialog, ForkEntry, HelpDialog,
     HomeView, McpDialog, McpItem, Model, ModelSelectDialog, PermissionAction, PermissionPrompt,
@@ -3086,6 +3086,15 @@ impl App {
 
     fn submit_prompt(&mut self) -> anyhow::Result<()> {
         let shell_mode = self.prompt.is_shell_mode();
+        let command = if shell_mode {
+            None
+        } else {
+            input_command_action(self.prompt.get_input())
+        };
+        if let Some(action) = command {
+            self.prompt.clear();
+            return self.execute_command_action(action);
+        }
         let input = self.prompt.take_input();
         if input.trim().is_empty() {
             return Ok(());
@@ -5900,6 +5909,21 @@ fn parse_model_ref_selection(
     )
 }
 
+fn input_command_action(input: &str) -> Option<CommandAction> {
+    let trimmed = input.trim();
+    let mut parts = trimmed.split_whitespace();
+    let token = parts.next()?;
+    if !token.starts_with('/') || parts.next().is_some() {
+        return None;
+    }
+    let registry = CommandRegistry::new();
+    let command = registry.get(&token.to_ascii_lowercase())?;
+    match command.action {
+        CommandAction::CheckForUpdates => Some(CommandAction::CheckForUpdates),
+        _ => None,
+    }
+}
+
 fn selected_agent(context: &Arc<AppContext>) -> Option<String> {
     let agent = context.current_agent.read().clone();
     if agent.trim().is_empty() {
@@ -6047,6 +6071,26 @@ fn open_initial_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_command_action_only_matches_bare_update_commands() {
+        assert!(matches!(
+            input_command_action("/update"),
+            Some(CommandAction::CheckForUpdates)
+        ));
+        assert!(matches!(
+            input_command_action("  /UPDATE  "),
+            Some(CommandAction::CheckForUpdates)
+        ));
+        assert!(matches!(
+            input_command_action("/upgrade"),
+            Some(CommandAction::CheckForUpdates)
+        ));
+        assert!(input_command_action("/update now").is_none());
+        assert!(input_command_action("update").is_none());
+        assert!(input_command_action("/help").is_none());
+        assert!(input_command_action("please /update").is_none());
+    }
 
     #[test]
     fn first_child_is_the_lowest_id() {
