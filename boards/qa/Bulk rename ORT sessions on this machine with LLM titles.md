@@ -78,6 +78,17 @@ Restart ORT to see the new titles in the session list/header.
   `rename-ort-sessions.py` and its `.sha256`, so binary-only machines can run it without a repo
   checkout (`gh release download v0.1.5 --pattern 'rename-ort-sessions.py*'`).
 
+## Fix - 2026-11-16 (macOS DB auto-detection)
+
+- Running the release script on macOS failed with `no such table: sessions`: the default DB
+  search only knew Linux paths and picked the vanilla `~/.local/share/opencode/opencode.db`.
+- The script now probes, in order: `$OPENCODE_DATA_DIR`, `$OPENCODE_ORT_DATA_DIR`,
+  `~/Library/Application Support/opencode-ort` and `.../opencode` on macOS, then the
+  XDG/`~/.local/share` equivalents. It only selects a candidate that actually has a `sessions`
+  table and prints every candidate plus its state when none is usable.
+- `--db <path>` remains the explicit override; the macOS ORT launcher path is
+  `~/Library/Application Support/opencode-ort/opencode.db`.
+
 ## Known limitations
 
 - Titles generated for sessions with no user input fall back to `Empty session <date>`.
