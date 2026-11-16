@@ -33,17 +33,61 @@ SESSIONS:
 """
 
 
-def default_db_path() -> Path:
+def connect_ro(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+
+
+def data_dirs() -> list[Path]:
     candidates: list[Path] = []
-    data_dir = os.environ.get("OPENCODE_DATA_DIR")
-    if data_dir:
-        candidates.append(Path(data_dir) / "opencode.db")
-    candidates.append(Path.home() / ".local" / "share" / "opencode-ort" / "opencode.db")
-    candidates.append(Path.home() / ".local" / "share" / "opencode" / "opencode.db")
+    for key in ("OPENCODE_DATA_DIR", "OPENCODE_ORT_DATA_DIR"):
+        value = os.environ.get(key)
+        if value:
+            candidates.append(Path(value).expanduser())
+    home = Path.home()
+    if sys.platform == "darwin":
+        support = home / "Library" / "Application Support"
+        candidates.extend([support / "opencode-ort", support / "opencode"])
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg).expanduser() if xdg else home / ".local" / "share"
+    candidates.extend([base / "opencode-ort", base / "opencode"])
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
+
+
+def candidate_db_paths() -> list[Path]:
+    return [directory / "opencode.db" for directory in data_dirs()]
+
+
+def database_has_sessions(path: Path) -> bool:
+    try:
+        con = connect_ro(path)
+        try:
+            row = con.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sessions'"
+            ).fetchone()
+            return row is not None
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return False
+
+
+def default_db_path() -> Path:
+    candidates = candidate_db_paths()
+    for candidate in candidates:
+        if candidate.is_file() and database_has_sessions(candidate):
+            return candidate
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    return candidates[-1]
+    return candidates[0]
 
 
 def default_cli_path() -> str:
@@ -104,7 +148,7 @@ def compact(text: str, max_chars: int) -> str:
 
 
 def load_sessions(db: Path, workspace: str | None, max_messages: int, max_chars: int) -> list[dict[str, Any]]:
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con = connect_ro(db)
     try:
         sql = "SELECT id, title, directory, created_at, updated_at FROM sessions"
         params: list[Any] = []
@@ -259,7 +303,7 @@ def apply_titles(
     if backup:
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         backup_path = db.with_name(f"{db.name}.rename-backup-{stamp}")
-        source = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        source = connect_ro(db)
         target = sqlite3.connect(backup_path)
         try:
             source.backup(target)
@@ -314,9 +358,23 @@ def main() -> int:
     parser.add_argument("--proposals-in", type=Path, default=None, help="Apply titles from a JSON file")
     args = parser.parse_args()
 
-    db = args.db or default_db_path()
+    db = Path(args.db).expanduser() if args.db else default_db_path()
     if not db.is_file():
         print(f"rename-ort-sessions: database not found: {db}", file=sys.stderr)
+        print("candidates checked:", file=sys.stderr)
+        for candidate in candidate_db_paths():
+            print(f"  {candidate}", file=sys.stderr)
+        return 2
+    if not database_has_sessions(db):
+        print(
+            f"rename-ort-sessions: {db} has no 'sessions' table; this is not an ORT database",
+            file=sys.stderr,
+        )
+        print("candidates checked:", file=sys.stderr)
+        for candidate in candidate_db_paths():
+            state = "ok" if candidate.is_file() and database_has_sessions(candidate) else "no"
+            print(f"  {state}  {candidate}", file=sys.stderr)
+        print("Pass --db <path> to select the ORT database explicitly.", file=sys.stderr)
         return 2
 
     workspace = str(Path(args.workspace).resolve()) if args.workspace else None
