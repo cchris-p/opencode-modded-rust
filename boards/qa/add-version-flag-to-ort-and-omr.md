@@ -5,7 +5,7 @@ priority: "P2"
 type: "bug"
 area: "CLI"
 spec: "README.md"
-status: "doing"
+status: "qa"
 created: "2026-11-16"
 updated: "2026-11-16"
 ---
@@ -79,6 +79,34 @@ Causes:
 - The standards launcher change is merged, and the routing is covered by a test or a recorded
   manual smoke.
 - README/launcher docs mention `--version` where launcher flags are documented.
+
+## Dev Notes
+
+Implemented on `bug/CLI-017-ort-version-flag` (worktree).
+
+- Product: added `#[command(version)]` to the top-level clap `Cli` in
+  `crates/opencode-cli/src/main.rs`, registering `-V`/`--version`. It prints the same
+  `opencode-modded-rust <semver>` identity as the `version` subcommand. The `oco` subcommand's
+  own `disable_version_flag` is unchanged.
+- Launcher (standards repo, committed separately on `development`): added
+  `_opencode_rust_is_version_arg` and routed a leading `version`/`--version`/`-V` in
+  `opencode-rust-tui` to `_opencode_rust_exec version`, so `ort --version` no longer becomes
+  `tui --version`. `omr --version` behavior is unchanged.
+- Tests: `version_flags_print_the_package_version` (both flags produce `DisplayVersion` with
+  the crate version) and `version_subcommand_still_parses`.
+
+Verification:
+
+- `cargo test -p opencode-cli` -> 25 passed, 0 failed.
+- `cargo fmt -p opencode-cli -- --check` -> clean.
+- Built the binary with the prebuilt native bundle and confirmed:
+  `--version`, `-V`, and `version` each print `opencode-modded-rust 0.1.4`, exit 0.
+- Sourced `~/standards/opencode-config` and confirmed `ort --version` and `omr --version`
+  print the version and exit 0.
+- `cargo clippy -p opencode-cli --all-targets` only reports pre-existing warnings unrelated to
+  this change.
+
+Standards-side commit: `54abb1c` in `~/standards` on `development` (pushed).
 
 ## Related Items
 
