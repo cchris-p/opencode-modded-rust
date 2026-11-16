@@ -216,6 +216,12 @@ jobs:
           name: release-manifest
           path: dist/release-manifest.json
 
+      - name: Include session rename utility
+        run: |
+          set -euo pipefail
+          cp scripts/rename-ort-sessions.py dist/
+          ( cd dist && sha256sum rename-ort-sessions.py > rename-ort-sessions.py.sha256 )
+
       - name: Publish immutable release
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run))
         env:
