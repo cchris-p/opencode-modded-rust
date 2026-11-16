@@ -26,18 +26,21 @@ use crate::components::{
     QuestionType, SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog,
     SessionRenameDialog, SessionView, SettingsInputMode, SettingsView, SkillListDialog,
     SlashCommandPopup, StashItem, StatusDialog, StatusLine, TagDialog, TaskKind, ThemeListDialog,
-    ThemeOption, TimelineDialog, TimelineEntry, Toast, ToastVariant,
+    ThemeOption, TimelineDialog, TimelineEntry, Toast, ToastVariant, UpdateDialog,
 };
 use crate::context::keybind::LeaderKeyState;
 use crate::context::{
     AppContext, McpConnectionStatus, McpServerStatus, Message, MessagePart as ContextMessagePart,
-    MessageRole, RevertInfo, Session, SessionStatus, TokenUsage,
+    MessageRole, RevertInfo, Session, SessionStatus, TokenUsage, UpdateNotice,
 };
 use crate::event::{CustomEvent, Event, StateChange};
 use crate::router::Route;
 use crate::trace;
 use crate::ui::{next_scroll_offset, AutoScroll, Clipboard, ContentSelection, CopyRow, Selection};
 use crate::TuiExit;
+use opencode_util::update::{
+    self, short_rev, AvailableUpdate, CheckOutcome, InstallReport, UpdateConfig,
+};
 
 // TS parity: renderer targetFps is 60, ~16ms frame budget.
 const TICK_RATE_MS: u64 = 16;
@@ -82,6 +85,7 @@ pub struct App {
     state: AppState,
     terminal: terminal::Tui,
     event_rx: Receiver<Event>,
+    event_tx: Sender<Event>,
     prompt: Prompt,
     settings_view: SettingsView,
     selection: Selection,
@@ -106,6 +110,13 @@ pub struct App {
     fork_dialog: ForkDialog,
     provider_dialog: ProviderDialog,
     tag_dialog: TagDialog,
+    update_dialog: UpdateDialog,
+    update_config: UpdateConfig,
+    installed_info: update::InstalledInfo,
+    pending_update: Option<AvailableUpdate>,
+    applied_update_rev: Option<String>,
+    update_check_in_flight: bool,
+    last_update_check: Instant,
     permission_prompt: PermissionPrompt,
     question_prompt: QuestionPrompt,
     toast: Toast,
@@ -237,11 +248,14 @@ impl App {
             }
         });
 
+        let update_config = UpdateConfig::from_env();
+        let installed_info = update::installed_info(&update_config);
         let mut app = Self {
             context,
             state: AppState::default(),
             terminal,
             event_rx,
+            event_tx: event_tx.clone(),
             prompt,
             settings_view: SettingsView::new(),
             selection: Selection::new(),
@@ -266,6 +280,13 @@ impl App {
             fork_dialog: ForkDialog::new(),
             provider_dialog: ProviderDialog::new(),
             tag_dialog: TagDialog::new(),
+            update_dialog: UpdateDialog::new(),
+            update_config,
+            installed_info,
+            pending_update: None,
+            applied_update_rev: None,
+            update_check_in_flight: false,
+            last_update_check: Instant::now(),
             permission_prompt: PermissionPrompt::new(),
             question_prompt: QuestionPrompt::new(),
             toast: Toast::new(),
@@ -305,6 +326,7 @@ impl App {
         }
         app.sync_prompt_spinner_style();
         app.sync_prompt_spinner_state();
+        app.start_update_check(false);
 
         Ok(app)
     }
@@ -700,6 +722,11 @@ impl App {
                     }
                 }
 
+                if self.matches_keybind("update_check", *key) {
+                    self.open_update_dialog();
+                    return Ok(());
+                }
+
                 if self.matches_keybind("command_palette", *key) {
                     self.sync_command_palette_labels();
                     self.command_palette.open();
@@ -997,6 +1024,76 @@ impl App {
                     );
                     self.sync_prompt_spinner_state();
                 }
+                CustomEvent::UpdateChecked(outcome) => {
+                    self.update_check_in_flight = false;
+                    match outcome {
+                        CheckOutcome::Available(update) => {
+                            if self.applied_update_rev.as_deref() == Some(update.rev.as_str()) {
+                                self.pending_update = None;
+                                self.context.set_update_notice(None);
+                                if self.update_dialog.is_open() {
+                                    self.update_dialog.set_available(None);
+                                    self.update_dialog.set_status(Some(
+                                        "Installed. Restart the session to apply.".to_string(),
+                                    ));
+                                }
+                                self.event_caused_change = true;
+                                return Ok(());
+                            }
+                            let hotkey = self.context.keybind.read().print("update_check");
+                            self.pending_update = Some(update.clone());
+                            if update.dismissed {
+                                self.context.set_update_notice(None);
+                            } else {
+                                self.context.set_update_notice(Some(UpdateNotice {
+                                    version: update.version.clone(),
+                                    rev: update.rev.clone(),
+                                    hotkey: hotkey.clone(),
+                                }));
+                                self.toast.show(
+                                    ToastVariant::Info,
+                                    &format!(
+                                        "Update available: {} ({}) - press {}",
+                                        update.version,
+                                        short_rev(&update.rev),
+                                        hotkey
+                                    ),
+                                    6000,
+                                );
+                            }
+                            if self.update_dialog.is_open() {
+                                self.update_dialog.set_available(Some(update.clone()));
+                            }
+                        }
+                        other => {
+                            self.pending_update = None;
+                            self.context.set_update_notice(None);
+                            if self.update_dialog.is_open() {
+                                self.update_dialog.set_available(None);
+                                let status = match other {
+                                    CheckOutcome::NotArtifact => Some(
+                                        "This build is not managed by ort-install; update checks are unavailable."
+                                            .to_string(),
+                                    ),
+                                    CheckOutcome::Disabled => Some(
+                                        "Update checks are disabled by OPENCODE_RUST_UPDATE_CHECK."
+                                            .to_string(),
+                                    ),
+                                    CheckOutcome::Unknown => Some(
+                                        "Could not check for updates (offline, rate limited, or no token)."
+                                            .to_string(),
+                                    ),
+                                    _ => None,
+                                };
+                                self.update_dialog.set_status(status);
+                            }
+                        }
+                    }
+                    self.event_caused_change = true;
+                }
+                CustomEvent::UpdateInstallFinished { rev, report } => {
+                    self.apply_update_install_report(rev.clone(), report.clone());
+                }
                 _ => {}
             },
             Event::Tick => {
@@ -1005,6 +1102,13 @@ impl App {
                 tick_changed |= self.toast.tick(TICK_RATE_MS);
                 tick_changed |= self.prompt.tick_spinner(TICK_RATE_MS);
                 tick_changed |= self.sync_prompt_spinner_state();
+                if self.update_config.enabled
+                    && self.update_config.interval.as_secs() > 0
+                    && !self.update_check_in_flight
+                    && self.last_update_check.elapsed() >= self.update_config.interval
+                {
+                    self.start_update_check(false);
+                }
 
                 if self.pending_initial_submit && !self.prompt.get_input().trim().is_empty() {
                     self.pending_initial_submit = false;
@@ -1058,6 +1162,7 @@ impl App {
     /// disabled and the app look frozen.
     fn has_modal_dialog_layer(&self) -> bool {
         self.alert_dialog.is_open()
+            || self.update_dialog.is_open()
             || self.help_dialog.is_open()
             || self.status_dialog.is_open()
             || self.session_rename_dialog.is_open()
@@ -1081,6 +1186,10 @@ impl App {
     }
 
     fn close_top_dialog(&mut self) -> bool {
+        if self.update_dialog.is_open() {
+            self.update_dialog.close();
+            return true;
+        }
         if self.alert_dialog.is_open() {
             self.alert_dialog.close();
             return true;
@@ -1310,6 +1419,27 @@ impl App {
     }
 
     fn handle_dialog_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+        if self.update_dialog.is_open() {
+            match key.code {
+                KeyCode::Esc => self.update_dialog.close(),
+                KeyCode::Enter => self.start_update_install(),
+                KeyCode::Char('r') | KeyCode::Char('R')
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.start_update_check(true);
+                    self.update_dialog.set_checking(true);
+                }
+                KeyCode::Char('d') | KeyCode::Char('D')
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.dismiss_update();
+                }
+                _ => {}
+            }
+            return Ok(true);
+        }
         if self.alert_dialog.is_open() {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => {
@@ -2133,6 +2263,9 @@ impl App {
                 let current_theme = self.context.current_theme_name();
                 self.theme_list_dialog.open(&current_theme);
             }
+            CommandAction::CheckForUpdates => {
+                self.open_update_dialog();
+            }
             CommandAction::ShowStatus => {
                 self.refresh_status_dialog();
                 self.status_dialog.open();
@@ -2494,6 +2627,88 @@ impl App {
                     .entry(child.id.clone())
                     .or_insert_with(|| map_api_session(&child));
             }
+        }
+    }
+
+    fn apply_update_install_report(&mut self, rev: String, report: InstallReport) {
+        let message = report.message;
+        if report.success {
+            self.applied_update_rev = Some(rev);
+            self.pending_update = None;
+            self.context.set_update_notice(None);
+            self.toast.show(ToastVariant::Success, &message, 8000);
+        } else {
+            self.toast.show(
+                ToastVariant::Error,
+                &format!("Update failed: {}", message),
+                8000,
+            );
+        }
+        if self.update_dialog.is_open() {
+            self.update_dialog.set_status(Some(message));
+        }
+        self.event_caused_change = true;
+    }
+
+    fn start_update_check(&mut self, force: bool) {
+        if !self.update_config.enabled || self.update_check_in_flight {
+            return;
+        }
+        self.update_check_in_flight = true;
+        self.last_update_check = Instant::now();
+        let config = self.update_config.clone();
+        let event_tx = self.event_tx.clone();
+        thread::spawn(move || {
+            let outcome = if force {
+                update::check_now(&config)
+            } else {
+                update::check(&config)
+            };
+            let _ = event_tx.send(Event::Custom(CustomEvent::UpdateChecked(outcome)));
+        });
+    }
+
+    fn open_update_dialog(&mut self) {
+        self.update_dialog.open(
+            &self.installed_info.version,
+            self.installed_info.rev.as_deref(),
+            self.update_config.channel,
+            self.pending_update.clone(),
+            self.update_check_in_flight,
+        );
+        if self.pending_update.is_none() && !self.update_check_in_flight {
+            self.start_update_check(true);
+            self.update_dialog.set_checking(true);
+        }
+    }
+
+    fn start_update_install(&mut self) {
+        let Some(update) = self.pending_update.clone() else {
+            return;
+        };
+        if !self.update_dialog.can_install() {
+            return;
+        }
+        self.update_dialog.set_installing(true);
+        let config = self.update_config.clone();
+        let event_tx = self.event_tx.clone();
+        let rev = update.rev.clone();
+        thread::spawn(move || {
+            let report = update::install(&config, &update);
+            let _ = event_tx.send(Event::Custom(CustomEvent::UpdateInstallFinished {
+                rev,
+                report,
+            }));
+        });
+    }
+
+    fn dismiss_update(&mut self) {
+        if let Some(update) = self.pending_update.take() {
+            update::dismiss(&self.update_config, &update.rev);
+            self.context.set_update_notice(None);
+            self.update_dialog.close();
+            self.toast
+                .show(ToastVariant::Info, "Update notice dismissed.", 2200);
         }
     }
 
@@ -4618,6 +4833,7 @@ impl App {
         let fork_dialog = &self.fork_dialog;
         let provider_dialog = &self.provider_dialog;
         let tag_dialog = &self.tag_dialog;
+        let update_dialog = &self.update_dialog;
         let permission_prompt = &self.permission_prompt;
         let question_prompt = &self.question_prompt;
         let slash_popup = &self.slash_popup;
@@ -4693,6 +4909,7 @@ impl App {
             fork_dialog.render(frame, area, &theme);
             provider_dialog.render(frame, area, &theme);
             tag_dialog.render(frame, area, &theme);
+            update_dialog.render(frame, area, &theme);
             permission_prompt.render(frame, area, &theme);
             question_prompt.render(frame, area, &theme);
 

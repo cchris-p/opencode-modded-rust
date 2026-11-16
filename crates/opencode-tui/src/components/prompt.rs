@@ -1242,6 +1242,21 @@ impl Prompt {
         drop(keybind);
 
         let mut spans = Vec::new();
+        if let Some(notice) = self.context.update_notice() {
+            spans.push(Span::styled(
+                notice.hotkey,
+                Style::default().fg(theme.warning),
+            ));
+            spans.push(Span::styled(
+                format!(
+                    " update {} ({})",
+                    notice.version,
+                    crate::context::short_rev(&notice.rev)
+                ),
+                Style::default().fg(theme.warning),
+            ));
+            spans.push(Span::raw("  "));
+        }
         if self.context.current_model_variant().is_some() {
             spans.push(Span::styled(variant_cycle, Style::default().fg(theme.text)));
             spans.push(Span::styled(
@@ -1839,6 +1854,27 @@ mod tests {
         assert!(!confirmation
             .is_armed_at(first + Duration::from_secs(INTERRUPT_CONFIRM_WINDOW_SECS + 1)));
         assert!(!confirmation.maybe_expire_at(first + Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn update_notice_renders_in_prompt_hint() {
+        with_isolated_prompt(|prompt| {
+            prompt
+                .context
+                .set_update_notice(Some(crate::context::UpdateNotice {
+                    version: "v0.1.5".to_string(),
+                    rev: "abcdef1234".to_string(),
+                    hotkey: "ctrl+g".to_string(),
+                }));
+
+            let line = prompt.hint_line(&Theme::dark());
+            let text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            assert!(text.contains("ctrl+g update v0.1.5 (abcdef1)"), "{text}");
+        });
     }
 
     #[test]

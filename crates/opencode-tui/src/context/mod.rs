@@ -4,9 +4,12 @@ mod session_context;
 
 pub use app_context::{
     AppContext, LspConnectionStatus, LspStatus, McpConnectionStatus, McpServerStatus,
-    MessageDensity, ModelInfo, ProviderInfo, SidebarMode,
+    MessageDensity, ModelInfo, ProviderInfo, SidebarMode, UpdateNotice,
 };
+
 pub use keybind::{Keybind, KeybindRegistry};
+
+pub use opencode_util::update::short_rev;
 pub use session_context::{
     DiffEntry, Message, MessagePart, MessageRole, RevertInfo, Session, SessionContext,
     SessionStatus, TodoItem, TodoStatus, TokenUsage,

@@ -31,6 +31,7 @@ use opencode_tool::{registry::create_default_registry, ToolContext};
 use opencode_types::{
     MessagePart, MessageRole, PartType, Session, SessionMessage, SessionStatus, SessionUsage,
 };
+use opencode_util::update::{self as ort_update, CheckOutcome, UpdateConfig};
 
 #[derive(Parser)]
 #[command(name = "opencode-modded-rust")]
@@ -270,6 +271,8 @@ enum Commands {
         target: Option<String>,
         #[arg(short = 'm', long)]
         method: Option<String>,
+        #[arg(long, default_value_t = false)]
+        check: bool,
     },
     #[command(about = "Uninstall opencode-modded-rust and remove related files")]
     Uninstall {
@@ -944,8 +947,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Pr { number }) => {
             handle_pr_command(number).await?;
         }
-        Some(Commands::Upgrade { target, method }) => {
-            handle_upgrade_command(target, method).await?;
+        Some(Commands::Upgrade {
+            target,
+            method,
+            check,
+        }) => {
+            handle_upgrade_command(target, method, check).await?;
         }
         Some(Commands::Uninstall {
             keep_config,
@@ -4184,7 +4191,20 @@ fn prompt_yes_no(question: &str) -> anyhow::Result<bool> {
 async fn handle_upgrade_command(
     target: Option<String>,
     method: Option<String>,
+    check: bool,
 ) -> anyhow::Result<()> {
+    if target.is_none() && method.is_none() {
+        let config = UpdateConfig::from_env();
+        let installed = ort_update::installed_info(&config);
+        if installed.artifact_installed || check {
+            return tokio::task::spawn_blocking(move || {
+                handle_artifact_upgrade(&config, &installed, check)
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("update task failed: {err}"))?;
+        }
+    }
+
     let detected = detect_install_method();
     let method = method
         .as_deref()
@@ -4219,6 +4239,60 @@ async fn handle_upgrade_command(
     run_upgrade_process(method, &target)?;
     println!("Upgrade complete.");
     Ok(())
+}
+
+fn handle_artifact_upgrade(
+    config: &UpdateConfig,
+    installed: &ort_update::InstalledInfo,
+    check: bool,
+) -> anyhow::Result<()> {
+    let rev = installed
+        .rev
+        .as_deref()
+        .map(ort_update::short_rev)
+        .unwrap_or("unknown");
+    println!(
+        "Current: {} ({}) - {} channel",
+        installed.version,
+        rev,
+        installed.channel.as_str()
+    );
+
+    match ort_update::check_now(config) {
+        CheckOutcome::Available(update) => {
+            println!(
+                "Available: {} ({}) - {} channel",
+                update.version,
+                ort_update::short_rev(&update.rev),
+                update.channel.as_str()
+            );
+            if check {
+                return Ok(());
+            }
+            println!("Installing through ort-install...");
+            let report = ort_update::install(config, &update);
+            println!("{}", report.message);
+            if !report.success {
+                anyhow::bail!("update failed");
+            }
+            Ok(())
+        }
+        CheckOutcome::NoUpdate => {
+            println!("Already up to date.");
+            Ok(())
+        }
+        CheckOutcome::Disabled => {
+            println!("Update checks are disabled by OPENCODE_RUST_UPDATE_CHECK.");
+            Ok(())
+        }
+        CheckOutcome::NotArtifact => {
+            println!("This binary is not managed by ort-install; no artifact update available.");
+            Ok(())
+        }
+        CheckOutcome::Unknown => {
+            anyhow::bail!("could not check for updates (offline, rate limited, or missing token)")
+        }
+    }
 }
 
 async fn handle_uninstall_command(
