@@ -116,6 +116,30 @@ Restart ORT to see the new titles in the session list/header.
   the shared prompt test env lock and cascades into other prompt tests. Re-run the job when this
   happens; it is unrelated to this script.
 
+## Safety fix - 2026-11-17 (ORT databases only)
+
+- A fleet run exposed two safety gaps: the default search fell back to the generic
+  `~/.local/share/opencode/opencode.db` when no `opencode-ort` DB existed, and legacy message
+  payloads stored as a bare list crashed `extract_text_parts`.
+- Default search is now **ORT-only**: `$OPENCODE_DATA_DIR`, `$OPENCODE_ORT_DATA_DIR`,
+  `~/Library/Application Support/opencode-ort`, and `$XDG_DATA_HOME`/`~/.local/share/opencode-ort`.
+  Generic OpenCode DBs are only touched with an explicit `--db`.
+- `extract_text_parts` now accepts both `{"parts": [...]}` and legacy bare-list payloads.
+- On `webappssub1` the generic DB was briefly selected before this fix; its 3 session titles were
+  restored from the pre-change session-archive snapshot and verified identical. `matrillo` and
+  `matrillosub2` had no ORT DB and were skipped with no changes.
+
+## Fleet run - 2026-11-17
+
+- Reachable active machines updated to ORT `0.1.5` via `ort-install`.
+- Applied: `jasper` 14, `webapps` 4, `matrillosub1` 16; `matrillobase1` had already been
+  applied (10). All had backups beside their ORT DB.
+- No ORT DB (skipped): `webappssub1`, `matrillo`, `matrillosub2`.
+- Unreachable from matrillobase1: `j8rsxy`, `moldavite`, `xp-farmer`; `webappssub2` is disabled.
+- Live ORT sessions were present on `jasper` (2), `webapps` (4), and `matrillosub1` (6);
+  `--force` was used and `updated_at` touched. Restart those sessions to show the new titles;
+  an active session can still revert its own title on its next update.
+
 ## Known limitations
 
 - Titles generated for sessions with no user input fall back to `Empty session <date>`.
