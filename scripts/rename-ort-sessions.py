@@ -127,12 +127,56 @@ def load_shared_env(target: dict[str, str]) -> None:
             target[key] = value
 
 
-def fallback_model(env: dict[str, str]) -> str | None:
-    if env.get("OPENCODE_API_KEY"):
-        return None
-    if env.get("DEEPSEEK_API_KEY"):
-        return "deepseek/deepseek-flash"
-    return None
+def auth_paths() -> list[Path]:
+    return [directory / "auth.json" for directory in data_dirs()]
+
+
+def load_auth_providers() -> set[str]:
+    providers: set[str] = set()
+    for path in auth_paths():
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            providers.update(str(key) for key in data)
+    return providers
+
+
+def seed_auth(data_dir: Path) -> None:
+    merged: dict[str, Any] = {}
+    for path in reversed(auth_paths()):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            merged.update(data)
+    if not merged:
+        return
+    destination = data_dir / "auth.json"
+    destination.write_text(json.dumps(merged))
+    try:
+        destination.chmod(0o600)
+    except OSError:
+        pass
+
+
+def fallback_models(env: dict[str, str], providers: set[str]) -> list[str]:
+    models: list[str] = []
+    if env.get("OPENCODE_API_KEY") or "opencode-go" in providers:
+        models.append("opencode-go/deepseek-v4.1-flash")
+    if env.get("DEEPSEEK_API_KEY") or "deepseek" in providers:
+        models.append("deepseek/deepseek-flash")
+    if env.get("ANTHROPIC_API_KEY") or "anthropic" in providers:
+        models.append("anthropic/claude-haiku-4-5")
+    if env.get("OPENAI_API_KEY") or "openai" in providers:
+        models.append("openai/gpt-4o-mini")
+    if env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY") or "google" in providers:
+        models.append("google/gemini-2.5-flash")
+    if env.get("NOVITA_API_KEY") or "novita-ai" in providers:
+        models.append("novita-ai/deepseek/deepseek-v4-pro-0813")
+    return models
 
 
 def running_ort_processes() -> list[str]:
@@ -274,6 +318,7 @@ def call_llm(cli: str, model: str | None, prompt: str, timeout: int) -> str:
         load_shared_env(env)
         env["OPENCODE_DATA_DIR"] = data_dir
         env.setdefault("OPENCODE_SERVER_LOG", "0")
+        seed_auth(Path(data_dir))
         command = [cli, "run", "--dir", work_dir, "--format", "default", "--agent", "build"]
         if model:
             command.extend(["--model", model])
@@ -294,15 +339,35 @@ def call_llm(cli: str, model: str | None, prompt: str, timeout: int) -> str:
 
 
 def generate_titles(
-    sessions: list[dict[str, Any]], cli: str, model: str | None, batch_size: int, timeout: int
+    sessions: list[dict[str, Any]],
+    cli: str,
+    models: list[str],
+    batch_size: int,
+    timeout: int,
 ) -> dict[str, str]:
     titles: dict[str, str] = {}
     for start in range(0, len(sessions), batch_size):
         batch = sessions[start : start + batch_size]
-        response = call_llm(cli, model, build_prompt(batch), timeout)
-        parsed = parse_titles(response)
+        parsed: dict[str, str] = {}
+        last_error: Exception | None = None
+        for model in models:
+            label = model or "product default"
+            try:
+                response = call_llm(cli, model, build_prompt(batch), timeout)
+                parsed = parse_titles(response)
+                if parsed:
+                    break
+                last_error = RuntimeError(
+                    f"{label} returned no parseable titles: {compact(response, 200)!r}"
+                )
+            except Exception as error:
+                last_error = error
+                print(
+                    f"rename-ort-sessions: {label} failed: {compact(str(error), 200)}",
+                    file=sys.stderr,
+                )
         if not parsed:
-            raise RuntimeError(f"model returned no parseable titles: {compact(response, 300)!r}")
+            raise RuntimeError(f"all title models failed: {last_error}")
         for session in batch:
             raw = parsed.get(session["id"])
             title = clean_title(raw) if raw else None
@@ -428,12 +493,15 @@ def main() -> int:
         titles = load_proposals(args.proposals_in)
     else:
         cli = args.cli or default_cli_path()
-        model = args.model
-        if model is None:
+        if args.model:
+            models = [args.model]
+        else:
             env = os.environ.copy()
             load_shared_env(env)
-            model = fallback_model(env)
-        titles = generate_titles(sessions, cli, model, args.batch_size, args.timeout)
+            models = fallback_models(env, load_auth_providers())
+            if not models:
+                models = [None]
+        titles = generate_titles(sessions, cli, models, args.batch_size, args.timeout)
 
     for session in sessions:
         titles.setdefault(session["id"], fallback_title(session))
