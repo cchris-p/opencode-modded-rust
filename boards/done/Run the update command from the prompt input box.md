@@ -5,9 +5,9 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "README.md"
-status: "qa"
+status: "done"
 created: "2026-11-16"
-updated: "2026-11-16"
+updated: "2026-11-17"
 ---
 
 # Run /update from the prompt input box
@@ -61,3 +61,10 @@ submits.
 
 - `FEAT-080` Detect and suggest new ORT release updates.
 - `CLI-017` Show the ORT version for `ort --version`.
+
+## QA Pass - 2026-11-17
+
+Owner accepted the fleet v0.1.5 install/update run as the QA pass. The input-box `/update` /
+`/upgrade` path shipped in `v0.1.5` and is installed on all reachable active machines.
+
+Status: done.

@@ -5,9 +5,9 @@ priority: "P2"
 type: "feature"
 area: "FEAT"
 spec: "docs/release-deployment.md"
-status: "qa"
+status: "done"
 created: "2026-11-16"
-updated: "2026-11-16"
+updated: "2026-11-17"
 ---
 
 # Detect a newer published ORT release and prompt the user to install it
@@ -178,3 +178,14 @@ the standards-side launcher default (`OPENCODE_RUST_AUTO_UPDATE`) so notices are
 - The silent updater (`_opencode_rust_maybe_auto_update`) already exists; this card is about
   making the state visible and giving the user a deliberate install path, not about adding
   another auto-updater.
+
+## QA Pass - 2026-11-17
+
+Owner accepted the fleet v0.1.5 install/update run as the QA pass. All reachable active
+registered machines were updated to ORT `0.1.5`; `matrillobase1` reports
+`opencode-modded-rust 0.1.5` and `ort-verify` rev `4292f41c2c4b8bc67c819a21ae98e02cbf17e31d`.
+The update notice, `/update` dialog, `upgrade --check`, and artifact-aware install shipped in
+`v0.1.5`. The remaining standards-side launcher default (`OPENCODE_RUST_AUTO_UPDATE`) is a
+follow-up, not a blocker for this feature.
+
+Status: done.

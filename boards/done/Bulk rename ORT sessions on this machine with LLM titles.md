@@ -5,9 +5,9 @@ priority: "P2"
 type: "feature"
 area: "CLI"
 spec: "scripts/rename-ort-sessions.py"
-status: "qa"
+status: "done"
 created: "2026-11-16"
-updated: "2026-11-16"
+updated: "2026-11-17"
 ---
 
 # Bulk rename ORT sessions on this machine with LLM titles
@@ -158,3 +158,20 @@ Restart ORT to see the new titles in the session list/header.
 
 - Created 2026-11-16 at the owner's request; owner explicitly chose fully automated LLM naming
   over a manual mapping and accepted a DB script instead of a permanent command.
+
+## QA Pass - 2026-11-17
+
+Owner accepted the fleet rename run as the QA pass.
+
+- ORT `0.1.5` installed on all reachable active machines.
+- Applied ORT titles: `jasper` 14, `webapps` 4, `matrillosub1` 16, `matrillobase1` 10
+  (earlier). Backups remain beside each ORT database.
+- No ORT DB, skipped: `webappssub1`, `matrillo`, `matrillosub2`; `webappssub2` disabled.
+- Unreachable from `matrillobase1`: `j8rsxy`, `moldavite`, `xp-farmer`.
+- Live ORT sessions were forced (`--force`); restart them to display titles. `webapps` retained
+  3/4 titles at the last check because one live session rewrote its own title.
+- `webappssub1` generic vanilla DB titles were restored from the pre-change session-archive
+  snapshot after the first pass; PR #205 restricts the script to ORT data dirs only.
+- Release asset `rename-ort-sessions.py` in `v0.1.5` is the fixed ORT-only version.
+
+Status: done.
