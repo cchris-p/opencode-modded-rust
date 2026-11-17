@@ -46,10 +46,10 @@ def data_dirs() -> list[Path]:
     home = Path.home()
     if sys.platform == "darwin":
         support = home / "Library" / "Application Support"
-        candidates.extend([support / "opencode-ort", support / "opencode"])
+        candidates.append(support / "opencode-ort")
     xdg = os.environ.get("XDG_DATA_HOME")
     base = Path(xdg).expanduser() if xdg else home / ".local" / "share"
-    candidates.extend([base / "opencode-ort", base / "opencode"])
+    candidates.append(base / "opencode-ort")
 
     unique: list[Path] = []
     seen: set[str] = set()
@@ -206,8 +206,16 @@ def extract_text_parts(data: str) -> list[str]:
         payload = json.loads(data or "{}")
     except json.JSONDecodeError:
         return []
+    if isinstance(payload, dict):
+        parts = payload.get("parts", [])
+    elif isinstance(payload, list):
+        parts = payload
+    else:
+        return []
     texts: list[str] = []
-    for part in payload.get("parts", []):
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
         part_type = part.get("part_type")
         text = None
         if isinstance(part_type, dict) and part_type.get("type") == "text":
@@ -458,10 +466,14 @@ def main() -> int:
 
     db = Path(args.db).expanduser() if args.db else default_db_path()
     if not db.is_file():
-        print(f"rename-ort-sessions: database not found: {db}", file=sys.stderr)
+        print(f"rename-ort-sessions: no ORT database found: {db}", file=sys.stderr)
         print("candidates checked:", file=sys.stderr)
         for candidate in candidate_db_paths():
             print(f"  {candidate}", file=sys.stderr)
+        print(
+            "This tool targets ORT data dirs only; pass --db <path> for a custom location.",
+            file=sys.stderr,
+        )
         return 2
     if not database_has_sessions(db):
         print(
