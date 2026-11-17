@@ -89,17 +89,25 @@ Restart ORT to see the new titles in the session list/header.
 - `--db <path>` remains the explicit override; the macOS ORT launcher path is
   `~/Library/Application Support/opencode-ort/opencode.db`.
 
-## Fix - 2026-11-16 (provider environment)
+## Fix - 2026-11-16 (provider environment and auth)
 
 - Running from a plain shell on macOS failed with `Provider 'opencode-go' is not available for
   model 'deepseek-v4.1-flash'`: the script's `run` subprocess did not inherit the managed
   provider keys that `opencode-config` normally exports.
-- `call_llm` now loads `$OPENCODE_CONFIG_DIR/.env` (default `~/.config/opencode/.env`) into the
-  subprocess environment, setting only missing keys and never printing values. If
-  `OPENCODE_API_KEY` is absent but `DEEPSEEK_API_KEY` is present, it falls back to
-  `deepseek/deepseek-flash`; `--model` still overrides.
-- Verified on Linux with `OPENCODE_API_KEY`/`DEEPSEEK_API_KEY` unset in the parent shell; the
-  script still generated titles by loading the managed env file.
+- A second failure (`DeepSeek ... 402 Insufficient Balance`) happened because the subprocess
+  used an isolated `OPENCODE_DATA_DIR`, so the machine's `auth.json` was invisible, and the
+  no-`--model` path could still resolve to the DeepSeek config/fallback instead of the
+  OpenCode Go key.
+- The script now:
+  - loads `$OPENCODE_CONFIG_DIR/.env` into the subprocess environment (missing keys only);
+  - seeds the temporary data dir from every readable `auth.json` (`opencode-ort`, `opencode`,
+    and XDG data dirs), so a key set through the TUI works;
+  - **explicitly pins `opencode-go/deepseek-v4.1-flash`** when `OPENCODE_API_KEY` is present in
+    the env or `opencode-go` is present in `auth.json`;
+  - falls through a provider chain on failure: opencode-go -> DeepSeek -> Anthropic -> OpenAI ->
+    Google -> Novita, and only uses the product/config default if none of those keys exist.
+- Verified on Linux with `OPENCODE_API_KEY` and `DEEPSEEK_API_KEY` unset in the parent shell:
+  the dry run still resolved OpenCode Go from `auth.json` and produced titles.
 
 ## CI note (2026-11-16)
 
