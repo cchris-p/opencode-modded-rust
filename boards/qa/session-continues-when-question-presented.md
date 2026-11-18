@@ -5,9 +5,9 @@ priority: "P1"
 type: "bug"
 area: "BUG"
 spec: "invariants/coding-session-behavior.md"
-status: "todo"
+status: "qa"
 created: "2026-09-30"
-updated: "2026-11-17"
+updated: "2026-11-18"
 ---
 
 # Session continues instead of stopping when the question tool is presented to the user
@@ -239,3 +239,40 @@ child question would block the parent's `task` tool with no visible prompt. Pick
 
 Recommended: **A**, with **B** as the fallback if the parent-side aggregation is too large
 for one pass. Live verification still requires a real `question` from a subagent run.
+
+## Implementation — Option A (2026-11-18)
+
+Owner picked Option A (vanilla parity: block on the ask everywhere and surface child
+questions in the parent's question flow).
+
+- `crates/opencode-server/src/routes.rs`: extracted the inline question callback into
+  `question_callback_for(state, session_id)` and installed it on the `task` subagent runner
+  (`prompt_child_subagent`). Both foreground and background subagent runs go through
+  `run_child_task` -> `prompt_child_subagent`, so a subagent `question` now parks on the ask
+  and returns the answer as the tool result instead of failing with "Question callback not
+  configured" and continuing the turn.
+- `list_session_questions` now aggregates pending questions for the session **and all
+  transitive descendant sessions** (`session_scope_ids`, depth-bounded at 16), with
+  parent-session questions listed first. The reply/reject routes already take the question's
+  own session id from the pending request, and the TUI sends `flow.session_id`, so answering
+  a child question works through the existing session-scoped endpoints.
+- `crates/opencode-tui/src/app/app.rs`: `PendingQuestionFlow` records `from_subagent` when the
+  ask's session differs from the viewed session, and the prompt is prefixed with
+  "Asked by a subagent" so a child ask is not mistaken for the main session's.
+
+### Verification
+
+- `cargo fmt --all -- --check` clean; `cargo clippy -p opencode-server -p opencode-tui
+  --all-targets` clean for the change.
+- `cargo test -p opencode-server --lib` — 78 passed (includes 5 question tests, one new:
+  descendant subagent questions are listed, unrelated sessions are not).
+- `cargo test -p opencode-tui --lib -- --test-threads=1` — 225 passed.
+- Parallel `cargo test -p opencode-tui --lib` still shows the documented
+  `tab_autocomplete_uses_first_candidate` flake and the env-lock poison cascade; both pass
+  serially.
+
+### Remaining QA gate
+
+Live check on a real run: have a `task` subagent call `question` and confirm the parent TUI
+shows "Asked by a subagent", the parent run stays parked (no further model step), and the
+answer reaches the subagent as the tool result.

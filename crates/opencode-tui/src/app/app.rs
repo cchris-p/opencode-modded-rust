@@ -73,6 +73,9 @@ struct TranscriptOptions {
 struct PendingQuestionFlow {
     id: String,
     session_id: String,
+    /// BUG-056: true when the pending ask comes from a child (`task` subagent)
+    /// session rather than the session the operator is viewing.
+    from_subagent: bool,
     steps: Vec<ApiQuestionPromptInfo>,
     answers: Vec<Vec<String>>,
     current_index: usize,
@@ -3826,11 +3829,11 @@ impl App {
         self.permission_prompt.set_requests(permissions);
 
         let question = client.list_questions(session_id)?.into_iter().next();
-        self.sync_question_prompt(question);
+        self.sync_question_prompt(question, session_id);
         Ok(())
     }
 
-    fn sync_question_prompt(&mut self, question: Option<ApiQuestionInfo>) {
+    fn sync_question_prompt(&mut self, question: Option<ApiQuestionInfo>, active_session_id: &str) {
         let Some(question) = question else {
             self.question_prompt.close();
             self.pending_question_flow = None;
@@ -3852,9 +3855,11 @@ impl App {
             return;
         }
 
+        let from_subagent = question.session_id != active_session_id;
         let flow = PendingQuestionFlow {
             id: question.id,
             session_id: question.session_id,
+            from_subagent,
             answers: Vec::new(),
             current_index: 0,
             steps: question.questions,
@@ -3902,13 +3907,19 @@ impl App {
         } else {
             QuestionType::SingleChoice
         };
+        let body = step
+            .header
+            .as_ref()
+            .map(|header| format!("{}\n\n{}", header, step.question))
+            .unwrap_or_else(|| step.question.clone());
+        let question = if flow.from_subagent {
+            format!("Asked by a subagent\n\n{body}")
+        } else {
+            body
+        };
         QuestionRequest {
             id: flow.id.clone(),
-            question: step
-                .header
-                .as_ref()
-                .map(|header| format!("{}\n\n{}", header, step.question))
-                .unwrap_or_else(|| step.question.clone()),
+            question,
             question_type: prompt_type,
             options: step
                 .options

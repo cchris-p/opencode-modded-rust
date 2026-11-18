@@ -3592,6 +3592,10 @@ async fn prompt_child_subagent(
         opencode_session::SessionStateManager::new(),
     )))
     .with_lsp_registry(state.lsp_registry.clone())
+    // BUG-056: subagent runs must park on a `question` exactly like the main
+    // prompt, so the ask becomes a real blocking tool result instead of a
+    // no-callback error that lets the turn continue.
+    .with_ask_question_callback(question_callback_for(state.clone(), child_id.clone()))
     .with_workspace_intelligence_policy(workspace_intelligence_policy(child_config.as_ref()));
     if let Some((title_provider, title_model_id)) = resolve_title_model(
         &state,
@@ -4417,68 +4421,10 @@ async fn run_prompt_turn(state: Arc<ServerState>, session_id: String, pending: P
         })
     });
 
-    let question_state = task_state.clone();
-    let question_session_id = session_id.clone();
-    let question_callback: opencode_tool::QuestionCallback = Arc::new(move |questions| {
-        let state = question_state.clone();
-        let session_id = question_session_id.clone();
-        Box::pin(async move {
-            let request_id = format!("question_{}", Uuid::new_v4().simple());
-            let info = QuestionInfo {
-                id: request_id.clone(),
-                session_id: session_id.clone(),
-                questions: questions
-                    .into_iter()
-                    .map(|question| QuestionPromptInfo {
-                        question: question.question,
-                        header: question.header,
-                        options: question
-                            .options
-                            .into_iter()
-                            .map(|option| QuestionOptionInfo {
-                                label: option.label,
-                                description: option.description,
-                            })
-                            .collect(),
-                        multiple: question.multiple,
-                        custom: question.custom,
-                    })
-                    .collect(),
-            };
-            let asked_questions = info.questions.clone();
-            let (tx, rx) = oneshot::channel();
-            QUESTION_REQUESTS
-                .write()
-                .await
-                .insert(request_id.clone(), info);
-            QUESTION_WAITERS
-                .write()
-                .await
-                .insert(request_id.clone(), tx);
-            let mut pending_guard = PendingQuestionGuard::new(request_id.clone());
-            state.broadcast(
-                &serde_json::json!({
-                    "type": "question.asked",
-                    "requestID": request_id,
-                    "sessionID": session_id,
-                    "questions": asked_questions,
-                })
-                .to_string(),
-            );
-            state.broadcast(
-                &serde_json::json!({
-                    "type": "session.updated",
-                    "sessionID": session_id,
-                    "source": "question.request",
-                })
-                .to_string(),
-            );
-
-            let result = question_resolution_result(rx.await);
-            pending_guard.disarm();
-            result
-        })
-    });
+    // BUG-056: one factory for the question callback, so every runner that can
+    // execute the `question` tool (main prompt and `task` subagents) blocks on
+    // the ask instead of erroring and continuing the turn.
+    let question_callback = question_callback_for(task_state.clone(), session_id.clone());
 
     // FEAT-045: real, persisted child sessions for the `task` tool. The server
     // owns the session manager and provider, so it supplies the create/prompt
@@ -7195,6 +7141,80 @@ fn question_resolution_result(
 
 /// Removes a pending question request and its waiter when the ask callback is
 /// dropped without being resolved (for example an aborted task, a cancelled run,
+/// BUG-056: build the `question` tool callback for a specific session.
+///
+/// The callback inserts the pending request, broadcasts `question.asked`, and
+/// awaits the waiter before returning the tool result, so the calling run parks
+/// on the ask exactly like vanilla. Every runner that can execute the `question`
+/// tool must install this (the main prompt and `task` subagent runs); a runner
+/// without it would turn the ask into an immediate `Question callback not
+/// configured` error and keep going.
+fn question_callback_for(
+    state: Arc<ServerState>,
+    session_id: String,
+) -> opencode_tool::QuestionCallback {
+    Arc::new(move |questions| {
+        let state = state.clone();
+        let session_id = session_id.clone();
+        Box::pin(async move {
+            let request_id = format!("question_{}", Uuid::new_v4().simple());
+            let info = QuestionInfo {
+                id: request_id.clone(),
+                session_id: session_id.clone(),
+                questions: questions
+                    .into_iter()
+                    .map(|question| QuestionPromptInfo {
+                        question: question.question,
+                        header: question.header,
+                        options: question
+                            .options
+                            .into_iter()
+                            .map(|option| QuestionOptionInfo {
+                                label: option.label,
+                                description: option.description,
+                            })
+                            .collect(),
+                        multiple: question.multiple,
+                        custom: question.custom,
+                    })
+                    .collect(),
+            };
+            let asked_questions = info.questions.clone();
+            let (tx, rx) = oneshot::channel();
+            QUESTION_REQUESTS
+                .write()
+                .await
+                .insert(request_id.clone(), info);
+            QUESTION_WAITERS
+                .write()
+                .await
+                .insert(request_id.clone(), tx);
+            let mut pending_guard = PendingQuestionGuard::new(request_id.clone());
+            state.broadcast(
+                &serde_json::json!({
+                    "type": "question.asked",
+                    "requestID": request_id,
+                    "sessionID": session_id,
+                    "questions": asked_questions,
+                })
+                .to_string(),
+            );
+            state.broadcast(
+                &serde_json::json!({
+                    "type": "session.updated",
+                    "sessionID": session_id,
+                    "source": "question.request",
+                })
+                .to_string(),
+            );
+
+            let result = question_resolution_result(rx.await);
+            pending_guard.disarm();
+            result
+        })
+    })
+}
+
 /// or server shutdown mid-question). Normal replies and rejects already remove
 /// both entries, so the guard is disarmed on those paths.
 struct PendingQuestionGuard {
@@ -7284,19 +7304,69 @@ async fn list_questions() -> Json<Vec<QuestionInfo>> {
     Json(result)
 }
 
-async fn list_session_questions(Path(session_id): Path<String>) -> Json<Vec<QuestionInfo>> {
-    Json(pending_questions_for_session(&session_id).await)
+async fn list_session_questions(
+    State(state): State<Arc<ServerState>>,
+    Path(session_id): Path<String>,
+) -> Json<Vec<QuestionInfo>> {
+    Json(pending_questions_for_session(&state, &session_id).await)
 }
 
-async fn pending_questions_for_session(session_id: &str) -> Vec<QuestionInfo> {
+/// BUG-056: pending questions for a session and all of its descendant (`task`
+/// subagent) sessions, so a subagent ask is visible while the operator is in the
+/// parent session. Vanilla has one global question surface; this keeps the
+/// session-scoped route honest without making the operator navigate first.
+async fn pending_questions_for_session(
+    state: &Arc<ServerState>,
+    session_id: &str,
+) -> Vec<QuestionInfo> {
+    let scope = session_scope_ids(state, session_id).await;
     let pending = QUESTION_REQUESTS.read().await;
     let mut result: Vec<_> = pending
         .values()
-        .filter(|question| question.session_id == session_id)
+        .filter(|question| scope.contains(&question.session_id))
         .cloned()
         .collect();
-    result.sort_by(|a, b| a.id.cmp(&b.id));
+    result.sort_by(|a, b| {
+        // Parent-session questions first, then by id for stability.
+        let a_is_root = a.session_id == session_id;
+        let b_is_root = b.session_id == session_id;
+        b_is_root.cmp(&a_is_root).then_with(|| a.id.cmp(&b.id))
+    });
     result
+}
+
+/// The session id plus every transitive descendant session id. Depth-bounded so a
+/// malformed parent chain cannot loop.
+async fn session_scope_ids(
+    state: &Arc<ServerState>,
+    session_id: &str,
+) -> std::collections::HashSet<String> {
+    const MAX_DEPTH: usize = 16;
+    let sessions = state.sessions.lock().await;
+    let mut scope = std::collections::HashSet::new();
+    scope.insert(session_id.to_string());
+    let mut frontier = vec![session_id.to_string()];
+    for _ in 0..MAX_DEPTH {
+        let mut next = Vec::new();
+        for session in sessions.list() {
+            let parent = match session.parent_id.as_deref() {
+                Some(parent) => parent,
+                None => continue,
+            };
+            if scope.contains(&session.id) {
+                continue;
+            }
+            if frontier.iter().any(|id| id == parent) {
+                scope.insert(session.id.clone());
+                next.push(session.id.clone());
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    scope
 }
 
 #[derive(Debug, Deserialize)]
@@ -7465,6 +7535,7 @@ mod question_tests {
 
     #[tokio::test]
     async fn session_question_list_filters_by_session() {
+        let state = Arc::new(ServerState::new());
         let session_id = "test-session-list-a";
         let other_session_id = "test-session-list-b";
         let request_id = "test-question-list-a";
@@ -7472,13 +7543,84 @@ mod question_tests {
         let _rx = insert_pending_question(request_id, session_id).await;
         let _other_rx = insert_pending_question(other_request_id, other_session_id).await;
 
-        let questions = pending_questions_for_session(session_id).await;
+        let questions = pending_questions_for_session(&state, session_id).await;
 
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].id, request_id);
 
         remove_pending_question(request_id).await;
         remove_pending_question(other_request_id).await;
+    }
+
+    /// BUG-056: a `task` subagent question must surface on the parent session's
+    /// question route, with parent questions listed first.
+    #[tokio::test]
+    async fn session_question_list_includes_descendant_subagent_questions() {
+        let state = Arc::new(ServerState::new());
+        let other_id = "test-unrelated-session";
+        {
+            let mut sessions = state.sessions.lock().await;
+            let parent = opencode_session::Session::new("proj", ".");
+            let mut child = opencode_session::Session::new("proj", ".");
+            child.parent_id = Some(parent.id.clone());
+            let mut grandchild = opencode_session::Session::new("proj", ".");
+            grandchild.parent_id = Some(child.id.clone());
+            sessions.update(parent);
+            sessions.update(child);
+            sessions.update(grandchild);
+        }
+        let (parent_id, child_id, grandchild_id) = {
+            let sessions = state.sessions.lock().await;
+            let parent = sessions
+                .list()
+                .into_iter()
+                .find(|session| session.parent_id.is_none())
+                .expect("parent exists")
+                .id
+                .clone();
+            let child = sessions
+                .list()
+                .into_iter()
+                .find(|session| session.parent_id.as_deref() == Some(parent.as_str()))
+                .expect("child exists")
+                .id
+                .clone();
+            let grandchild = sessions
+                .list()
+                .into_iter()
+                .find(|session| session.parent_id.as_deref() == Some(child.as_str()))
+                .expect("grandchild exists")
+                .id
+                .clone();
+            (parent, child, grandchild)
+        };
+
+        let parent_question = "test-question-parent";
+        let child_question = "test-question-child";
+        let grandchild_question = "test-question-grandchild";
+        let unrelated_question = "test-question-unrelated";
+        let _a = insert_pending_question(parent_question, &parent_id).await;
+        let _b = insert_pending_question(child_question, &child_id).await;
+        let _c = insert_pending_question(grandchild_question, &grandchild_id).await;
+        let _d = insert_pending_question(unrelated_question, other_id).await;
+
+        let questions = pending_questions_for_session(&state, &parent_id).await;
+        let ids: Vec<&str> = questions.iter().map(|q| q.id.as_str()).collect();
+
+        assert_eq!(questions.len(), 3, "descendants must be included: {ids:?}");
+        assert_eq!(ids[0], parent_question, "parent question listed first");
+        assert!(ids.contains(&child_question));
+        assert!(ids.contains(&grandchild_question));
+        assert!(!ids.contains(&unrelated_question));
+
+        for id in [
+            parent_question,
+            child_question,
+            grandchild_question,
+            unrelated_question,
+        ] {
+            remove_pending_question(id).await;
+        }
     }
 
     #[tokio::test]
