@@ -179,3 +179,78 @@ deferred follow-up.
   `api.launchpad.net`; macOS job also failed during native setup), so no code/test failure was
   involved.
 - Card remains in `qa`; no QA report has been recorded yet.
+
+## QA Failure - 2026-11-11
+
+- Reported after merge: copying a fenced code block with Ctrl+C pasted only empty lines.
+- Reproduced with the live ORT binary (`3bceef8...`, which includes PR #179) against session
+  `ses_84126346ec064c1a9db3ce7e1074bf98` in `cass`: the assistant message has two bash fences
+  (single-line `python manage.py export_appointments_csv`, then the multi-line
+  `--start/--end/--output` command). Copying the second block yielded blank lines.
+- Root cause: `copy_rows_for_message` classified rendered rows with `text.trim_start()`. Every
+  rendered row is right-padded to the pane width, so `is_code_frame_footer` never matched `╰───`
+  plus trailing padding. The code region never closed; the second `╭` header was treated as a
+  continuation and its body rows were paired past the end of the first block's source, producing
+  `CodeStart("")`.
+- Existing copy-plan tests only covered single-block messages, so this slipped through.
+
+## Follow-up Fix - 2026-11-11
+
+- Branch: `bug/BUG-070-fence-footer-padding`.
+- PR: https://github.com/cchris-p/opencode-modded-rust/pull/188
+- Change: classify with `text.trim()` in `copy_rows_for_message` so a padded footer is recognized
+  and each fence opens and closes its own region.
+- Tests: `fenced_code_copy_plan_handles_multiple_blocks_in_one_message` covers two fences at 200
+  and 60 columns; `prose_after_a_fenced_block_stays_normal` proves the region closes before
+  following prose.
+- Verification: `cargo fmt -p opencode-tui -- --check`, `cargo check -p opencode-tui`, and both new
+  tests pass. Full suite: 210 passed, 2 pre-existing prompt failures
+  (`tab_autocomplete_uses_first_candidate` and the poisoned-env
+  `utf8_backspace_delete_and_cursor_are_char_safe`) unchanged from clean `development`.
+- Card returned to `qa`; post-fix QA report recorded below.
+
+## QA Report - 2026-11-11
+
+- Fixed binary: branch `bug/BUG-070-fence-footer-padding` at `4eafe18`, built with
+  `cargo build -p opencode-cli --no-default-features` (the native scopemux sources are not present
+  in this checkout).
+- Fixture: isolated server on `127.0.0.1:3299` with `OPENCODE_DATA_DIR=/tmp/qa070`, session
+  `ses_924dbe3f078e4b09aa5baf84b9bf6c69`, seeded with one assistant message containing two bash
+  fences.
+- A/B in the real TUI via tmux, selecting the second block and pressing Ctrl+C:
+  - pre-fix binary (`3bceef8...`): clipboard was exactly `\n\n\n` (the reported empty lines).
+  - fixed binary: clipboard was the four raw source lines, preserving `\` continuations and the
+    two-space continuation indentation.
+- First block still copies correctly; `cargo fmt -p opencode-tui -- --check`, `cargo check -p
+  opencode-tui`, both new regression tests, and the full suite pass (210 passed, 2 pre-existing
+  prompt failures unchanged from clean `development`).
+- QA passes for the reported failure; card remains in `qa` awaiting merge closeout.
+
+## Next Agent Instructions
+
+**Current state:** PR #188 is open on `bug/BUG-070-fence-footer-padding` with commits `4eafe18`
+(fix), `c317ef5` (PR link), and `8747b9e` (QA report). The branch is pushed and checked out; the
+card is in `qa`.
+
+**Start here:** review PR #188 and the QA Report above.
+
+**Verify:**
+- `cargo test -p opencode-tui --lib fenced_code_copy_plan_handles_multiple_blocks_in_one_message`
+- `cargo test -p opencode-tui --lib prose_after_a_fenced_block_stays_normal`
+- Rebuild and run the real TUI, open a message with two fenced blocks, select the second block, press
+  Ctrl+C, and confirm the clipboard has the raw source lines instead of blank lines.
+
+**Known issues:** native scopemux sources are absent in this checkout, so a plain
+`cargo build -p opencode-cli` panics in `crates/opencode-scopemux/build.rs`. Use
+`cargo build -p opencode-cli --no-default-features` for local QA, or `ort-build` for a full native
+build. The full `opencode-tui` suite still has two pre-existing prompt failures unrelated to this
+card.
+
+**Gates:** PR #188 checks and the owner's merge decision. The card stays in `qa` until merge
+closeout; do not promote it to `done` without QA/owner direction.
+
+**Do not:** push or merge into `main`; do not merge PR #188 without the owner explicitly asking for
+closeout; do not delete the branch before merge.
+
+**References:** PR #188, `boards/qa/BUG-070-fenced-code-selection-copies-frame-chrome.md`, commits
+`4eafe18` / `c317ef5` / `8747b9e`.
