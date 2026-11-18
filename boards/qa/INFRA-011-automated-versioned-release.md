@@ -129,3 +129,72 @@ publishing. Deployment is `INFRA-012`.
   on `j8rsxy`). Until then every release must be completed the same way.
 
 Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.0
+
+## Update - 2026-11-12
+
+- The release matrix now uses `macos-15` (GitHub retired `macos-14` on 2026-11-02).
+- The rolling `native-artifacts` macOS leg is `continue-on-error`, so a hosted macOS runner outage
+  cannot block Linux artifact publishing.
+- The immutable `release.yml` still requires both Linux and macOS assets, per
+  `invariants/release-deployment.md`. A hosted macOS runner outage can still block a `main`
+  release by design; resolving that needs reliable macOS runners or an explicit invariant change.
+
+## Update - 2026-11-12 (v0.1.3)
+
+- Automated release attempted twice (`43249125655`, `43252958582`): Linux `build` succeeded, but
+  `build (macos-15)` was cancelled after ~15 minutes queued with an empty `runner_name` and zero
+  steps; `publish` was skipped. The rolling preview build had queued ~20 minutes and succeeded, so
+  this is hosted macOS capacity, not a bad label.
+- Recovered manually: Linux asset from Release run `43252958582` (`e2334a3`); macOS CLI/native from
+  the tree-identical preview run `43247378454` (PR merge ref `4ae1556`). All three commits share
+  tree `6d7d516d4ec17bbaf3ac314c406672151a34d09f`. Verified SHA256s, wrote the manifest
+  (`commit=e2334a3`, `version=0.1.3`, pin/query key), tagged and published `v0.1.3` with 12 assets.
+- Recommendation: add an automatic retry/fallback for macOS release jobs (or a self-hosted macOS
+  runner). A 15-minute queue cancellation currently requires manual recovery.
+
+Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.3
+
+## Update - 2026-11-13 (v0.1.4)
+
+- Release PR #194 merged; `main` at `cc9befa`, version `0.1.4`.
+- `Release` run `43443998888`: Linux `build` succeeded, but `build (macos-15)` again
+  queued ~15 minutes with `runner_id: 0` and zero steps before cancellation;
+  `publish` was skipped. Hosted macOS capacity/minutes remain the blocker.
+- Recovered manually: Linux assets from run `43443998888`; macOS CLI built on
+  `j8rsxy` from `cc9befa` with the prebuilt `macos-aarch64-2a642c10534f` bundle
+  (query smoke key `73aa2ff86776cc85`, matching the Linux key). Repackaged with
+  `.rev=cc9befa`, generated `release-manifest.json`, and published `v0.1.4` with
+  12 assets.
+- Still recommended: automatic macOS retry/fallback or a self-hosted macOS
+  runner; hosted macOS availability caused the same manual recovery for v0.1.0,
+  v0.1.3, and v0.1.4.
+
+Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.4
+
+## Update - 2026-11-16 (v0.1.5)
+
+- Release PR #198 merged; `main` at `c03cd52`, version `0.1.5`.
+- `Release` run `43896647003`: both `build (ubuntu-22.04)` and `build (macos-15)` succeeded.
+  `publish` failed after creating no tag/release: `gh release create "$tag" dist/*` tried to
+  upload the staged native-bundle **directory** (`opencode-native-linux-x86_64-...`) as an asset
+  and aborted with `read ...: is a directory`.
+- Fix: the publish step now expands `dist/` to regular files only (`find dist -maxdepth 1
+  -type f`) and fails when no assets are found, so directories can never be treated as release
+  assets. Fix merged via PR #199.
+- Retry release PR #200 merged; `main` at `4292f41`. `Release` run `43904691286`: Linux `build`
+  succeeded, but `build (macos-15)` was cancelled again after 15 minutes queued with no runner,
+  so `publish` was skipped. The GitHub token available to the agent lacks `actions:write`, so the
+  failed job could not be re-run from the CLI.
+- Recovered manually using tree-identical builds (`c03cd52` vs `4292f41` differ only in
+  `.github/workflows/release.yml` and board docs): macOS assets from the successful macOS build in
+  run `43896647003` (`c03cd52`), Linux assets from run `43904691286` (`4292f41`). Rewrote the
+  macOS `.rev` to `4292f41`, verified all SHA256s, regenerated `release-manifest.json`
+  (commit `4292f41`, version `0.1.5`, pin `2a642c10...`, query key `73aa2ff86776cc85`), and
+  published `v0.1.5` with 12 assets. Installed on `matrillobase1` via `ort-install`; `ort-verify`
+  reports `rev=4292f41c2c4b8bc67c819a21ae98e02cbf17e31d version=0.1.5`.
+- Still recommended: automatic macOS retry/fallback or a self-hosted macOS runner. Hosted macOS
+  availability has now required manual recovery for v0.1.0, v0.1.3, v0.1.4, and v0.1.5. Also give
+  the release automation a token with `actions:write` so a failed macOS job can be re-run without
+  a new release PR.
+
+Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.5

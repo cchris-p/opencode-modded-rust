@@ -70,7 +70,7 @@ Jev ships no MCP server and no Rust binding, so any path beyond conceptual borro
 
 ## Why It Does Not Fit the Current Stance
 
-- **Hosted dependency.** The core policy is a hosted TypeSafe API (`api.typesafe.ai`), and text generation defaults to a hosted chat model. This conflicts with the product's local-first posture; the product-owned default remains `deepseek/deepseek-flash`.
+- **Hosted dependency.** The core policy is a hosted TypeSafe API (`api.typesafe.ai`), and text generation defaults to a hosted chat model. This conflicts with the product's local-first posture; the product-owned default remains `opencode-go/deepseek-v4.1-flash`.
 - **Heavy browser runtime.** Jev needs Chrome plus Browser Harness with remote debugging, and it drives an owned tab in the user's existing Chrome profile. That is a real operational and isolation cost inside a Rust product.
 - **Language and packaging.** There is no Rust binding; every path runs a Python `>=3.12` sidecar with `browser-harness==0.1.13`.
 - **Scope.** Interactive browser automation is far outside the narrow V1 coding daily-driver, and the nearest clean boundary (MCP) is explicitly deferred.

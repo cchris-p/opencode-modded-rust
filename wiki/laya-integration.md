@@ -46,7 +46,7 @@ These are exactly Laya's `choice` / `score` / `noul` shape. A 33 ms local forwar
 | `triage` / custom questions | classify a request or task before choosing a mode/agent | mode and agent selection, alongside `wiki/agent-modes-and-custom-agents.md` |
 | `moderation` / `noul`-style checks | content and safety gates | policy checks on user-visible content |
 | `score` / `decide` confidence | first-pass verification and review signal | verification/review context, without replacing the fresh-context review invariant |
-| `model_router` preset | pick a provider/model for a request | optional provider selection; the product-owned default remains `deepseek/deepseek-flash` |
+| `model_router` preset | pick a provider/model for a request | optional provider selection; the product-owned default remains `opencode-go/deepseek-v4.1-flash` |
 | `shortlist` | choose among many labels/tools | narrowing large option sets before a `choice` question |
 
 Two adoption shapes fall out of this:

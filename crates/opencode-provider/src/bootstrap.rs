@@ -1707,6 +1707,18 @@ fn capitalize_mode(mode: &str) -> String {
 pub fn from_models_dev_provider(provider: &ModelsProviderInfo) -> ProviderState {
     let mut models: HashMap<String, ProviderModel> = HashMap::new();
 
+    // The provider-level `api` is the canonical OpenAI-compatible base URL.
+    // Individual models may advertise native endpoints (Anthropic, Google),
+    // but those are translated by the provider gateway and must not become the
+    // generic provider base URL.
+    let mut options = HashMap::new();
+    if let Some(api) = provider.api.as_ref().filter(|api| !api.trim().is_empty()) {
+        options.insert(
+            "baseURL".to_string(),
+            serde_json::Value::String(api.clone()),
+        );
+    }
+
     for (id, model) in &provider.models {
         let base = from_models_dev_model(provider, model);
         models.insert(id.clone(), base.clone());
@@ -1735,7 +1747,7 @@ pub fn from_models_dev_provider(provider: &ModelsProviderInfo) -> ProviderState 
         name: provider.name.clone(),
         env: provider.env.clone(),
         key: None,
-        options: HashMap::new(),
+        options,
         models,
     }
 }

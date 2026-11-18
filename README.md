@@ -101,7 +101,8 @@ From the repo root use `./target/debug/opencode-modded-rust` or `cargo run -p op
 - `mcp` – MCP management
 - `export` / `import` – Export/import sessions
 - `github` / `pr` – GitHub-related features
-- `upgrade` / `uninstall` – Upgrade and uninstall
+- `upgrade` / `uninstall` – Upgrade and uninstall (`upgrade --check` reports an available
+  artifact revision without installing)
 - `generate` – Generate OpenAPI spec
 - `version` – Show version
 
@@ -203,6 +204,50 @@ without cloning this repo or installing a Rust toolchain.
 - Policy: `invariants/release-deployment.md`. Runbook:
   `docs/release-deployment.md`.
 
+### Update notices and artifact updates
+
+- An artifact-installed binary compares its installed revision with the
+  revision published for the active channel at startup and then on a throttled
+  interval. The running revision is read from the
+  `~/.local/share/ort/bin/<rev>/opencode-modded-rust` layout, so a
+  `cargo run`/`target/debug` build is treated as a development build and never
+  shows a notice.
+- When a different published revision exists, the prompt status line shows
+  `Update available: <version> (<short rev>) - press ctrl+g`, and the same
+  notice is shown once as a toast. It never steals focus or blocks a turn.
+- `ctrl+g`, typing a bare `/update` (or `/upgrade`) in the prompt and pressing Enter, or
+  `/update` in the command palette opens the Update dialog. It
+  shows current vs available version/rev/channel; `Enter` installs, `r`
+  re-checks, `d` dismisses the notice, and `Esc` closes. `upgrade --check`
+  prints the same state from the CLI.
+- Installation is delegated to `~/standards/utilities/ort-install` (checksum
+  verified, channel-aware). The running process is never hot-swapped; restart
+  the session to apply the new revision. A successful install suppresses the
+  notice for the rest of that session.
+- Checks use a short timeout, cache their result in
+  `${XDG_CACHE_HOME:-~/.cache}/opencode/update-check.json`, and are silent on
+  offline, rate-limited, or unknown responses. They never block startup or a
+  model request.
+- `OPENCODE_RUST_UPDATE_CHECK=0` disables notices and checks for this feature
+  (use it to opt out); `OPENCODE_RUST_UPDATE_INTERVAL=<seconds>` sets the
+  periodic interval and `0` disables periodic re-checks after the startup
+  check. `OPENCODE_RUST_CHANNEL=stable|preview` chooses the channel and is
+  unchanged by this feature. The launcher's silent auto-update remains a
+  separate `OPENCODE_RUST_AUTO_UPDATE` control before the product starts.
+
+### Bulk session rename utility
+
+`scripts/rename-ort-sessions.py` is also attached to every release as
+`rename-ort-sessions.py` (with a `.sha256`), so a machine that only installed the
+binary can run it without cloning this repo:
+
+```bash
+gh release download v0.1.5 --pattern 'rename-ort-sessions.py*'
+sha256sum -c rename-ort-sessions.py.sha256
+python3 rename-ort-sessions.py          # dry run
+python3 rename-ort-sessions.py --apply  # write titles (quit ORT first)
+```
+
 ## Development and validation
 
 ```bash
@@ -266,15 +311,25 @@ points at rendering.
 
 ### Runtime bounds and server logs
 
-Every run is bounded and must always reach a terminal state:
+Runtime bounds match opencode vanilla: a normal turn is not cut off by a
+wall-clock cap. A run continues until the model stops, the provider fails, or
+the user aborts it. Optional opt-in backstops remain available:
 
-- `OPENCODE_RUN_TIMEOUT_MS` - hard wall-clock budget for one queued run
-  (default `1800000`, 30 minutes; `0` disables). On expiry the run is cancelled
-  and the session is finalized with a durable error instead of staying `busy`.
-- `OPENCODE_STREAM_BUDGET_MS` - wall-clock budget for a single provider step
-  (default `900000`, 15 minutes; `0` disables). It complements the 90s stream
-  idle timeout, which only fires when the stream goes silent; the step budget
-  also stops a stream that keeps emitting forever.
+- `OPENCODE_RUN_TIMEOUT_MS` - optional hard wall-clock budget for one queued
+  run. Default is `0` (disabled), matching vanilla; set a positive value to opt
+  into a backstop for unattended runs. On expiry the run is cancelled and the
+  session is finalized with a durable error instead of staying `busy`.
+- `OPENCODE_STREAM_IDLE_TIMEOUT_MS` - idle gap tolerated between provider
+  stream events before the step is treated as stalled and fails loudly
+  (default `300000`, 5 minutes, matching vanilla's provider chunk timeout; `0`
+  disables).
+- `OPENCODE_STREAM_BUDGET_MS` - optional wall-clock budget for a single
+  provider step, used to bound an endless reasoning loop that keeps emitting
+  events. Default is `0` (disabled), matching vanilla; set a positive value to
+  opt in.
+
+Neither `OPENCODE_RUN_TIMEOUT_MS` nor `OPENCODE_STREAM_BUDGET_MS` is set by
+default, so long agentic runs are allowed to finish just like vanilla.
 
 Aborting a run (`Esc`) cancels it even when it is parked on an await that does
 not observe the prompt token, so the session returns to idle instead of wedging.

@@ -5,9 +5,9 @@ priority: "P1"
 type: "docs"
 area: "INFRA"
 spec: "invariants/release-deployment.md"
-status: "doing"
+status: "qa"
 created: "2026-11-05"
-updated: "2026-11-08"
+updated: "2026-11-17"
 ---
 
 # Capture The Main-Release Fleet Deployment Invariant And Runbook
@@ -102,3 +102,15 @@ automation in `INFRA-009`..`INFRA-014` has a durable standard to conform to.
 
 Remain in `doing` until `INFRA-009`..`INFRA-014` land, then refine the invariant
 and runbook to match the shipped automation and move to QA/done.
+
+## Moved To QA (2026-11-17)
+
+- `INFRA-009`, `INFRA-010`, `INFRA-011`, `INFRA-013`, and `INFRA-014` are implemented and in
+  `qa`; `INFRA-012` is down to its owner-gated control-plane remainder. The stated
+  precondition for leaving `doing` is therefore met.
+- Runbook refreshed: the stale "no release workflow yet" fallback label is corrected, since
+  `.github/workflows/release.yml` (`INFRA-011`) is live.
+- Invariant reviewed against the shipped automation; all twelve rules still map to an
+  enforcement point and need no change.
+- QA gate: confirm the invariant and runbook read correctly against the shipped
+  `v0.1.5` release/deploy behavior, then close.

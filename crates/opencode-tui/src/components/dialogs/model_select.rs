@@ -22,6 +22,7 @@ pub struct ModelSelectDialog {
     query: String,
     state: ListState,
     open: bool,
+    current_model: Option<String>,
 }
 
 impl ModelSelectDialog {
@@ -87,6 +88,7 @@ impl ModelSelectDialog {
             query: String::new(),
             state,
             open: false,
+            current_model: None,
         }
     }
 
@@ -108,6 +110,10 @@ impl ModelSelectDialog {
 
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    pub fn set_current_model(&mut self, current: Option<String>) {
+        self.current_model = current.filter(|value| !value.trim().is_empty());
     }
 
     pub fn handle_input(&mut self, c: char) {
@@ -141,6 +147,12 @@ impl ModelSelectDialog {
             .selected()
             .and_then(|i| self.filtered.get(i))
             .and_then(|&idx| self.models.get(idx))
+    }
+
+    fn is_current_model(&self, model: &Model) -> bool {
+        self.current_model
+            .as_deref()
+            .is_some_and(|current| current == format!("{}/{}", model.provider, model.id))
     }
 
     fn filter(&mut self) {
@@ -223,11 +235,19 @@ impl ModelSelectDialog {
                         Style::default().fg(theme.text)
                     };
 
-                    ListItem::new(Line::from(vec![
+                    let mut spans = vec![
                         Span::styled(&m.name, style),
                         Span::styled("  ", style),
                         Span::styled(&m.provider, Style::default().fg(theme.text_muted)),
-                    ]))
+                    ];
+                    if self.is_current_model(m) {
+                        spans.push(Span::styled(
+                            "  (current)",
+                            Style::default().fg(theme.text_muted),
+                        ));
+                    }
+
+                    ListItem::new(Line::from(spans))
                 })
             })
             .collect();
@@ -252,4 +272,86 @@ impl Default for ModelSelectDialog {
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     super::centered_rect(width, height, area)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Model, ModelSelectDialog};
+    use crate::theme::Theme;
+
+    fn sample_models() -> Vec<Model> {
+        vec![
+            Model {
+                id: "alpha".into(),
+                name: "Alpha".into(),
+                provider: "zeta".into(),
+                context_window: 0,
+            },
+            Model {
+                id: "beta".into(),
+                name: "Beta".into(),
+                provider: "zeta".into(),
+                context_window: 0,
+            },
+        ]
+    }
+
+    fn render_to_string(dialog: &ModelSelectDialog) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).unwrap();
+        let theme = Theme::default();
+        terminal
+            .draw(|frame| dialog.render(frame, frame.size(), &theme))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer.get(x, y).symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn line_with<'a>(rendered: &'a str, needle: &str) -> &'a str {
+        rendered
+            .lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or("")
+    }
+
+    #[test]
+    fn current_model_is_marked_in_the_list() {
+        let mut dialog = ModelSelectDialog::new();
+        dialog.set_models(sample_models());
+        dialog.set_current_model(Some("zeta/beta".to_string()));
+        dialog.open();
+
+        let rendered = render_to_string(&dialog);
+        assert!(line_with(&rendered, "Beta").contains("(current)"));
+        assert!(!line_with(&rendered, "Alpha").contains("(current)"));
+    }
+
+    #[test]
+    fn no_current_model_marks_nothing() {
+        let mut dialog = ModelSelectDialog::new();
+        dialog.set_models(sample_models());
+        dialog.set_current_model(None);
+        dialog.open();
+
+        let rendered = render_to_string(&dialog);
+        assert!(!rendered.contains("(current)"));
+    }
+
+    #[test]
+    fn blank_current_model_is_treated_as_unset() {
+        let mut dialog = ModelSelectDialog::new();
+        dialog.set_models(sample_models());
+        dialog.set_current_model(Some("   ".to_string()));
+        dialog.open();
+
+        let rendered = render_to_string(&dialog);
+        assert!(!rendered.contains("(current)"));
+    }
 }

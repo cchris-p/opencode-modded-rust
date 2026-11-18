@@ -7,8 +7,8 @@ area: "INFRA"
 spec: "invariants/release-deployment.md"
 status: "doing"
 created: "2026-11-05"
-updated: "2026-11-08"
-attention: "First real fleet deploy + control-plane trigger remain. Run standards-deploy-ort --rev v0.1.0 on matrillobase1 after the v0.1.0 release publishes; wiring a release-triggered systemd job needs owner setup."
+updated: "2026-11-17"
+attention: "Owner gate: wiring the release-triggered deploy control plane (systemd unit or self-hosted runner on matrillobase1) needs owner setup. Fleet deploys have otherwise run for v0.1.3, v0.1.4, and v0.1.5; moldavite and xp-farmer remain Tailscale-offline."
 ---
 
 # Automatically Deploy Every Main Release To All Registered Machines
@@ -105,6 +105,7 @@ step rather than weakening key handling.
 - `INFRA-013` stable channel.
 - `INFRA-014` verification and rollback.
 - `INFRA-015` invariant and runbook.
+- `H-021` production/fleet deployment handoff (manual interim procedure for the next agent).
 
 ## Implementation (2026-11-08)
 
@@ -141,3 +142,26 @@ Verified at `eeb608f` (`version 0.1.0`, queries `73aa2ff86776cc85`):
 Remaining: resolve the two offline active machines; wire the release-triggered control-plane
 job on `matrillobase1`; the macOS release asset still needs a working runner or the manual
 `j8rsxy` build path.
+
+## Deployment: v0.1.3 (2026-11-12)
+
+- Ran `standards-deploy-ort --rev e2334a35e2262a48ac1050b623ce7ba759dd59d7 --tag v0.1.3` on
+  `matrillobase1`. Report archived under `~/.local/share/ort/deploy-reports/`.
+- Verified at `e2334a3` (8/10 active): `jasper` (canary), `webapps`, `webappssub1`,
+  `matrillobase1`, `matrillo`, `matrillosub1`, `matrillosub2`, `j8rsxy` (macOS arm64).
+- `webappssub2` is `disabled` and was reported/skipped.
+- `moldavite` (Tailscale offline 22d) and `xp-farmer` (offline 1h) failed at "could not push
+  deploy tools" (SSH connect timeout). They remain on their previous revision; the deploy is
+  **not fully complete** per the invariant until they are online and re-verified.
+
+## Deployment: v0.1.5 (2026-11-16)
+
+- `v0.1.5` published at `main` `4292f41`; all reachable active machines were updated to ORT
+  `0.1.5` through the in-product `/update` path (`FEAT-080`), which the owner accepted as the
+  QA pass. `moldavite` and `xp-farmer` remain Tailscale-offline.
+- No `standards-deploy-ort` TSV was produced for this cycle because the rollout was driven by
+  the update path, not the deploy driver. The driver remains the canonical path for
+  `INFRA-014` verification and rollback.
+- Remaining owner-gated item is unchanged: the release-triggered control plane (systemd unit
+  or self-hosted runner on `matrillobase1`) so a published `main` release deploys without a
+  human. The manual interim procedure is `H-021`.

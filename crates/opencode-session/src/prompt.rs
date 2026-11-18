@@ -11,9 +11,9 @@ use futures::StreamExt;
 use opencode_plugin::{HookContext, HookEvent};
 use opencode_provider::transform::{apply_caching, ProviderType};
 use opencode_provider::{
-    get_model_context_limit, stream_budget_from_env, with_idle_timeout, with_stream_budget,
-    ChatRequest, ChatResponse, Content, ContentPart, Message, Provider, Role, StreamEvent,
-    ToolDefinition, DEFAULT_STREAM_IDLE_TIMEOUT,
+    get_model_context_limit, stream_budget_from_env, stream_idle_timeout_from_env,
+    with_idle_timeout, with_stream_budget, ChatRequest, ChatResponse, Content, ContentPart,
+    Message, Provider, Role, StreamEvent, ToolDefinition,
 };
 
 use crate::compaction::{
@@ -1403,6 +1403,13 @@ impl SessionPrompt {
             let resolved_tools =
                 merge_tool_definitions(tools.clone(), Self::mcp_tools_from_session(session));
 
+            let mut provider_options = std::collections::HashMap::new();
+            opencode_provider::inject_session_headers(
+                &mut provider_options,
+                &provider_id,
+                &session_id,
+            );
+
             let request = ChatRequest {
                 model: model_id.clone(),
                 messages: chat_messages,
@@ -1417,7 +1424,11 @@ impl SessionPrompt {
                 stream: Some(true),
                 top_p: agent_params.top_p,
                 variant: variant.clone(),
-                provider_options: None,
+                provider_options: if provider_options.is_empty() {
+                    None
+                } else {
+                    Some(provider_options)
+                },
             };
 
             // Stream the response (matching TS streamText approach).
@@ -1433,10 +1444,10 @@ impl SessionPrompt {
             // sending without closing the connection cannot wedge the turn
             // forever. Without this, a mid-turn stall never reaches a terminal
             // state and the session stays `active` indefinitely (BUG-038).
-            let stream = with_idle_timeout(stream, DEFAULT_STREAM_IDLE_TIMEOUT);
-            // Also bound the whole step: an idle timeout resets on every event,
-            // so a provider that keeps streaming (endless reasoning) would never
-            // trip it (BUG-046).
+            // The default matches vanilla's provider timeout; `0` disables it.
+            let stream = with_idle_timeout(stream, stream_idle_timeout_from_env());
+            // Opt-in whole-step budget for endless reasoning loops (BUG-046).
+            // Disabled by default to match vanilla, which has no step budget.
             let mut stream = with_stream_budget(stream, stream_budget_from_env());
 
             // Create assistant message placeholder before consuming the stream so
@@ -2789,11 +2800,13 @@ impl SessionPrompt {
     }
 
     async fn ensure_title(session: &mut Session, provider: Arc<dyn Provider>, model_id: &str) {
+        let session_id = session.id.clone();
         let Some(first_user_text) = session_title_source(session) else {
             return;
         };
 
-        let Some(title) = generate_session_title_llm(&first_user_text, provider, model_id).await
+        let Some(title) =
+            generate_session_title_llm(&first_user_text, provider, model_id, &session_id).await
         else {
             return;
         };
@@ -3340,6 +3353,7 @@ pub struct SubtaskExecutor {
     pub description: Option<String>,
     pub model: Option<ModelRef>,
     pub agent_params: AgentParams,
+    session_id: String,
 }
 
 impl SubtaskExecutor {
@@ -3350,7 +3364,13 @@ impl SubtaskExecutor {
             description: None,
             model: None,
             agent_params: AgentParams::default(),
+            session_id: uuid::Uuid::new_v4().to_string(),
         }
+    }
+
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = session_id.into();
+        self
     }
 
     pub fn with_description(mut self, description: &str) -> Self {
@@ -3429,6 +3449,13 @@ impl SubtaskExecutor {
             })
             .collect();
 
+        let mut provider_options = std::collections::HashMap::new();
+        opencode_provider::inject_session_headers(
+            &mut provider_options,
+            &model.provider_id,
+            &self.session_id,
+        );
+
         let messages = vec![Message::user(&self.prompt)];
 
         let request = ChatRequest {
@@ -3441,7 +3468,11 @@ impl SubtaskExecutor {
             stream: Some(false),
             top_p: self.agent_params.top_p,
             variant: None,
-            provider_options: None,
+            provider_options: if provider_options.is_empty() {
+                None
+            } else {
+                Some(provider_options)
+            },
         };
 
         let response = provider.chat(request).await?;
@@ -3945,7 +3976,11 @@ pub async fn generate_session_title_llm(
     first_user_message: &str,
     provider: Arc<dyn Provider>,
     model_id: &str,
+    session_id: &str,
 ) -> Option<String> {
+    let mut provider_options = std::collections::HashMap::new();
+    opencode_provider::inject_session_headers(&mut provider_options, provider.id(), session_id);
+
     let request = ChatRequest {
         model: model_id.to_string(),
         messages: vec![
@@ -3968,7 +4003,11 @@ pub async fn generate_session_title_llm(
         temperature: Some(0.5),
         top_p: None,
         stream: None,
-        provider_options: None,
+        provider_options: if provider_options.is_empty() {
+            None
+        } else {
+            Some(provider_options)
+        },
         variant: None,
     };
 
@@ -4388,6 +4427,81 @@ mod tests {
             model: title_test_provider_model(),
             events: Vec::new(),
         })
+    }
+
+    struct HeaderCapturingProvider {
+        captured: Arc<StdMutex<Option<HashMap<String, serde_json::Value>>>>,
+        model: ModelInfo,
+    }
+
+    #[async_trait]
+    impl Provider for HeaderCapturingProvider {
+        fn id(&self) -> &str {
+            "opencode-go"
+        }
+
+        fn name(&self) -> &str {
+            "OpenCode Go"
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            vec![self.model.clone()]
+        }
+
+        fn get_model(&self, id: &str) -> Option<&ModelInfo> {
+            (self.model.id == id).then_some(&self.model)
+        }
+
+        async fn chat(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
+            *self.captured.lock().unwrap() = request.provider_options;
+            Ok(ChatResponse {
+                id: "chat_mock".to_string(),
+                model: self.model.id.clone(),
+                choices: vec![opencode_provider::Choice {
+                    index: 0,
+                    message: Message {
+                        role: Role::Assistant,
+                        content: Content::Text("Go title".to_string()),
+                        cache_control: None,
+                        provider_options: None,
+                    },
+                    finish_reason: Some("stop".to_string()),
+                }],
+                usage: None,
+            })
+        }
+
+        async fn chat_stream(&self, _request: ChatRequest) -> Result<StreamResult, ProviderError> {
+            Ok(Box::pin(stream::empty()))
+        }
+    }
+
+    #[tokio::test]
+    async fn title_request_carries_opencode_session_header() {
+        let captured = Arc::new(StdMutex::new(None));
+        let provider: Arc<dyn Provider> = Arc::new(HeaderCapturingProvider {
+            captured: captured.clone(),
+            model: title_test_provider_model(),
+        });
+
+        let title = generate_session_title_llm(
+            "Investigate flaky tests",
+            provider,
+            "test-model",
+            "ses_abc",
+        )
+        .await;
+
+        assert_eq!(title.as_deref(), Some("Go title"));
+        let options = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("provider options captured");
+        assert_eq!(
+            options["headers"]["x-opencode-session"],
+            serde_json::json!("ses_abc")
+        );
     }
 
     #[tokio::test]

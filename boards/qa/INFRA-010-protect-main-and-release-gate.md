@@ -133,3 +133,10 @@ Remaining QA gates before `done`:
   checks, and conversation resolution. Re-add an approval requirement if a second reviewer
   is available.
 - `native (macos-14)` stays advisory until the macOS runner is available.
+
+## Update - 2026-11-12
+
+- `macos-14` was retired by GitHub on 2026-11-02; the runner label was migrated to `macos-15`.
+- PR/push CI native verification is Linux-only. `native (macos-15)` is still **not** a required
+  check because hosted macOS runner acquisition remains intermittent. Keep it advisory until a
+  reliable macOS runner exists (hosted capacity or self-hosted).

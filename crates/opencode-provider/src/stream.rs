@@ -137,7 +137,20 @@ pub type StreamResult = Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderEr
 /// session loop awaiting an event that never arrives. The turn then never
 /// reaches a terminal state, the session stays `active`, and the user is stuck
 /// until they abandon it (BUG-038).
-pub const DEFAULT_STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+///
+/// `300s` matches opencode vanilla's default per-chunk/provider timeout
+/// (`chunkTimeout`), so a gap that vanilla tolerates is not cut short here.
+pub const DEFAULT_STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Resolve the per-stream idle timeout. `OPENCODE_STREAM_IDLE_TIMEOUT_MS`
+/// overrides the vanilla-parity default; `0` disables the idle bound.
+pub fn stream_idle_timeout_from_env() -> std::time::Duration {
+    std::env::var("OPENCODE_STREAM_IDLE_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(DEFAULT_STREAM_IDLE_TIMEOUT)
+}
 
 /// Wrap a provider event stream so a gap longer than `idle_timeout` between
 /// events ends the stream with a [`StreamEvent::Error`] instead of hanging
@@ -145,9 +158,13 @@ pub const DEFAULT_STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration
 ///
 /// This converts a silently wedged provider connection into a visible terminal
 /// error that the session loop can record and surface, guaranteeing every turn
-/// either completes or fails loudly (BUG-038).
+/// either completes or fails loudly (BUG-038). A zero timeout is a no-op.
 pub fn with_idle_timeout(stream: StreamResult, idle_timeout: std::time::Duration) -> StreamResult {
     use futures::StreamExt;
+
+    if idle_timeout.is_zero() {
+        return stream;
+    }
 
     let stream = futures::stream::unfold(
         (stream, idle_timeout, false),
@@ -177,13 +194,15 @@ pub fn with_idle_timeout(stream: StreamResult, idle_timeout: std::time::Duration
 /// many events it emits.
 ///
 /// The idle timeout resets on every event, so a provider that keeps streaming
-/// (for example an endless reasoning loop) never trips it. This budget bounds
-/// the whole step and ends it with a [`StreamEvent::Error`] (BUG-046). `0`
-/// disables the bound.
-pub const DEFAULT_STREAM_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// (for example an endless reasoning loop) never trips it. This opt-in budget
+/// bounds the whole step and ends it with a [`StreamEvent::Error`] (BUG-046).
+///
+/// The default is `0` (disabled) to match opencode vanilla, which has no
+/// whole-step budget. Set `OPENCODE_STREAM_BUDGET_MS` to opt into a backstop.
+pub const DEFAULT_STREAM_BUDGET: std::time::Duration = std::time::Duration::ZERO;
 
-/// Resolve the per-step stream budget. `OPENCODE_STREAM_BUDGET_MS` overrides
-/// the default; `0` disables the bound.
+/// Resolve the per-step stream budget. `OPENCODE_STREAM_BUDGET_MS` opts into a
+/// bound; `0` (the default) leaves the step unbounded, matching vanilla.
 pub fn stream_budget_from_env() -> std::time::Duration {
     std::env::var("OPENCODE_STREAM_BUDGET_MS")
         .ok()
@@ -1305,6 +1324,37 @@ mod idle_timeout_tests {
         let events: Vec<Result<StreamEvent, ProviderError>> = stream.collect().await;
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], Ok(StreamEvent::TextDelta(_))));
+        assert!(matches!(events[1], Ok(StreamEvent::Done)));
+    }
+
+    #[tokio::test]
+    async fn zero_idle_timeout_is_disabled() {
+        // A gap longer than any small timeout must still pass through when the
+        // bound is disabled (vanilla parity).
+        let inner: StreamResult = Box::pin(futures::stream::unfold(false, |sent| async move {
+            if sent {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            Some((Ok(StreamEvent::TextDelta("late".to_string())), true))
+        }));
+        let stream = with_idle_timeout(inner, std::time::Duration::ZERO);
+
+        let events: Vec<Result<StreamEvent, ProviderError>> = stream.collect().await;
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Ok(StreamEvent::TextDelta(_))));
+    }
+
+    #[tokio::test]
+    async fn zero_stream_budget_is_disabled() {
+        let inner: StreamResult = Box::pin(futures::stream::iter(vec![
+            Ok(StreamEvent::TextDelta("hi".to_string())),
+            Ok(StreamEvent::Done),
+        ]));
+        let stream = with_stream_budget(inner, std::time::Duration::ZERO);
+
+        let events: Vec<Result<StreamEvent, ProviderError>> = stream.collect().await;
+        assert_eq!(events.len(), 2);
         assert!(matches!(events[1], Ok(StreamEvent::Done)));
     }
 

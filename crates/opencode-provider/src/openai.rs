@@ -578,6 +578,10 @@ impl OpenAIProvider {
             // as top-level keys rather than nested under `provider_options`.
             if let Some(Value::Object(opts)) = obj.remove("provider_options") {
                 for (k, v) in opts {
+                    // `headers` is transport metadata, not a body field.
+                    if k == "headers" {
+                        continue;
+                    }
                     obj.entry(k).or_insert(v);
                 }
             }
@@ -592,6 +596,27 @@ impl OpenAIProvider {
         }
 
         Ok(value)
+    }
+
+    /// Provider-option headers (including OpenCode session headers) that must
+    /// travel on the HTTP request rather than in the JSON body.
+    fn request_headers(request: &ChatRequest) -> Vec<(String, String)> {
+        request
+            .provider_options
+            .as_ref()
+            .and_then(|options| options.get("headers"))
+            .and_then(Value::as_object)
+            .map(|headers| {
+                headers
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .as_str()
+                            .map(|value| (name.clone(), value.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn responses_url(base_url: Option<&str>, path: &str) -> String {
@@ -795,6 +820,9 @@ impl OpenAIProvider {
         if let Some(org) = &self.config.organization {
             req_builder = req_builder.header("OpenAI-Organization", org);
         }
+        for (name, value) in Self::request_headers(&request) {
+            req_builder = req_builder.header(name, value);
+        }
 
         let response = req_builder
             .json(&request_body)
@@ -977,6 +1005,9 @@ impl OpenAIProvider {
 
         if let Some(org) = &self.config.organization {
             req_builder = req_builder.header("OpenAI-Organization", org);
+        }
+        for (name, value) in Self::request_headers(&request) {
+            req_builder = req_builder.header(name, value);
         }
 
         let response = req_builder
@@ -1409,6 +1440,22 @@ mod tests {
                 "read".to_string(),
                 serde_json::json!({"file_path":"hello.txt"})
             )]
+        );
+    }
+
+    #[test]
+    fn provider_option_headers_are_transport_only() {
+        let mut request = ChatRequest::new("deepseek-v4.1-flash", vec![Message::user("hi")]);
+        request.provider_options = Some(HashMap::from([(
+            "headers".to_string(),
+            serde_json::json!({"x-opencode-session": "ses_abc"}),
+        )]));
+
+        let body = OpenAIProvider::build_request_body(&request).expect("body");
+        assert!(body.get("headers").is_none());
+        assert_eq!(
+            OpenAIProvider::request_headers(&request),
+            vec![("x-opencode-session".to_string(), "ses_abc".to_string())]
         );
     }
 }

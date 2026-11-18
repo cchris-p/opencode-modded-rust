@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 /// Product-owned default model.
 ///
-/// The Rust product defaults to the deepseek-direct provider instead of
+/// The Rust product defaults to OpenCode Go's DeepSeek Flash instead of
 /// inheriting the shared global config's model, which is typically generated
 /// for vanilla opencode by the user's shell (e.g. `opencode-use-auto` selects
 /// an openrouter model). It is applied in `load_all` immediately after the
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 /// config, or managed config still overrides it. Model-only inline content from
 /// the shared vanilla global config path is treated as another global default
 /// and ignored.
-pub const DEFAULT_MODEL: &str = "deepseek/deepseek-flash";
+pub const DEFAULT_MODEL: &str = "opencode-go/deepseek-v4.1-flash";
 
 /// Labels describing which source produced the effective `model` value.
 ///

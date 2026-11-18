@@ -8,7 +8,8 @@
 - OpenRouter may be selected explicitly by config, environment, or `Settings > Provider`.
 - If OpenRouter is temporarily hidden from normal provider-selection lists, explicit `openrouter/...` configuration behavior must remain intentional and documented by the implementing board item.
 - OpenRouter must not become the implicit product default unless an explicit project invariant changes that policy.
-- The product-owned default model/provider is `deepseek/deepseek-flash` and is independent of vanilla OpenCode's global OpenRouter configuration.
+- The product-owned default model/provider is `opencode-go/deepseek-v4.1-flash` and is independent of vanilla OpenCode's global OpenRouter configuration.
+- Every request to an `opencode*` provider (the free `opencode` catalog and the paid `opencode-go` catalog) must carry a stable `x-opencode-session` header identifying the conversation. OpenCode Go rejects requests without it (`400 MissingSessionID`). The header is transport metadata and must not be serialized into the request body.
 - DeepSeek model metadata (context window, max output, modalities, effort levels) must come from the live official listing or the `models.dev` catalog, never from a stale hardcoded table. The bundled fallback catalog consumes the same canonical spec in `crates/opencode-provider/src/deepseek.rs`, so a missing/corrupt cache cannot silently revert to older limits.
 - DeepSeek reasoning effort is capability-driven: the direct OpenAI-compatible path advertises `low`/`high`/`max` and rejects any other value before network I/O. The endpoint default (`high`) applies when no variant is selected.
 - The DeepSeek Anthropic-Messages transport is opt-in via `transport = "anthropic"`; `/chat/completions` remains the default. The transport may only be promoted to default if a recorded measurement shows a win (currently a measured null result; see `docs/research/RESEARCH-008-deepseek-harness-vs-opencode.md`).

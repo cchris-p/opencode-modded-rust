@@ -17,7 +17,7 @@ Behavior outside that screen is secondary:
 
 The provider screen shows the effective provider, effective model, selection source, auth source, and Ollama host source so overrides are visible instead of implicit. The selection source distinguishes the product default from a persisted manual selection and from config or environment overrides.
 
-When you press `Enter` on a highlighted model in `Settings > Provider`, the selection is written to the project-local runtime config (`<workspace>/opencode.json`, which this repo gitignores) and becomes the default for new sessions and future runs. The same persistence applies when a model is chosen from the model-cycle dialog. Press `d` in `Settings > Provider` to clear the saved selection so the product default (`deepseek/deepseek-flash`) is effective again.
+When you press `Enter` on a highlighted model in `Settings > Provider`, the selection is written to the project-local runtime config (`<workspace>/opencode.json`, which this repo gitignores) and becomes the default for new sessions and future runs. The same persistence applies when a model is chosen from the model-cycle dialog. Press `d` in `Settings > Provider` to clear the saved selection so the product default (`opencode-go/deepseek-v4.1-flash`) is effective again.
 
 Manual selection is **project-level**: it is stored in the workspace's own `opencode.json` and applies to that workspace, not to every workspace on the machine. The product default only applies while no manual selection exists, or after a reset.
 
@@ -37,8 +37,8 @@ need to probe it or export state. Precedence, high to low:
 The `ollama` provider is registered as OpenAI-compatible at `<host>/v1`, and
 the configured tag is added to the provider catalog. The host and model from
 `ollama.json` are provider details, not launch defaults: a bare `ort` keeps the
-product/workspace default (`deepseek/deepseek-flash` unless config or `--model`
-says otherwise). Select an Ollama model explicitly with `--model ollama/<tag>`
+product/workspace default (`opencode-go/deepseek-v4.1-flash` unless config or
+`--model` says otherwise). Select an Ollama model explicitly with `--model ollama/<tag>`
 or a workspace config naming it; the standards `ortq` wrapper passes `--model`
 for you. Ollama is always reached over HTTP; the `ollama` binary is never
 required or invoked.

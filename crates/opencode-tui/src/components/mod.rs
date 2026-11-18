@@ -26,7 +26,7 @@ pub use dialogs::{
     McpDialog, McpItem, Model, ModelSelectDialog, PromptStashDialog, Provider, ProviderDialog,
     ProviderStatus, SessionDeleteState, SessionExportDialog, SessionItem, SessionListDialog,
     SessionRenameDialog, SkillListDialog, StashItem, StatusDialog, StatusLine, Tag, TagDialog,
-    ThemeListDialog, ThemeOption, TimelineDialog, TimelineEntry,
+    ThemeListDialog, ThemeOption, TimelineDialog, TimelineEntry, UpdateDialog,
 };
 pub use diff::{DiffLine, DiffLineType, DiffMode, DiffView};
 pub use home::HomeView;

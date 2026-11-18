@@ -28,9 +28,12 @@ manual interim step and record it on the release.
    checksums, `.rev` sidecars, manifest, and release notes.
 6. Confirm the release manifest and all assets are present before deployment starts.
 
-Manual interim (no release workflow yet): build with
+Fallback (workflow unavailable, for example no hosted macOS runner): build with
 `scripts/package-native-artifacts.sh` and `scripts/publish-cli-artifact.sh`, then verify the
 uploaded assets and record the commit SHA, scopemux pin, and query-set key on the card.
+Tree-identical commits may reuse assets from an earlier successful build, but you must
+rewrite the `.rev` sidecar to the release commit and re-verify every checksum. Hosted macOS
+availability has required this recovery for `v0.1.0`, `v0.1.3`, `v0.1.4`, and `v0.1.5`.
 
 ## Read The Release Manifest
 

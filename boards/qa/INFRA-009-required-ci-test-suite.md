@@ -120,3 +120,16 @@ classified as core OS-notify infrastructure; `opencode-oco` is boundary.
 Remaining QA gate before `done`: the failure-injection checks from "Verification"
 (break fmt/test/query-smoke separately; docs-only PR passes) and resolving or explicitly
 tracking the macOS runner availability.
+
+## Update - 2026-11-12
+
+- GitHub retired the `macos-14` hosted runner image on 2026-11-02; the CI matrix now uses
+  `macos-15`.
+- PR/push `CI` runs the `native` job on Linux only. macOS native build/test coverage stays in
+  `native-artifacts.yml` (rolling artifacts) and `release.yml` (immutable release), where it is
+  not required to gate every PR.
+- `native (macos-15)` remains advisory for required-check purposes (see `INFRA-010`); a hosted
+  macOS runner acquisition failure no longer appears as a cancelled `macos-14` job on PRs.
+- The Ubuntu native job no longer depends on the Launchpad `deadsnakes` PPA;
+  `scripts/fetch-scopemux-core.sh` installs the distro Python 3.10 development package, removing
+  that transient external failure.

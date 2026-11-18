@@ -891,6 +891,7 @@ impl LlmProcessor {
         if !plugin_headers.is_empty() {
             provider_options.insert("headers".to_string(), serde_json::json!(plugin_headers));
         }
+        opencode_provider::inject_session_headers(&mut provider_options, &provider_id, &session_id);
 
         let request = ChatRequest {
             model: model_id,

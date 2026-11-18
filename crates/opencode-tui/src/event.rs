@@ -18,9 +18,20 @@ pub enum CustomEvent {
     StreamChunk(String),
     StreamComplete,
     StreamError(String),
-    ToolCallStart { id: String, name: String },
-    ToolCallComplete { id: String, result: String },
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    ToolCallComplete {
+        id: String,
+        result: String,
+    },
     StateChanged(StateChange),
+    UpdateChecked(opencode_util::update::CheckOutcome),
+    UpdateInstallFinished {
+        rev: String,
+        report: opencode_util::update::InstallReport,
+    },
 }
 
 #[derive(Clone, Debug)]

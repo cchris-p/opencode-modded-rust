@@ -39,10 +39,9 @@ jobs:
         include:
           - os: ubuntu-22.04
             deps: |
-              sudo add-apt-repository -y ppa:deadsnakes/ppa
               sudo apt-get update
-              sudo apt-get install -y cmake python3.11-dev
-          - os: macos-14
+              sudo apt-get install -y cmake
+          - os: macos-15
             deps: |
               brew install cmake python@3.11
               echo "$(brew --prefix python@3.11)/bin" >> "$GITHUB_PATH"
@@ -217,6 +216,12 @@ jobs:
           name: release-manifest
           path: dist/release-manifest.json
 
+      - name: Include session rename utility
+        run: |
+          set -euo pipefail
+          cp scripts/rename-ort-sessions.py dist/
+          ( cd dist && sha256sum rename-ort-sessions.py > rename-ort-sessions.py.sha256 )
+
       - name: Publish immutable release
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run))
         env:
@@ -224,7 +229,15 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.meta.outputs.tag }}"
-          gh release create "$tag" dist/* \
+          assets=()
+          while IFS= read -r -d '' file; do
+            assets+=("$file")
+          done < <(find dist -maxdepth 1 -type f -print0)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "no release assets found under dist/" >&2
+            exit 1
+          fi
+          gh release create "$tag" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "opencode-modded-rust ${tag}" \
