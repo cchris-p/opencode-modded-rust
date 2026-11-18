@@ -276,3 +276,11 @@ questions in the parent's question flow).
 Live check on a real run: have a `task` subagent call `question` and confirm the parent TUI
 shows "Asked by a subagent", the parent run stays parked (no further model step), and the
 answer reaches the subagent as the tool result.
+
+## Merge Closeout — 2026-11-18
+
+- PR #206 merged into `development` as merge commit `ec5c024` with all required checks green
+  (`fmt`, `check`, `clippy`, `test`, `native (ubuntu-22.04)`); PR state was `CLEAN`.
+- Branch `feature/BUG-056-subagent-question-suspend` deleted remotely and locally; the
+  temporary worktree was removed and `origin` pruned.
+- Card stays in `qa`. Remaining gate is the live subagent-question check listed above.
