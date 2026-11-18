@@ -7,6 +7,7 @@ area: "BUG"
 spec: "invariants/coding-session-behavior.md"
 status: "todo"
 created: "2026-09-30"
+updated: "2026-11-17"
 ---
 
 # Session continues instead of stopping when the question tool is presented to the user
@@ -205,3 +206,36 @@ Candidate non-blocking / continuation paths:
   model steps, and whether that is vanilla-compatible (vanilla resolves the ask on reject and
   resumes, so a "stop forever" expectation would be a deliberate deviation to record on `GATE-002`).
   The separate answer-revision defect (defect A) is tracked by `BUG-058` and is out of scope here.
+
+## Code Recheck — 2026-11-17
+
+Line references above have drifted; re-verified against `development` at this date:
+
+- **H1 confirmed instance.** Only the main prompt path installs the question callback:
+  `crates/opencode-server/src/routes.rs:4716` (`.with_ask_question_callback(question_callback)`).
+  `prompt_child_subagent` (`crates/opencode-server/src/routes.rs:3511`) builds a
+  `SessionPrompt` with no question callback, so a `question` tool call from a `task`
+  subagent runner hits `ToolContext::question`'s no-callback error
+  (`crates/opencode-tool/src/tool.rs:644`, `"Question callback not configured"`) and the
+  loop continues instead of suspending.
+- **Surfacing constraint.** The TUI only lists questions for the *active* session:
+  `crates/opencode-tui/src/app/app.rs:3828` calls `client.list_questions(session_id)` for
+  the current session only (`/session/{id}/question`). A child-session question is therefore
+  invisible unless the operator has navigated into that child session.
+
+### Decision needed before implementation
+
+Installing the callback on the child runner is not sufficient on its own: an unanswered
+child question would block the parent's `task` tool with no visible prompt. Pick one:
+
+- **A (vanilla parity)** — install the callback on every tool-capable runner *and* surface
+  pending questions from child sessions in the parent's question flow (aggregate across
+  descendants of the active session).
+- **B (safe interim)** — withhold the `question` tool from runners that have no callback, so
+  no runner can silently downgrade a question into an error-and-continue. Diverges from
+  vanilla for subagents; record the deviation in `GATE-002`.
+- **C** — install the callback and require the operator to navigate to the child session to
+  answer. Rejected as a default: it can hang a foreground `task` with no signal.
+
+Recommended: **A**, with **B** as the fallback if the parent-side aggregation is too large
+for one pass. Live verification still requires a real `question` from a subagent run.

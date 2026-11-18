@@ -5,8 +5,9 @@ priority: "P1"
 type: "research"
 area: "DECISION"
 spec: "wiki/decision-layer.md"
-status: "todo"
+status: "qa"
 created: "2026-10-24"
+updated: "2026-11-17"
 ---
 
 # Inventory and baseline harness decision points
@@ -71,3 +72,22 @@ a baseline, "Jev is cheaper" is not measurable per class.
 - `DECISION-008`
 - `DECISION-009`
 - `wiki/decision-layer.md`
+
+## Implementation (2026-11-17)
+
+- Added `docs/decision-inventory.md`: 18 rows covering permissions, command risk, agent
+  selection, tool filtering, model/provider selection, title/summary generation (excluded),
+  compaction trigger, tool-result pruning, tool-call normalization, loop continuation,
+  retrieval sufficiency, workspace-intelligence routing, failure classification, review
+  triage, board/task classification, memory write, and safety screening.
+- Each row records: exact code location, deterministic/generative/absent, baseline status
+  (`unmeasured` plus the measurement plan, or `n/a` for generation), sensitivity tier,
+  proposed authority tier, and an expected-value rank.
+- Wave 1 classes (failure classification, review triage, compaction trigger, retrieval
+  sufficiency) are specified in detail with state, options, baseline plan, and authority.
+- Explicitly excluded generation (titles, summaries, answers) and `forbidden`-authority
+  surfaces (permissions, tool exposure, dispositions, merges, invariants, secrets).
+- Linked from `wiki/decision-layer.md`; added a bounded, local-only measurement plan.
+- No behavior change; every baseline stays `unmeasured` until the measurement plan runs.
+
+QA gate: confirm the code locations still resolve and that no class was invented.

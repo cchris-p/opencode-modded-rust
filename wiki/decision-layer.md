@@ -56,8 +56,11 @@ Examples:
 
 ## Current decision inventory
 
-The first inventory pass should confirm and extend this list. The current code
-already contains decision points that are either deterministic or generative:
+The first inventory pass is recorded in [`docs/decision-inventory.md`](../docs/decision-inventory.md)
+(`DECISION-002`): exact code locations, implementation kind, baseline status, sensitivity
+tier, and proposed authority per class. The table below is the short summary; keep the two
+in sync when a class moves. The current code already contains decision points that are
+either deterministic or generative:
 
 | Decision point | Current implementation | System-1 candidate |
 | --- | --- | --- |
