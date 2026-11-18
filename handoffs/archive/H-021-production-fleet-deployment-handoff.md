@@ -1,13 +1,12 @@
 ---
 id: "H-021"
 title: "Production / Fleet Deployment Handoff (manual interim while INFRA-012 auto-trigger is unfinished)"
-status: "open"
+status: "complete"
 created: "2026-11-13"
-updated: "2026-11-17"
+updated: "2026-11-18"
 owner: ""
 target: "opencode-modded-rust; standards (ort-install / standards-deploy-ort)"
 blocked_reason: ""
-needs_human: "Owner gate: every main release and every fleet rollout needs explicit owner confirmation for that release."
 items: ["BUG-075", "INFRA-012", "INFRA-014", "INFRA-011", "INFRA-013"]
 ---
 
@@ -233,3 +232,7 @@ GBPCAD, EUR CPI, BoE, NFP, PWRH-002-RSCH, TJB-047) belongs to the `aa-studies` /
 - `INFRA-011` — versioned release + manifest.
 - `INFRA-013` — stable vs preview channels.
 - `handoffs/H-019-main-release-fleet-deployment-program-handoff.md` — program handoff.
+
+## Archived
+
+2026-11-18: payload shipped (`v0.1.4`), `v0.1.5` is installed, the automatic control plane is live (`standards-deploy-ort-poll`), and `moldavite`/`xp-farmer` are intentionally `pending`. Archived as superseded.

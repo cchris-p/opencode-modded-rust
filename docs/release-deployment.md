@@ -68,6 +68,37 @@ cat <asset>.rev   # must equal the manifest commit
 Manual interim: run the deploy driver on the control host with `--dry-run` first, then for
 real; never expose fleet credentials to a GitHub-hosted runner.
 
+### Automatic control plane (live)
+
+The control host is **`matrillobase1`**. `standards-deploy-ort-poll` polls the stable
+release list every 5 minutes (user `crontab`, no GitHub runner and no fleet credentials
+leaving the host) and runs `standards-deploy-ort` once per new `v<version>` commit. The
+rolling `native-artifacts` preview is ignored.
+
+```bash
+~/standards/utilities/standards-deploy-ort-poll --status
+~/standards/utilities/standards-deploy-ort-poll --dry-run
+~/standards/utilities/standards-deploy-ort-poll --install-cron --interval 5
+```
+
+Operator controls:
+
+- **Pause a rollout** — `standards-deploy-ort-poll --pause "<reason>"` writes
+  `~/.local/share/ort/deploy-paused`; the timer skips until `--resume`.
+- **State** — `~/.local/share/ort/deploy-state` holds the last deployed tag + commit.
+  Delete it only to force a re-deploy of the current release.
+- **Backoff** — a failed deploy records `~/.local/share/ort/deploy-last-failure` and
+  retries after `ORT_DEPLOY_BACKOFF_SECS` (default 3600), not on every tick.
+- **Reports** — `~/.local/share/ort/deploy-reports/`; poll log at
+  `~/.local/share/ort/logs/deploy-poll.log`.
+- **Offline machines** — set lifecycle state to `pending`/`disabled`
+  (`secret/standards/machines/<name>`) so they are reported and skipped, never silently
+  dropped. `moldavite` and `xp-farmer` are `pending` while Tailscale-offline.
+
+The owner gate still applies to the **release** (the `development -> main` merge). Once a
+`main` release is published, deployment is automatic; pause the poller if a rollout must
+wait.
+
 ## Verify
 
 For each machine, `INFRA-014` verifies:

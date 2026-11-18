@@ -1,13 +1,12 @@
 ---
 id: "H-019"
 title: "INFRA-009/010/011/012/013/014/015 Main-Release Fleet Deployment Program — Program Handoff"
-status: "open"
+status: "complete"
 created: "2026-11-05"
 updated: "2026-11-05"
 owner: ""
 target: "opencode-modded-rust; standards (fleet deploy tooling and channel docs)"
 blocked_reason: ""
-needs_human: ""
 items: ["INFRA-015", "INFRA-009", "INFRA-011", "INFRA-010", "INFRA-013", "INFRA-014", "INFRA-012"]
 ---
 
@@ -308,3 +307,7 @@ Stop for human approval before: applying the main ruleset, choosing the deploy c
 plane/credentials, and enabling automatic fleet deployment. Do not merge any PR without
 the owner's explicit approval.
 ```
+
+## Archived
+
+2026-11-18: all seven items are implemented and in `qa`; `INFRA-012`'s control plane is live on `matrillobase1`. Archived.

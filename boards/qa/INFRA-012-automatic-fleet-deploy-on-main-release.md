@@ -5,10 +5,9 @@ priority: "P1"
 type: "feature"
 area: "INFRA"
 spec: "invariants/release-deployment.md"
-status: "doing"
+status: "qa"
 created: "2026-11-05"
-updated: "2026-11-17"
-attention: "Owner gate: wiring the release-triggered deploy control plane (systemd unit or self-hosted runner on matrillobase1) needs owner setup. Fleet deploys have otherwise run for v0.1.3, v0.1.4, and v0.1.5; moldavite and xp-farmer remain Tailscale-offline."
+updated: "2026-11-18"
 ---
 
 # Automatically Deploy Every Main Release To All Registered Machines
@@ -165,3 +164,38 @@ job on `matrillobase1`; the macOS release asset still needs a working runner or 
 - Remaining owner-gated item is unchanged: the release-triggered control plane (systemd unit
   or self-hosted runner on `matrillobase1`) so a published `main` release deploys without a
   human. The manual interim procedure is `H-021`.
+
+## Control Plane Live (2026-11-18)
+
+Owner decision: systemd/timer-style polling, not a self-hosted GitHub runner; skip
+`moldavite` and `xp-farmer` until they return.
+
+- Added `~/standards/utilities/standards-deploy-ort-poll` (commit in the standards repo):
+  reads the stable release list, ignores non-`v<semver>` tags (so the rolling
+  `native-artifacts` preview can never trigger a deploy), resolves the release commit from
+  `release-manifest.json` (with a tag-commit fallback), and runs
+  `standards-deploy-ort --rev <commit>` exactly once per release.
+- State and safety: `~/.local/share/ort/deploy-state` (last deployed tag+commit),
+  `deploy-paused` (operator pause with reason), `deploy-last-failure` +
+  `ORT_DEPLOY_BACKOFF_SECS` (default 3600) to avoid re-hitting a failing fleet every tick,
+  `flock` on `deploy-poll.lock`, and per-run TSV reports in `~/.local/share/ort/deploy-reports/`.
+- Installed on the control host `matrillobase1` as a user cron entry every 5 minutes
+  (`--install-cron`). No GitHub-hosted runner and no fleet credentials leave the host.
+  A user `systemd` timer was not used because linger is off and `sudo` needs a password on
+  that host; cron is the established non-root scheduling path in standards.
+- Fleet state: `moldavite` and `xp-farmer` set to `pending` in
+  `secret/standards/machines/<name>` with a reason and date, so the driver reports and
+  skips them instead of failing. Promote them back to `active` when they are online.
+- Seeded `deploy-state` at `v0.1.5` (`4292f41`) because that release is already installed
+  on the reachable fleet, so the first tick is a no-op.
+
+Verification:
+
+- `--status` shows state `v0.1.5 4292f41...`, not paused, 1 cron line.
+- Plain poll: `v0.1.5 already deployed; nothing to do`.
+- Fresh state dir `--dry-run`: `would deploy v0.1.5 (4292f41c...)`.
+- `--pause` / `--resume` round-trip verified.
+- `standards-machine-status moldavite` and `xp-farmer` both read `pending` with reasons.
+
+Remaining: owner QA of the release→deploy path on the next real `main` release (watch the
+first automatic run), then close.

@@ -108,5 +108,6 @@
 - Advancing `main` is a production release and always needs the owner's explicit confirmation for that specific release; a bare "update main" is not sufficient.
 - Every `main` merge produces an immutable `v<version>` release (native bundle + CLI assets + checksums + manifest). `development`/preview builds use the rolling `native-artifacts` tag and never deploy to the fleet automatically.
 - Only `main` releases deploy; every active registered machine is deployed and verified, and any failure fails the release and rolls back the affected machines. Inactive machines are reported and skipped.
+- The deploy control plane is `standards-deploy-ort-poll` on `matrillobase1` (user cron, every 5 min): it deploys each new stable release once, backs off on failure, and honors `--pause`. Never move this trigger to a GitHub-hosted runner.
 - The stable channel is the default for `ort-install`/`opencode-config`; preview is explicit opt-in (`OPENCODE_RUST_CHANNEL=preview`). Fleet credentials (mesh keys, OpenBao tokens) never reach GitHub-hosted runners.
 - Program tracking: `H-019`, `INFRA-009` (CI), `INFRA-010` (protect `main`), `INFRA-011` (release), `INFRA-012` (deploy), `INFRA-013` (channels), `INFRA-014` (verify/rollback), `INFRA-015` (invariant/runbook).
