@@ -119,3 +119,17 @@ confirm every active machine passes.
   regressions. `webappssub2` is disabled/skipped.
 - Canary: `webapps` passed before fan-out. Report:
   `/tmp/standards-deploy-ort-20261113T190453Z.tsv`.
+
+## Verification: v0.1.5 (2026-11-16)
+
+- `v0.1.5` published at `main` `4292f41` (`4292f41c2c4b8bc67c819a21ae98e02cbf17e31d`); assets
+  assembled through the manual macOS recovery path documented on `INFRA-011`.
+- Installed on `matrillobase1` via `ort-install`; `ort-verify` reports
+  `rev=4292f41c2c4b8bc67c819a21ae98e02cbf17e31d version=0.1.5`.
+- Owner accepted the fleet install/update run as the QA pass (`FEAT-080`): all reachable
+  active machines were updated to ORT `0.1.5`. `webappssub2` is `disabled`/skipped.
+- `moldavite` and `xp-farmer` remain Tailscale-offline and still need the `v0.1.5` revision;
+  connectivity failures, not verification regressions.
+- No per-machine TSV was produced this cycle because the update ran through the in-product
+  `/update` path rather than `standards-deploy-ort`; the automated trigger is still
+  `INFRA-012`'s owner-gated remainder.
