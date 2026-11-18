@@ -7,7 +7,7 @@ area: "BUG"
 spec: ""
 status: "qa"
 created: "2026-11-11"
-updated: "2026-11-11"
+updated: "2026-11-17"
 ---
 
 # Selecting a fenced code block copies frame chrome and wraps instead of raw code
@@ -254,3 +254,18 @@ closeout; do not delete the branch before merge.
 
 **References:** PR #188, `boards/qa/BUG-070-fenced-code-selection-copies-frame-chrome.md`, commits
 `4eafe18` / `c317ef5` / `8747b9e`.
+
+## Merge Closeout — 2026-11-17 (follow-up PR #188)
+
+- Merged PR #188 into `development` as merge commit `a495356`.
+- Branch `bug/BUG-070-fence-footer-padding` deleted remotely and locally; the temporary
+  worktree was removed and `origin` pruned. Local `development` is current at `a495356`.
+- Pre-merge: merged `origin/development` into the branch (clean), then re-ran CI because the
+  previous run's `native (ubuntu-22.04)` job died on a Launchpad PPA
+  `GPGKeyTemporarilyNotFoundError` (infrastructure, not code) and the stale macOS runner job
+  was queued/cancelled. The fresh run passed `fmt`, `check`, `clippy`, `test`, and
+  `native (ubuntu-22.04)`; the PR reported `MERGEABLE`/`CLEAN`.
+- Local verification on the merged branch: `cargo fmt -p opencode-tui -- --check`,
+  `cargo check -p opencode-tui`, and both BUG-070 regression tests pass.
+- Card remains in `qa`; the remaining gate is owner QA of the real-TUI copy behavior from the
+  `Next Agent Instructions` section above.
