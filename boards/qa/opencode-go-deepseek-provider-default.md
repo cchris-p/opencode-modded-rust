@@ -70,3 +70,15 @@ product default model.
   `j8rsxy`). `jasper`, `moldavite`, and `xp-farmer` were offline; redeploy them
   when reachable. `webappssub2` is disabled/skipped.
 - Awaiting owner post-merge QA on `development` (owner will test later).
+
+## Re-verification 2026-11-19
+
+- `cargo test -p opencode-provider --lib` -> 159 passed (session-header tests
+  included).
+- Bare `run` in a clean `/tmp/og-smoke` workspace (no `opencode.json{,c}`)
+  printed `Model: deepseek-v4.1-flash`, answered `OK`, i.e. resolved the
+  `opencode-go/deepseek-v4.1-flash` product default live.
+- No provider/config behavior commits landed between the tested binary and
+  current `development` HEAD (`c2d0702`); later commits are unrelated
+  (FEAT-080 update check, CLI-017 `--version`).
+- Still awaiting owner confirmation before moving to `done`.
