@@ -34,7 +34,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
-      fail-fast: true
+      # INFRA-016: a cancelled macOS job must not cancel the Linux build, so the
+      # failure stays diagnosable and the retry re-runs a real attempt.
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
@@ -149,9 +151,12 @@ jobs:
 
           # Immutability: never overwrite an existing release tag. Bump
           # [workspace.package] version in the release PR to cut a new release.
+          # INFRA-016: record the state here; `publish` is idempotent so an
+          # automatic retry of a partially completed run can finish safely.
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "release tag ${tag} already exists; bump [workspace.package] version" >&2
-            exit 1
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
           for required in \
@@ -229,6 +234,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.meta.outputs.tag }}"
+          repo="$GITHUB_REPOSITORY"
           assets=()
           while IFS= read -r -d '' file; do
             assets+=("$file")
@@ -237,12 +243,45 @@ jobs:
             echo "no release assets found under dist/" >&2
             exit 1
           fi
-          gh release create "$tag" "${assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "opencode-modded-rust ${tag}" \
-            --generate-notes \
-            --latest
+
+          # INFRA-016: idempotent publish. An automatic retry may find the tag
+          # and/or the release already created by a partially completed attempt.
+          if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            tmp="$(mktemp -d)"
+            published_commit=""
+            if gh release download "$tag" --repo "$repo" \
+                --pattern release-manifest.json --dir "$tmp" >/dev/null 2>&1; then
+              published_commit="$(python3 -c \
+                'import json,sys; print(json.load(open(sys.argv[1])).get("commit",""))' \
+                "$tmp/release-manifest.json")"
+            fi
+            rm -rf "$tmp"
+            if [ -z "$published_commit" ]; then
+              published_commit="$(gh api "repos/$repo/commits/$tag" --jq .sha 2>/dev/null || true)"
+            fi
+            if [ "$published_commit" != "$GITHUB_SHA" ]; then
+              echo "::error::release tag $tag exists for a different commit" >&2
+              exit 1
+            fi
+            have="$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name')"
+            for file in "${assets[@]}"; do
+              name="$(basename "$file")"
+              if ! printf '%s\n' "$have" | grep -qxF "$name"; then
+                echo "uploading missing asset $name"
+                gh release upload "$tag" "$file" --repo "$repo" --clobber
+              fi
+            done
+            echo "release $tag already published for $GITHUB_SHA"
+            exit 0
+          fi
+
+          create_args=(--repo "$repo" --title "opencode-modded-rust ${tag}" --generate-notes --latest)
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            create_args+=(--verify-tag)
+          else
+            create_args+=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$tag" "${assets[@]}" "${create_args[@]}"
 
       - name: Summarize release
         run: |
