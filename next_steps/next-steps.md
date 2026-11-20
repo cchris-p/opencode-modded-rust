@@ -42,6 +42,6 @@ Option A fix is PR #206.
   product docs/cards updated and `H-019`/`H-021` archived (`e637752`).
 - 2026-11-18: `BUG-056` Option A implemented, PR #206 merged (`ec5c024`), branch/worktree
   cleaned; card in `qa` awaiting the live subagent-question check.
-- 2026-11-20: carded the macOS-runner/`actions:write` gap as `INFRA-016` and fixed it —
+- 2026-11-20: carded the macOS-runner/`actions:write` gap as `INFRA-017` and fixed it —
   PR #207 merged (`a059d09`): automatic bounded release retry with the built-in token,
   idempotent publish, `fail-fast: false`. Card in `qa` until the next real release proves it.
