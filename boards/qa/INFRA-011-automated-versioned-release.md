@@ -199,9 +199,9 @@ Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.4
 
 Release: https://github.com/cchris-p/opencode-modded-rust/releases/tag/v0.1.5
 
-## Update — 2026-11-20 (`INFRA-016`)
+## Update — 2026-11-20 (`INFRA-017`)
 
-- The hosted-macOS recovery gap noted above is now tracked by `INFRA-016` and fixed:
+- The hosted-macOS recovery gap noted above is now tracked by `INFRA-017` and fixed:
   `release-retry.yml` auto-retries a failed/cancelled `main` release (bounded to 3 attempts,
   built-in `GITHUB_TOKEN` with `actions: write`), `release.yml` uses `fail-fast: false`, and
   `publish` is idempotent so a retry can finish a partially created release.

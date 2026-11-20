@@ -36,7 +36,7 @@ rewrite the `.rev` sidecar to the release commit and re-verify every checksum. H
 availability required this recovery for `v0.1.0`, `v0.1.3`, `v0.1.4`, and `v0.1.5`; the
 automatic retry below removes that manual step for future releases.
 
-### Automatic retry (`INFRA-016`)
+### Automatic retry (`INFRA-017`)
 
 `release-retry.yml` listens for a completed `Release` run on `main` and, when the run ended
 `failure` or `cancelled`, retries it after a 10-minute delay so hosted macOS capacity can
