@@ -33,7 +33,30 @@ Fallback (workflow unavailable, for example no hosted macOS runner): build with
 uploaded assets and record the commit SHA, scopemux pin, and query-set key on the card.
 Tree-identical commits may reuse assets from an earlier successful build, but you must
 rewrite the `.rev` sidecar to the release commit and re-verify every checksum. Hosted macOS
-availability has required this recovery for `v0.1.0`, `v0.1.3`, `v0.1.4`, and `v0.1.5`.
+availability required this recovery for `v0.1.0`, `v0.1.3`, `v0.1.4`, and `v0.1.5`; the
+automatic retry below removes that manual step for future releases.
+
+### Automatic retry (`INFRA-016`)
+
+`release-retry.yml` listens for a completed `Release` run on `main` and, when the run ended
+`failure` or `cancelled`, retries it after a 10-minute delay so hosted macOS capacity can
+recover.
+
+- It uses its own `GITHUB_TOKEN` with `permissions: actions: write`, so no personal token
+  scope is needed for the automatic path.
+- It is bounded: retries stop once the run reaches attempt 3, then the failure is left
+  visible for a human.
+- It skips runs that already published (the `publish` job succeeded), so it cannot republish.
+- `release.yml` builds with `fail-fast: false`, so a cancelled macOS job no longer cancels
+  the Linux job, and `publish` is idempotent: an existing release for the same commit is
+  verified and completed rather than re-created.
+
+`workflow_run` only fires for workflows present on `main`, so this takes effect for the first
+release merged after it lands. A personal token with `actions:write` is still useful for
+manual `gh run rerun`; grant it in the PAT settings if an agent must re-run by hand.
+
+Manual escalation when attempt 3 fails: use the fallback above, or ask a repository admin to
+re-run the macOS job.
 
 ## Read The Release Manifest
 
