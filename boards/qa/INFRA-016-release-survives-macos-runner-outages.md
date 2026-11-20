@@ -88,3 +88,12 @@ Verification:
 
 Remaining: prove it on a real `main` release (the retry workflow only activates once this
 file is on `main`).
+
+## Merge Closeout — 2026-11-20
+
+- PR #207 merged into `development` as merge commit `a059d09` with all required checks green
+  (`fmt`, `check`, `clippy`, `test`, `native (ubuntu-22.04)`); PR state `CLEAN`.
+- Branch `feature/INFRA-016-release-retry` deleted remotely and locally; worktree removed and
+  `origin` pruned.
+- Card stays in `qa`: the retry workflow only fires once it is on `main`, so proof is the next
+  real release. Manual asset recovery remains the documented last resort until then.

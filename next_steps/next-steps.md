@@ -1,4 +1,4 @@
-# Where We Left Off - 2026-11-17 14:16 EST
+# Where We Left Off - 2026-11-20 13:40 EST
 
 ## Where We Left Off
 Everything that was ranked and could move without an owner decision has moved. The
@@ -28,11 +28,7 @@ Option A fix is PR #206.
 3. First automatic release→deploy run: confirm the poller deploys once and reports skips.
 
 ## Observational Gaps (no card yet)
-- Hosted macOS runner availability has forced manual asset recovery for `v0.1.0`, `v0.1.3`,
-  `v0.1.4`, and `v0.1.5` (documented in `docs/release-deployment.md`). The release token also
-  lacks `actions:write`, so a failed macOS job cannot be re-run from the CLI. Neither is
-  tracked as a card.
-- The `qa` lane (66 cards, most stale) needs a dedicated owner QA sweep or batch closeout.
+- The `qa` lane (67 cards, most stale) needs a dedicated owner QA sweep or batch closeout.
 
 ## Best Next Step
 - Owner QA: run the live subagent-question check for `BUG-056`, then sweep the `qa` lane.
@@ -46,3 +42,6 @@ Option A fix is PR #206.
   product docs/cards updated and `H-019`/`H-021` archived (`e637752`).
 - 2026-11-18: `BUG-056` Option A implemented, PR #206 merged (`ec5c024`), branch/worktree
   cleaned; card in `qa` awaiting the live subagent-question check.
+- 2026-11-20: carded the macOS-runner/`actions:write` gap as `INFRA-016` and fixed it —
+  PR #207 merged (`a059d09`): automatic bounded release retry with the built-in token,
+  idempotent publish, `fail-fast: false`. Card in `qa` until the next real release proves it.
