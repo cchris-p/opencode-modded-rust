@@ -10,10 +10,9 @@ use ratatui::{
     Frame,
 };
 
+use super::context_usage;
 use crate::branding::{APP_NAME, APP_SHORT_NAME, APP_VERSION_DATE};
-use crate::context::{
-    AppContext, LspConnectionStatus, McpConnectionStatus, MessageRole, TodoStatus,
-};
+use crate::context::{AppContext, LspConnectionStatus, McpConnectionStatus, TodoStatus};
 use crate::theme::Theme;
 
 pub struct Sidebar {
@@ -244,76 +243,33 @@ impl Sidebar {
             });
         }
 
-        let total_cost: f64 = messages
-            .iter()
-            .filter(|m| matches!(m.role, MessageRole::Assistant))
-            .map(|m| m.cost)
-            .sum();
-        let total_tokens = messages
-            .iter()
-            .filter(|m| matches!(m.role, MessageRole::Assistant))
-            .map(|m| {
-                m.tokens.input
-                    + m.tokens.output
-                    + m.tokens.reasoning
-                    + m.tokens.cache_read
-                    + m.tokens.cache_write
-            })
-            .sum::<u64>();
-        let model_context_limit = {
+        let total_cost = context_usage::total_cost(&messages);
+        let usage = {
             let providers = self.context.providers.read();
             let current_model = self.context.current_model.read();
-            let active_model = messages
-                .iter()
-                .rev()
-                .find(|m| matches!(m.role, MessageRole::Assistant))
-                .and_then(|m| m.model.as_deref())
-                .or(current_model.as_deref());
-            active_model
-                .and_then(|model_id| {
-                    providers.iter().find_map(|provider| {
-                        provider
-                            .models
-                            .iter()
-                            .find(|model| {
-                                model.id == *model_id
-                                    || model
-                                        .id
-                                        .rsplit_once('/')
-                                        .map(|(_, suffix)| suffix == model_id)
-                                        .unwrap_or(false)
-                            })
-                            .map(|model| model.context_window)
-                    })
-                })
-                .unwrap_or(0)
+            context_usage::context_usage(&messages, &providers, current_model.as_deref())
         };
+        let total_tokens = usage.map(|u| u.tokens).unwrap_or(0);
+        let used_pct = usage.and_then(|u| u.percent).unwrap_or(0);
         sections.push(SidebarSection {
             key: "context",
             title: "Context",
             lines: vec![
-                {
-                    let mut spans = vec![
-                        Span::styled("Tokens ", Style::default().fg(theme.text_muted)),
-                        Span::styled(format_number(total_tokens), Style::default().fg(theme.text)),
-                    ];
-                    if model_context_limit > 0 && total_tokens > 0 {
-                        let used_pct = ((total_tokens as f64 / model_context_limit as f64) * 100.0)
-                            .round() as u64;
-                        spans.push(Span::styled(
-                            format!("  {}%", used_pct),
-                            Style::default().fg(theme.text_muted),
-                        ));
-                    }
-                    Line::from(spans)
-                },
-                Line::from(vec![
-                    Span::styled("Cost   ", Style::default().fg(theme.text_muted)),
-                    Span::styled(
-                        format!("${:.2}", total_cost),
-                        Style::default().fg(theme.text),
+                Line::from(Span::styled(
+                    format!(
+                        "{} tokens",
+                        context_usage::format_grouped_number(total_tokens)
                     ),
-                ]),
+                    Style::default().fg(theme.text_muted),
+                )),
+                Line::from(Span::styled(
+                    format!("{}% used", used_pct),
+                    Style::default().fg(theme.text_muted),
+                )),
+                Line::from(Span::styled(
+                    format!("${:.2} spent", total_cost),
+                    Style::default().fg(theme.text_muted),
+                )),
             ],
             summary: None,
             collapsible: false,
@@ -640,16 +596,4 @@ fn split_path_segments(path: &str) -> (String, String) {
     }
 
     (String::new(), path.to_string())
-}
-
-fn format_number(value: u64) -> String {
-    let digits = value.to_string();
-    let mut out = String::with_capacity(digits.len() + (digits.len() / 3));
-    for (idx, ch) in digits.chars().rev().enumerate() {
-        if idx > 0 && idx % 3 == 0 {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out.chars().rev().collect()
 }

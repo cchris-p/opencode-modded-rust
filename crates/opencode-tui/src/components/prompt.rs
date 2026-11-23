@@ -456,12 +456,10 @@ impl Prompt {
             theme.background,
         );
 
-        let status_line = Paragraph::new(self.render_status_line(&theme))
+        let status_area = inset_horizontal(chunks[3], PROMPT_LINE_H_INSET);
+        let status_line = Paragraph::new(self.render_status_line(&theme, status_area.width))
             .style(Style::default().bg(theme.background));
-        frame.render_widget(
-            status_line,
-            inset_horizontal(chunks[3], PROMPT_LINE_H_INSET),
-        );
+        frame.render_widget(status_line, status_area);
     }
 
     pub fn tick_spinner(&mut self, delta_ms: u64) -> bool {
@@ -1149,11 +1147,31 @@ impl Prompt {
             .clamp(PROMPT_MIN_INPUT_LINES, PROMPT_MAX_INPUT_LINES)
     }
 
-    fn render_status_line(&self, theme: &Theme) -> Line<'static> {
+    fn render_status_line(&self, theme: &Theme, width: u16) -> Line<'static> {
         if let Some(status) = self.current_session_status() {
-            return self.status_line_for_session(status, theme);
+            return self.status_line_for_session(status, theme, width);
         }
-        self.hint_line(theme)
+        self.hint_line(theme, width)
+    }
+
+    /// Vanilla prompt-footer context readout: `1.2K (56%) · $0.12`.
+    fn usage_text(&self) -> Option<String> {
+        let session_id = match self.context.current_route() {
+            crate::router::Route::Session { session_id } => session_id,
+            _ => return None,
+        };
+        let session_ctx = self.context.session.read();
+        let messages = session_ctx.messages.get(&session_id)?;
+        let providers = self.context.providers.read();
+        let current_model = self.context.current_model.read();
+        let usage =
+            super::context_usage::context_usage(messages, &providers, current_model.as_deref())?;
+        let mut text = super::context_usage::format_context(&usage);
+        let cost = super::context_usage::total_cost(messages);
+        if cost > 0.0 {
+            text.push_str(&format!(" · ${:.2}", cost));
+        }
+        Some(text)
     }
 
     fn current_session_status(&self) -> Option<SessionStatus> {
@@ -1165,7 +1183,12 @@ impl Prompt {
         Some(session_ctx.status(&session_id).clone())
     }
 
-    fn status_line_for_session(&self, status: SessionStatus, theme: &Theme) -> Line<'static> {
+    fn status_line_for_session(
+        &self,
+        status: SessionStatus,
+        theme: &Theme,
+        width: u16,
+    ) -> Line<'static> {
         if matches!(self.mode, PromptMode::Shell) {
             return Line::from(vec![
                 Span::styled("esc", Style::default().fg(theme.text)),
@@ -1216,10 +1239,27 @@ impl Prompt {
                         Style::default().fg(theme.text_muted),
                     ));
                 }
-                Line::from(spans)
+                self.with_usage(Line::from(spans), theme, width)
             }
-            SessionStatus::Idle => self.hint_line(theme),
+            SessionStatus::Idle => self.hint_line(theme, width),
         }
+    }
+
+    fn with_usage(&self, line: Line<'static>, theme: &Theme, width: u16) -> Line<'static> {
+        let Some(right) = self.usage_text() else {
+            return line;
+        };
+        let left_width: usize = line.spans.iter().map(|span| span.content.width()).sum();
+        let right_width = right.width();
+        let available = width as usize;
+        if available <= left_width + right_width + 1 {
+            return line;
+        }
+        let padding = available - left_width - right_width;
+        let mut spans = line.spans;
+        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(Span::styled(right, Style::default().fg(theme.text_muted)));
+        Line::from(spans)
     }
 
     fn interrupt_confirmation_active(&self) -> bool {
@@ -1234,7 +1274,7 @@ impl Prompt {
         self.interrupt.reset()
     }
 
-    fn hint_line(&self, theme: &Theme) -> Line<'static> {
+    fn hint_line(&self, theme: &Theme, width: u16) -> Line<'static> {
         let keybind = self.context.keybind.read();
         let variant_cycle = keybind.print("variant_cycle");
         let agent_cycle = keybind.print("agent_cycle");
@@ -1276,7 +1316,7 @@ impl Prompt {
             " commands",
             Style::default().fg(theme.text_muted),
         ));
-        Line::from(spans)
+        self.with_usage(Line::from(spans), theme, width)
     }
 }
 
@@ -1867,7 +1907,7 @@ mod tests {
                     hotkey: "ctrl+g".to_string(),
                 }));
 
-            let line = prompt.hint_line(&Theme::dark());
+            let line = prompt.hint_line(&Theme::dark(), 80);
             let text: String = line
                 .spans
                 .iter()
