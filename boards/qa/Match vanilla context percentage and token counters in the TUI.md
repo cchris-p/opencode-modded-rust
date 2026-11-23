@@ -96,6 +96,8 @@ Presentation:
 - `BUG-069` (stats token accounting)
 - `BUG-068` / TUI footer cards
 
+PR: https://github.com/cchris-p/opencode-modded-rust/pull/208 (branch `bug/TUI-001-context-token-parity`)
+
 ## Implementation notes (2026-11-23)
 
 - Added `crates/opencode-tui/src/components/context_usage.rs` as the single
