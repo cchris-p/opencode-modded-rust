@@ -384,7 +384,11 @@ impl SessionView {
         let context_and_cost = usage.map(|usage| {
             let context_text = super::context_usage::format_context(&usage);
             if total_cost > 0.0 {
-                format!("{} · ${:.2}", context_text, total_cost)
+                format!(
+                    "{} · {}",
+                    context_text,
+                    super::context_usage::format_cost(total_cost)
+                )
             } else {
                 context_text
             }

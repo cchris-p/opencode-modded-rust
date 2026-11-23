@@ -1169,7 +1169,7 @@ impl Prompt {
         let mut text = super::context_usage::format_context(&usage);
         let cost = super::context_usage::total_cost(messages);
         if cost > 0.0 {
-            text.push_str(&format!(" · ${:.2}", cost));
+            text.push_str(&format!(" · {}", super::context_usage::format_cost(cost)));
         }
         Some(text)
     }

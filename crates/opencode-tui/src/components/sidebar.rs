@@ -267,7 +267,7 @@ impl Sidebar {
                     Style::default().fg(theme.text_muted),
                 )),
                 Line::from(Span::styled(
-                    format!("${:.2} spent", total_cost),
+                    format!("{} spent", context_usage::format_cost(total_cost)),
                     Style::default().fg(theme.text_muted),
                 )),
             ],

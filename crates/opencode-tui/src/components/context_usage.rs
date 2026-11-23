@@ -101,6 +101,17 @@ pub(crate) fn format_context(usage: &ContextUsage) -> String {
     }
 }
 
+/// Vanilla `Intl.NumberFormat("en-US", { style: "currency" })`: `$1,234.56`.
+pub(crate) fn format_cost(value: f64) -> String {
+    let formatted = format!("{:.2}", value.max(0.0));
+    let (whole, fraction) = formatted.split_once('.').unwrap_or((&formatted, "00"));
+    format!(
+        "${}.{}",
+        format_grouped_number(whole.parse().unwrap_or(0)),
+        fraction
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +194,12 @@ mod tests {
         assert_eq!(format_grouped_number(999), "999");
         assert_eq!(format_grouped_number(1234), "1,234");
         assert_eq!(format_grouped_number(12_345_678), "12,345,678");
+    }
+
+    #[test]
+    fn matches_vanilla_cost_format() {
+        assert_eq!(format_cost(0.0), "$0.00");
+        assert_eq!(format_cost(0.12), "$0.12");
+        assert_eq!(format_cost(1234.5), "$1,234.50");
     }
 }
