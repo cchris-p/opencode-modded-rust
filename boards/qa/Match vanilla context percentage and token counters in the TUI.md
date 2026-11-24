@@ -7,7 +7,7 @@ area: "TUI"
 spec: "wiki/harness-substrate.md"
 status: "qa"
 created: "2026-11-23"
-updated: "2026-11-23"
+updated: "2026-11-24"
 ---
 
 # Match vanilla context percentage and token counters in the TUI
@@ -108,10 +108,18 @@ PR: https://github.com/cchris-p/opencode-modded-rust/pull/208 (branch `bug/TUI-0
   total now comes from the last assistant message instead of the session sum.
 - Prompt hint (`prompt.rs`): right-aligned usage text, hidden while retrying and
   in shell mode to match vanilla.
-- Tests: `cargo test -p opencode-tui` (229 passed), including new
+- Tests: `cargo test -p opencode-tui` (230 passed), including new
   `context_usage` tests for last-message selection, percent math, and number
   formats. `cargo build -p opencode-cli` succeeds.
 
 Open question for the owner: vanilla has no color/threshold change as the
 window fills. This card matches vanilla exactly; a separate near-limit color
 warning would be an ORT-only addition.
+
+## Merge closeout (2026-11-24)
+
+- PR #208 merged into `development` (`c6ad0cc`).
+- Remote and local `bug/TUI-001-context-token-parity` branches deleted.
+- Card stays in `qa`: no recorded QA report yet. Remaining QA: run a real session
+  and confirm the header/prompt percentage tracks the vanilla value as the window
+  fills.
