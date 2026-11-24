@@ -144,6 +144,9 @@ pub struct AppContext {
     /// FEAT-048: whether experimental background subagents are enabled
     /// (reference `capabilities.experimentalBackgroundSubagents`).
     pub experimental_background_subagents: RwLock<bool>,
+    /// Whether large pastes collapse to a `[Pasted ~N lines]` placeholder
+    /// (reference `experimental.disable_paste_summary`; enabled by default).
+    pub paste_summary_enabled: RwLock<bool>,
     ui_kv: RwLock<UiKv>,
     pub api_client: RwLock<Option<Arc<ApiClient>>>,
 }
@@ -244,6 +247,7 @@ impl AppContext {
             )),
             has_connected_provider: RwLock::new(false),
             experimental_background_subagents: RwLock::new(false),
+            paste_summary_enabled: RwLock::new(true),
             ui_kv: RwLock::new(ui_kv),
             api_client: RwLock::new(None),
         }
@@ -423,6 +427,14 @@ impl AppContext {
 
     pub fn experimental_background_subagents(&self) -> bool {
         *self.experimental_background_subagents.read()
+    }
+
+    pub fn set_paste_summary_enabled(&self, enabled: bool) {
+        *self.paste_summary_enabled.write() = enabled;
+    }
+
+    pub fn paste_summary_enabled(&self) -> bool {
+        *self.paste_summary_enabled.read()
     }
 }
 

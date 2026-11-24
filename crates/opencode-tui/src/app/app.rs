@@ -163,6 +163,7 @@ impl App {
         *context.directory.write() = workspace_dir.clone();
         *context.git_branch.write() = detect_git_branch(&workspace_dir);
         context.set_experimental_background_subagents(config.experimental_background_subagents());
+        context.set_paste_summary_enabled(config.paste_summary_enabled());
         let terminal = terminal::init()?;
         let mut prompt = Prompt::new(context.clone())
             .with_placeholder("Ask anything... \"Fix a TODO in the codebase\"");
@@ -973,7 +974,7 @@ impl App {
                 }
             }
             Event::Paste(text) => {
-                self.insert_text_into_active_input(&text);
+                self.paste_into_active_input(&text);
             }
             Event::Custom(event) => match event {
                 CustomEvent::StateChanged(StateChange::SessionUpdated(session_id)) => {
@@ -2298,22 +2299,22 @@ impl App {
         Ok(())
     }
 
-    /// Route text to the question answer field when a question is open,
-    /// otherwise to the session prompt.
-    fn insert_text_into_active_input(&mut self, text: &str) {
+    /// Route pasted text to the question answer field when a question is open,
+    /// otherwise to the session prompt (which may collapse it to a summary).
+    fn paste_into_active_input(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
         if self.question_prompt.is_open {
             self.question_prompt.insert_text(text);
         } else {
-            self.prompt.insert_text(text);
+            self.prompt.paste_text(text);
         }
     }
 
     fn paste_clipboard_to_prompt(&mut self) {
         match Clipboard::read_text() {
-            Ok(text) => self.insert_text_into_active_input(&text),
+            Ok(text) => self.paste_into_active_input(&text),
             Err(err) => {
                 self.alert_dialog
                     .set_message(&format!("Failed to read clipboard:\n{}", err));
