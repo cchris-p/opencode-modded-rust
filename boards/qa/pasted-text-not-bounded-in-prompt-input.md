@@ -216,6 +216,8 @@ QA: BUG-059 — pasted text bounded within the prompt input box (agent-driven).
 
 ## Related Items
 
+- `TUI-002` Show a paste summary with line count in the prompt - builds on this
+  card's `normalize_prompt_text` to collapse large pastes to a placeholder.
 - `BUG-039` Question prompt and review screen layout - same "pasted text not horizontally
   contained" class on the question tool custom-answer box; already handled there with paste
   routing and single-line flattening.
