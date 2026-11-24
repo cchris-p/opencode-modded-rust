@@ -8,8 +8,7 @@ with vanilla's last-assistant-message semantics and unified the header, sidebar,
 and prompt footer on one formatter. `BUG-056` and `INFRA-017` remain merged and
 still awaiting live QA. No `doing` cards and no live handoffs; `H-016`, `H-017`,
 `H-019`, `H-021` are archived. The queue is now dominated by a large, stale `qa`
-lane (73 cards) and a 55-card `todo` backlog; `BUG-074` (truncated native
-tool-call recovery) is implemented in PR #209 and awaiting QA.
+lane (72 cards) and a 56-card `todo` backlog.
 
 ## Needs Human Intervention
 - `TUI-001` (qa): live QA — run a real session and confirm header/prompt percentage
@@ -40,24 +39,25 @@ tool-call recovery) is implemented in PR #209 and awaiting QA.
 1. Owner QA sweep — start with `TUI-001` live percentage check, then the deployment
    cards and `BUG-056`; archive or complete `qa` cards that have actually passed.
    (human gate)
-2. First automatic release→deploy proof — confirm the poller deploys once, reports
+2. `BUG-074` — truncated native tool-call block silently drops the intended file
+   write; clear acceptance criteria and an end-to-end regression test make this the
+   strongest agent-executable bug. (P2, `todo`)
+3. First automatic release→deploy proof — confirm the poller deploys once, reports
    skips, and `release-retry` recovers a failed attempt. (human watch)
-3. `BUG-058` — let users revise earlier `question` answers instead of the single
+4. `BUG-058` — let users revise earlier `question` answers instead of the single
    one-step back; parent run-parking is owned by `BUG-056`. (P2, `todo`)
-4. `INFRA-003` — CI clean-clone native build guard. (P3, `todo`, quick win)
+5. `INFRA-003` — CI clean-clone native build guard. (P3, `todo`, quick win)
 
 ## Best Next Step
 - Owner QA sweep: run the live `TUI-001` context check, then clear the stale `qa`
-  lane; the first agent-executable item afterwards is `BUG-058`.
+  lane; the first agent-executable item afterwards is `BUG-074`.
 
 ## Offer
 - I can take these in order, one at a time, and trim this file as each is done.
-  The QA sweep and release watch need your OK/eyes; `BUG-058` and `INFRA-003` are
-  safe to start now. Proceed with `BUG-058`? [awaiting your OK]
+  The QA sweep and release watch need your OK/eyes; `BUG-074` and `INFRA-003` are
+  safe to start now. Proceed with `BUG-074`? [awaiting your OK]
 
 ## Completed
-- 2026-11-24: `BUG-074` truncated native tool-call recovery implemented in PR #209
-  (branch `bug/BUG-074-truncated-toolcall-recovery`); card in `qa`.
 - 2026-11-24: `TUI-001` vanilla context/token parity implemented, PR #208 merged
   (`c6ad0cc`), branch cleaned; card in `qa` awaiting live QA (`ea85605`).
 - 2026-11-20: `INFRA-017` bounded release retry fixed, PR #207 merged (`a059d09`);
