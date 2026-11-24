@@ -1304,6 +1304,17 @@ impl Config {
         from_env || from_config
     }
 
+    /// Whether large pastes are collapsed to a `[Pasted ~N lines]` placeholder.
+    /// Matches the reference `experimental.disable_paste_summary` flag: the
+    /// summary is shown by default and only hidden when explicitly disabled.
+    pub fn paste_summary_enabled(&self) -> bool {
+        !self
+            .experimental
+            .as_ref()
+            .and_then(|experimental| experimental.disable_paste_summary)
+            .unwrap_or(false)
+    }
+
     pub fn merge(&mut self, other: Config) {
         merge_option_replace(&mut self.schema, other.schema);
         merge_option_replace(&mut self.theme, other.theme);
@@ -1664,5 +1675,30 @@ mod tests {
         if let Some(previous) = previous {
             std::env::set_var("OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS", previous);
         }
+    }
+
+    #[test]
+    fn paste_summary_enabled_defaults_on_and_honors_disable_flag() {
+        assert!(Config::default().paste_summary_enabled());
+
+        let mut base = Config::default();
+        base.merge(Config {
+            experimental: Some(ExperimentalConfig {
+                disable_paste_summary: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert!(!base.paste_summary_enabled());
+
+        let mut base = Config::default();
+        base.merge(Config {
+            experimental: Some(ExperimentalConfig {
+                disable_paste_summary: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert!(base.paste_summary_enabled());
     }
 }

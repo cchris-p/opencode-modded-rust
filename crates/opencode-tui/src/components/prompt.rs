@@ -71,6 +71,13 @@ struct StashStore {
     entries: Vec<PromptStashEntry>,
 }
 
+#[derive(Debug, Clone)]
+struct PastedSegment {
+    start: usize,
+    end: usize,
+    text: String,
+}
+
 /// Interrupt confirmation state machine.
 ///
 /// `Esc` must be pressed twice within [`INTERRUPT_CONFIRM_WINDOW_SECS`] to
@@ -171,6 +178,7 @@ pub struct Prompt {
     frecency_path: PathBuf,
     stash_path: PathBuf,
     file_index: FileIndex,
+    pasted: Vec<PastedSegment>,
     spinner: KnightRiderSpinner,
     mode: PromptMode,
     interrupt: InterruptConfirmation,
@@ -260,6 +268,7 @@ impl Prompt {
             frecency_path,
             stash_path,
             file_index: FileIndex::default(),
+            pasted: Vec::new(),
             spinner,
             mode: PromptMode::Normal,
             interrupt: InterruptConfirmation::default(),
@@ -377,10 +386,19 @@ impl Prompt {
                 theme.text_muted
             }))
         } else {
+            let styles = self.style_ranges(&theme);
             let mut display_lines: Vec<Line> = wrapped_input
                 .lines
                 .iter()
-                .map(|line| Line::from(line.clone()))
+                .enumerate()
+                .map(|(index, line)| {
+                    let (start, end) = wrapped_input
+                        .line_ranges
+                        .get(index)
+                        .copied()
+                        .unwrap_or((0, 0));
+                    build_styled_line(line, start, end, &styles)
+                })
                 .collect();
             while display_lines.len() < needed_lines {
                 display_lines.push(Line::from(""));
@@ -526,6 +544,7 @@ impl Prompt {
                     self.mode = PromptMode::Shell;
                     return false;
                 }
+                self.shift_pasted_segments(self.cursor_position, 0, c.len_utf8());
                 self.input.insert(self.cursor_position, c);
                 self.cursor_position += c.len_utf8();
                 self.reset_history_cursor();
@@ -537,6 +556,7 @@ impl Prompt {
                     return false;
                 }
                 if let Some(prev) = prev_char_boundary(&self.input, self.cursor_position) {
+                    self.shift_pasted_segments(prev, self.cursor_position - prev, 0);
                     self.input.replace_range(prev..self.cursor_position, "");
                     self.cursor_position = prev;
                     self.reset_history_cursor();
@@ -545,6 +565,11 @@ impl Prompt {
             }
             KeyCode::Delete => {
                 if let Some(next) = next_char_boundary(&self.input, self.cursor_position) {
+                    self.shift_pasted_segments(
+                        self.cursor_position,
+                        next - self.cursor_position,
+                        0,
+                    );
                     self.input.replace_range(self.cursor_position..next, "");
                     self.reset_history_cursor();
                     self.recompute_suggestions();
@@ -634,11 +659,57 @@ impl Prompt {
         self.cursor_position
     }
 
+    /// Byte ranges in the buffer that render with a non-default style: pasted
+    /// `[Pasted ~N lines]` placeholders and `@` file/agent references.
+    fn style_ranges(&self, theme: &Theme) -> Vec<(usize, usize, Style)> {
+        let mut ranges: Vec<(usize, usize, Style)> = Vec::new();
+
+        let paste_style = Style::default()
+            .fg(theme.selected_foreground(Some(theme.warning)))
+            .bg(theme.warning)
+            .bold();
+        for segment in &self.pasted {
+            if segment.start < segment.end
+                && segment.end <= self.input.len()
+                && self.input.is_char_boundary(segment.start)
+                && self.input.is_char_boundary(segment.end)
+            {
+                ranges.push((segment.start, segment.end, paste_style));
+            }
+        }
+
+        for (start, end) in reference_token_ranges(&self.input) {
+            if self
+                .pasted
+                .iter()
+                .any(|segment| start < segment.end && end > segment.start)
+            {
+                continue;
+            }
+            let name = &self.input[start + 1..end];
+            let style = if self
+                .known_agents
+                .iter()
+                .any(|agent| agent.eq_ignore_ascii_case(name))
+            {
+                Style::default().fg(theme.secondary).bold()
+            } else {
+                Style::default().fg(theme.warning).bold()
+            };
+            ranges.push((start, end, style));
+        }
+
+        ranges.sort_by_key(|(start, _, _)| *start);
+        ranges
+    }
+
     pub fn take_input(&mut self) -> String {
         let input = std::mem::take(&mut self.input);
-        let trimmed = input.trim();
+        let expanded = Self::expand_pasted_segments(&input, &self.pasted);
+        self.pasted.clear();
+        let trimmed = expanded.trim();
         if !trimmed.is_empty() {
-            self.push_history(input.clone());
+            self.push_history(expanded.clone());
             self.bump_frecency(trimmed);
             if let Some(first) = trimmed.split_whitespace().next() {
                 if first.starts_with('/') || first.starts_with('@') {
@@ -655,11 +726,12 @@ impl Prompt {
         self.suggestion_index = None;
         self.mode = PromptMode::Normal;
         self.reset_interrupt_confirmation();
-        input
+        expanded
     }
 
     pub fn clear(&mut self) {
         self.input.clear();
+        self.pasted.clear();
         self.cursor_position = 0;
         self.history_index = None;
         self.history_draft = None;
@@ -679,6 +751,7 @@ impl Prompt {
 
     pub fn set_input(&mut self, input: String) {
         self.input = normalize_prompt_text(&input);
+        self.pasted.clear();
         self.cursor_position = self.input.len();
         self.history_index = None;
         self.history_draft = None;
@@ -717,10 +790,103 @@ impl Prompt {
         if normalized.is_empty() {
             return;
         }
+        self.shift_pasted_segments(self.cursor_position, 0, normalized.len());
         self.input.insert_str(self.cursor_position, &normalized);
         self.cursor_position = self.cursor_position.saturating_add(normalized.len());
         self.reset_history_cursor();
         self.recompute_suggestions();
+    }
+
+    /// Insert pasted text, collapsing large multi-line pastes into a
+    /// `[Pasted ~N lines]` placeholder that expands back to the full text on
+    /// submit. Mirrors vanilla OpenCode's paste summary.
+    pub fn paste_text(&mut self, text: &str) {
+        let normalized = normalize_prompt_text(text);
+        if normalized.is_empty() {
+            return;
+        }
+
+        let summarized = normalized.trim();
+        let line_count = summarized.matches('\n').count() + 1;
+        let summarize = self.context.paste_summary_enabled()
+            && (line_count >= 3 || summarized.chars().count() > 150);
+
+        if summarize {
+            let placeholder = format!("[Pasted ~{line_count} lines]");
+            let start = self.cursor_position;
+            let end = start + placeholder.len();
+            self.shift_pasted_segments(start, 0, placeholder.len());
+            self.input.insert_str(start, &placeholder);
+            self.cursor_position = end;
+            self.pasted.push(PastedSegment {
+                start,
+                end,
+                text: summarized.to_string(),
+            });
+        } else {
+            self.shift_pasted_segments(self.cursor_position, 0, normalized.len());
+            self.input.insert_str(self.cursor_position, &normalized);
+            self.cursor_position = self.cursor_position.saturating_add(normalized.len());
+        }
+
+        self.reset_history_cursor();
+        self.recompute_suggestions();
+    }
+
+    fn expanded_input(&self) -> String {
+        Self::expand_pasted_segments(&self.input, &self.pasted)
+    }
+
+    fn expand_pasted_segments(input: &str, pasted: &[PastedSegment]) -> String {
+        if pasted.is_empty() {
+            return input.to_string();
+        }
+        let mut segments: Vec<&PastedSegment> = pasted
+            .iter()
+            .filter(|segment| {
+                segment.start <= segment.end
+                    && segment.end <= input.len()
+                    && input.is_char_boundary(segment.start)
+                    && input.is_char_boundary(segment.end)
+            })
+            .collect();
+        segments.sort_by_key(|segment| segment.start);
+
+        let mut out = String::with_capacity(input.len());
+        let mut cursor = 0usize;
+        for segment in segments {
+            if segment.start < cursor {
+                continue;
+            }
+            out.push_str(&input[cursor..segment.start]);
+            out.push_str(&segment.text);
+            cursor = segment.end;
+        }
+        out.push_str(&input[cursor..]);
+        out
+    }
+
+    /// Keep placeholder ranges in sync as the buffer is edited. An edit that
+    /// starts at or before a placeholder shifts it; an edit after it leaves it
+    /// alone; an edit overlapping it invalidates the placeholder (its content is
+    /// dropped, matching vanilla deleting the extmark).
+    fn shift_pasted_segments(&mut self, at: usize, removed: usize, inserted: usize) {
+        if self.pasted.is_empty() {
+            return;
+        }
+        let delta = inserted as isize - removed as isize;
+        let removed_end = at.saturating_add(removed);
+        self.pasted.retain_mut(|segment| {
+            if removed_end <= segment.start {
+                segment.start = (segment.start as isize + delta).max(0) as usize;
+                segment.end = (segment.end as isize + delta).max(0) as usize;
+            } else if at >= segment.end {
+                // Edit happens entirely after the placeholder.
+            } else {
+                return false;
+            }
+            true
+        });
     }
 
     pub fn desired_height(&self, width: u16) -> u16 {
@@ -736,7 +902,7 @@ impl Prompt {
         }
 
         self.stash.push(PromptStashEntry {
-            input: self.input.clone(),
+            input: self.expanded_input(),
             created_at: chrono::Utc::now().timestamp_millis(),
         });
         if self.stash.len() > MAX_STASH_ENTRIES {
@@ -788,12 +954,14 @@ impl Prompt {
                 }
             }
             None => {
-                self.history_draft = Some(self.input.clone());
+                self.history_draft = Some(self.expanded_input());
+                self.pasted.clear();
                 self.history_index = Some(self.history.len() - 1);
             }
         }
 
         if let Some(idx) = self.history_index {
+            self.pasted.clear();
             self.input = self.history[idx].clone();
             self.cursor_position = 0;
             self.recompute_suggestions();
@@ -1096,6 +1264,7 @@ impl Prompt {
             return;
         };
 
+        self.shift_pasted_segments(start, end - start, suggestion.len());
         self.input.replace_range(start..end, &suggestion);
         self.cursor_position = start + suggestion.len();
         if (suggestion.starts_with('/') || suggestion.starts_with('@'))
@@ -1107,6 +1276,7 @@ impl Prompt {
                 .copied()
                 .is_some_and(|b| b.is_ascii_whitespace())
         {
+            self.shift_pasted_segments(self.cursor_position, 0, 1);
             self.input.insert(self.cursor_position, ' ');
             self.cursor_position += 1;
         }
@@ -1396,6 +1566,8 @@ fn saturating_u16(value: usize) -> u16 {
 struct WrappedPromptInput {
     lines: Vec<String>,
     positions: HashMap<usize, (usize, u16)>,
+    /// Byte range in the raw input that each wrapped line renders.
+    line_ranges: Vec<(usize, usize)>,
 }
 
 impl WrappedPromptInput {
@@ -1454,29 +1626,71 @@ fn prompt_grapheme_is_line_break(grapheme: &str) -> bool {
     matches!(grapheme, "\n" | "\r" | "\r\n")
 }
 
+/// Tracks the raw-input byte range rendered by each wrapped line so callers can
+/// style spans (pasted placeholders, `@` references) without re-slicing the
+/// original buffer.
+#[derive(Debug, Default)]
+struct WrapTrack {
+    line_ranges: Vec<(usize, usize)>,
+    current_start: usize,
+    current_end: usize,
+    has_content: bool,
+}
+
+impl WrapTrack {
+    fn note(&mut self, offset: usize, len: usize) {
+        if !self.has_content {
+            self.current_start = offset;
+            self.has_content = true;
+        }
+        self.current_end = offset.saturating_add(len);
+    }
+
+    fn finish(&mut self, lines: &mut Vec<String>, current: &mut String) {
+        let start = if self.has_content {
+            self.current_start
+        } else {
+            self.current_end
+        };
+        self.line_ranges.push((start, self.current_end));
+        lines.push(std::mem::take(current));
+        self.has_content = false;
+    }
+
+    fn reset_to(&mut self, offset: usize) {
+        self.current_start = offset;
+        self.current_end = offset;
+        self.has_content = false;
+    }
+}
+
 /// Append one whitespace grapheme to the current wrapped line, breaking to a new
 /// line first when it would push the line past `width`. This keeps runs of
 /// whitespace (including whitespace-only lines) bounded instead of letting them
 /// overflow the box.
+#[allow(clippy::too_many_arguments)]
 fn push_wrapped_whitespace(
     lines: &mut Vec<String>,
     current: &mut String,
     current_width: &mut usize,
     positions: &mut HashMap<usize, (usize, u16)>,
+    track: &mut WrapTrack,
     offset: usize,
     whitespace: &str,
     width: usize,
 ) {
     let grapheme_width = prompt_grapheme_width(whitespace);
     if *current_width > 0 && *current_width + grapheme_width > width {
-        lines.push(std::mem::take(current));
+        track.finish(lines, current);
         *current_width = 0;
     }
     positions.insert(offset, (lines.len(), saturating_u16(*current_width)));
+    track.note(offset, whitespace.len());
     current.push_str(whitespace);
     *current_width = current_width.saturating_add(grapheme_width);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_pending_prompt_whitespace(
     lines: &mut Vec<String>,
     current: &mut String,
@@ -1484,6 +1698,7 @@ fn append_pending_prompt_whitespace(
     pending_ws: &mut Vec<(usize, String)>,
     pending_ws_width: &mut usize,
     positions: &mut HashMap<usize, (usize, u16)>,
+    track: &mut WrapTrack,
     width: usize,
 ) {
     for (offset, grapheme) in pending_ws.drain(..) {
@@ -1492,6 +1707,7 @@ fn append_pending_prompt_whitespace(
             current,
             current_width,
             positions,
+            track,
             offset,
             &grapheme,
             width,
@@ -1504,6 +1720,7 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
     let width = usize::from(width.max(1));
     let mut lines: Vec<String> = Vec::new();
     let mut positions: HashMap<usize, (usize, u16)> = HashMap::new();
+    let mut track = WrapTrack::default();
     let mut current = String::new();
     let mut current_width = 0usize;
     let mut pending_ws: Vec<(usize, String)> = Vec::new();
@@ -1521,10 +1738,12 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
                 &mut pending_ws,
                 &mut pending_ws_width,
                 &mut positions,
+                &mut track,
                 width,
             );
             positions.insert(byte_offset, (lines.len(), saturating_u16(current_width)));
-            lines.push(std::mem::take(&mut current));
+            track.finish(&mut lines, &mut current);
+            track.reset_to(byte_offset.saturating_add(grapheme.len()));
             current_width = 0;
             index += 1;
             continue;
@@ -1555,7 +1774,7 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
             }
             pending_ws.clear();
             pending_ws_width = 0;
-            lines.push(std::mem::take(&mut current));
+            track.finish(&mut lines, &mut current);
             current_width = 0;
         } else {
             for (offset, whitespace) in pending_ws.drain(..) {
@@ -1564,6 +1783,7 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
                     &mut current,
                     &mut current_width,
                     &mut positions,
+                    &mut track,
                     offset,
                     &whitespace,
                     width,
@@ -1575,10 +1795,11 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
         for (offset, grapheme) in graphemes[word_start..word_end].iter().copied() {
             let grapheme_width = prompt_grapheme_width(grapheme);
             if current_width > 0 && current_width + grapheme_width > width {
-                lines.push(std::mem::take(&mut current));
+                track.finish(&mut lines, &mut current);
                 current_width = 0;
             }
             positions.insert(offset, (lines.len(), saturating_u16(current_width)));
+            track.note(offset, grapheme.len());
             current.push_str(grapheme);
             current_width = current_width.saturating_add(grapheme_width);
         }
@@ -1593,14 +1814,94 @@ fn wrap_prompt_input(input: &str, width: u16) -> WrappedPromptInput {
         &mut pending_ws,
         &mut pending_ws_width,
         &mut positions,
+        &mut track,
         width,
     );
-    lines.push(std::mem::take(&mut current));
+    track.finish(&mut lines, &mut current);
     if lines.is_empty() {
         lines.push(String::new());
     }
 
-    WrappedPromptInput { lines, positions }
+    WrappedPromptInput {
+        lines,
+        positions,
+        line_ranges: track.line_ranges,
+    }
+}
+
+/// Byte ranges of `@token` references in the prompt buffer. A reference starts
+/// with `@` at the start of a whitespace-delimited token.
+fn reference_token_ranges(input: &str) -> Vec<(usize, usize)> {
+    let bytes = input.as_bytes();
+    let mut ranges = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'@' && (index == 0 || bytes[index - 1].is_ascii_whitespace()) {
+            let mut end = index + 1;
+            while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+                end += 1;
+            }
+            if end > index + 1 && input.is_char_boundary(end) {
+                ranges.push((index, end));
+            }
+            index = end;
+        } else {
+            index += input[index..]
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(1);
+        }
+    }
+    ranges
+}
+
+/// Build one rendered line, applying style spans whose byte ranges fall inside
+/// `[line_start, line_end)`. `line` must be the raw input slice for that range.
+fn build_styled_line(
+    line: &str,
+    line_start: usize,
+    line_end: usize,
+    styles: &[(usize, usize, Style)],
+) -> Line<'static> {
+    if styles.is_empty() || line.is_empty() {
+        return Line::from(line.to_string());
+    }
+
+    let line_limit = line_start.saturating_add(line.len());
+    let line_end = line_end.min(line_limit).max(line_start);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut cursor = 0usize;
+
+    for (start, end, style) in styles {
+        let start = (*start).max(line_start).min(line_end);
+        let end = (*end).max(line_start).min(line_end);
+        if end <= start {
+            continue;
+        }
+        let local_start = start - line_start;
+        let local_end = end - line_start;
+        if local_end <= cursor
+            || !line.is_char_boundary(local_start)
+            || !line.is_char_boundary(local_end)
+        {
+            continue;
+        }
+        let local_start = local_start.max(cursor);
+        if local_start > cursor {
+            spans.push(Span::raw(line[cursor..local_start].to_string()));
+        }
+        spans.push(Span::styled(
+            line[local_start..local_end].to_string(),
+            *style,
+        ));
+        cursor = local_end;
+    }
+
+    if cursor < line.len() {
+        spans.push(Span::raw(line[cursor..].to_string()));
+    }
+    Line::from(spans)
 }
 
 fn truncate_for_status(input: &str, max_chars: usize) -> String {
@@ -1932,6 +2233,14 @@ mod tests {
             let _ = prompt.take_input();
             prompt.set_input("test".to_string());
             let _ = prompt.take_input();
+            // Pin both entries to one timestamp: equal frecency falls back to
+            // the alphabetical tie-break ("team" before "test"). Without this
+            // the assertion depends on whether the two bumps land in the same
+            // millisecond.
+            let now = chrono::Utc::now().timestamp_millis();
+            for entry in prompt.frecency.values_mut() {
+                entry.last_used = now;
+            }
             prompt.set_input("te".to_string());
 
             prompt.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()));
@@ -2467,6 +2776,119 @@ mod tests {
             prompt.set_input("x\r\ny\tz".to_string());
             assert_eq!(prompt.get_input(), "x\ny   z");
             assert_eq!(prompt.cursor_position(), prompt.get_input().len());
+        });
+    }
+
+    #[test]
+    fn paste_text_summarizes_multiline_paste_and_expands_on_submit() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.paste_text("one\ntwo\nthree");
+            assert_eq!(prompt.get_input(), "[Pasted ~3 lines]");
+            assert_eq!(prompt.cursor_position(), "[Pasted ~3 lines]".len());
+            assert_eq!(prompt.take_input(), "one\ntwo\nthree");
+        });
+    }
+
+    #[test]
+    fn paste_text_keeps_small_pastes_inline() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.paste_text("hello\nworld");
+            assert_eq!(prompt.get_input(), "hello\nworld");
+            assert_eq!(prompt.take_input(), "hello\nworld");
+        });
+    }
+
+    #[test]
+    fn paste_text_summarizes_long_single_line_pastes() {
+        with_isolated_prompt(|mut prompt| {
+            let text = "a".repeat(160);
+            prompt.paste_text(&text);
+            assert_eq!(prompt.get_input(), "[Pasted ~1 lines]");
+            assert_eq!(prompt.take_input(), text);
+        });
+    }
+
+    #[test]
+    fn paste_summary_expands_with_surrounding_typed_text() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.paste_text("alpha\nbeta\ngamma");
+            prompt.handle_key(KeyEvent::from(KeyCode::Home));
+            prompt.insert_text("pre ");
+            assert_eq!(prompt.get_input(), "pre [Pasted ~3 lines]");
+            assert_eq!(prompt.take_input(), "pre alpha\nbeta\ngamma");
+        });
+    }
+
+    #[test]
+    fn deleting_into_paste_placeholder_drops_its_content() {
+        with_isolated_prompt(|mut prompt| {
+            prompt.paste_text("alpha\nbeta\ngamma");
+            prompt.handle_key(KeyEvent::from(KeyCode::Backspace));
+            assert_eq!(prompt.get_input(), "[Pasted ~3 lines");
+            assert_eq!(prompt.take_input(), "[Pasted ~3 lines");
+        });
+    }
+
+    #[test]
+    fn reference_token_ranges_detect_file_and_agent_refs() {
+        assert_eq!(
+            reference_token_ranges("see @src/main.rs and @build"),
+            vec![(4, 16), (21, 27)]
+        );
+        assert_eq!(reference_token_ranges("email a@b.com"), Vec::new());
+        assert_eq!(reference_token_ranges("@one\n@two"), vec![(0, 4), (5, 9)]);
+    }
+
+    #[test]
+    fn wrap_prompt_input_records_line_ranges() {
+        let wrapped = wrap_prompt_input("ab cd", 3);
+        assert_eq!(wrapped.lines, vec!["ab".to_string(), "cd".to_string()]);
+        assert_eq!(wrapped.line_ranges, vec![(0, 2), (3, 5)]);
+
+        let wrapped = wrap_prompt_input("a\nb", 40);
+        assert_eq!(wrapped.line_ranges, vec![(0, 1), (2, 3)]);
+    }
+
+    #[test]
+    fn rendered_prompt_shows_paste_summary_and_reference_styles() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        with_isolated_prompt(|mut prompt| {
+            let warning = prompt.context.theme.read().warning;
+            prompt.paste_text("one\ntwo\nthree");
+            prompt.insert_text(" @src/main.rs");
+            let width = 60u16;
+            let height = prompt.desired_height(width);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+            terminal
+                .draw(|frame| prompt.render(frame, frame.size()))
+                .expect("draw");
+
+            let buffer = terminal.backend().buffer();
+            let mut text = String::new();
+            let mut warning_bg = false;
+            let mut warning_fg = false;
+            for y in 0..height {
+                for x in 0..width {
+                    let cell = buffer.get(x, y);
+                    text.push_str(cell.symbol());
+                    warning_bg |= cell.bg == warning;
+                    warning_fg |= cell.fg == warning;
+                }
+                text.push('\n');
+            }
+
+            assert!(
+                text.contains("[Pasted ~3 lines]"),
+                "paste summary missing from rendered prompt:\n{text}"
+            );
+            assert!(
+                text.contains("@src/main.rs"),
+                "file reference missing from rendered prompt:\n{text}"
+            );
+            assert!(warning_bg, "paste summary must use the warning background");
+            assert!(warning_fg, "file reference must use the warning foreground");
         });
     }
 
