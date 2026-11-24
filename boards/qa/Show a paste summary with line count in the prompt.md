@@ -101,3 +101,9 @@ config flag default/on/off.
 `tab_autocomplete_uses_first_candidate` was timing-flaky (depends on two frecency
 bumps landing in the same millisecond); pinned its timestamps in the test while
 touching the file.
+## Merge closeout
+
+- PR #211 merged into `development` (merge commit `790532e`); branch
+  `feature/TUI-002-003-prompt-input-parity` deleted after merge.
+- Remaining gate: post-merge QA on `development` (agent-driven QA passed on the
+  PR branch before merge).

@@ -1,7 +1,7 @@
 ---
 id: "H-022"
 title: "TUI-002/TUI-003 prompt input paste summary and @file reference styling - Handoff"
-status: "ready"
+status: "complete"
 created: "2026-11-24"
 updated: "2026-11-24"
 owner: ""
@@ -169,3 +169,34 @@ cargo clippy -p opencode-config -p opencode-tui --all-targets
 6. Leave both cards in `qa`. Report the PR URL, the exact commands run, and any
    remaining gap. Do not merge to `main`; `development → main` is a separate
    explicitly-approved release.
+
+## Completion
+
+- PR [#211](https://github.com/cchris-p/opencode-modded-rust/pull/211) merged
+  into `development` as `790532e`. Commit `dd0d73b` carried the implementation,
+  the two `boards/qa` cards, and this handoff.
+- Verified before merge: `cargo fmt --all`, `cargo test -p opencode-tui` (238
+  passed), `cargo test -p opencode-config` (67 passed), `cargo clippy
+  -p opencode-config -p opencode-tui --all-targets` (161 warnings before and
+  after - no new ones), `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo check
+  -p opencode-config -p opencode-tui`.
+- Both cards remain in `qa` with QA evidence and a merge-closeout note.
+- Scope held to the main session prompt; the question tool paste path is
+  unchanged apart from receiving raw text.
+
+## Next Agent Instructions
+
+**Current state:** TUI-002 and TUI-003 are merged into `development` (`790532e`)
+and sit in `qa`; no code work remains on this handoff.
+**Start here:** post-merge QA of the paste and `@` reference behavior on
+`development`; then promote both cards to `done` if it passes.
+**Verify:** `cargo test -p opencode-tui components::prompt`, `cargo test
+-p opencode-config`, plus a manual paste of `>= 3` lines and an `@file` token in
+`ort` (build first with `ort-build`).
+**Known issues:** none from this change. Full `cargo check --workspace` is
+blocked only by the unfetched `third_party/scopemux-core` environment gap.
+**Gates:** post-merge QA/owner confirmation before moving the cards to `done`.
+**Do not:** merge anything to `main`; widen styling to the question tool or
+dialog inputs.
+**References:** `boards/qa/Show a paste summary with line count in the prompt.md`,
+`boards/qa/Style @file references in the prompt input.md`, this handoff.

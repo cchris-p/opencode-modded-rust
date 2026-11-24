@@ -77,3 +77,9 @@ line-range mapping, and a rendered-render assertion for the warning foreground.
   the warning background/foreground for the placeholder and `@file` token).
 - `cargo clippy -p opencode-config -p opencode-tui --all-targets` — no new
   warnings from this change.
+## Merge closeout
+
+- PR #211 merged into `development` (merge commit `790532e`); branch
+  `feature/TUI-002-003-prompt-input-parity` deleted after merge.
+- Remaining gate: post-merge QA on `development` (agent-driven QA passed on the
+  PR branch before merge).
