@@ -59,6 +59,8 @@ pub struct QuestionPrompt {
     text_mode: bool,
     last_rendered_area: Cell<Option<Rect>>,
     option_rows: RefCell<Vec<u16>>,
+    /// BUG-058: navigation affordance for multi-question / review screens.
+    nav_hint: Option<String>,
 }
 
 fn is_single_select(question_type: &QuestionType) -> bool {
@@ -80,6 +82,7 @@ impl QuestionPrompt {
             text_mode: false,
             last_rendered_area: Cell::new(None),
             option_rows: RefCell::new(Vec::new()),
+            nav_hint: None,
         }
     }
 
@@ -93,6 +96,67 @@ impl QuestionPrompt {
         self.text_input.clear();
         self.text_mode = false;
         self.option_rows.borrow_mut().clear();
+        self.nav_hint = None;
+    }
+
+    /// BUG-058: show the cross-question navigation affordance.
+    pub fn set_nav_hint(&mut self, hint: Option<String>) {
+        self.nav_hint = hint;
+    }
+
+    /// BUG-058: pre-populate the prompt with a previously recorded answer so an
+    /// earlier question can be revisited and edited in place.
+    pub fn apply_answer(&mut self, answer: &[String]) {
+        if answer.is_empty() {
+            return;
+        }
+        let Some(question) = self.current_question.as_ref() else {
+            return;
+        };
+        let is_text = question.question_type == QuestionType::Text;
+        let single_select = is_single_select(&question.question_type);
+
+        if is_text {
+            self.text_input.clear();
+            self.text_input.insert_str(&answer.join("\n"));
+            return;
+        }
+
+        // Restore option selections by id (option ids == answer ids).
+        for (index, option) in question.options.iter().enumerate() {
+            if answer.iter().any(|value| value == &option.id) {
+                if single_select {
+                    for selected in self.selected_options.iter_mut() {
+                        *selected = false;
+                    }
+                }
+                if let Some(selected) = self.selected_options.get_mut(index) {
+                    *selected = true;
+                }
+            }
+        }
+
+        // Anything that is not an option id is custom typed text.
+        let custom: Vec<&str> = answer
+            .iter()
+            .map(String::as_str)
+            .filter(|value| !question.options.iter().any(|option| option.id == *value))
+            .collect();
+        if !custom.is_empty() && self.has_custom_row() {
+            self.custom_selected = true;
+            self.text_mode = true;
+            self.selected_index = question.options.len();
+            self.text_input.clear();
+            self.text_input.insert_str(&custom.join(", "));
+            return;
+        }
+
+        self.selected_index = self
+            .selected_options
+            .iter()
+            .position(|selected| *selected)
+            .unwrap_or(0);
+        self.custom_selected = false;
     }
 
     pub fn current(&self) -> Option<&QuestionRequest> {
@@ -108,6 +172,7 @@ impl QuestionPrompt {
         self.text_input.clear();
         self.text_mode = false;
         self.option_rows.borrow_mut().clear();
+        self.nav_hint = None;
     }
 
     /// True when a selectable "Type your own answer" row is appended.
@@ -471,8 +536,13 @@ impl QuestionPrompt {
             if editing {
                 content.push(self.input_line(theme));
                 content.push(Line::from(""));
+                let mut hint = "Type your answer and press Enter".to_string();
+                if let Some(nav) = self.nav_hint.as_deref() {
+                    hint.push_str(" · ");
+                    hint.push_str(nav);
+                }
                 content.push(Line::from(Span::styled(
-                    "Type your answer and press Enter",
+                    hint,
                     Style::default().fg(theme.text_muted),
                 )));
             }
@@ -525,13 +595,23 @@ impl QuestionPrompt {
             content.push(Line::from(""));
             if self.text_mode {
                 content.push(self.input_line(theme));
+                let mut hint = "Enter to submit, Esc to cancel".to_string();
+                if let Some(nav) = self.nav_hint.as_deref() {
+                    hint.push_str(" · ");
+                    hint.push_str(nav);
+                }
                 content.push(Line::from(Span::styled(
-                    "Enter to submit, Esc to cancel",
+                    hint,
                     Style::default().fg(theme.text_muted),
                 )));
             } else {
+                let mut hint = "Up/Down to navigate, Space to toggle, Enter to confirm".to_string();
+                if let Some(nav) = self.nav_hint.as_deref() {
+                    hint.push_str(" · ");
+                    hint.push_str(nav);
+                }
                 content.push(Line::from(Span::styled(
-                    "Up/Down to navigate, Space to toggle, Enter to confirm",
+                    hint,
                     Style::default().fg(theme.text_muted),
                 )));
             }
@@ -706,6 +786,41 @@ mod tests {
 
         assert_eq!(answers, vec!["a".to_string()]);
         assert!(!prompt.is_open);
+    }
+
+    #[test]
+    fn apply_answer_prefills_single_choice_for_editing() {
+        let mut prompt = option_prompt(QuestionType::SingleChoice);
+        prompt.apply_answer(&["b".to_string()]);
+
+        let (_request, answers) = prompt.confirm().expect("prefilled answer submits");
+        assert_eq!(answers, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn apply_answer_prefills_multiple_choice_for_editing() {
+        let mut prompt = option_prompt(QuestionType::MultipleChoice);
+        prompt.apply_answer(&["a".to_string(), "b".to_string()]);
+
+        let (_request, answers) = prompt.confirm().expect("prefilled answers submit");
+        assert_eq!(answers, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn apply_answer_prefills_text_for_editing() {
+        let mut prompt = QuestionPrompt::new();
+        prompt.ask(QuestionRequest {
+            id: "request-text".to_string(),
+            question: "Anything else?".to_string(),
+            question_type: QuestionType::Text,
+            options: Vec::new(),
+            custom: true,
+        });
+        prompt.apply_answer(&["first draft".to_string()]);
+        prompt.type_char('!');
+
+        let (_request, answers) = prompt.confirm().expect("edited text submits");
+        assert_eq!(answers, vec!["first draft!".to_string()]);
     }
 
     #[test]

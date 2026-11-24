@@ -83,6 +83,26 @@ struct PendingQuestionFlow {
     submitting: bool,
 }
 
+impl PendingQuestionFlow {
+    /// BUG-058: answers are index-addressed so revisiting an earlier question
+    /// replaces its value instead of appending/popping the tail.
+    fn store_answer(&mut self, index: usize, answer: Vec<String>) {
+        if index >= self.answers.len() {
+            self.answers.resize(index + 1, Vec::new());
+        }
+        self.answers[index] = answer;
+    }
+}
+
+/// BUG-058: target step for Tab/Shift+Tab. `step_count` questions plus a review
+/// step, clamped to the valid range; single-question requests have no target.
+fn clamped_question_index(current: usize, delta: isize, step_count: usize) -> usize {
+    if step_count <= 1 {
+        return 0;
+    }
+    (current as isize + delta).clamp(0, step_count as isize) as usize
+}
+
 pub struct App {
     context: Arc<AppContext>,
     state: AppState,
@@ -474,6 +494,8 @@ impl App {
                         return Ok(());
                     }
                     match key.code {
+                        KeyCode::Tab => self.navigate_question_flow(1),
+                        KeyCode::BackTab => self.navigate_question_flow(-1),
                         KeyCode::Up => self.question_prompt.move_up(),
                         KeyCode::Down => self.question_prompt.move_down(),
                         KeyCode::Left => {
@@ -3882,12 +3904,29 @@ impl App {
         };
 
         if index < step_count {
-            let prompt = self
+            let (prompt, answer) = self
                 .pending_question_flow
                 .as_ref()
-                .map(|flow| Self::question_prompt_for_step(flow, index))
+                .map(|flow| {
+                    (
+                        Self::question_prompt_for_step(flow, index),
+                        flow.answers.get(index).cloned(),
+                    )
+                })
                 .expect("flow checked above");
             self.question_prompt.ask(prompt);
+            // BUG-058: re-open an answered question with its stored selection so
+            // it can be edited instead of only reaching the tail.
+            if let Some(answer) = answer {
+                self.question_prompt.apply_answer(&answer);
+            }
+            if step_count > 1 {
+                self.question_prompt.set_nav_hint(Some(format!(
+                    "Tab/Shift+Tab to change question ({}/{})",
+                    index + 1,
+                    step_count
+                )));
+            }
             return;
         }
 
@@ -3976,6 +4015,9 @@ impl App {
             custom: false,
         };
         self.question_prompt.ask(prompt);
+        self.question_prompt.set_nav_hint(Some(
+            "Tab/Shift+Tab to revisit a question, Enter to submit".to_string(),
+        ));
         // Pre-select "Submit answers" so the common path is a single keypress.
         self.question_prompt.toggle_selected();
         if let Some(flow) = self.pending_question_flow.as_mut() {
@@ -3993,8 +4035,9 @@ impl App {
             flow.reviewing = false;
             let action = answer.first().map(String::as_str);
             if action == Some("Go back") {
+                // BUG-058: go back to the last question but keep all answers so
+                // they can be edited in place (Tab reaches the others).
                 flow.current_index = flow.steps.len().saturating_sub(1);
-                flow.answers.pop();
                 self.pending_question_flow = Some(flow);
                 self.open_current_question_step();
             } else {
@@ -4004,8 +4047,41 @@ impl App {
             return;
         }
 
-        flow.answers.push(answer);
+        // BUG-058: answers are index-addressed, so editing an earlier question
+        // replaces its value instead of appending/popping the tail.
+        flow.store_answer(flow.current_index, answer);
         flow.current_index += 1;
+        self.pending_question_flow = Some(flow);
+        self.open_current_question_step();
+    }
+
+    /// BUG-058: move between question steps (and the review step) while a
+    /// request is pending. Tab/Shift+Tab mirror vanilla tab navigation.
+    fn navigate_question_flow(&mut self, delta: isize) {
+        let Some(mut flow) = self.pending_question_flow.take() else {
+            return;
+        };
+
+        if flow.reviewing {
+            if delta < 0 {
+                flow.reviewing = false;
+                flow.current_index = flow.steps.len().saturating_sub(1);
+                self.pending_question_flow = Some(flow);
+                self.open_current_question_step();
+            } else {
+                self.pending_question_flow = Some(flow);
+            }
+            return;
+        }
+
+        // With a single question there is nowhere else to go; Enter answers.
+        if flow.steps.len() <= 1 {
+            self.pending_question_flow = Some(flow);
+            return;
+        }
+
+        // BUG-058: step_count questions plus the review step (index = len).
+        flow.current_index = clamped_question_index(flow.current_index, delta, flow.steps.len());
         self.pending_question_flow = Some(flow);
         self.open_current_question_step();
     }
@@ -4052,16 +4128,25 @@ impl App {
                     &format!("Failed to answer question: {}", err),
                     3200,
                 );
-                // Error recovery: drop the last answer and re-ask that question
-                // instead of leaving the prompt stuck in a submitting state.
+                // Error recovery: keep every answer and re-open the review (or
+                // the single question) so the user can retry without losing
+                // edits made to earlier questions.
                 if let Some(flow) = self.pending_question_flow.as_mut() {
                     flow.submitting = false;
-                    if flow.current_index > 0 {
-                        flow.current_index -= 1;
-                        flow.answers.pop();
+                    flow.reviewing = flow.steps.len() > 1;
+                    if flow.steps.len() <= 1 {
+                        flow.current_index = 0;
                     }
                 }
-                self.open_current_question_step();
+                if self
+                    .pending_question_flow
+                    .as_ref()
+                    .is_some_and(|flow| flow.reviewing)
+                {
+                    self.open_question_review();
+                } else {
+                    self.open_current_question_step();
+                }
             }
         }
     }
@@ -6607,5 +6692,53 @@ mod tests {
 
         let text = compose_transcript_selection(&selection, &lines, &copy_rows);
         assert_eq!(text, "hello");
+    }
+
+    fn question_step(text: &str) -> ApiQuestionPromptInfo {
+        ApiQuestionPromptInfo {
+            question: text.to_string(),
+            header: None,
+            options: Vec::new(),
+            multiple: false,
+            custom: false,
+        }
+    }
+
+    fn two_question_flow() -> PendingQuestionFlow {
+        PendingQuestionFlow {
+            id: "question-1".to_string(),
+            session_id: "session-1".to_string(),
+            from_subagent: false,
+            steps: vec![question_step("First?"), question_step("Second?")],
+            answers: vec![vec!["a".to_string()], vec!["b".to_string()]],
+            current_index: 0,
+            reviewing: false,
+            submitting: false,
+        }
+    }
+
+    #[test]
+    fn editing_an_earlier_answer_replaces_it_at_its_index() {
+        let mut flow = two_question_flow();
+        flow.store_answer(0, vec!["changed".to_string()]);
+        assert_eq!(
+            flow.answers,
+            vec![vec!["changed".to_string()], vec!["b".to_string()]]
+        );
+    }
+
+    #[test]
+    fn question_navigation_reaches_every_step_and_the_review() {
+        assert_eq!(clamped_question_index(0, 1, 2), 1);
+        assert_eq!(clamped_question_index(1, 1, 2), 2);
+        assert_eq!(clamped_question_index(2, 1, 2), 2);
+        assert_eq!(clamped_question_index(1, -1, 2), 0);
+        assert_eq!(clamped_question_index(0, -1, 2), 0);
+    }
+
+    #[test]
+    fn question_navigation_is_a_noop_for_single_question() {
+        assert_eq!(clamped_question_index(0, 1, 1), 0);
+        assert_eq!(clamped_question_index(0, -1, 1), 0);
     }
 }

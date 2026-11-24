@@ -5,8 +5,9 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: "invariants/option-selection.md"
-status: "todo"
+status: "qa"
 created: "2026-09-30"
+updated: "2026-11-24"
 ---
 
 # Cannot revise question answers: review only steps back one question, and submitted answers are final
@@ -150,3 +151,23 @@ out of scope (matches vanilla).
 - Design caution: replacing the one-step "Go back" changes `flow.answers` indexing assumptions in
   `advance_question_flow` (`app.rs:3523-3542`); treat the answer store as index-addressed, not
   append/pop-only.
+
+## Dev Notes (2026-11-24)
+
+- Reworked the question flow to be index-addressed: `PendingQuestionFlow::store_answer`
+  replaces the answer at the current question's index, so editing an earlier
+  question no longer appends/pops the tail.
+- `Tab`/`BackTab` (Shift+Tab) navigate between every question step and the review
+  step, clamped to the valid range; single-question requests are unchanged
+  (Enter still answers immediately).
+- Re-opening a question prefills its stored answer via
+  `QuestionPrompt::apply_answer` (single/multi option ids, custom text, and
+  free-text questions), so the user can edit rather than re-enter.
+- Review "Go back" returns to the last question without discarding answers, and
+  the new nav hint documents `Tab/Shift+Tab`.
+- Submit error recovery keeps all answers and re-opens the review (multi) or the
+  question (single) instead of dropping the last answer.
+- Verification: `cargo test -p opencode-tui` (236 passed in the isolated
+  worktree), `cargo fmt --all -- --check`, and
+  `cargo clippy -p opencode-tui --all-targets` (no errors). New tests cover
+  index-replacement, navigation clamping, editing, and answer prefill.
