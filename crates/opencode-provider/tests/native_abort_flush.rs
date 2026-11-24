@@ -128,3 +128,57 @@ fn partial_native_block_then_finish_does_not_leak_and_reports() {
         "truncated native block must fail visibly, got {events:?}"
     );
 }
+
+#[test]
+fn truncated_outer_block_recovers_complete_write_call() {
+    // BUG-074: the model finished the write call (inner closing token + valid
+    // JSON) but was cut off before the outer `calls_end` token. The intended
+    // write must execute instead of being dropped.
+    let args = "{\"filePath\":\"boards/todo/x.md\",\"content\":\"hello\"}";
+    let partial = format!("{CB}{CBE}function{SEP}write\n```json\n{args}\n```{CE}");
+    let body = format!(
+        "{}{}{}",
+        content_frame("Writing the card:"),
+        content_frame(&partial),
+        finish_frame()
+    );
+    let events = replay(&body);
+    assert_no_raw_native_tokens(&events);
+    assert_eq!(
+        calls(&events),
+        vec![(
+            "write".to_string(),
+            serde_json::json!({"filePath": "boards/todo/x.md", "content": "hello"})
+        )],
+        "complete inner write call must be recovered, got {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, StreamEvent::Error(_))),
+        "a recovered call must not also fail the turn, got {events:?}"
+    );
+}
+
+#[test]
+fn truncated_block_with_invalid_json_still_reports_and_does_not_execute() {
+    // Inner closing token present but arguments are not valid JSON: never run a
+    // partial write. Surface the actionable failure instead.
+    let partial = format!("{CB}{CBE}function{SEP}write\n```json\n{{\"content\": }}\n```{CE}");
+    let body = format!(
+        "{}{}{}",
+        content_frame("Writing the card:"),
+        content_frame(&partial),
+        finish_frame()
+    );
+    let events = replay(&body);
+    assert_no_raw_native_tokens(&events);
+    assert!(
+        calls(&events).is_empty(),
+        "invalid args must not execute: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::Error(msg) if msg.contains("Re-issue the tool call to retry"))),
+        "unrecoverable truncation must surface an actionable retry error, got {events:?}"
+    );
+}
