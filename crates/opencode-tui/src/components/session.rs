@@ -374,58 +374,25 @@ impl SessionView {
             .cloned()
             .unwrap_or_default();
 
-        // Find the last assistant message with output tokens > 0 for token display
-        let last_assistant = messages
-            .iter()
-            .rev()
-            .find(|m| matches!(m.role, MessageRole::Assistant) && m.tokens.output > 0);
-
         // TS parity: cost only sums assistant messages.
-        let total_cost: f64 = messages
-            .iter()
-            .filter(|m| matches!(m.role, MessageRole::Assistant))
-            .map(|m| m.cost)
-            .sum();
-        let mut context_and_cost = None;
-        if let Some(assistant_msg) = last_assistant {
-            let t = &assistant_msg.tokens;
-            let total_tokens = t.input + t.output + t.reasoning + t.cache_read + t.cache_write;
-            if total_tokens > 0 {
-                let model_context_limit = {
-                    let providers = self.context.providers.read();
-                    let current_model = self.context.current_model.read();
-                    assistant_msg
-                        .model
-                        .as_ref()
-                        .or(current_model.as_ref())
-                        .and_then(|model_id| {
-                            providers.iter().find_map(|p| {
-                                p.models
-                                    .iter()
-                                    .find(|m| {
-                                        m.id == *model_id
-                                            || m.id
-                                                .rsplit_once('/')
-                                                .map(|(_, suffix)| suffix == model_id)
-                                                .unwrap_or(false)
-                                    })
-                                    .map(|m| m.context_window)
-                            })
-                        })
-                        .unwrap_or(0)
-                };
-
-                let mut context_text = format_number(total_tokens);
-                if model_context_limit > 0 {
-                    let pct =
-                        ((total_tokens as f64 / model_context_limit as f64) * 100.0).round() as u64;
-                    context_text.push_str(&format!(" {}%", pct));
-                }
-
-                let cost_text = format!("${:.2}", total_cost);
-                context_and_cost = Some(format!("{} ({})", context_text, cost_text));
+        let total_cost = super::context_usage::total_cost(&messages);
+        let usage = {
+            let providers = self.context.providers.read();
+            let current_model = self.context.current_model.read();
+            super::context_usage::context_usage(&messages, &providers, current_model.as_deref())
+        };
+        let context_and_cost = usage.map(|usage| {
+            let context_text = super::context_usage::format_context(&usage);
+            if total_cost > 0.0 {
+                format!(
+                    "{} · {}",
+                    context_text,
+                    super::context_usage::format_cost(total_cost)
+                )
+            } else {
+                context_text
             }
-        }
+        });
 
         let content = if is_narrow {
             let mut lines = vec![Line::from(vec![Span::styled(
@@ -2622,18 +2589,6 @@ fn task_view_subagents_line(
         ));
     }
     Line::from(spans)
-}
-
-fn format_number(value: u64) -> String {
-    let digits = value.to_string();
-    let mut out = String::with_capacity(digits.len() + (digits.len() / 3));
-    for (idx, ch) in digits.chars().rev().enumerate() {
-        if idx > 0 && idx % 3 == 0 {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out.chars().rev().collect()
 }
 
 #[cfg(test)]
