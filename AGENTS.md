@@ -103,6 +103,7 @@
 
 ## Release And Fleet Deployment
 
+- CI on every PR/push to `development`/`main` is `.github/workflows/ci.yml` (`INFRA-009`): `cargo fmt --check`, `cargo clippy`, skip-native workspace tests, plus a clean-clone `native` job that fetches the pinned public `scopemux-core`, builds the native bundle, runs `opencode-scopemux`/`opencode-cli` tests, and smoke-tests the release CLI (`INFRA-003`). `scopemux-core` is public over anonymous HTTPS; if it becomes private, add token auth to the `native` job.
 - Canonical rules: `invariants/release-deployment.md`; operating steps: `docs/release-deployment.md`.
 - `main` is protected and release-only: it advances only through a `development -> main` release PR with green required checks and an explicit review. Never push directly to `main`.
 - Advancing `main` is a production release and always needs the owner's explicit confirmation for that specific release; a bare "update main" is not sufficient.

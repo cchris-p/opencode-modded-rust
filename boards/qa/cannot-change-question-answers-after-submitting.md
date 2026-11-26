@@ -7,7 +7,7 @@ area: "BUG"
 spec: "invariants/option-selection.md"
 status: "qa"
 created: "2026-09-30"
-updated: "2026-11-24"
+updated: "2026-11-25"
 ---
 
 # Cannot revise question answers: review only steps back one question, and submitted answers are final
@@ -152,7 +152,7 @@ out of scope (matches vanilla).
   `advance_question_flow` (`app.rs:3523-3542`); treat the answer store as index-addressed, not
   append/pop-only.
 
-## Dev Notes (2026-11-24)
+## Dev Notes (2026-11-25)
 
 - Reworked the question flow to be index-addressed: `PendingQuestionFlow::store_answer`
   replaces the answer at the current question's index, so editing an earlier
@@ -171,3 +171,9 @@ out of scope (matches vanilla).
   worktree), `cargo fmt --all -- --check`, and
   `cargo clippy -p opencode-tui --all-targets` (no errors). New tests cover
   index-replacement, navigation clamping, editing, and answer prefill.
+
+## Merge closeout (2026-11-25)
+
+- PR #210 merged into `development` (`5130c61`); remote and local branches
+  deleted. Card stays in `qa` pending a recorded QA report (live check described
+  above).

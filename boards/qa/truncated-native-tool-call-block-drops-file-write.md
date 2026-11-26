@@ -7,7 +7,7 @@ area: "BUG"
 spec: ""
 status: "qa"
 created: "2026-11-12"
-updated: "2026-11-24"
+updated: "2026-11-25"
 ---
 
 # Truncated native tool-call block drops the intended file write without retry
@@ -47,7 +47,7 @@ A board-item write was lost when the model's native tool-call block was truncate
 - Reproduce a truncated native tool-call block (truncate the closing token) and confirm the agent receives an actionable failure and retries.
 - `cargo test -p opencode-provider`.
 
-## Dev Notes (2026-11-24)
+## Dev Notes (2026-11-25)
 
 - Root cause: `DeepSeekNativeToolCallExtractor::finish` discarded the whole
   unterminated calls block without inspecting its complete inner calls, so a
@@ -65,3 +65,9 @@ A board-item write was lost when the model's native tool-call block was truncate
 - Verification: `cargo test -p opencode-provider` (159 + suites pass), including
   new `native_abort_flush` tests for recovered write calls and invalid-JSON
   truncation. `cargo test -p opencode-tui` unaffected.
+
+## Merge closeout (2026-11-25)
+
+- PR #209 merged into `development` (`97a4a4b`); remote and local branches
+  deleted. Card stays in `qa` pending a recorded QA report (live check described
+  above).

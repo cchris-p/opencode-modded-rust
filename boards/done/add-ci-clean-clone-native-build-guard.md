@@ -5,8 +5,9 @@ priority: "P3"
 type: "chore"
 area: "INFRA"
 spec: ""
-status: "todo"
+status: "done"
 created: "2026-09-26"
+updated: "2026-11-25"
 ---
 
 # Add a CI clean-clone native build guard
@@ -54,3 +55,24 @@ Decide the mechanism and add the secret before enabling the native job.
 ## Related Items
 
 - `INFRA-002` local fetch and drift automation (this is the CI counterpart).
+
+## Delivered / superseded (2026-11-25)
+
+The premise is stale: `.github/workflows/ci.yml` (INFRA-009) and
+`.github/workflows/native-artifacts.yml` (INFRA-006) now cover this card.
+
+- Job A equivalent: `ci.yml` runs `cargo fmt --all --check`,
+  `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo clippy --workspace --all-targets`, and
+  `SCOPEMUX_SKIP_NATIVE_BUILD=1 cargo test --workspace --exclude opencode-cli`.
+- Job B equivalent: `ci.yml` `native` job checks out clean, installs cmake, runs
+  `scripts/fetch-scopemux-core.sh`, packages the native bundle, runs
+  `cargo test -p opencode-scopemux --features native`, `cargo test -p
+  opencode-cli`, builds the release CLI, and smoke-tests portable queries.
+- Caching: cargo registry/git/target caches are keyed on `Cargo.lock`.
+- Prerequisite resolved: `github.com/cchris-p/scopemux-core` is now public, so the
+  clean-clone fetch needs no deploy key/PAT (`git ls-remote` anonymous HTTPS
+  succeeds, verified 2026-11-25). If it becomes private again, add token auth to
+  the `native` job.
+- Documented in `AGENTS.md` under CI and release deployment.
+
+No new workflow was added; a duplicate native job would only add cost.
