@@ -5,8 +5,9 @@ priority: "P2"
 type: "bug"
 area: "BUG"
 spec: ""
-status: "todo"
+status: "qa"
 created: "2026-11-12"
+updated: "2026-11-24"
 ---
 
 # Truncated native tool-call block drops the intended file write without retry
@@ -30,9 +31,9 @@ A board-item write was lost when the model's native tool-call block was truncate
 - Make clear that a truncated native block means the tool did not execute.
 
 ## Acceptance Criteria
-- [ ] A truncated native tool-call block that would have written a file produces a clear tool failure or retry prompt, not a dropped operation.
-- [ ] The agent can distinguish "tool executed" from "tool block discarded".
-- [ ] Add a regression test covering a truncated write tool call end-to-end.
+- [x] A truncated native tool-call block that would have written a file produces a clear tool failure or retry prompt, not a dropped operation.
+- [x] The agent can distinguish "tool executed" from "tool block discarded".
+- [x] Add a regression test covering a truncated write tool call end-to-end.
 
 ## Related Items
 - `BUG-063`: DeepSeek/Novita native tool-call leak resurfaced on stale build
@@ -45,3 +46,22 @@ A board-item write was lost when the model's native tool-call block was truncate
 ## Verification
 - Reproduce a truncated native tool-call block (truncate the closing token) and confirm the agent receives an actionable failure and retries.
 - `cargo test -p opencode-provider`.
+
+## Dev Notes (2026-11-24)
+
+- Root cause: `DeepSeekNativeToolCallExtractor::finish` discarded the whole
+  unterminated calls block without inspecting its complete inner calls, so a
+  model that finished the write call but was cut off before the outer
+  `<|tool▁calls▁end|>` token lost the operation.
+- Fix: on an unterminated block, recover inner calls that have BOTH a closing
+  `<|tool▁call▁end|>` token and valid JSON arguments, and emit them as normal
+  `ToolCallStart`/`ToolCallEnd` events so they execute. Partially streamed or
+  invalid-JSON calls are still never executed.
+- When nothing is recoverable, the loud error now says
+  "Re-issue the tool call to retry." so the failure is actionable instead of
+  only diagnostic. Recovered calls are logged redacted (count only).
+- Both the stateful and legacy parsers share this extractor, so the Novita
+  `deepseek-r1` path gets the same recovery.
+- Verification: `cargo test -p opencode-provider` (159 + suites pass), including
+  new `native_abort_flush` tests for recovered write calls and invalid-JSON
+  truncation. `cargo test -p opencode-tui` unaffected.

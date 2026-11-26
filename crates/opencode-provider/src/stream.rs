@@ -381,6 +381,8 @@ pub struct DeepSeekNativeToolCallExtractor {
     counter: u64,
     pending_calls: Vec<(String, String, serde_json::Value)>,
     unterminated_block: bool,
+    /// Complete inner calls recovered from an unterminated calls block.
+    unterminated_recovered: usize,
     enabled: bool,
 }
 
@@ -392,6 +394,7 @@ impl Default for DeepSeekNativeToolCallExtractor {
             counter: 0,
             pending_calls: Vec::new(),
             unterminated_block: false,
+            unterminated_recovered: 0,
             enabled: native_normalization_enabled(),
         }
     }
@@ -410,8 +413,10 @@ impl DeepSeekNativeToolCallExtractor {
     /// Flush any buffered remainder at end of stream.
     ///
     /// An unterminated native calls block has its raw token markup discarded
-    /// (never leaked into assistant text), and a visible error is returned so
-    /// the truncated tool call fails loudly instead of silently (BUG-063).
+    /// (never leaked into assistant text). Complete inner calls recovered from
+    /// the block are executed as real tool calls; if none are recoverable the
+    /// turn fails loudly with an actionable error instead of silently
+    /// (BUG-063, BUG-074).
     pub fn finish(&mut self) -> Vec<StreamEvent> {
         if !self.enabled {
             return Vec::new();
@@ -419,10 +424,18 @@ impl DeepSeekNativeToolCallExtractor {
         let mut events = self.drain(true);
         if self.unterminated_block {
             self.unterminated_block = false;
-            events.push(StreamEvent::Error(
-                "incomplete DeepSeek native tool-call block (missing closing token) was discarded; no tool was executed"
-                    .to_string(),
-            ));
+            let recovered = std::mem::take(&mut self.unterminated_recovered);
+            if recovered == 0 {
+                events.push(StreamEvent::Error(
+                    "incomplete DeepSeek native tool-call block (missing closing token) was discarded; no tool was executed. Re-issue the tool call to retry."
+                        .to_string(),
+                ));
+            } else {
+                tracing::warn!(
+                    recovered,
+                    "recovered complete tool call(s) from an unterminated DeepSeek native block"
+                );
+            }
         }
         events
     }
@@ -463,12 +476,18 @@ impl DeepSeekNativeToolCallExtractor {
                 }
                 if flush_all {
                     // Unterminated calls block: discard the raw native-token
-                    // markup instead of leaking it as assistant text, and flag
-                    // it so `finish` can report a visible error (BUG-063).
+                    // markup instead of leaking it as assistant text. Recover
+                    // any complete inner calls (valid closing token and valid
+                    // JSON args) so a truncated closing token does not silently
+                    // drop the intended tool call (BUG-074). `finish` reports a
+                    // visible error only when nothing is recoverable (BUG-063).
                     let rest = std::mem::take(&mut self.buffer);
                     self.capturing = false;
                     if !rest.trim().is_empty() {
                         self.unterminated_block = true;
+                        let recovered = parse_complete_inner_calls(&rest, &mut self.counter);
+                        self.unterminated_recovered = recovered.len();
+                        self.pending_calls.extend(recovered);
                     }
                 }
                 break;
@@ -547,6 +566,18 @@ fn partial_suffix_len(buf: &str, token: &str) -> usize {
 /// segment into a `(name, arguments)` pair. Arguments may be wrapped in a
 /// Markdown code fence; unparseable arguments become an empty object.
 fn parse_native_call_segment(segment: &str) -> Option<(String, serde_json::Value)> {
+    let (name, args_raw) = native_call_segment_parts(segment)?;
+    Some((name.to_string(), parse_native_args(args_raw)))
+}
+
+/// Strict variant used when recovering a call from a truncated block: require
+/// valid JSON arguments so a partially streamed write is never executed.
+fn parse_native_call_segment_strict(segment: &str) -> Option<(String, serde_json::Value)> {
+    let (name, args_raw) = native_call_segment_parts(segment)?;
+    Some((name.to_string(), parse_native_args_strict(args_raw)?))
+}
+
+fn native_call_segment_parts(segment: &str) -> Option<(&str, &str)> {
     let segment = segment.trim_start();
     let after_type = match segment.find(DS_TOOL_SEP) {
         Some(sep) => &segment[sep + DS_TOOL_SEP.len()..],
@@ -563,10 +594,37 @@ fn parse_native_call_segment(segment: &str) -> Option<(String, serde_json::Value
     if name.is_empty() {
         return None;
     }
-    Some((name.to_string(), parse_native_args(args_raw)))
+    Some((name, args_raw))
 }
 
-fn parse_native_args(raw: &str) -> serde_json::Value {
+/// Recover complete inner calls from an unterminated native calls block.
+///
+/// Only calls with a present `<｜tool▁call▁end｜>` token and valid JSON arguments
+/// are recovered, so a partially streamed write is never executed. The outer
+/// `<｜tool▁calls▁end｜>` token is what is typically missing when a model is cut
+/// off right after finishing a call (BUG-074).
+fn parse_complete_inner_calls(
+    block: &str,
+    counter: &mut u64,
+) -> Vec<(String, String, serde_json::Value)> {
+    let mut recovered = Vec::new();
+    let mut rest = block;
+    while let Some(call_begin) = rest.find(DS_TOOL_CALL_BEGIN) {
+        let after = &rest[call_begin + DS_TOOL_CALL_BEGIN.len()..];
+        let Some(call_end) = after.find(DS_TOOL_CALL_END) else {
+            break;
+        };
+        let segment = &after[..call_end];
+        rest = &after[call_end + DS_TOOL_CALL_END.len()..];
+        if let Some((name, input)) = parse_native_call_segment_strict(segment) {
+            recovered.push((format!("deepseek-native-call-{}", *counter), name, input));
+            *counter += 1;
+        }
+    }
+    recovered
+}
+
+fn strip_native_args_fences(raw: &str) -> &str {
     let mut s = raw.trim();
     if let Some(stripped) = s.strip_prefix("```json") {
         s = stripped;
@@ -576,11 +634,23 @@ fn parse_native_args(raw: &str) -> serde_json::Value {
     if let Some(idx) = s.rfind("```") {
         s = &s[..idx];
     }
-    let s = s.trim();
+    s.trim()
+}
+
+fn parse_native_args(raw: &str) -> serde_json::Value {
+    let s = strip_native_args_fences(raw);
     if s.is_empty() {
         return serde_json::Value::Object(serde_json::Map::new());
     }
     serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()))
+}
+
+fn parse_native_args_strict(raw: &str) -> Option<serde_json::Value> {
+    let s = strip_native_args_fences(raw);
+    if s.is_empty() {
+        return Some(serde_json::Value::Object(serde_json::Map::new()));
+    }
+    serde_json::from_str(s).ok()
 }
 
 /// Whether native-token normalization is active. Enabled by default;
